@@ -1,0 +1,16 @@
+
+[1m[37m===[39m Deploying to 'outfitoftheday-4d401'...[22m
+
+[36m[1mi [22m[39m deploying [1mfunctions[22m
+[36m[1mi  functions:[22m[39m preparing codebase [1mdefault[22m for deployment
+[36m[1mi  functions:[22m[39m ensuring required API [1mcloudfunctions.googleapis.com[22m is enabled...
+[36m[1mi  functions:[22m[39m ensuring required API [1mcloudbuild.googleapis.com[22m is enabled...
+[36m[1mi  artifactregistry:[22m[39m ensuring required API [1martifactregistry.googleapis.com[22m is enabled...
+[36m[1mi  functions:[22m[39m Loading and analyzing source code for codebase default to determine what to deploy
+Serving at port 8282
+
+[36m[1mi  extensions:[22m[39m ensuring required API [1mfirebaseextensions.googleapis.com[22m is enabled...
+
+[32m[1m+ [22m[39m [1m[4mDeploy complete![24m[22m
+
+[1mProject Console:[22m https://console.firebase.google.com/project/outfitoftheday-4d401/overview

@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "221686818701",
+    "project_id": "outfitoftheday-4d401",
+    "storage_bucket": "outfitoftheday-4d401.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:221686818701:android:5c10f25965bc2396973fc4",
+        "android_client_info": {
+          "package_name": "com.krist.outfitoftheday"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "221686818701-6pafit47b6amqs9nm63ins6du4gmsjuq.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.krist.outfitoftheday",
+            "certificate_hash": "8085510927692b427897624170c8987554617059"
+          }
+        },
+        {
+          "client_id": "221686818701-44elcocf5ge0k7otajo8qobne908kjir.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDGtWcSl3qXooHZH2tESxE6HIkj2UZOzow"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "221686818701-44elcocf5ge0k7otajo8qobne908kjir.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

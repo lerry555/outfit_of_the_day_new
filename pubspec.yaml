@@ -1,0 +1,34 @@
+name: outfitofTheDay # Názov projektu (z pubspec.yaml)
+description: A new Flutter project.
+
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+environment:
+  sdk: ">=3.0.0 <4.0.0" # Aktualizované pre novšie verzie Flutteru
+
+dependencies:
+  flutter:
+    sdk: flutter
+  firebase_core: ^2.32.0
+  firebase_auth: ^4.20.0
+  google_sign_in: ^6.3.0
+  image_picker: ^1.1.2
+  http: ^1.2.1
+  shared_preferences: ^2.5.3
+  cloud_firestore: ^4.17.5
+  firebase_storage: ^11.7.7
+  file_picker: ^8.0.0
+  geolocator: ^12.0.0
+  cloud_functions: ^4.5.7  # NOVÝ RIADOK
+  dio: ^5.9.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+    - assets/mannequin_silhouette.png
+  # - assets/tshirt.jpg # Odkomentuj, ak ho chceš použiť, a uisti sa, že je súbor na správnom mieste
