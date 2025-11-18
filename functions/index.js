@@ -3,8 +3,9 @@ const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const https = require("https");
 
-// 🔑 DOSAĎ SVOJ OPENAI API KĽÚČ (SECRET KEY)
+// 🔑 Kľúče z .env
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const OPENWEATHER_API_KEY = process.env.OPENWEATHER_API_KEY || null;
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -12,18 +13,19 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 
+// ========== POMOCNÉ FUNKCIE ==========
+
 function pickRandom(items) {
   if (!items || items.length === 0) return null;
   const idx = Math.floor(Math.random() * items.length);
   return items[idx];
 }
 
-// ========== POMOCNÉ FUNKCIE ==========
-
 function detectTemperatureInfo(userQuery) {
   const text = (userQuery || "").toLowerCase();
   let temp = null;
 
+  // Skús najprv nájsť číslo + °C
   const tempMatch =
     text.match(/(-?\d+)\s*(?:°|stupn|c\b)/) ||
     text.match(/(-?\d+)\s*(?:\s*°?\s*c)/);
@@ -276,6 +278,83 @@ function pickByStylePreference(items, stylePreference) {
   return pickRandom(avoid.length > 0 ? avoid : items);
 }
 
+// ========== POČASIE – OpenWeather ==========
+function mapTempToCategory(tempCelsius) {
+  if (tempCelsius <= 5) return "cold";
+  if (tempCelsius <= 15) return "cool";
+  if (tempCelsius <= 25) return "warm";
+  return "hot";
+}
+
+function fetchWeatherFromOpenWeather(lat, lon) {
+  return new Promise((resolve, reject) => {
+    const apiKey = OPENWEATHER_API_KEY;
+    if (!apiKey) {
+      console.warn("OPENWEATHER_API_KEY nie je nastavený");
+      return resolve(null);
+    }
+    if (typeof lat !== "number" || typeof lon !== "number") {
+      console.warn("Latitude/longitude nie sú korektné čísla");
+      return resolve(null);
+    }
+
+    const url = `/data/2.5/weather?lat=${lat}&lon=${lon}&units=metric&appid=${apiKey}`;
+
+    const options = {
+      hostname: "api.openweathermap.org",
+      path: url,
+      method: "GET",
+    };
+
+    const req = https.request(options, (res) => {
+      let data = "";
+
+      res.on("data", (chunk) => {
+        data += chunk;
+      });
+
+      res.on("end", () => {
+        try {
+          if (res.statusCode < 200 || res.statusCode >= 300) {
+            console.error("OpenWeather error:", res.statusCode, data);
+            return resolve(null);
+          }
+          const json = JSON.parse(data);
+          const temp = json.main && typeof json.main.temp === "number"
+            ? json.main.temp
+            : null;
+          const feelsLike = json.main && typeof json.main.feels_like === "number"
+            ? json.main.feels_like
+            : temp;
+          const weatherMain = Array.isArray(json.weather) && json.weather[0]
+            ? json.weather[0].main
+            : null;
+
+          const tempToUse = feelsLike != null ? feelsLike : temp;
+          const tempCategory = tempToUse != null ? mapTempToCategory(tempToUse) : "unknown";
+
+          resolve({
+            temp: tempToUse,
+            tempCategory,
+            raw: json,
+            weatherMain,
+          });
+        } catch (e) {
+          console.error("Chyba pri parsovaní OpenWeather:", e);
+          resolve(null);
+        }
+      });
+    });
+
+    req.on("error", (err) => {
+      console.error("Chyba pri volaní OpenWeather:", err);
+      resolve(null);
+    });
+
+    req.end();
+  });
+}
+
 // ===== OpenAI volanie cez HTTPS =====
 async function callOpenAI(openaiKey, messages) {
   const requestBody = JSON.stringify({
@@ -351,10 +430,12 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
     const userQuery = body.userQuery || "";
     const wardrobe = Array.isArray(body.wardrobe) ? body.wardrobe : [];
     const userPreferences = body.userPreferences || {};
+    const location = body.location || {}; // { latitude, longitude }
 
     console.log("➡️ userQuery:", userQuery);
     console.log("➡️ wardrobe length:", wardrobe.length);
     console.log("➡️ userPreferences:", userPreferences);
+    console.log("➡️ location:", location);
 
     const openaiKey = OPENAI_API_KEY || null;
 
@@ -370,10 +451,9 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
 
     // === 0) SMALL TALK MOD ===
     if (!isOutfitRequest(userQuery)) {
-      // 👉 ak nemáme kľúč, NEBUDEME robiť fallback, ale povieme ti to
       if (!openaiKey) {
         return res.status(500).json({
-          text: "Na serveri nie je nastavený OPENAI_API_KEY. (Backend nevie volať AI.)",
+          text: "Na serveri nie je nastavený OPENAI_API_KEY.",
           outfit_images: [],
         });
       }
@@ -400,7 +480,6 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
         });
       } catch (err) {
         console.error("OpenAI small talk error:", err);
-        // 👉 tu vrátime CHYBU, aby si ju videl v appke
         return res.status(200).json({
           text: `Chyba pri volaní OpenAI (small talk): ${err.message || String(err)}`,
           outfit_images: [],
@@ -410,15 +489,46 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
 
     // === 1) OUTFIT MOD ===
 
-    const { temp, category: tempCategory } = detectTemperatureInfo(userQuery);
+    // 1) Skús získať počasie z polohy
+    let temp = null;
+    let tempCategory = "unknown";
+
+    let weatherInfo = null;
+    const lat =
+      typeof location.latitude === "number" ? location.latitude : null;
+    const lon =
+      typeof location.longitude === "number" ? location.longitude : null;
+
+    if (lat != null && lon != null) {
+      try {
+        weatherInfo = await fetchWeatherFromOpenWeather(lat, lon);
+        if (weatherInfo && typeof weatherInfo.temp === "number") {
+          temp = Math.round(weatherInfo.temp);
+          tempCategory = weatherInfo.tempCategory || "unknown";
+          console.log("➡️ OpenWeather – temp:", temp, "category:", tempCategory);
+        }
+      } catch (err) {
+        console.error("Chyba pri fetchWeatherFromOpenWeather:", err);
+      }
+    }
+
+    // 2) Ak sa nepodarí – skús odhadnúť z textu
+    if (temp == null || tempCategory === "unknown") {
+      const detected = detectTemperatureInfo(userQuery);
+      temp = detected.temp;
+      tempCategory = detected.category;
+    }
+
     const { occasion, stylePreference, description: occasionDescription } =
       detectOccasion(userQuery);
 
     console.log("➡️ temperature info:", temp, tempCategory);
     console.log("➡️ occasion info:", occasion, stylePreference);
 
+    // Filtrovanie šatníka – iba čisté veci
     const cleanWardrobe = wardrobe.filter((item) => item.isClean !== false);
 
+    // TOP (vrchy)
     const tops = cleanWardrobe.filter((item) => {
       const c = (item.category || "").toString().toLowerCase();
       return (
@@ -426,12 +536,14 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
         c.includes("shirt") ||
         c.includes("koše") ||
         c.includes("mikina") ||
+        c.includes("mikiny") ||
         c.includes("sveter") ||
         c.includes("blúzka") ||
         c.includes("bluzka")
       );
     });
 
+    // BOTTOM (spodky)
     const allBottoms = cleanWardrobe.filter((item) => {
       const c = (item.category || "").toString().toLowerCase();
       return (
@@ -471,6 +583,7 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       );
     });
 
+    // SHOES (topánky)
     const allShoes = cleanWardrobe.filter((item) => {
       const c = (item.category || "").toString().toLowerCase();
       return (
@@ -516,6 +629,7 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       );
     });
 
+    // OUTERWEAR (bundy, kabáty)
     const outerwearAll = cleanWardrobe.filter((item) => {
       const c = (item.category || "").toString().toLowerCase();
       return (
@@ -530,6 +644,7 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       );
     });
 
+    // Výber jednotlivých kúskov podľa štýlu a počasia
     const pickedTop = pickByStylePreference(tops, stylePreference);
 
     let bottomPool = allBottoms;
@@ -560,9 +675,12 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       pickedOuter,
     ].filter((x) => !!x);
 
-    const outfitImages = chosenItems
-      .map((item) => item.imageUrl || item.imageURL || item.image || null)
-      .filter((url) => !!url);
+    // Obrázky – v poradí: (vrch, spodok, topánky, bunda)
+    const outfitImages = [];
+    if (pickedTop && pickedTop.imageUrl) outfitImages.push(pickedTop.imageUrl);
+    if (pickedBottom && pickedBottom.imageUrl) outfitImages.push(pickedBottom.imageUrl);
+    if (pickedShoes && pickedShoes.imageUrl) outfitImages.push(pickedShoes.imageUrl);
+    if (pickedOuter && pickedOuter.imageUrl) outfitImages.push(pickedOuter.imageUrl);
 
     let fallbackText = "";
 
@@ -597,7 +715,11 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
         const color = item.color || "";
         const styleText = getStyleText(item);
         let line = `• ${label}: ${category}`;
-        if (color) line += `, farba: ${color}`;
+        if (color && Array.isArray(color)) {
+          line += `, farba: ${color.join(", ")}`;
+        } else if (color && typeof color === "string") {
+          line += `, farba: ${color}`;
+        }
         if (styleText) line += `, štýl: ${styleText}`;
         return line + "\n";
       };
@@ -605,18 +727,20 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       fallbackText += describe(pickedTop, "vrch");
       fallbackText += describe(pickedBottom, "spodok");
       fallbackText += describe(pickedShoes, "topánky");
-      fallbackText += describe(pickedOuter, "vrchná vrstva");
+      if (pickedOuter) {
+        fallbackText += describe(pickedOuter, "vrchná vrstva");
+      }
 
       if (outfitImages.length > 0) {
         fallbackText +=
-          "\nPridal som ti aj fotky týchto kúskov, aby si ich v chate videl 😉";
+          "\nPridal som ti aj fotky týchto kúskov, aby si ich v chate videl pekne pod sebou 😉";
       } else {
         fallbackText +=
           "\nVyzerá to, že niektoré kúsky nemajú uloženú fotku, takže ti ich neviem zobraziť v chate.";
       }
     }
 
-    // Ak by nebol kľúč alebo nemáme outfit, vrátime fallback
+    // Ak nemáme OpenAI alebo outfit, vrátime fallback
     if (!openaiKey || chosenItems.length === 0) {
       return res.status(200).json({
         text: fallbackText,
@@ -639,13 +763,14 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
           const category = item.category || label;
           const color = item.color || "";
           const styleText = getStyleText(item);
-          return `${label}: ${category}, farba: ${color || "neznáma"}, štýl: ${
-            styleText || "neznámy"
-          }`;
+          return `${label}: ${category}, farba: ${
+            Array.isArray(color) ? color.join(", ") : color || "neznáma"
+          }, štýl: ${styleText || "neznámy"}`;
         })
         .join("\n");
 
-      const tempInfo = temp !== null ? `${temp} °C (${tempCategory})` : tempCategory;
+      const tempInfo =
+        temp !== null ? `${temp} °C (${tempCategory})` : tempCategory;
       const occasionInfo = occasion;
 
       aiText = await callOpenAI(openaiKey, [
@@ -663,7 +788,7 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
           role: "user",
           content:
             `Používateľ napísal: "${userQuery}".\n` +
-            `Teplotná kategória: ${tempInfo}.\n` +
+            `Teplota/počasie: ${tempInfo}.\n` +
             `Príležitosť: ${occasionInfo}.\n` +
             `Vybraný outfit (NEVYMÝŠĽAJ INÉ KUSY):\n${outfitForAI}\n\n` +
             "Na základe tohto prosím napíš odpoveď používateľovi.",
@@ -671,7 +796,6 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       ]);
     } catch (err) {
       console.error("OpenAI outfit error:", err);
-      // Tu už pokojne fallback
       aiText = fallbackText;
     }
 
