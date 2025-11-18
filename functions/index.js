@@ -1,9 +1,10 @@
+require("dotenv").config();
 const functions = require("firebase-functions");
 const admin = require("firebase-admin");
 const https = require("https");
 
 // 🔑 DOSAĎ SVOJ OPENAI API KĽÚČ (SECRET KEY)
-const OPENAI_API_KEY = "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"; // napr. "sk-proj-abc123..."
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 if (!admin.apps.length) {
   admin.initializeApp();
