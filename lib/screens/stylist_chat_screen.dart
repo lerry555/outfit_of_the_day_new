@@ -13,7 +13,11 @@ class Message {
   final List<String> imageUrls;
   final bool isUser;
 
-  Message({required this.text, this.imageUrls = const [], required this.isUser});
+  Message({
+    required this.text,
+    this.imageUrls = const [],
+    required this.isUser,
+  });
 }
 
 class StylistChatScreen extends StatefulWidget {
@@ -25,7 +29,9 @@ class StylistChatScreen extends StatefulWidget {
 
 class _StylistChatScreenState extends State<StylistChatScreen> {
   final TextEditingController _textController = TextEditingController();
-  final List<Message> _messages = []; // Zmenené na List<Message>
+  final ScrollController _scrollController = ScrollController();
+
+  final List<Message> _messages = [];
   bool _isSending = false;
   List<Map<String, dynamic>> _wardrobe = [];
   Map<String, dynamic> _userPreferences = {};
@@ -150,6 +156,41 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     );
   }
 
+  // 🔹 Timestamp → String, aby šlo jsonEncode
+  dynamic _sanitizeValue(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate().toIso8601String();
+    } else if (value is Map<String, dynamic>) {
+      return _sanitizeMapForJson(value);
+    } else if (value is List) {
+      return value.map((v) => _sanitizeValue(v)).toList();
+    }
+    return value;
+  }
+
+  Map<String, dynamic> _sanitizeMapForJson(Map<String, dynamic> input) {
+    final result = <String, dynamic>{};
+    input.forEach((key, value) {
+      result[key] = _sanitizeValue(value);
+    });
+    return result;
+  }
+
+  void _scrollToBottom() {
+    if (!_scrollController.hasClients) return;
+    _scrollController.animateTo(
+      _scrollController.position.maxScrollExtent,
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+    );
+  }
+
+  void _scheduleScrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToBottom();
+    });
+  }
+
   Future<void> _handleSubmitted(String text) async {
     if (text.isEmpty || _isLoadingData) return;
     _textController.clear();
@@ -158,6 +199,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _messages.add(Message(text: text, isUser: true));
       _isSending = true;
     });
+    _scheduleScrollToBottom();
 
     // 1) Skúsime získať polohu z mobilu
     Position? position;
@@ -171,11 +213,32 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       const String functionUrl =
           'https://us-central1-outfitoftheday-4d401.cloudfunctions.net/chatWithStylist';
 
-      // 2) Poskladáme telo requestu
+      // 🔹 2) Očistíme šatník a preferencie od Timestampov
+      final List<Map<String, dynamic>> sanitizedWardrobe =
+      _wardrobe.map((item) => _sanitizeMapForJson(item)).toList();
+
+      final Map<String, dynamic> sanitizedPreferences =
+      _sanitizeMapForJson(_userPreferences);
+
+      // 🔹 3) Pripravíme krátku históriu chatu (posledných ~10 správ)
+      final int historyLength = 10;
+      final List<Message> lastMessages = _messages.length <= historyLength
+          ? _messages
+          : _messages.sublist(_messages.length - historyLength);
+
+      final List<Map<String, dynamic>> history = lastMessages
+          .map((m) => {
+        'role': m.isUser ? 'user' : 'assistant',
+        'content': m.text,
+      })
+          .toList();
+
+      // 4) Poskladáme telo requestu
       final Map<String, dynamic> body = {
         'userQuery': text,
-        'wardrobe': _wardrobe,
-        'userPreferences': _userPreferences,
+        'wardrobe': sanitizedWardrobe,
+        'userPreferences': sanitizedPreferences,
+        'history': history,
       };
 
       if (position != null) {
@@ -185,7 +248,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         };
       }
 
-      // 3) Pošleme request na backend
+      // 5) Pošleme request na backend
       final response = await http.post(
         Uri.parse(functionUrl),
         headers: {
@@ -199,8 +262,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body) as Map<String, dynamic>;
         setState(() {
-          final responseText = data['text'] as String? ??
-              'Prepáč, momentálne ti neviem pomôcť.';
+          final responseText =
+              data['text'] as String? ?? 'Prepáč, momentálne ti neviem pomôcť.';
           final outfitImages = data['outfit_images'] as List<dynamic>?;
 
           if (outfitImages != null && outfitImages.isNotEmpty) {
@@ -221,6 +284,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           }
           _isSending = false;
         });
+        _scheduleScrollToBottom();
       } else {
         setState(() {
           _messages.add(
@@ -232,9 +296,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           );
           _isSending = false;
         });
+        _scheduleScrollToBottom();
       }
-    } catch (e) {
-      print('Neočakávaná chyba: $e');
+    } catch (e, st) {
+      print('Neočakávaná chyba: $e\n$st');
       if (!mounted) return;
       setState(() {
         _messages.add(
@@ -246,12 +311,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         );
         _isSending = false;
       });
+      _scheduleScrollToBottom();
     }
   }
 
   @override
   void dispose() {
     _textController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -262,9 +329,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         margin: const EdgeInsets.symmetric(vertical: 4.0, horizontal: 8.0),
         padding: const EdgeInsets.symmetric(vertical: 10.0, horizontal: 14.0),
         decoration: BoxDecoration(
-          color: message.isUser
-              ? const Color(0xFF4E5AE8)
-              : Colors.grey.shade200,
+          color:
+          message.isUser ? const Color(0xFF4E5AE8) : Colors.grey.shade200,
           borderRadius: BorderRadius.circular(16.0),
         ),
         child: Column(
@@ -322,12 +388,12 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       ),
       body: Column(
         children: [
-          if (_isLoadingData)
-            const LinearProgressIndicator(minHeight: 2),
+          if (_isLoadingData) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: Container(
               color: Colors.grey.shade100,
               child: ListView.builder(
+                controller: _scrollController,
                 padding: const EdgeInsets.all(8.0),
                 reverse: false,
                 itemCount: _messages.length,
@@ -376,7 +442,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                     color: const Color(0xFF4E5AE8),
                     onPressed: _isSending
                         ? null
-                        : () => _handleSubmitted(_textController.text.trim()),
+                        : () => _handleSubmitted(
+                      _textController.text.trim(),
+                    ),
                   ),
                 ],
               ),

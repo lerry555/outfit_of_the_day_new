@@ -25,7 +25,7 @@ function detectTemperatureInfo(userQuery) {
   const text = (userQuery || "").toLowerCase();
   let temp = null;
 
-  // Skús najprv nájsť číslo + °C
+  // Skús nájsť číslo + °C
   const tempMatch =
     text.match(/(-?\d+)\s*(?:°|stupn|c\b)/) ||
     text.match(/(-?\d+)\s*(?:\s*°?\s*c)/);
@@ -182,7 +182,7 @@ function isOutfitRequest(userQuery) {
     "teplo",
     "chladno",
     "mrzne",
-    "je vonku"
+    "je vonku",
   ];
 
   if (outfitWords.some((w) => text.includes(w))) {
@@ -279,6 +279,7 @@ function pickByStylePreference(items, stylePreference) {
 }
 
 // ========== POČASIE – OpenWeather ==========
+
 function mapTempToCategory(tempCelsius) {
   if (tempCelsius <= 5) return "cold";
   if (tempCelsius <= 15) return "cool";
@@ -320,18 +321,22 @@ function fetchWeatherFromOpenWeather(lat, lon) {
             return resolve(null);
           }
           const json = JSON.parse(data);
-          const temp = json.main && typeof json.main.temp === "number"
-            ? json.main.temp
-            : null;
-          const feelsLike = json.main && typeof json.main.feels_like === "number"
-            ? json.main.feels_like
-            : temp;
-          const weatherMain = Array.isArray(json.weather) && json.weather[0]
-            ? json.weather[0].main
-            : null;
+          const temp =
+            json.main && typeof json.main.temp === "number"
+              ? json.main.temp
+              : null;
+          const feelsLike =
+            json.main && typeof json.main.feels_like === "number"
+              ? json.main.feels_like
+              : temp;
+          const weatherMain =
+            Array.isArray(json.weather) && json.weather[0]
+              ? json.weather[0].main
+              : null;
 
           const tempToUse = feelsLike != null ? feelsLike : temp;
-          const tempCategory = tempToUse != null ? mapTempToCategory(tempToUse) : "unknown";
+          const tempCategory =
+            tempToUse != null ? mapTempToCategory(tempToUse) : "unknown";
 
           resolve({
             temp: tempToUse,
@@ -355,7 +360,23 @@ function fetchWeatherFromOpenWeather(lat, lon) {
   });
 }
 
+// ========== KONVERZÁCIA – pomocná funkcia ==========
+
+function convertHistoryToOpenAIMessages(history) {
+  if (!Array.isArray(history)) return [];
+  return history
+    .map((h) => {
+      const role = h.role === "assistant" ? "assistant" : "user";
+      const content =
+        typeof h.content === "string" ? h.content.trim() : "";
+      if (!content) return null;
+      return { role, content };
+    })
+    .filter((x) => x !== null);
+}
+
 // ===== OpenAI volanie cez HTTPS =====
+
 async function callOpenAI(openaiKey, messages) {
   const requestBody = JSON.stringify({
     model: "gpt-4.1-mini",
@@ -369,7 +390,7 @@ async function callOpenAI(openaiKey, messages) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${openaiKey}`,
+      Authorization: `Bearer ${openaiKey}`,
       "Content-Length": Buffer.byteLength(requestBody),
     },
   };
@@ -417,6 +438,7 @@ async function callOpenAI(openaiKey, messages) {
 // =======================
 // 1) AI stylista zo šatníka
 // =======================
+
 exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
   try {
     if (req.method !== "POST") {
@@ -430,13 +452,16 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
     const userQuery = body.userQuery || "";
     const wardrobe = Array.isArray(body.wardrobe) ? body.wardrobe : [];
     const userPreferences = body.userPreferences || {};
-    const location = body.location || {}; // { latitude, longitude }
+    const location = body.location || {};
+    const history = Array.isArray(body.history) ? body.history : [];
 
     console.log("➡️ userQuery:", userQuery);
     console.log("➡️ wardrobe length:", wardrobe.length);
     console.log("➡️ userPreferences:", userPreferences);
     console.log("➡️ location:", location);
+    console.log("➡️ history length:", history.length);
 
+    const historyMessages = convertHistoryToOpenAIMessages(history);
     const openaiKey = OPENAI_API_KEY || null;
 
     const trimmed = userQuery.trim();
@@ -459,15 +484,20 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       }
 
       try {
+        const systemMessage = {
+          role: "system",
+          content:
+            "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
+            "Používateľ sa s tebou môže baviť aj nezáväzne (small talk), " +
+            "ale vždy zostaň v úlohe kamoša-stylistu. Odpovedaj krátko (2–5 viet), " +
+            "môžeš použiť emoji, ale s mierou. Využívaj predošlú konverzáciu, " +
+            "ktorú dostaneš v histórii. Aplikácia zobrazuje fotky kúskov nad chatom, " +
+            "takže nikdy nepíš, že nevieš ukázať obrázok – radšej sa odvolaj na kúsky, ktoré vidí používateľ.",
+        };
+
         const aiText = await callOpenAI(openaiKey, [
-          {
-            role: "system",
-            content:
-              "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
-              "Používateľ sa s tebou môže baviť aj nezáväzne (small talk), " +
-              "ale vždy zostaň v úlohe kamoša-stylistu. Odpovedaj krátko (2–5 viet), " +
-              "môžeš použiť emoji, ale s mierou.",
-          },
+          systemMessage,
+          ...historyMessages,
           {
             role: "user",
             content: userQuery,
@@ -481,7 +511,9 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       } catch (err) {
         console.error("OpenAI small talk error:", err);
         return res.status(200).json({
-          text: `Chyba pri volaní OpenAI (small talk): ${err.message || String(err)}`,
+          text: `Chyba pri volaní OpenAI (small talk): ${
+            err.message || String(err)
+          }`,
           outfit_images: [],
         });
       }
@@ -505,7 +537,12 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
         if (weatherInfo && typeof weatherInfo.temp === "number") {
           temp = Math.round(weatherInfo.temp);
           tempCategory = weatherInfo.tempCategory || "unknown";
-          console.log("➡️ OpenWeather – temp:", temp, "category:", tempCategory);
+          console.log(
+            "➡️ OpenWeather – temp:",
+            temp,
+            "category:",
+            tempCategory
+          );
         }
       } catch (err) {
         console.error("Chyba pri fetchWeatherFromOpenWeather:", err);
@@ -668,19 +705,19 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       pickedOuter = pickByStylePreference(outerwearAll, stylePreference);
     }
 
-    const chosenItems = [
-      pickedTop,
-      pickedBottom,
-      pickedShoes,
-      pickedOuter,
-    ].filter((x) => !!x);
+    // Poradie objektov pre AI a text: top, bottom, shoes, outer
+    const chosenItems = [];
+    if (pickedTop) chosenItems.push(pickedTop);
+    if (pickedBottom) chosenItems.push(pickedBottom);
+    if (pickedShoes) chosenItems.push(pickedShoes);
+    if (pickedOuter) chosenItems.push(pickedOuter);
 
-    // Obrázky – v poradí: (vrch, spodok, topánky, bunda)
+    // Obrázky – BUNDA PRVÁ, potom vrch, spodok, topánky
     const outfitImages = [];
+    if (pickedOuter && pickedOuter.imageUrl) outfitImages.push(pickedOuter.imageUrl);
     if (pickedTop && pickedTop.imageUrl) outfitImages.push(pickedTop.imageUrl);
     if (pickedBottom && pickedBottom.imageUrl) outfitImages.push(pickedBottom.imageUrl);
     if (pickedShoes && pickedShoes.imageUrl) outfitImages.push(pickedShoes.imageUrl);
-    if (pickedOuter && pickedOuter.imageUrl) outfitImages.push(pickedOuter.imageUrl);
 
     let fallbackText = "";
 
@@ -696,10 +733,14 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       if (temp !== null) {
         fallbackText += `Rozumiem, že vonku je približne ${temp} °C (${tempCategory}).\n`;
       } else if (tempCategory !== "unknown") {
-        if (tempCategory === "cold") fallbackText += "Rozumiem, že je vonku zima.\n";
-        if (tempCategory === "cool") fallbackText += "Rozumiem, že je vonku skôr chladnejšie.\n";
-        if (tempCategory === "warm") fallbackText += "Vyzerá to na príjemné teplé počasie.\n";
-        if (tempCategory === "hot") fallbackText += "Vyzerá to, že je vonku poriadne teplo.\n";
+        if (tempCategory === "cold")
+          fallbackText += "Rozumiem, že je vonku zima.\n";
+        if (tempCategory === "cool")
+          fallbackText += "Rozumiem, že je vonku skôr chladnejšie.\n";
+        if (tempCategory === "warm")
+          fallbackText += "Vyzerá to na príjemné teplé počasie.\n";
+        if (tempCategory === "hot")
+          fallbackText += "Vyzerá to, že je vonku poriadne teplo.\n";
       }
 
       if (occasionDescription) {
@@ -749,47 +790,51 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
     }
 
     let aiText;
-    try {
-      const outfitForAI = chosenItems
-        .map((item, idx) => {
-          const label =
-            idx === 0
-              ? "vrch"
-              : idx === 1
-              ? "spodok"
-              : idx === 2
-              ? "topánky"
-              : "vrchná vrstva";
-          const category = item.category || label;
-          const color = item.color || "";
-          const styleText = getStyleText(item);
-          return `${label}: ${category}, farba: ${
-            Array.isArray(color) ? color.join(", ") : color || "neznáma"
-          }, štýl: ${styleText || "neznámy"}`;
-        })
-        .join("\n");
 
+    try {
       const tempInfo =
         temp !== null ? `${temp} °C (${tempCategory})` : tempCategory;
-      const occasionInfo = occasion;
+
+      const lineForAI = (item, label) => {
+        if (!item) return "";
+        const category = item.category || label;
+        const color = item.color || "";
+        const styleText = getStyleText(item);
+        return `${label}: ${category}, farba: ${
+          color || "neznáma"
+        }, štýl: ${styleText || "neznámy"}\n`;
+      };
+
+      let outfitForAI = "";
+      outfitForAI += lineForAI(pickedTop, "vrch");
+      outfitForAI += lineForAI(pickedBottom, "spodok");
+      outfitForAI += lineForAI(pickedShoes, "topánky");
+      outfitForAI += lineForAI(pickedOuter, "vrchná vrstva");
+      outfitForAI = outfitForAI.trim();
+
+      const systemMessage = {
+        role: "system",
+        content:
+          "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
+          "Pomáhaš používateľovi vybrať outfit z JEHO ŠATNÍKA. " +
+          "Nikdy nevymýšľaj kúsky, ktoré nie sú v zadanom outfite. " +
+          "Odpoveď napíš stručne (3–6 viet), môžeš použiť emoji, ale s mierou. " +
+          "Najprv používateľa prirodzene oslov, potom vysvetli, prečo je tento outfit vhodný " +
+          "na dané počasie a príležitosť. Na konci môžeš pridať krátky tip (napr. vrstvenie, doplnky). " +
+          "Využívaj históriu chatu, aby si nadväzoval na predchádzajúcu konverzáciu. " +
+          "Aplikácia zobrazuje fotky kúskov nad chatom, takže nikdy nepíš, že nevieš ukázať obrázok – " +
+          "radšej sa odvolaj na to, čo používateľ vidí na obrazovke.",
+      };
 
       aiText = await callOpenAI(openaiKey, [
-        {
-          role: "system",
-          content:
-            "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
-            "Pomáhaš používateľovi vybrať outfit z JEHO ŠATNÍKA. " +
-            "Nikdy nevymýšľaj kúsky, ktoré nie sú v zadanom outfite. " +
-            "Odpoveď napíš stručne (3–6 viet), môžeš použiť emoji, ale s mierou. " +
-            "Najprv používateľa prirodzene oslov, potom vysvetli, prečo je tento outfit vhodný " +
-            "na dané počasie a príležitosť. Na konci môžeš pridať krátky tip (napr. vrstvenie, doplnky).",
-        },
+        systemMessage,
+        ...historyMessages,
         {
           role: "user",
           content:
             `Používateľ napísal: "${userQuery}".\n` +
             `Teplota/počasie: ${tempInfo}.\n` +
-            `Príležitosť: ${occasionInfo}.\n` +
+            `Príležitosť: ${occasion}.\n` +
             `Vybraný outfit (NEVYMÝŠĽAJ INÉ KUSY):\n${outfitForAI}\n\n` +
             "Na základe tohto prosím napíš odpoveď používateľovi.",
         },
@@ -815,6 +860,7 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
 // ======================================
 // 2) Čistiaca funkcia – zlé imageUrl
 // ======================================
+
 exports.cleanBadImageUrls = functions.https.onRequest(async (req, res) => {
   try {
     let cleanedUserWardrobe = 0;
@@ -828,7 +874,7 @@ exports.cleanBadImageUrls = functions.https.onRequest(async (req, res) => {
         const imageUrl = data.imageUrl;
         if (typeof imageUrl === "string" && imageUrl.includes("example.com")) {
           console.log(
-            `Čistím users/${userDoc.id}/wardrobe/${itemDoc.id} – imageUrl=${imageUrl}`,
+            `Čistím users/${userDoc.id}/wardrobe/${itemDoc.id} – imageUrl=${imageUrl}`
           );
           await itemDoc.ref.update({ imageUrl: "" });
           cleanedUserWardrobe++;
@@ -842,7 +888,7 @@ exports.cleanBadImageUrls = functions.https.onRequest(async (req, res) => {
       const imageUrl = data.imageUrl;
       if (typeof imageUrl === "string" && imageUrl.includes("example.com")) {
         console.log(
-          `Čistím public_wardrobe/${itemDoc.id} – imageUrl=${imageUrl}`,
+          `Čistím public_wardrobe/${itemDoc.id} – imageUrl=${imageUrl}`
         );
         await itemDoc.ref.update({ imageUrl: "" });
         cleanedPublicWardrobe++;
@@ -871,6 +917,7 @@ exports.cleanBadImageUrls = functions.https.onRequest(async (req, res) => {
 // ======================================
 // 3) analyzeClothingImage – jednoduché “AI”
 // ======================================
+
 exports.analyzeClothingImage = functions.https.onRequest(async (req, res) => {
   try {
     if (req.method !== "POST") {
