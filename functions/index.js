@@ -563,66 +563,73 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
     console.log("➡️ occasion info:", occasion, stylePreference);
 
     // Filtrovanie šatníka – iba čisté veci
+    // Filtrovanie šatníka – iba čisté veci
     const cleanWardrobe = wardrobe.filter((item) => item.isClean !== false);
 
-    // TOP (vrchy)
-    const tops = cleanWardrobe.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
-      return (
-        c.includes("tri") ||
-        c.includes("shirt") ||
-        c.includes("koše") ||
-        c.includes("mikina") ||
-        c.includes("mikiny") ||
-        c.includes("sveter") ||
-        c.includes("blúzka") ||
-        c.includes("bluzka")
-      );
-    });
+    // Pomocné funkcie na kategórie / štýly
+    const cat = (item) => (item.category || "").toString().toLowerCase();
+    const styleField = (item) => {
+      if (typeof item.style === "string") return item.style.toLowerCase();
+      if (Array.isArray(item.styles)) return item.styles.join(" ").toLowerCase();
+      return "";
+    };
 
-    // BOTTOM (spodky)
-    const allBottoms = cleanWardrobe.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
+    const isBaseTop = (item) => {
+      const c = cat(item);
+      return (
+        c.includes("tri") || // tričko
+        c.includes("shirt") ||
+        c.includes("koše") || // košeľa
+        c.includes("blúz") ||
+        c.includes("bluz") ||
+        c.includes("top")
+      );
+    };
+
+    const isMidLayer = (item) => {
+      const c = cat(item);
+      return (
+        c.includes("mikina") ||
+        c.includes("sveter") ||
+        c.includes("sweat")
+      );
+    };
+
+    const isOuterwear = (item) => {
+      const c = cat(item);
+      return (
+        c.includes("bunda") ||
+        c.includes("coat") ||
+        c.includes("kabát") ||
+        c.includes("kabat") ||
+        c.includes("parka") ||
+        c.includes("plášť") ||
+        c.includes("plast")
+      );
+    };
+
+    const isBottom = (item) => {
+      const c = cat(item);
       return (
         c.includes("nohavice") ||
         c.includes("rifle") ||
+        c.includes("džínsy") ||
+        c.includes("dzinsy") ||
         c.includes("kraťasy") ||
         c.includes("kratasy") ||
         c.includes("šortky") ||
         c.includes("sortky") ||
         c.includes("sukňa") ||
         c.includes("sukna") ||
-        c.includes("pants") ||
-        c.includes("jeans")
-      );
-    });
-
-    const longBottoms = allBottoms.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
-      return (
-        c.includes("nohavice") ||
-        c.includes("rifle") ||
-        c.includes("jeans") ||
+        c.includes("legíny") ||
+        c.includes("leginy") ||
         c.includes("tepláky") ||
         c.includes("teplaky")
       );
-    });
+    };
 
-    const shortBottoms = allBottoms.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
-      return (
-        c.includes("kraťasy") ||
-        c.includes("kratasy") ||
-        c.includes("šortky") ||
-        c.includes("sortky") ||
-        c.includes("sukňa") ||
-        c.includes("sukna")
-      );
-    });
-
-    // SHOES (topánky)
-    const allShoes = cleanWardrobe.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
+    const isShoes = (item) => {
+      const c = cat(item);
       return (
         c.includes("topánky") ||
         c.includes("topanky") ||
@@ -639,85 +646,200 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
         c.includes("lodicky") ||
         c.includes("shoes")
       );
+    };
+
+    const isSportyBottom = (item) => {
+      const c = cat(item);
+      const s = styleField(item);
+      return (
+        c.includes("tepláky") ||
+        c.includes("teplaky") ||
+        c.includes("jogger") ||
+        s.includes("sport") ||
+        s.includes("šport") ||
+        s.includes("sporty")
+      );
+    };
+
+    const isSportyShoes = (item) => {
+      const c = cat(item);
+      const s = styleField(item);
+      return (
+        c.includes("tenisky") ||
+        c.includes("sneakers") ||
+        c.includes("running") ||
+        s.includes("sport") ||
+        s.includes("šport")
+      );
+    };
+
+    const isFormalShoes = (item) => {
+      const c = cat(item);
+      const s = styleField(item);
+      return (
+        c.includes("lodičky") ||
+        c.includes("lodicky") ||
+        c.includes("oxford") ||
+        c.includes("polobotky") ||
+        c.includes("mokasíny") ||
+        c.includes("mokasiny") ||
+        s.includes("elegant") ||
+        s.includes("formal") ||
+        s.includes("business")
+      );
+    };
+
+    // Rozdelenie šatníka
+    const baseTops = cleanWardrobe.filter(isBaseTop);
+    const midLayers = cleanWardrobe.filter(isMidLayer);
+    const outerwearAll = cleanWardrobe.filter(isOuterwear);
+
+    const allBottoms = cleanWardrobe.filter(isBottom);
+    const shortBottoms = allBottoms.filter((item) => {
+      const c = cat(item);
+      return (
+        c.includes("kraťasy") ||
+        c.includes("kratasy") ||
+        c.includes("šortky") ||
+        c.includes("sortky") ||
+        c.includes("sukňa") ||
+        c.includes("sukna")
+      );
     });
+    const longBottoms = allBottoms.filter((item) => !shortBottoms.includes(item));
+
+    const allShoes = cleanWardrobe.filter(isShoes);
 
     const warmShoes = allShoes.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
+      const c = cat(item);
       return (
         c.includes("čižmy") ||
         c.includes("cizmy") ||
-        c.includes("tenisky") ||
-        c.includes("sneakers") ||
-        c.includes("topánky") ||
-        c.includes("topanky") ||
-        c.includes("boty")
+        c.includes("boots") ||
+        c.includes("work boots") ||
+        c.includes("turist") ||
+        c.includes("zimné") ||
+        c.includes("zimne") ||
+        isSportyShoes(item) // tenisky sú OK aj v chladnom počasí
       );
     });
 
     const summerShoes = allShoes.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
+      const c = cat(item);
       return (
         c.includes("sandále") ||
         c.includes("sandale") ||
         c.includes("šľapky") ||
         c.includes("slapky") ||
-        c.includes("lodičky") ||
-        c.includes("lodicky")
+        c.includes("espadril") ||
+        c.includes("plátenky") ||
+        c.includes("platene")
       );
     });
 
-    // OUTERWEAR (bundy, kabáty)
-    const outerwearAll = cleanWardrobe.filter((item) => {
-      const c = (item.category || "").toString().toLowerCase();
-      return (
-        c.includes("bunda") ||
-        c.includes("bundy") ||
-        c.includes("kabát") ||
-        c.includes("kabat") ||
-        c.includes("kabátik") ||
-        c.includes("sako") ||
-        c.includes("coat") ||
-        c.includes("jacket")
-      );
-    });
+    // === Výber kúskov podľa štýlu, počasia a kombinácie ===
 
-    // Výber jednotlivých kúskov podľa štýlu a počasia
-    const pickedTop = pickByStylePreference(tops, stylePreference);
-
+    // 1) Spodok
     let bottomPool = allBottoms;
     if (tempCategory === "cold" || tempCategory === "cool") {
       bottomPool = longBottoms.length > 0 ? longBottoms : allBottoms;
     } else if (tempCategory === "hot") {
       bottomPool = shortBottoms.length > 0 ? shortBottoms : allBottoms;
     }
-    const pickedBottom = pickByStylePreference(bottomPool, stylePreference);
+    const pickedBottom =
+      pickByStylePreference(bottomPool, stylePreference) ||
+      pickByStylePreference(allBottoms, "any");
 
+
+
+        // 2) Vrch – tričko (base layer) + mikina/sveter (mid layer)
+        let pickedBaseTop =
+          pickByStylePreference(baseTops, stylePreference) ||
+          pickByStylePreference(baseTops, "any");
+
+        let pickedMidLayer = null;
+        if (tempCategory === "cold" || tempCategory === "cool") {
+          pickedMidLayer =
+            pickByStylePreference(midLayers, stylePreference) ||
+            pickByStylePreference(midLayers, "any");
+        }
+
+        // Ak nemáme žiadne base tričko, aspoň niečo daj na vrch
+        if (!pickedBaseTop && !pickedMidLayer) {
+          const anyTop = pickByStylePreference(
+            cleanWardrobe.filter((item) => isBaseTop(item) || isMidLayer(item)),
+            stylePreference
+          );
+          if (anyTop) pickedBaseTop = anyTop;
+        }
+
+        // Retro-kompatibilita: pre zvyšok kódu používame aj skrátený názov pickedTop
+        const pickedTop = pickedMidLayer || pickedBaseTop;
+
+
+    // 3) Topánky – podľa spodku + štýlu + počasia
+    const sportyBottom = pickedBottom && isSportyBottom(pickedBottom);
     let shoesPool = allShoes;
-    if (tempCategory === "cold" || tempCategory === "cool") {
-      shoesPool = warmShoes.length > 0 ? warmShoes : allShoes;
-    } else if (tempCategory === "hot") {
-      shoesPool = summerShoes.length > 0 ? summerShoes : allShoes;
-    }
-    const pickedShoes = pickByStylePreference(shoesPool, stylePreference);
 
+    if (sportyBottom) {
+      const sporty = allShoes.filter(isSportyShoes);
+      if (sporty.length > 0) {
+        shoesPool = sporty; // tepláky → tenisky
+      } else {
+        const nonFormal = allShoes.filter((s) => !isFormalShoes(s));
+        if (nonFormal.length > 0) shoesPool = nonFormal;
+      }
+    } else if (
+      occasion === "date" ||
+      occasion === "work" ||
+      stylePreference === "elegant"
+    ) {
+      const elegant = allShoes.filter(isFormalShoes);
+      if (elegant.length > 0) shoesPool = elegant;
+    }
+
+    // Až potom zohľadníme teplotu
+    let tempShoesPool = shoesPool;
+    if (tempCategory === "cold" || tempCategory === "cool") {
+      const warm = shoesPool.filter((s) => warmShoes.includes(s));
+      if (warm.length > 0) tempShoesPool = warm;
+    } else if (tempCategory === "hot") {
+      const summer = shoesPool.filter((s) => summerShoes.includes(s));
+      if (summer.length > 0) tempShoesPool = summer;
+    }
+
+    const pickedShoes =
+      pickByStylePreference(tempShoesPool, stylePreference) ||
+      pickByStylePreference(shoesPool, stylePreference) ||
+      pickByStylePreference(allShoes, "any");
+
+    // 4) Vrchná vrstva (bunda/kabát) – len keď je chladno
     let pickedOuter = null;
     if (tempCategory === "cold" || tempCategory === "cool") {
       pickedOuter = pickByStylePreference(outerwearAll, stylePreference);
     }
 
-    // Poradie objektov pre AI a text: top, bottom, shoes, outer
-    const chosenItems = [];
-    if (pickedTop) chosenItems.push(pickedTop);
-    if (pickedBottom) chosenItems.push(pickedBottom);
-    if (pickedShoes) chosenItems.push(pickedShoes);
-    if (pickedOuter) chosenItems.push(pickedOuter);
+    // Zoznam vybraných kúskov pre text
+    const chosenItems = [
+      pickedBaseTop,
+      pickedMidLayer,
+      pickedBottom,
+      pickedShoes,
+      pickedOuter,
+    ].filter((x) => !!x);
 
-    // Obrázky – BUNDA PRVÁ, potom vrch, spodok, topánky
+    // Obrázky do appky – necháme max. 4 ako doteraz:
+    // vrch (mikina alebo tričko), spodok, topánky, bunda
     const outfitImages = [];
-    if (pickedOuter && pickedOuter.imageUrl) outfitImages.push(pickedOuter.imageUrl);
-    if (pickedTop && pickedTop.imageUrl) outfitImages.push(pickedTop.imageUrl);
+    const topForImage = pickedMidLayer || pickedBaseTop;
+    if (topForImage && topForImage.imageUrl) {
+      outfitImages.push(topForImage.imageUrl);
+    }
     if (pickedBottom && pickedBottom.imageUrl) outfitImages.push(pickedBottom.imageUrl);
     if (pickedShoes && pickedShoes.imageUrl) outfitImages.push(pickedShoes.imageUrl);
+    if (pickedOuter && pickedOuter.imageUrl) outfitImages.push(pickedOuter.imageUrl);
+
+
 
     let fallbackText = "";
 
@@ -789,56 +911,77 @@ exports.chatWithStylist = functions.https.onRequest(async (req, res) => {
       });
     }
 
-    let aiText;
+        let aiText;
+        try {
+          // Popis vybraného outfitu pre AI
+          const outfitForAI = [
+            { item: pickedBaseTop, label: "spodná vrstva (tričko/košeľa)" },
+            { item: pickedMidLayer, label: "mikina / sveter" },
+            { item: pickedBottom, label: "spodok" },
+            { item: pickedShoes, label: "topánky" },
+            { item: pickedOuter, label: "vrchná vrstva" },
+          ]
+            .filter((x) => x.item)
+            .map(({ item, label }) => {
+              const category = item.category || label;
+              const color = item.color || "";
+              const styleText = getStyleText(item);
+              return `${label}: ${category}, farba: ${
+                Array.isArray(color) ? color.join(", ") : color || "neznáma"
+              }, štýl: ${styleText || "neznámy"}`;
+            })
+            .join("\n");
 
-    try {
-      const tempInfo =
-        temp !== null ? `${temp} °C (${tempCategory})` : tempCategory;
+          // Info o počasí pre AI – nech to pekne rozpíše
+          let weatherContext = "";
+          if (temp !== null) {
+            weatherContext += `Pocitová teplota je približne ${Math.round(
+              temp
+            )} °C, kategória: ${tempCategory}. `;
+            if (tempCategory === "cold") {
+              weatherContext +=
+                "Je zima, očakávaj chlad hlavne ráno a večer – vrstvy sú dôležité. ";
+            } else if (tempCategory === "cool") {
+              weatherContext +=
+                "Je skôr chladnejšie, ale nie úplne mráz – vhodné sú ľahšie, ale stále teplé vrstvy. ";
+            } else if (tempCategory === "warm") {
+              weatherContext +=
+                "Je príjemne teplo – stačí ľahší outfit, ale večer môže byť chladnejšie. ";
+            } else if (tempCategory === "hot") {
+              weatherContext +=
+                "Je naozaj teplo – outfit by mal byť čo najvzdušnejší. ";
+            }
+          } else if (tempCategory !== "unknown") {
+            weatherContext += `Teplotná kategória (odhad): ${tempCategory}. `;
+          }
 
-      const lineForAI = (item, label) => {
-        if (!item) return "";
-        const category = item.category || label;
-        const color = item.color || "";
-        const styleText = getStyleText(item);
-        return `${label}: ${category}, farba: ${
-          color || "neznáma"
-        }, štýl: ${styleText || "neznámy"}\n`;
-      };
+          const tempInfo =
+            temp !== null ? `${Math.round(temp)} °C (${tempCategory})` : tempCategory;
+          const occasionInfo = occasion || "bežný deň";
 
-      let outfitForAI = "";
-      outfitForAI += lineForAI(pickedTop, "vrch");
-      outfitForAI += lineForAI(pickedBottom, "spodok");
-      outfitForAI += lineForAI(pickedShoes, "topánky");
-      outfitForAI += lineForAI(pickedOuter, "vrchná vrstva");
-      outfitForAI = outfitForAI.trim();
+          aiText = await callOpenAI(openaiKey, [
+            {
+              role: "system",
+              content:
+                "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
+                "Pomáhaš používateľovi vybrať outfit z JEHO ŠATNÍKA. " +
+                "Nikdy nevymýšľaj nové kúsky, pracuj IBA s oblečením, ktoré je v zozname outfitu. " +
+                "Odpoveď napíš stručne (3–6 viet), môžeš použiť emoji, ale s mierou. " +
+                "Vysvetli, prečo sa jednotlivé vrstvy hodia k počasiu (spomeň konkrétne teploty / pocitovú zimu) " +
+                "a k danej príležitosti. Na záver môžeš pridať 1 krátky tip na doplnok alebo drobnú zmenu.",
+            },
+            {
+              role: "user",
+              content:
+                userQuery +
+                "\n\nInformácie o počasí, ktoré máš zohľadniť:\n" +
+                `Teplota: ${tempInfo}. ${weatherContext}\n\n` +
+                "Vybral som ti tento outfit zo šatníka (použi IBA tieto kúsky, nič nepridávaj):\n" +
+                outfitForAI +
+                "\n\nProsím, vysvetli používateľovi, prečo je tento outfit vhodný.",
+            },
+          ]);
 
-      const systemMessage = {
-        role: "system",
-        content:
-          "Si priateľský módny stylista, ktorý komunikuje po slovensky. " +
-          "Pomáhaš používateľovi vybrať outfit z JEHO ŠATNÍKA. " +
-          "Nikdy nevymýšľaj kúsky, ktoré nie sú v zadanom outfite. " +
-          "Odpoveď napíš stručne (3–6 viet), môžeš použiť emoji, ale s mierou. " +
-          "Najprv používateľa prirodzene oslov, potom vysvetli, prečo je tento outfit vhodný " +
-          "na dané počasie a príležitosť. Na konci môžeš pridať krátky tip (napr. vrstvenie, doplnky). " +
-          "Využívaj históriu chatu, aby si nadväzoval na predchádzajúcu konverzáciu. " +
-          "Aplikácia zobrazuje fotky kúskov nad chatom, takže nikdy nepíš, že nevieš ukázať obrázok – " +
-          "radšej sa odvolaj na to, čo používateľ vidí na obrazovke.",
-      };
-
-      aiText = await callOpenAI(openaiKey, [
-        systemMessage,
-        ...historyMessages,
-        {
-          role: "user",
-          content:
-            `Používateľ napísal: "${userQuery}".\n` +
-            `Teplota/počasie: ${tempInfo}.\n` +
-            `Príležitosť: ${occasion}.\n` +
-            `Vybraný outfit (NEVYMÝŠĽAJ INÉ KUSY):\n${outfitForAI}\n\n` +
-            "Na základe tohto prosím napíš odpoveď používateľovi.",
-        },
-      ]);
     } catch (err) {
       console.error("OpenAI outfit error:", err);
       aiText = fallbackText;
@@ -949,4 +1092,3 @@ exports.analyzeClothingImage = functions.https.onRequest(async (req, res) => {
     });
   }
 });
-m
