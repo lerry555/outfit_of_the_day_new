@@ -1,6 +1,7 @@
 // lib/screens/daily_outfit_screen.dart
 
 import 'dart:convert';
+import 'dart:ui' as ui;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -41,8 +42,14 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
   @override
   void initState() {
     super.initState();
+
+    final ui.Locale loc = ui.PlatformDispatcher.instance.locale;
+    print("🔥🔥 INIT STATE — SYSTEM LOCALE: ${loc.languageCode}-${loc.countryCode}");
+    print("🔥🔥 INIT STATE — ALL LOCALES: ${ui.PlatformDispatcher.instance.locales}");
+
     _loadDataAndGenerateOutfit();
   }
+
 
   /// Helper: konvertuje všetky Timestampy na ISO string,
   /// aby ich vedel jsonEncode() zakódovať.
@@ -73,6 +80,8 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
   }
 
   Future<void> _loadDataAndGenerateOutfit() async {
+    print("🔥🔥 FUNCTION STARTED: _loadDataAndGenerateOutfit()");
+
     final user = _auth.currentUser;
     if (user == null) {
       setState(() {
@@ -188,6 +197,11 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
 
   Future<void> _callStylistForOutfit() async {
     final user = _auth.currentUser;
+    final ui.Locale loc = ui.PlatformDispatcher.instance.locale;
+    print("🔥🔥🔥 SYSTEM LOCALE DETECTED: ${loc.languageCode}-${loc.countryCode}");
+    print("🔥🔥🔥 ALL LOCALES: ${ui.PlatformDispatcher.instance.locales}");
+    print("🔥🔥 ENTERED _callStylistForOutfit() — LANGUAGE CHECK RUNNING");
+
     if (user == null) return;
 
     if (_wardrobe.isEmpty) {
@@ -207,11 +221,20 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
         ? 'Prosím, navrhni mi outfit na zajtra podľa počasia a môjho šatníka. Ide o denný outfit na bežný deň.'
         : 'Prosím, navrhni mi outfit na dnešok od teraz do večera podľa počasia a môjho šatníka. Ide o dnešný bežný deň.';
 
+    // 👇 Zistenie jazyka priamo zo systému (Android/iOS), nie z lokalizácie appky
+    final ui.Locale systemLocale = ui.PlatformDispatcher.instance.locale;
+    final String languageCode = systemLocale.languageCode; // napr. "sk", "en", "de", "fr"...
+
+    debugPrint('📱 System locale: ${systemLocale.toLanguageTag()} | languageCode: $languageCode');
+
     final Map<String, dynamic> body = {
       'userQuery': userQuery,
       'wardrobe': _wardrobe,
       'userPreferences': _userPreferences,
+      'isTomorrow': widget.isTomorrow,
+      'language': languageCode, // 🔥 ODTIAĽTO SA PRENESIE DO BACKENDU
     };
+
 
     if (_currentPosition != null) {
       body['location'] = {
@@ -241,15 +264,18 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
         return;
       }
 
-      final data =
-          jsonDecode(response.body) as Map<String, dynamic>? ?? <String, dynamic>{};
+      final data = jsonDecode(response.body) as Map<String, dynamic>? ??
+          <String, dynamic>{};
 
       final text = data['text'] as String? ??
           'Pozrel som sa do tvojho šatníka a vybral som outfit, ale nepodarilo sa načítať detailný popis.';
 
-      final outfitImagesDynamic = data['outfit_images'] as List<dynamic>? ?? [];
-      final images =
-      outfitImagesDynamic.map((e) => e.toString()).where((e) => e.isNotEmpty).toList();
+      final outfitImagesDynamic =
+          data['outfit_images'] as List<dynamic>? ?? [];
+      final images = outfitImagesDynamic
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
 
       setState(() {
         _aiText = text;
@@ -268,53 +294,28 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
     }
   }
 
-  /// Pomocný widget na pekné zobrazenie jedného kusu outfitu.
-  Widget _buildOutfitImage(int index, String imageUrl) {
-    // Poradie v backend-e: top, bottom, shoes, outer
-    String label;
-    switch (index) {
-      case 0:
-        label = 'Vrch';
-        break;
-      case 1:
-        label = 'Spodok';
-        break;
-      case 2:
-        label = 'Topánky';
-        break;
-      case 3:
-        label = 'Vrchná vrstva';
-        break;
-      default:
-        label = 'Kus oblečenia';
-    }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 6),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: AspectRatio(
-            aspectRatio: 3 / 2,
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) => Container(
-                color: Colors.grey.shade200,
-                child: const Center(
-                  child: Icon(Icons.broken_image_outlined),
-                ),
+
+  /// Jednoduché zobrazenie jedného kusu outfitu bez textového labelu.
+  Widget _buildOutfitImage(String imageUrl) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12.0),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(12),
+        child: AspectRatio(
+          aspectRatio: 3 / 2,
+          child: Image.network(
+            imageUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) => Container(
+              color: Colors.grey.shade200,
+              child: const Center(
+                child: Icon(Icons.broken_image_outlined),
               ),
             ),
           ),
         ),
-        const SizedBox(height: 12),
-      ],
+      ),
     );
   }
 
@@ -346,10 +347,9 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             if (_outfitImages.isNotEmpty)
-              ..._outfitImages.asMap().entries.map(
-                    (entry) =>
-                    _buildOutfitImage(entry.key, entry.value),
-              )
+              ..._outfitImages
+                  .map((url) => _buildOutfitImage(url))
+                  .toList()
             else
               Text(
                 'AI vybrala outfit, ale nenašla fotky kúskov. Skús skontrolovať, či majú položky v šatníku imageUrl.',

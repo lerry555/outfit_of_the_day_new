@@ -248,8 +248,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (context) => AddClothingScreen(
-                            initialData: const <String, dynamic>{},
+                          builder: (context) => const AddClothingScreen(
+                            initialData: <String, dynamic>{},
                             imageUrl: '',
                           ),
                         ),
@@ -281,7 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
         _selectedOutfitImage = File(picked.path);
       });
 
-      // Tu neskôr zavoláme AI analýzu outfitu (Cloud Function)
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Fotka outfitu pripravená. AI analýza bude doplnená.'),

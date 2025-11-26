@@ -2,10 +2,8 @@
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_storage/firebase_storage.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:outfitofTheDay/constants/app_constants.dart';
-
 
 class ClothingDetailScreen extends StatefulWidget {
   final String clothingItemId;
@@ -18,330 +16,366 @@ class ClothingDetailScreen extends StatefulWidget {
   }) : super(key: key);
 
   @override
-  _ClothingDetailScreenState createState() => _ClothingDetailScreenState();
+  State<ClothingDetailScreen> createState() => _ClothingDetailScreenState();
 }
 
 class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
-  String? _selectedCategory;
+  final User? _user = FirebaseAuth.instance.currentUser;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  // 👉 textové pole na značku
+  final TextEditingController _brandController = TextEditingController();
+
+  String? _selectedMainCategory;
+  String? _selectedSubcategory;
+
   List<String> _selectedColors = [];
   List<String> _selectedStyles = [];
   List<String> _selectedPatterns = [];
-  String? _selectedBrand;
   List<String> _selectedSeasons = [];
-  late bool _isClean;
-  late int _wearCount;
-  late bool _isSharable; // NOVÉ: Premenná pre zdieľanie
 
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final FirebaseStorage _storage = FirebaseStorage.instance;
-  final User? _user = FirebaseAuth.instance.currentUser;
+  bool _isClean = true;
+  int _wearCount = 0;
 
+  String? _imageUrl;
+  bool _isSaving = false;
+  bool _isDeleting = false;
 
   @override
   void initState() {
     super.initState();
+    _prefillFromItem();
+  }
 
-    String currentCategory = widget.clothingItemData['category'] ?? 'Ostatné';
-    dynamic currentColorsData = widget.clothingItemData['color'];
-    dynamic currentStylesData = widget.clothingItemData['style'];
-    dynamic currentPatternsData = widget.clothingItemData['pattern'];
-    String? currentBrandData = widget.clothingItemData['brand'];
-    dynamic currentSeasonsData = widget.clothingItemData['season'];
+  void _prefillFromItem() {
+    final data = widget.clothingItemData;
 
+    _imageUrl = data['imageUrl'] as String?;
+    _brandController.text = (data['brand'] ?? '') as String;
 
-    _selectedCategory = categories.contains(currentCategory) ? currentCategory : null;
-    if (_selectedCategory == null && currentCategory != 'Ostatné' && currentCategory.isNotEmpty) {
-      _selectedCategory = 'Ostatné';
+    // pôvodná kategória - v novej verzii je to podkategória (Tričko, Tepláky, ...)
+    final String? storedCategory = data['category'] as String?;
+    final String? storedMainCategory = data['mainCategory'] as String?;
+
+    // najprv skúsime použiť mainCategory ak existuje
+    if (storedMainCategory != null &&
+        subcategoriesByCategory.containsKey(storedMainCategory)) {
+      _selectedMainCategory = storedMainCategory;
     }
 
-    if (currentColorsData is String) {
-      _selectedColors = [currentColorsData];
-    } else if (currentColorsData is List) {
-      _selectedColors = List<String>.from(currentColorsData);
-    } else {
-      _selectedColors = [];
-    }
-    _selectedColors = _selectedColors.where((color) => colors.contains(color)).toList();
-
-
-    if (currentStylesData is String) {
-      _selectedStyles = [currentStylesData];
-    } else if (currentStylesData is List) {
-      _selectedStyles = List<String>.from(currentStylesData);
-    } else {
-      _selectedStyles = [];
-    }
-    _selectedStyles = _selectedStyles.where((style) => styles.contains(style)).toList();
-
-    if (currentPatternsData is String) {
-      _selectedPatterns = [currentPatternsData];
-    } else if (currentPatternsData is List) {
-      _selectedPatterns = List<String>.from(currentPatternsData);
-    } else {
-      _selectedPatterns = [];
-    }
-    _selectedPatterns = _selectedPatterns.where((p) => patterns.contains(p)).toList();
-
-    _selectedBrand = brands.contains(currentBrandData) ? currentBrandData : null;
-    if (_selectedBrand == null && currentBrandData != 'Ostatné' && currentBrandData != null && currentBrandData.isNotEmpty) {
-      _selectedBrand = 'Ostatné';
+    // ak nemáme mainCategory, skúsime nájsť podľa podkategórie
+    if (_selectedMainCategory == null && storedCategory != null) {
+      for (final entry in subcategoriesByCategory.entries) {
+        if (entry.value.contains(storedCategory)) {
+          _selectedMainCategory = entry.key;
+          break;
+        }
+      }
     }
 
-
-    if (currentSeasonsData is String) {
-      _selectedSeasons = [currentSeasonsData];
-    } else if (currentSeasonsData is List) {
-      _selectedSeasons = List<String>.from(currentSeasonsData);
-    } else {
-      _selectedSeasons = [];
+    // podkategória – ak je platná, použijeme ju
+    if (_selectedMainCategory != null &&
+        storedCategory != null &&
+        subcategoriesByCategory[_selectedMainCategory!]!
+            .contains(storedCategory)) {
+      _selectedSubcategory = storedCategory;
     }
-    _selectedSeasons = _selectedSeasons.where((s) => seasons.contains(s)).toList();
 
+    // farby
+    final dynamic colorData = data['color'];
+    if (colorData is List) {
+      _selectedColors = List<String>.from(colorData);
+    } else if (colorData is String && colorData.isNotEmpty) {
+      _selectedColors = [colorData];
+    }
 
-    _isClean = widget.clothingItemData['isClean'] ?? false;
-    _wearCount = widget.clothingItemData['wearCount'] ?? 0;
-    _isSharable = widget.clothingItemData['isSharable'] ?? false;
+    // štýly
+    final dynamic styleData = data['style'];
+    if (styleData is List) {
+      _selectedStyles = List<String>.from(styleData);
+    } else if (styleData is String && styleData.isNotEmpty) {
+      _selectedStyles = [styleData];
+    }
+
+    // vzory
+    final dynamic patternData = data['pattern'];
+    if (patternData is List) {
+      _selectedPatterns = List<String>.from(patternData);
+    } else if (patternData is String && patternData.isNotEmpty) {
+      _selectedPatterns = [patternData];
+    }
+
+    // sezóny
+    final dynamic seasonData = data['season'];
+    if (seasonData is List) {
+      _selectedSeasons = List<String>.from(seasonData);
+    } else if (seasonData is String && seasonData.isNotEmpty) {
+      _selectedSeasons = [seasonData];
+    }
+
+    _isClean = (data['isClean'] as bool?) ?? true;
+    _wearCount = (data['wearCount'] as int?) ?? 0;
   }
 
   @override
   void dispose() {
+    _brandController.dispose();
     super.dispose();
   }
 
-  Future<void> _updateClothingInFirestore() async {
+  Future<void> _saveChanges() async {
     if (_user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chyba: Používateľ nie je prihlásený.')),
+        const SnackBar(content: Text('Na úpravu musíš byť prihlásený.')),
       );
       return;
     }
 
-    if (_selectedCategory == null || _selectedColors.isEmpty || _selectedStyles.isEmpty || _selectedPatterns.isEmpty || _selectedBrand == null || _selectedSeasons.isEmpty) {
+    if (_selectedMainCategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Prosím, vyplňte všetky povinné polia (kategória, farba, štýl, vzor, značka, sezóna).')),
+        const SnackBar(content: Text('Prosím, vyber kategóriu.')),
       );
       return;
     }
 
+    if (_selectedSubcategory == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Prosím, vyber typ / podkategóriu.')),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
 
     try {
-      // Uloží zmeny do tvojho súkromného šatníka
-      await _firestore
+      final docRef = _firestore
           .collection('users')
           .doc(_user!.uid)
           .collection('wardrobe')
-          .doc(widget.clothingItemId)
-          .update({
-        'category': _selectedCategory,
+          .doc(widget.clothingItemId);
+
+      await docRef.update({
+        'category': _selectedSubcategory,
+        'mainCategory': _selectedMainCategory,
         'color': _selectedColors,
         'style': _selectedStyles,
         'pattern': _selectedPatterns,
-        'brand': _selectedBrand,
         'season': _selectedSeasons,
+        'brand': _brandController.text,
         'isClean': _isClean,
-        'isSharable': _isSharable,
+        'wearCount': _wearCount,
       });
 
-      // NOVÉ: Logika pre verejný šatník
-      final publicWardrobeRef = _firestore.collection('public_wardrobe').doc(widget.clothingItemId);
-
-      if (_isSharable) {
-        // Ak je zdieľanie zapnuté, skopíruje dáta do verejnej kolekcie
-        await publicWardrobeRef.set({
-          ...widget.clothingItemData, // Skopíruje pôvodné dáta
-          'category': _selectedCategory,
-          'color': _selectedColors,
-          'style': _selectedStyles,
-          'pattern': _selectedPatterns,
-          'brand': _selectedBrand,
-          'season': _selectedSeasons,
-          'isSharable': true,
-          'userId': _user!.uid, // Dôležité pre identifikáciu majiteľa
-        });
-        print('Položka bola pridaná do verejného šatníka.');
-      } else {
-        // Ak je zdieľanie vypnuté, vymaže položku z verejnej kolekcie
-        await publicWardrobeRef.delete();
-        print('Položka bola vymazaná z verejného šatníka.');
-      }
+      if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Oblečenie úspešne upravené!')),
+        const SnackBar(content: Text('Zmeny boli uložené.')),
       );
+
       Navigator.of(context).pop();
     } catch (e) {
-      print('Chyba pri úprave oblečenia: $e');
+      debugPrint('Chyba pri ukladaní zmien: $e');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Chyba pri úprave oblečenia: ${e.toString()}')),
+        SnackBar(content: Text('Chyba pri ukladaní: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
     }
   }
 
-  Future<void> _deleteClothingFromFirebase() async {
+  Future<void> _deleteItem() async {
     if (_user == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Chyba: Používateľ nie je prihlásený.')),
+        const SnackBar(content: Text('Na vymazanie musíš byť prihlásený.')),
       );
       return;
     }
 
-    final bool? confirmDelete = await showDialog<bool>(
+    final confirmed = await showDialog<bool>(
       context: context,
-      builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text('Potvrdiť vymazanie'),
-          content: const Text('Naozaj chcete vymazať túto položku zo šatníka?'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Zrušiť'),
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-            ),
-            ElevatedButton(
-              child: const Text('Vymazať', style: TextStyle(color: Colors.red)),
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-            ),
-          ],
-        );
-      },
+      builder: (context) => AlertDialog(
+        title: const Text('Vymazať kúsok?'),
+        content: const Text('Naozaj chceš vymazať tento kúsok zo šatníka?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Zrušiť'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Vymazať'),
+          ),
+        ],
+      ),
     );
 
-    if (confirmDelete == true) {
-      try {
-        // Vymaže položku z tvojho súkromného šatníka
-        await _firestore
-            .collection('users')
-            .doc(_user!.uid)
-            .collection('wardrobe')
-            .doc(widget.clothingItemId)
-            .delete();
+    if (confirmed != true) return;
 
-        // NOVÉ: Vymaže položku aj z verejného šatníka
-        await _firestore.collection('public_wardrobe').doc(widget.clothingItemId).delete();
+    setState(() {
+      _isDeleting = true;
+    });
 
+    try {
+      final docRef = _firestore
+          .collection('users')
+          .doc(_user!.uid)
+          .collection('wardrobe')
+          .doc(widget.clothingItemId);
 
-        print('Dokument z Firestore vymazaný.');
+      await docRef.delete();
 
-        final String imageUrl = widget.clothingItemData['imageUrl'] ?? '';
-        if (imageUrl.isNotEmpty) {
-          final Reference storageRef = _storage.refFromURL(imageUrl);
-          await storageRef.delete();
-          print('Obrázok z Storage vymazaný.');
-        }
+      if (!mounted) return;
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Položka úspešne vymazaná!')),
-        );
-        Navigator.of(context).pop();
-      } catch (e) {
-        print('Chyba pri vymazávaní položky: $e');
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Chyba pri vymazávaní položky: ${e.toString()}')),
-        );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kúsok bol vymazaný.')),
+      );
+
+      Navigator.of(context).pop();
+    } catch (e) {
+      debugPrint('Chyba pri mazání kúsku: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Chyba pri mazaní: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isDeleting = false;
+        });
       }
     }
   }
 
-  Future<void> _increaseWearCount() async {
-    if (_user == null) return;
-    try {
-      setState(() {
-        _wearCount++;
-      });
-      await _firestore
-          .collection('users')
-          .doc(_user!.uid)
-          .collection('wardrobe')
-          .doc(widget.clothingItemId)
-          .update({'wearCount': _wearCount});
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Počet nosení zvýšený!')),
-      );
-    } catch (e) {
-      print('Chyba pri zvýšení počtu nosení: $e');
-    }
-  }
-
-
   @override
   Widget build(BuildContext context) {
-    final String imageUrl = widget.clothingItemData['imageUrl'] ?? '';
+    final String title =
+        (widget.clothingItemData['name'] as String?) ?? 'Detail oblečenia';
+
+    final List<String> currentSubcategories = _selectedMainCategory != null
+        ? (subcategoriesByCategory[_selectedMainCategory!] ?? [])
+        : [];
+
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.clothingItemData['category'] ?? 'Detail oblečenia'),
+        title: Text(title),
         actions: [
           IconButton(
-            icon: const Icon(Icons.check_circle_outline),
-            tooltip: 'Označiť ako použité',
-            onPressed: _increaseWearCount,
-          ),
-          IconButton(
-            icon: const Icon(Icons.edit),
-            tooltip: 'Upraviť',
-            onPressed: _updateClothingInFirestore,
-          ),
-          IconButton(
-            icon: const Icon(Icons.delete),
-            tooltip: 'Vymazať',
-            onPressed: _deleteClothingFromFirebase,
+            icon: const Icon(Icons.delete_outline),
+            onPressed: _isDeleting ? null : _deleteItem,
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (imageUrl.isNotEmpty)
-              Center(
+            // obrázok
+            if (_imageUrl != null && _imageUrl!.isNotEmpty)
+              ClipRRect(
+                borderRadius: BorderRadius.circular(16),
                 child: Image.network(
-                  imageUrl,
-                  height: 300,
+                  _imageUrl!,
+                  height: 240,
                   fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) {
-                    return const Icon(Icons.broken_image, size: 100.0);
-                  },
+                  errorBuilder: (context, error, stackTrace) => Container(
+                    height: 240,
+                    color: Colors.grey.shade200,
+                    child: const Center(
+                      child: Icon(Icons.broken_image_outlined, size: 48),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Container(
+                height: 200,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(16),
+                  color: Colors.grey.shade200,
+                ),
+                child: const Center(
+                  child: Icon(Icons.image_not_supported_outlined, size: 48),
                 ),
               ),
-            if (imageUrl.isEmpty)
-              const Center(
-                child: Text('Bez obrázka', style: TextStyle(fontSize: 18.0)),
-              ),
+            const SizedBox(height: 16),
 
-            const SizedBox(height: 20),
-
-            Text('Kategória:', style: Theme.of(context).textTheme.headlineSmall),
+            // kategória
+            Text(
+              'Kategória:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
             DropdownButtonFormField<String>(
-              value: _selectedCategory,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-              items: categories.map((String value) {
+              value: _selectedMainCategory,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
+              items: categories.map((value) {
                 return DropdownMenuItem<String>(
                   value: value,
                   child: Text(value),
                 );
               }).toList(),
-              onChanged: (String? newValue) {
+              onChanged: (value) {
                 setState(() {
-                  _selectedCategory = newValue;
+                  _selectedMainCategory = value;
+                  _selectedSubcategory = null;
                 });
               },
-              hint: _selectedCategory == null && widget.clothingItemData['category'] != null && widget.clothingItemData['category'].isNotEmpty
-                  ? Text(widget.clothingItemData['category']!)
-                  : null,
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            Text('Farba(y):', style: Theme.of(context).textTheme.headlineSmall),
+            if (_selectedMainCategory != null) ...[
+              Text(
+                'Typ / podkategória:',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              DropdownButtonFormField<String>(
+                value: _selectedSubcategory,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                ),
+                items: currentSubcategories.map((value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  setState(() {
+                    _selectedSubcategory = value;
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // farby
+            Text(
+              'Farby:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8.0,
-              runSpacing: 8.0,
+              spacing: 8,
+              runSpacing: 8,
               children: colors.map((color) {
-                final bool isSelected = _selectedColors.contains(color);
+                final bool selected = _selectedColors.contains(color);
                 return FilterChip(
                   label: Text(color),
-                  selected: isSelected,
-                  onSelected: (bool selected) {
+                  selected: selected,
+                  onSelected: (value) {
                     setState(() {
-                      if (selected) {
+                      if (value) {
                         _selectedColors.add(color);
                       } else {
                         _selectedColors.remove(color);
@@ -351,20 +385,25 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            Text('Štýl(y):', style: Theme.of(context).textTheme.headlineSmall),
+            // štýl
+            Text(
+              'Štýl:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8.0,
-              runSpacing: 8.0,
+              spacing: 8,
+              runSpacing: 8,
               children: styles.map((style) {
-                final bool isSelected = _selectedStyles.contains(style);
+                final bool selected = _selectedStyles.contains(style);
                 return FilterChip(
                   label: Text(style),
-                  selected: isSelected,
-                  onSelected: (bool selected) {
+                  selected: selected,
+                  onSelected: (value) {
                     setState(() {
-                      if (selected) {
+                      if (value) {
                         _selectedStyles.add(style);
                       } else {
                         _selectedStyles.remove(style);
@@ -374,20 +413,25 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            Text('Vzor(y):', style: Theme.of(context).textTheme.headlineSmall),
+            // vzory
+            Text(
+              'Vzory:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8.0,
-              runSpacing: 8.0,
+              spacing: 8,
+              runSpacing: 8,
               children: patterns.map((pattern) {
-                final bool isSelected = _selectedPatterns.contains(pattern);
+                final bool selected = _selectedPatterns.contains(pattern);
                 return FilterChip(
                   label: Text(pattern),
-                  selected: isSelected,
-                  onSelected: (bool selected) {
+                  selected: selected,
+                  onSelected: (value) {
                     setState(() {
-                      if (selected) {
+                      if (value) {
                         _selectedPatterns.add(pattern);
                       } else {
                         _selectedPatterns.remove(pattern);
@@ -397,41 +441,25 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            Text('Značka:', style: Theme.of(context).textTheme.headlineSmall),
-            DropdownButtonFormField<String>(
-              value: _selectedBrand,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
-              items: brands.map((String value) {
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(value),
-                );
-              }).toList(),
-              onChanged: (String? newValue) {
-                setState(() {
-                  _selectedBrand = newValue;
-                });
-              },
-              hint: _selectedBrand == null && widget.clothingItemData['brand'] != null && widget.clothingItemData['brand'].isNotEmpty
-                  ? Text(widget.clothingItemData['brand']!)
-                  : null,
+            // sezóny
+            Text(
+              'Sezóny:',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 10),
-
-            Text('Sezóna(y):', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 6),
             Wrap(
-              spacing: 8.0,
-              runSpacing: 8.0,
+              spacing: 8,
+              runSpacing: 8,
               children: seasons.map((season) {
-                final bool isSelected = _selectedSeasons.contains(season);
+                final bool selected = _selectedSeasons.contains(season);
                 return FilterChip(
                   label: Text(season),
-                  selected: isSelected,
-                  onSelected: (bool selected) {
+                  selected: selected,
+                  onSelected: (value) {
                     setState(() {
-                      if (selected) {
+                      if (value) {
                         _selectedSeasons.add(season);
                       } else {
                         _selectedSeasons.remove(season);
@@ -441,50 +469,54 @@ class _ClothingDetailScreenState extends State<ClothingDetailScreen> {
                 );
               }).toList(),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-
-            Row(
-              children: [
-                Text('Stav čistoty:', style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(width: 10),
-                Switch(
-                  value: _isClean,
-                  onChanged: (bool value) {
-                    setState(() {
-                      _isClean = value;
-                    });
-                    _updateClothingInFirestore();
-                  },
-                ),
-                Text(_isClean ? 'Čisté' : 'Špinavé'),
-              ],
+            // značka – textové pole
+            Text(
+              'Značka:',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 10),
-
-            Row(
-              children: [
-                Text('Zdieľateľné:', style: Theme.of(context).textTheme.headlineSmall),
-                const SizedBox(width: 10),
-                Switch(
-                  value: _isSharable,
-                  onChanged: (bool value) {
-                    setState(() {
-                      _isSharable = value;
-                    });
-                    _updateClothingInFirestore();
-                  },
-                ),
-                Text(_isSharable ? 'Áno' : 'Nie'),
-              ],
+            const SizedBox(height: 6),
+            TextField(
+              controller: _brandController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'Napr. Nike, Zara, H&M…',
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
 
-            Text('Počet nosení: $_wearCount', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 20),
+            // stav čistoty + počet nosení
+            SwitchListTile(
+              title: const Text('Je čisté (pripravené na nosenie)'),
+              value: _isClean,
+              onChanged: (value) {
+                setState(() {
+                  _isClean = value;
+                });
+              },
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Počet nosení: $_wearCount',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
 
-            Text('Nahrané: ${(widget.clothingItemData['uploadedAt'] as Timestamp?)?.toDate().toString().split(' ')[0] ?? 'N/A'}',
-                style: Theme.of(context).textTheme.bodyMedium),
+            // uložiť
+            ElevatedButton(
+              onPressed: _isSaving ? null : _saveChanges,
+              child: _isSaving
+                  ? const SizedBox(
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : const Text('Uložiť zmeny'),
+            ),
           ],
         ),
       ),
