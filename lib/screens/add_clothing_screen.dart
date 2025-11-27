@@ -38,7 +38,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _selectedColors = [];
   List<String> _selectedStyles = [];
   List<String> _selectedPatterns = [];
-  List<String> _selectedSeasons = [];
+  List<String> _selectedSeasons = ['Celoročne']; // default
 
   bool _isClean = true;
 
@@ -110,12 +110,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedPatterns = [patternData];
     }
 
-    // sezóny
+    // sezóny (ak sú v existujúcich dátach)
     final dynamic seasonData = data['season'];
     if (seasonData is List) {
       _selectedSeasons = List<String>.from(seasonData);
     } else if (seasonData is String && seasonData.isNotEmpty) {
       _selectedSeasons = [seasonData];
+    }
+
+    // ak nič neprišlo, nech je default Celoročne
+    if (_selectedSeasons.isEmpty) {
+      _selectedSeasons = ['Celoročne'];
     }
 
     _isClean = (data['isClean'] as bool?) ?? true;
@@ -252,6 +257,21 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         });
       }
     }
+  }
+
+  /// Špeciálna logika pre sezóny:
+  /// - "Celoročne" je default a exkluzívne
+  /// - ak zvolím inú, Celoročne sa vypne
+  /// - vždy je vybraná maximálne 1 možnosť
+  void _toggleSeason(String season) {
+    setState(() {
+      if (season == 'Celoročne') {
+        _selectedSeasons = ['Celoročne'];
+        return;
+      }
+
+      _selectedSeasons = [season];
+    });
   }
 
   /// Ukáž sezóny len tam, kde to fakt dáva zmysel,
@@ -521,18 +541,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 runSpacing: 8,
                 children: seasons.map((season) {
                   final bool selected = _selectedSeasons.contains(season);
-                  return FilterChip(
+                  return ChoiceChip(
                     label: Text(season),
                     selected: selected,
-                    onSelected: (value) {
-                      setState(() {
-                        if (value) {
-                          _selectedSeasons.add(season);
-                        } else {
-                          _selectedSeasons.remove(season);
-                        }
-                      });
-                    },
+                    onSelected: (_) => _toggleSeason(season),
                   );
                 }).toList(),
               ),
