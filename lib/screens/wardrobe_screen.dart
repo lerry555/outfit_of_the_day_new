@@ -56,6 +56,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final Map<String, String?> _selectedStyleFilter = {};
   final Map<String, String?> _selectedPatternFilter = {};
 
+  // vyhľadávanie
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+
   bool _shouldShowSeasonFilter(String main, String? sub) {
     if (sub == null) return false;
 
@@ -65,6 +69,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         (sub == 'Čiapka' || sub == 'Šál' || sub == 'Rukavice')) return true;
 
     return false;
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   @override
@@ -102,6 +112,27 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
             return Column(
               children: [
+                // 🔎 Vyhľadávanie
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: 'Hľadať v tejto kategórii…',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      isDense: true,
+                    ),
+                    onChanged: (value) {
+                      setState(() {
+                        _searchQuery = value;
+                      });
+                    },
+                  ),
+                ),
+
                 // Podkategórie
                 if (subList.isNotEmpty)
                   Padding(
@@ -185,7 +216,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 // Štýl (iba ak máme subkategóriu)
                 if (selectedSub != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -222,7 +254,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 // Pattern
                 if (selectedSub != null)
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -266,13 +299,16 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         .where('mainCategory', isEqualTo: category)
                         .snapshots(),
                     builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
+                      if (snapshot.connectionState ==
+                          ConnectionState.waiting) {
+                        return const Center(
+                            child: CircularProgressIndicator());
                       }
 
                       if (snapshot.hasError) {
                         return const Center(
-                            child: Text('Nastala chyba pri načítaní položiek.'));
+                            child:
+                                Text('Nastala chyba pri načítaní položiek.'));
                       }
 
                       List<QueryDocumentSnapshot> items =
@@ -293,7 +329,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           final dynamic s = data['season'];
 
                           if (s is String) return s == selectedSeason;
-                          if (s is List) return s.contains(selectedSeason);
+                          if (s is List) {
+                            return List<String>.from(s)
+                                .contains(selectedSeason);
+                          }
                           return false;
                         }).toList();
                       }
@@ -304,7 +343,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           final data = doc.data() as Map<String, dynamic>;
                           final dynamic styleData = data['style'];
 
-                          if (styleData is String) return styleData == selectedStyle;
+                          if (styleData is String) {
+                            return styleData == selectedStyle;
+                          }
                           if (styleData is List) {
                             return List<String>.from(styleData)
                                 .contains(selectedStyle);
@@ -321,9 +362,19 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
                           if (p is String) return p == selectedPattern;
                           if (p is List) {
-                            return List<String>.from(p).contains(selectedPattern);
+                            return List<String>.from(p)
+                                .contains(selectedPattern);
                           }
                           return false;
+                        }).toList();
+                      }
+
+                      // Filter 5 — vyhľadávanie
+                      final query = _searchQuery.trim();
+                      if (query.isNotEmpty) {
+                        items = items.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          return _matchesSearch(data, query);
                         }).toList();
                       }
 
@@ -340,6 +391,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         }
                         if (selectedPattern != null) {
                           msg += '\nFiltrované pre vzor "$selectedPattern".';
+                        }
+                        if (query.isNotEmpty) {
+                          msg += '\nVyhľadávanie: "$query".';
                         }
 
                         return Center(
@@ -370,16 +424,21 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         itemBuilder: (context, index) {
                           final data =
                               items[index].data() as Map<String, dynamic>;
-                          final imageUrl = data['imageUrl'] as String? ?? '';
-                          final name = data['name'] as String? ?? 'Neznáma položka';
+                          final imageUrl =
+                              data['imageUrl'] as String? ?? '';
+                          final name =
+                              data['name'] as String? ?? 'Neznáma položka';
 
-                          final categoryName = data['category'] as String? ?? '';
-                          final seasonsList = _normalizeList(data['season']);
+                          final categoryName =
+                              data['category'] as String? ?? '';
+                          final seasonsList =
+                              _normalizeList(data['season']);
 
                           String subline = '';
                           if (categoryName.isNotEmpty &&
                               seasonsList.isNotEmpty) {
-                            subline = '$categoryName • ${seasonsList.join(', ')}';
+                            subline =
+                                '$categoryName • ${seasonsList.join(', ')}';
                           } else if (categoryName.isNotEmpty) {
                             subline = categoryName;
                           } else if (seasonsList.isNotEmpty) {
@@ -404,11 +463,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                crossAxisAlignment:
+                                    CrossAxisAlignment.stretch,
                                 children: [
                                   Expanded(
                                     child: ClipRRect(
-                                      borderRadius: const BorderRadius.vertical(
+                                      borderRadius:
+                                          const BorderRadius.vertical(
                                         top: Radius.circular(12),
                                       ),
                                       child: imageUrl.isNotEmpty
@@ -430,44 +491,4 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                     child: Text(
                                       name,
                                       overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                          fontWeight: FontWeight.bold),
-                                    ),
-                                  ),
-                                  if (subline.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(
-                                          left: 8, right: 8, bottom: 8),
-                                      child: Text(
-                                        subline,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: TextStyle(
-                                          color: Colors.grey.shade600,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
-  }
-}
+                                   
