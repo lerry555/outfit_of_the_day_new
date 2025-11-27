@@ -141,7 +141,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   Future<void> _pickImage(ImageSource source) async {
     try {
       final picked =
-      await _picker.pickImage(source: source, imageQuality: 80);
+          await _picker.pickImage(source: source, imageQuality: 80);
       if (picked == null) return;
 
       setState(() {
@@ -254,6 +254,36 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
+  /// Ukáž sezóny len tam, kde to fakt dáva zmysel,
+  /// aby používateľ nemusel všade klikať dotazník.
+  bool get _showSeasonSection {
+    if (_selectedMainCategory == null || _selectedSubcategory == null) {
+      return false;
+    }
+
+    final main = _selectedMainCategory!;
+    final sub = _selectedSubcategory!;
+
+    // Bundy / kabáty
+    if (main == 'Vrch' && (sub == 'Bunda' || sub == 'Kabát')) {
+      return true;
+    }
+
+    // "ťažšia" obuv – topánky
+    if (main == 'Obuv' && sub == 'Topánky') {
+      return true;
+    }
+
+    // Zimné doplnky
+    if (main == 'Doplnky' &&
+        (sub == 'Čiapka' || sub == 'Šál' || sub == 'Rukavice')) {
+      return true;
+    }
+
+    // všetko ostatné – tričká, tepláky, tenisky, atď. – sezóny neukazuj
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<String> currentSubcategories = _selectedMainCategory != null
@@ -291,8 +321,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                     height: 220,
                     color: Colors.grey.shade200,
                     child: const Center(
-                      child:
-                      Icon(Icons.broken_image_outlined, size: 48),
+                      child: Icon(Icons.broken_image_outlined, size: 48),
                     ),
                   ),
                 ),
@@ -480,33 +509,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ),
             const SizedBox(height: 12),
 
-            // sezóny
-            Text(
-              'Sezóny:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: seasons.map((season) {
-                final bool selected = _selectedSeasons.contains(season);
-                return FilterChip(
-                  label: Text(season),
-                  selected: selected,
-                  onSelected: (value) {
-                    setState(() {
-                      if (value) {
-                        _selectedSeasons.add(season);
-                      } else {
-                        _selectedSeasons.remove(season);
-                      }
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
+            // sezóny – zobraz iba vtedy, ak to dáva zmysel (bunda, topánky, zimné doplnky)
+            if (_showSeasonSection) ...[
+              Text(
+                'Sezóny:',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: seasons.map((season) {
+                  final bool selected = _selectedSeasons.contains(season);
+                  return FilterChip(
+                    label: Text(season),
+                    selected: selected,
+                    onSelected: (value) {
+                      setState(() {
+                        if (value) {
+                          _selectedSeasons.add(season);
+                        } else {
+                          _selectedSeasons.remove(season);
+                        }
+                      });
+                    },
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 12),
+            ],
 
             // značka
             Text(
@@ -540,13 +571,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               onPressed: _isSaving ? null : _save,
               child: _isSaving
                   ? const SizedBox(
-                height: 20,
-                width: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              )
+                      height: 20,
+                      width: 20,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Text('Uložiť do šatníka'),
             ),
           ],
