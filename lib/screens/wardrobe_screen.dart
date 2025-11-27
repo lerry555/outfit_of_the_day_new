@@ -60,6 +60,16 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  // triedenie
+  String _sortOption = 'Najnovšie';
+  final List<String> _sortOptions = [
+    'Najnovšie',
+    'Najstaršie',
+    'Značka',
+    'Farba',
+    'Najčastejšie nosené',
+  ];
+
   bool _shouldShowSeasonFilter(String main, String? sub) {
     if (sub == null) return false;
 
@@ -289,6 +299,36 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     ),
                   ),
 
+                // 🔽 Triedenie – dropdown vpravo
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      const Text('Triediť podľa: '),
+                      const SizedBox(width: 8),
+                      DropdownButton<String>(
+                        value: _sortOption,
+                        items: _sortOptions
+                            .map(
+                              (opt) => DropdownMenuItem<String>(
+                                value: opt,
+                                child: Text(opt),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _sortOption = value;
+                          });
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+
                 // Grid s oblečením
                 Expanded(
                   child: StreamBuilder<QuerySnapshot>(
@@ -378,6 +418,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         }).toList();
                       }
 
+                      // 🔽 Triedenie – aplikujeme až po filtroch
+                      items.sort((a, b) => _compareDocs(a, b));
+
                       if (items.isEmpty) {
                         String msg = selectedSub == null
                             ? 'V kategórii "$category" nemáte žiadne oblečenie.'
@@ -464,31 +507,4 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                               ),
                               child: Column(
                                 crossAxisAlignment:
-                                    CrossAxisAlignment.stretch,
-                                children: [
-                                  Expanded(
-                                    child: ClipRRect(
-                                      borderRadius:
-                                          const BorderRadius.vertical(
-                                        top: Radius.circular(12),
-                                      ),
-                                      child: imageUrl.isNotEmpty
-                                          ? Image.network(
-                                              imageUrl,
-                                              fit: BoxFit.cover,
-                                            )
-                                          : Container(
-                                              color: Colors.grey.shade200,
-                                              child: const Icon(
-                                                Icons.image_not_supported,
-                                                size: 50,
-                                              ),
-                                            ),
-                                    ),
-                                  ),
-                                  Padding(
-                                    padding: const EdgeInsets.all(8),
-                                    child: Text(
-                                      name,
-                                      overflow: TextOverflow.ellipsis,
-                                   
+                                    CrossAxisAlignment.st
