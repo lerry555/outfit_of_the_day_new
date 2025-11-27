@@ -40,8 +40,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _selectedPatterns = [];
   List<String> _selectedSeasons = ['Celoročne']; // default
 
-  bool _isClean = true;
-
   File? _localImageFile;
   String? _uploadedImageUrl;
 
@@ -110,7 +108,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedPatterns = [patternData];
     }
 
-    // sezóny (ak sú v existujúcich dátach)
+    // sezóny
     final dynamic seasonData = data['season'];
     if (seasonData is List) {
       _selectedSeasons = List<String>.from(seasonData);
@@ -118,12 +116,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedSeasons = [seasonData];
     }
 
-    // ak nič neprišlo, nech je default Celoročne
     if (_selectedSeasons.isEmpty) {
       _selectedSeasons = ['Celoročne'];
     }
-
-    _isClean = (data['isClean'] as bool?) ?? true;
 
     // obrázok – buď z parametra imageUrl, alebo z initialData
     if (widget.imageUrl.isNotEmpty) {
@@ -232,7 +227,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'pattern': _selectedPatterns,
         'season': _selectedSeasons,
         'brand': _brandController.text.trim(),
-        'isClean': _isClean,
         'wearCount': 0,
         'imageUrl': imageUrl ?? '',
         'uploadedAt': FieldValue.serverTimestamp(),
@@ -259,49 +253,248 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  /// Špeciálna logika pre sezóny:
-  /// - "Celoročne" je default a exkluzívne
-  /// - ak zvolím inú, Celoročne sa vypne
-  /// - vždy je vybraná maximálne 1 možnosť
+  /// Sezóna – vždy maximálne 1 možnosť, "Celoročne" je exkluzívne.
   void _toggleSeason(String season) {
     setState(() {
       if (season == 'Celoročne') {
         _selectedSeasons = ['Celoročne'];
-        return;
+      } else {
+        _selectedSeasons = [season];
       }
-
-      _selectedSeasons = [season];
     });
   }
 
-  /// Ukáž sezóny len tam, kde to fakt dáva zmysel,
-  /// aby používateľ nemusel všade klikať dotazník.
-  bool get _showSeasonSection {
-    if (_selectedMainCategory == null || _selectedSubcategory == null) {
-      return false;
-    }
+  /// Štýl – priradíme vždy 1 hlavný štýl (dominantný).
+  void _toggleStyle(String style) {
+    setState(() {
+      if (_selectedStyles.contains(style)) {
+        _selectedStyles.clear();
+      } else {
+        _selectedStyles = [style];
+      }
+    });
+  }
 
-    final main = _selectedMainCategory!;
-    final sub = _selectedSubcategory!;
+  /// Vzor – priradíme 1 dominantný vzor.
+  void _togglePattern(String pattern) {
+    setState(() {
+      if (_selectedPatterns.contains(pattern)) {
+        _selectedPatterns.clear();
+      } else {
+        _selectedPatterns = [pattern];
+      }
+    });
+  }
 
-    // Bundy / kabáty
-    if (main == 'Vrch' && (sub == 'Bunda' || sub == 'Kabát')) {
-      return true;
-    }
+  /// Testovacia funkcia – "Simulovať AI"
+  /// Tu sa len napevno doplnia hodnoty, aby si videl, ako to bude fungovať.
+  void _applyAiMock() {
+    setState(() {
+      _selectedMainCategory = 'Vrch';
+      _selectedSubcategory = 'Bunda';
+      _selectedColors = ['Čierna'];
+      _selectedSeasons = ['Zima'];
+      _selectedStyles = ['Casual'];
+      _selectedPatterns = ['Jednofarebné'];
+      _brandController.text = 'Nike';
 
-    // "ťažšia" obuv – topánky
-    if (main == 'Obuv' && sub == 'Topánky') {
-      return true;
-    }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Simulácia AI doplnila informácie. Skontroluj, či sú správne.'),
+        ),
+      );
+    });
+  }
 
-    // Zimné doplnky
-    if (main == 'Doplnky' &&
-        (sub == 'Čiapka' || sub == 'Šál' || sub == 'Rukavice')) {
-      return true;
-    }
+  /// Zatiaľ len placeholder – neskôr sem pôjde reálny chat so stylistom.
+  void _openConsultationDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Poradiť sa o tomto kúsku'),
+        content: const Text(
+          'Tu bude neskôr chat s AI stylistom, ktorý ti vysvetlí, '
+          'prečo boli tieto informácie vyplnené takto a pomôže ti ich upraviť.',
+        ),
+        actions: [
+          TextButton(
+            child: const Text('Zavrieť'),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+        ],
+      ),
+    );
+  }
 
-    // všetko ostatné – tričká, tepláky, tenisky, atď. – sezóny neukazuj
-    return false;
+  void _showStyleInfo() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Vysvetlenie štýlov',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+
+                const Text(
+                  '👔 Elegantný\n'
+                  'Kúsky vhodné na oslavy, do divadla, reštaurácie. '
+                  'Košele, saká, elegantné kabáty, látkové nohavice, lodičky a pod.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  '👕 Casual\n'
+                  'Bežné každodenné oblečenie. Basic tričká, rifle, '
+                  'jednoduché mikiny, ľahké bundy a tenisky.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  '🏃 Športový\n'
+                  'Oblečenie určené na tréning, beh alebo aktívny pohyb. '
+                  'Funkčné tričká, teplákové súpravy, športové tenisky.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  '🧥 Streetwear\n'
+                  'Mestský, moderný štýl. Oversized mikiny, hoodie s potlačou, '
+                  'baggy nohavice, výrazné logá, šiltovky.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  '💼 Business / formálny\n'
+                  'Pracovný a formálny štýl. Obleky, formálne nohavice, košele, '
+                  'saka a elegantné topánky do kancelárie alebo na meetingy.',
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+
+                Text(
+                  'Stále si nie si istý, kam tvoj kúsok zaradiť?',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(fontStyle: FontStyle.italic),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Použi tlačidlo „Poradiť sa o tomto kúsku“ a AI stylist ti '
+                  'vysvetlí konkrétne na základe tvojej fotky, ktorý štýl je '
+                  'najvhodnejší.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _showPatternInfo() {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Vysvetlenie vzorov',
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 12),
+
+                const Text(
+                  'Jednofarebné\n'
+                  'Celý kúsok má jednu hlavnú farbu bez vzorov.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Pruhy\n'
+                  'Opakujúce sa línie – horizontálne, vertikálne alebo šikmé pruhy.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Kocky\n'
+                  'Štvorcový alebo kockovaný vzor (napríklad flanelová košeľa).',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Bodky\n'
+                  'Vzor z malých alebo väčších bodiek rozložených po celom kúsku.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Kamufláž\n'
+                  '„Maskáčový“ vzor – organické tvary vo viacerých odtieňoch.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Potlač / logo\n'
+                  'Výrazná grafika, nápis alebo logo značky na tričku, mikine a pod.',
+                ),
+                const SizedBox(height: 8),
+
+                const Text(
+                  'Ornamenty\n'
+                  'Ozdobné vzory, ornamenty, mandaly a komplikované dekory.',
+                ),
+                const SizedBox(height: 16),
+                const Divider(),
+                const SizedBox(height: 8),
+
+                Text(
+                  'Stále si nie si istý, aký vzor zvoliť?',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodyMedium
+                      ?.copyWith(fontStyle: FontStyle.italic),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Použi tlačidlo „Poradiť sa o tomto kúsku“ a AI stylist ti '
+                  'pomôže vzor zaradiť podľa tvojej konkrétnej fotky.',
+                  style: Theme.of(context)
+                      .textTheme
+                      .bodySmall
+                      ?.copyWith(fontStyle: FontStyle.italic),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -393,208 +586,43 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ),
             const SizedBox(height: 16),
 
-            // hlavná kategória
-            Text(
-              'Kategória:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            DropdownButtonFormField<String>(
-              value: _selectedMainCategory,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
+            // AI informačný box
+            Card(
+              elevation: 3,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
               ),
-              items: categories.map((value) {
-                return DropdownMenuItem<String>(
-                  value: value,
-                  child: Text(value),
-                );
-              }).toList(),
-              onChanged: (value) {
-                setState(() {
-                  _selectedMainCategory = value;
-                  _selectedSubcategory = null;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'AI rozpoznala tieto informácie',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: _applyAiMock,
+                          icon: const Icon(Icons.auto_awesome_outlined, size: 18),
+                          label: const Text('Simulovať AI'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Skontroluj, či sú údaje o kúsku vyplnené správne. '
+                      'V prípade potreby ich môžeš upraviť.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 16),
 
-            if (_selectedMainCategory != null) ...[
-              Text(
-                'Typ / podkategória:',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 6),
-              DropdownButtonFormField<String>(
-                value: _selectedSubcategory,
-                decoration: const InputDecoration(
-                  border: OutlineInputBorder(),
-                ),
-                items: currentSubcategories.map((value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value),
-                  );
-                }).toList(),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedSubcategory = value;
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-            ],
-
-            // farby
-            Text(
-              'Farby:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: colors.map((color) {
-                final bool selected = _selectedColors.contains(color);
-                return FilterChip(
-                  label: Text(color),
-                  selected: selected,
-                  onSelected: (value) {
-                    setState(() {
-                      if (value) {
-                        _selectedColors.add(color);
-                      } else {
-                        _selectedColors.remove(color);
-                      }
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-
-            // štýl
-            Text(
-              'Štýl:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: styles.map((style) {
-                final bool selected = _selectedStyles.contains(style);
-                return FilterChip(
-                  label: Text(style),
-                  selected: selected,
-                  onSelected: (value) {
-                    setState(() {
-                      if (value) {
-                        _selectedStyles.add(style);
-                      } else {
-                        _selectedStyles.remove(style);
-                      }
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-
-            // vzory
-            Text(
-              'Vzory:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: patterns.map((pattern) {
-                final bool selected = _selectedPatterns.contains(pattern);
-                return FilterChip(
-                  label: Text(pattern),
-                  selected: selected,
-                  onSelected: (value) {
-                    setState(() {
-                      if (value) {
-                        _selectedPatterns.add(pattern);
-                      } else {
-                        _selectedPatterns.remove(pattern);
-                      }
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 12),
-
-            // sezóny – zobraz iba vtedy, ak to dáva zmysel (bunda, topánky, zimné doplnky)
-            if (_showSeasonSection) ...[
-              Text(
-                'Sezóny:',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 6),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: seasons.map((season) {
-                  final bool selected = _selectedSeasons.contains(season);
-                  return ChoiceChip(
-                    label: Text(season),
-                    selected: selected,
-                    onSelected: (_) => _toggleSeason(season),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 12),
-            ],
-
-            // značka
-            Text(
-              'Značka:',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 6),
-            TextField(
-              controller: _brandController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: 'Napr. Nike, Zara, H&M…',
-              ),
-            ),
-            const SizedBox(height: 12),
-
-            // stav čistoty
-            SwitchListTile(
-              title: const Text('Je čisté (pripravené na nosenie)'),
-              value: _isClean,
-              onChanged: (value) {
-                setState(() {
-                  _isClean = value;
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // uložiť
-            ElevatedButton(
-              onPressed: _isSaving ? null : _save,
-              child: _isSaving
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Uložiť do šatníka'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
+                    // hlavná kategória
+                    Text(
+                      'Kategória',
+                      style: Theme.of(context).textTheme.titleSmall,
+                    ),
+               
