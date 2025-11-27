@@ -50,72 +50,20 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final _firestore = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance.currentUser;
 
-  // ktorá podkategória je vybraná pre každý hlavný tab (Vrch/Spodok/...)
+  // filter stavy
   final Map<String, String?> _selectedSubCategory = {};
-
-  // sezónny filter pre každý hlavný tab (Vrch/Spodok/...)
-  // null = "Všetky sezóny"
   final Map<String, String?> _selectedSeasonFilter = {};
-
-  // štýlový filter pre každý hlavný tab
-  // null = "Všetky štýly"
   final Map<String, String?> _selectedStyleFilter = {};
-
-  // pattern (vzor) filter pre každý hlavný tab
-  // null = "Všetky vzory"
   final Map<String, String?> _selectedPatternFilter = {};
 
-  Future<void> _openAddClothingDialog() async {
-    // Placeholder na pridanie oblečenia
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Pridať oblečenie'),
-          content: const Text('Tu by bol formulár na pridanie oblečenia.'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Zrušiť'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            TextButton(
-              child: const Text('Uložiť'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
+  bool _shouldShowSeasonFilter(String main, String? sub) {
+    if (sub == null) return false;
 
-  // Máme pri danej kombinácii main + sub zobraziť sezónny filter?
-  bool _shouldShowSeasonFilter(String mainCategory, String? subCategory) {
-    if (subCategory == null) return false;
+    if (main == 'Vrch' && (sub == 'Bunda')) return true;
+    if (main == 'Obuv' && sub == 'Topánky') return true;
+    if (main == 'Doplnky' &&
+        (sub == 'Čiapka' || sub == 'Šál' || sub == 'Rukavice')) return true;
 
-    // Bundy / kabáty
-    if (mainCategory == 'Vrch' &&
-        (subCategory == 'Bunda' || subCategory == 'Kabát')) {
-      return true;
-    }
-
-    // "ťažšia" obuv – topánky
-    if (mainCategory == 'Obuv' && subCategory == 'Topánky') {
-      return true;
-    }
-
-    // Zimné doplnky
-    if (mainCategory == 'Doplnky' &&
-        (subCategory == 'Čiapka' ||
-            subCategory == 'Šál' ||
-            subCategory == 'Rukavice')) {
-      return true;
-    }
-
-    // všade inde sezóny nefiltrujeme
     return false;
   }
 
@@ -129,7 +77,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       );
     }
 
-    // Hlavné kategórie: Vrch, Spodok, Obuv, Doplnky
     final List<String> _categories = categories;
 
     return DefaultTabController(
@@ -139,41 +86,30 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           title: const Text('Môj Šatník'),
           bottom: TabBar(
             isScrollable: true,
-            tabs: _categories.map((category) => Tab(text: category)).toList(),
+            tabs: _categories.map((c) => Tab(text: c)).toList(),
           ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.add),
-              onPressed: _openAddClothingDialog,
-            ),
-          ],
         ),
         body: TabBarView(
           children: _categories.map((category) {
-            // Zoberieme zoznam podkategórií pre daný mainCategory (napr. Spodok -> Tepláky, Nohavice…)
             final List<String> subList = subCategories[category] ?? [];
-            final String? selectedSub = _selectedSubCategory[category];
-            final String? selectedSeason = _selectedSeasonFilter[category];
-            final String? selectedStyle = _selectedStyleFilter[category];
-            final String? selectedPattern = _selectedPatternFilter[category];
+            final selectedSub = _selectedSubCategory[category];
+            final selectedSeason = _selectedSeasonFilter[category];
+            final selectedStyle = _selectedStyleFilter[category];
+            final selectedPattern = _selectedPatternFilter[category];
 
             final bool showSeasonFilter =
                 _shouldShowSeasonFilter(category, selectedSub);
 
             return Column(
               children: [
-                // Riadok s podkategóriami – zobrazí sa len ak nejaké sú
+                // Podkategórie
                 if (subList.isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 8.0,
-                    ),
+                    padding: const EdgeInsets.all(8),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
                         children: [
-                          // Tlačidlo "Všetko"
                           ChoiceChip(
                             label: const Text('Všetko'),
                             selected: selectedSub == null,
@@ -187,10 +123,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             },
                           ),
                           const SizedBox(width: 8),
-                          // Tlačidlá pre každú podkategóriu
-                          ...subList.map((sub) {
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
+                          ...subList.map(
+                            (sub) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
                                 label: Text(sub),
                                 selected: selectedSub == sub,
@@ -203,490 +138,17 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                   });
                                 },
                               ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Sezónny filter – len ak ide o bundy/topánky/zimné doplnky
-                if (showSeasonFilter)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4.0,
-                      horizontal: 8.0,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('Všetky sezóny'),
-                            selected: selectedSeason == null,
-                            onSelected: (_) {
-                              setState(() {
-                                _selectedSeasonFilter[category] = null;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          ...seasons.map((season) {
-                            final bool selected = selectedSeason == season;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
-                              child: ChoiceChip(
-                                label: Text(season),
-                                selected: selected,
-                                onSelected: (_) {
-                                  setState(() {
-                                    _selectedSeasonFilter[category] = season;
-                                  });
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Štýlový filter – ukážeme, keď je vybraná nejaká podkategória
-                if (selectedSub != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4.0,
-                      horizontal: 8.0,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('Všetky štýly'),
-                            selected: selectedStyle == null,
-                            onSelected: (_) {
-                              setState(() {
-                                _selectedStyleFilter[category] = null;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          ...styles.map((style) {
-                            final bool selected = selectedStyle == style;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
-                              child: ChoiceChip(
-                                label: Text(style),
-                                selected: selected,
-                                onSelected: (_) {
-                                  setState(() {
-                                    _selectedStyleFilter[category] = style;
-                                  });
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Pattern (vzor) filter – tiež pri vybratej podkategórii
-                if (selectedSub != null)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4.0,
-                      horizontal: 8.0,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          ChoiceChip(
-                            label: const Text('Všetky vzory'),
-                            selected: selectedPattern == null,
-                            onSelected: (_) {
-                              setState(() {
-                                _selectedPatternFilter[category] = null;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          ...patterns.map((pattern) {
-                            final bool selected = selectedPattern == pattern;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
-                              child: ChoiceChip(
-                                label: Text(pattern),
-                                selected: selected,
-                                onSelected: (_) {
-                                  setState(() {
-                                    _selectedPatternFilter[category] = pattern;
-                                  });
-                                },
-                              ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                // Samotný obsah – grid s oblečením
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: _firestore
-                        .collection('users')
-                        .doc(_auth!.uid)
-                        .collection('wardrobe')
-                        .where('mainCategory', isEqualTo: category)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-
-                      if (snapshot.hasError) {
-                        return const Center(
-                          child: Text('Nastala chyba pri načítaní položiek.'),
-                        );
-                      }
-
-                      final allItems = snapshot.data?.docs ?? [];
-
-                      // 1. filter podľa podkategórie (Tričko / Bunda / ...)
-                      List<QueryDocumentSnapshot> filteredItems;
-                      if (selectedSub == null) {
-                        filteredItems = allItems;
-                      } else {
-                        filteredItems = allItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final itemCategory =
-                              data['category'] as String? ?? '';
-                          return itemCategory == selectedSub;
-                        }).toList();
-                      }
-
-                      // 2. filter podľa sezóny (Celoročne / Jar/Jeseň / Leto / Zima)
-                      if (showSeasonFilter && selectedSeason != null) {
-                        filteredItems = filteredItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final dynamic seasonData = data['season'];
-
-                          if (seasonData is List) {
-                            final seasonsList =
-                                List<String>.from(seasonData);
-                            return seasonsList.contains(selectedSeason);
-                          } else if (seasonData is String) {
-                            return seasonData == selectedSeason;
-                          }
-                          return false;
-                        }).toList();
-                      }
-
-                      // 3. filter podľa štýlu
-                      if (selectedStyle != null) {
-                        filteredItems = filteredItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final dynamic styleData = data['style'];
-                          if (styleData is List) {
-                            final stylesList =
-                                List<String>.from(styleData);
-                            return stylesList.contains(selectedStyle);
-                          } else if (styleData is String) {
-                            return styleData == selectedStyle;
-                          }
-                          return false;
-                        }).toList();
-                      }
-
-                      // 4. filter podľa vzoru (pattern)
-                      if (selectedPattern != null) {
-                        filteredItems = filteredItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final dynamic patternData = data['pattern'];
-                          if (patternData is List) {
-                            final patternsList =
-                                List<String>.from(patternData);
-                            return patternsList.contains(selectedPattern);
-                          } else if (patternData is String) {
-                            return patternData == selectedPattern;
-                          }
-                          return false;
-                        }).toList();
-                      }
-
-                      if (filteredItems.isEmpty) {
-                        String base = '';
-                        if (selectedSub == null) {
-                          base = 'V kategórii "$category"';
-                        } else {
-                          base = 'V podkategórii "$selectedSub"';
-                        }
-
-                        if (showSeasonFilter && selectedSeason != null) {
-                          base += ' a sezóne "$selectedSeason"';
-                        }
-
-                        if (selectedStyle != null) {
-                          base += ' a štýle "$selectedStyle"';
-                        }
-
-                        if (selectedPattern != null) {
-                          base += ' a vzore "$selectedPattern"';
-                        }
-
-                        return Center(
-                          child: Text(
-                            '$base nemáte žiadne oblečenie.',
-                            style: TextStyle(
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .bodyLarge
-                                  ?.color
-                                  ?.withOpacity(0.6),
                             ),
                           ),
-                        );
-                      }
-
-                      return GridView.builder(
-                        padding: const EdgeInsets.all(16.0),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 16.0,
-                          mainAxisSpacing: 16.0,
-                          childAspectRatio: 0.75,
-                        ),
-                        itemCount: filteredItems.length,
-                        itemBuilder: (context, index) {
-                          final itemData = filteredItems[index].data()
-                              as Map<String, dynamic>;
-                          final imageUrl =
-                              itemData['imageUrl'] as String? ?? '';
-                          final colorsText = itemData['color'] is List
-                              ? (itemData['color'] as List).join(', ')
-                              : itemData['color'] as String? ?? 'Neznáma';
-                          final itemId = filteredItems[index].id;
-                          final name =
-                              itemData['name'] as String? ?? 'Neznáma položka';
-
-                          // kategória (Tričko, Bunda, Tepláky…)
-                          final itemCategory =
-                              itemData['category'] as String? ?? '';
-
-                          // sezóny – môžu byť uložené ako list alebo string
-                          final dynamic seasonData = itemData['season'];
-                          String seasonText = '';
-                          if (seasonData is List) {
-                            seasonText =
-                                List<String>.from(seasonData).join(', ');
-                          } else if (seasonData is String) {
-                            seasonText = seasonData;
-                          }
-
-                          // štýl – list alebo string
-                          final dynamic styleData = itemData['style'];
-                          String styleText = '';
-                          if (styleData is List) {
-                            styleText =
-                                List<String>.fro',
-    'Top',
-  ],
-  'Spodok': [
-    'Tepláky',
-    'Nohavice',
-    'Kraťasy',
-    'Legíny',
-    'Sukňa',
-  ],
-  'Obuv': [
-    'Tenisky',
-    'Topánky',
-    'Sandále',
-    'Lodičky',
-  ],
-  'Doplnky': [
-    'Čiapka',
-    'Šál',
-    'Rukavice',
-    'Okuliare',
-    'Opasok',
-  ],
-};
-
-class WardrobeScreen extends StatefulWidget {
-  const WardrobeScreen({Key? key}) : super(key: key);
-
-  @override
-  _WardrobeScreenState createState() => _WardrobeScreenState();
-}
-
-class _WardrobeScreenState extends State<WardrobeScreen> {
-  final _firestore = FirebaseFirestore.instance;
-  final _auth = FirebaseAuth.instance.currentUser;
-
-  // ktorá podkategória je vybraná pre každý hlavný tab (Vrch/Spodok/...)
-  final Map<String, String?> _selectedSubCategory = {};
-
-  // sezónny filter pre každý hlavný tab (Vrch/Spodok/...)
-  // null = "Všetky"
-  final Map<String, String?> _selectedSeasonFilter = {};
-
-  Future<void> _openAddClothingDialog() async {
-    // Placeholder na pridanie oblečenia
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Pridať oblečenie'),
-          content: const Text('Tu by bol formulár na pridanie oblečenia.'),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Zrušiť'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-            TextButton(
-              child: const Text('Uložiť'),
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Máme pri danej kombinácii main + sub zobraziť sezónny filter?
-  bool _shouldShowSeasonFilter(String mainCategory, String? subCategory) {
-    if (subCategory == null) return false;
-
-    // Bundy / kabáty
-    if (mainCategory == 'Vrch' &&
-        (subCategory == 'Bunda' || subCategory == 'Kabát')) {
-      return true;
-    }
-
-    // "ťažšia" obuv – topánky
-    if (mainCategory == 'Obuv' && subCategory == 'Topánky') {
-      return true;
-    }
-
-    // Zimné doplnky
-    if (mainCategory == 'Doplnky' &&
-        (subCategory == 'Čiapka' ||
-            subCategory == 'Šál' ||
-            subCategory == 'Rukavice')) {
-      return true;
-    }
-
-    // všade inde sezóny nefiltrujeme
-    return false;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_auth == null) {
-      return const Scaffold(
-        body: Center(
-          child: Text('Pre zobrazenie šatníka sa musíte prihlásiť.'),
-        ),
-      );
-    }
-
-    // Hlavné kategórie: Vrch, Spodok, Obuv, Doplnky
-    final List<String> _categories = categories;
-
-    return DefaultTabController(
-      length: _categories.length,
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Môj Šatník'),
-          bottom: TabBar(
-            isScrollable: true,
-            tabs: _categories.map((category) => Tab(text: category)).toList(),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.add),
-              onPressed: _openAddClothingDialog,
-            ),
-          ],
-        ),
-        body: TabBarView(
-          children: _categories.map((category) {
-            // Zoberieme zoznam podkategórií pre daný mainCategory (napr. Spodok -> Tepláky, Nohavice…)
-            final List<String> subList = subCategories[category] ?? [];
-            final String? selectedSub = _selectedSubCategory[category];
-            final String? selectedSeason = _selectedSeasonFilter[category];
-
-            final bool showSeasonFilter =
-                _shouldShowSeasonFilter(category, selectedSub);
-
-            return Column(
-              children: [
-                // Riadok s podkategóriami – zobrazí sa len ak nejaké sú
-                if (subList.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 8.0,
-                      horizontal: 8.0,
-                    ),
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      child: Row(
-                        children: [
-                          // Tlačidlo "Všetko"
-                          ChoiceChip(
-                            label: const Text('Všetko'),
-                            selected: selectedSub == null,
-                            onSelected: (_) {
-                              setState(() {
-                                _selectedSubCategory[category] = null;
-                                // ak zrušíme podkategóriu, sezónny filter tiež nedáva zmysel
-                                _selectedSeasonFilter[category] = null;
-                              });
-                            },
-                          ),
-                          const SizedBox(width: 8),
-                          // Tlačidlá pre každú podkategóriu
-                          ...subList.map((sub) {
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
-                              child: ChoiceChip(
-                                label: Text(sub),
-                                selected: selectedSub == sub,
-                                onSelected: (_) {
-                                  setState(() {
-                                    _selectedSubCategory[category] = sub;
-                                    // pri zmene podkategórie resetneme sezónny filter na "Všetky"
-                                    _selectedSeasonFilter[category] = null;
-                                  });
-                                },
-                              ),
-                            );
-                          }).toList(),
                         ],
                       ),
                     ),
                   ),
 
-                // Sezónny filter – len ak ide o bundy/topánky/zimné doplnky
+                // Sezóna
                 if (showSeasonFilter)
                   Padding(
-                    padding: const EdgeInsets.symmetric(
-                      vertical: 4.0,
-                      horizontal: 8.0,
-                    ),
+                    padding: const EdgeInsets.all(8),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -701,27 +163,100 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             },
                           ),
                           const SizedBox(width: 8),
-                          ...seasons.map((season) {
-                            final bool selected = selectedSeason == season;
-                            return Padding(
-                              padding: const EdgeInsets.only(left: 8.0),
+                          ...seasons.map(
+                            (s) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
-                                label: Text(season),
-                                selected: selected,
+                                label: Text(s),
+                                selected: selectedSeason == s,
                                 onSelected: (_) {
                                   setState(() {
-                                    _selectedSeasonFilter[category] = season;
+                                    _selectedSeasonFilter[category] = s;
                                   });
                                 },
                               ),
-                            );
-                          }).toList(),
+                            ),
+                          ),
                         ],
                       ),
                     ),
                   ),
 
-                // Samotný obsah – grid s oblečením
+                // Štýl (iba ak máme subkategóriu)
+                if (selectedSub != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Všetky štýly'),
+                            selected: selectedStyle == null,
+                            onSelected: (_) {
+                              setState(() {
+                                _selectedStyleFilter[category] = null;
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          ...styles.map(
+                            (st) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: ChoiceChip(
+                                label: Text(st),
+                                selected: selectedStyle == st,
+                                onSelected: (_) {
+                                  setState(() {
+                                    _selectedStyleFilter[category] = st;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // Pattern
+                if (selectedSub != null)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Všetky vzory'),
+                            selected: selectedPattern == null,
+                            onSelected: (_) {
+                              setState(() {
+                                _selectedPatternFilter[category] = null;
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          ...patterns.map(
+                            (pt) => Padding(
+                              padding: const EdgeInsets.only(left: 8),
+                              child: ChoiceChip(
+                                label: Text(pt),
+                                selected: selectedPattern == pt,
+                                onSelected: (_) {
+                                  setState(() {
+                                    _selectedPatternFilter[category] = pt;
+                                  });
+                                },
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // Grid s oblečením
                 Expanded(
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _firestore
@@ -737,59 +272,80 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
                       if (snapshot.hasError) {
                         return const Center(
-                          child: Text('Nastala chyba pri načítaní položiek.'),
-                        );
+                            child: Text('Nastala chyba pri načítaní položiek.'));
                       }
 
-                      final allItems = snapshot.data?.docs ?? [];
+                      List<QueryDocumentSnapshot> items =
+                          snapshot.data?.docs ?? [];
 
-                      // 1. filter podľa podkategórie (Tričko / Bunda / ...)
-                      List<QueryDocumentSnapshot> filteredItems;
-                      if (selectedSub == null) {
-                        filteredItems = allItems;
-                      } else {
-                        filteredItems = allItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final itemCategory =
-                              data['category'] as String? ?? '';
-                          return itemCategory == selectedSub;
+                      // Filter 1 — podkategória
+                      if (selectedSub != null) {
+                        items = items.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          return data['category'] == selectedSub;
                         }).toList();
                       }
 
-                      // 2. filter podľa sezóny (Celoročne / Jar/Jeseň / Leto / Zima)
-                      if (showSeasonFilter && selectedSeason != null) {
-                        filteredItems = filteredItems.where((doc) {
-                          final data =
-                              doc.data() as Map<String, dynamic>;
-                          final dynamic seasonData = data['season'];
+                      // Filter 2 — sezóna
+                      if (selectedSeason != null) {
+                        items = items.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final dynamic s = data['season'];
 
-                          if (seasonData is List) {
-                            final seasonsList =
-                                List<String>.from(seasonData);
-                            return seasonsList.contains(selectedSeason);
-                          } else if (seasonData is String) {
-                            return seasonData == selectedSeason;
+                          if (s is String) return s == selectedSeason;
+                          if (s is List) return s.contains(selectedSeason);
+                          return false;
+                        }).toList();
+                      }
+
+                      // Filter 3 — štýl
+                      if (selectedStyle != null) {
+                        items = items.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final dynamic styleData = data['style'];
+
+                          if (styleData is String) return styleData == selectedStyle;
+                          if (styleData is List) {
+                            return List<String>.from(styleData)
+                                .contains(selectedStyle);
                           }
                           return false;
                         }).toList();
                       }
 
-                      if (filteredItems.isEmpty) {
-                        String base = '';
-                        if (selectedSub == null) {
-                          base = 'V kategórii "$category"';
-                        } else {
-                          base = 'V podkategórii "$selectedSub"';
-                        }
+                      // Filter 4 — pattern
+                      if (selectedPattern != null) {
+                        items = items.where((doc) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          final dynamic p = data['pattern'];
 
-                        if (showSeasonFilter && selectedSeason != null) {
-                          base += ' pre sezónu "$selectedSeason"';
+                          if (p is String) return p == selectedPattern;
+                          if (p is List) {
+                            return List<String>.from(p).contains(selectedPattern);
+                          }
+                          return false;
+                        }).toList();
+                      }
+
+                      if (items.isEmpty) {
+                        String msg = selectedSub == null
+                            ? 'V kategórii "$category" nemáte žiadne oblečenie.'
+                            : 'V podkategórii "$selectedSub" nemáte žiadne oblečenie.';
+
+                        if (selectedSeason != null) {
+                          msg += '\nFiltrované pre sezónu "$selectedSeason".';
+                        }
+                        if (selectedStyle != null) {
+                          msg += '\nFiltrované pre štýl "$selectedStyle".';
+                        }
+                        if (selectedPattern != null) {
+                          msg += '\nFiltrované pre vzor "$selectedPattern".';
                         }
 
                         return Center(
                           child: Text(
-                            '$base nemáte žiadne oblečenie.',
+                            msg,
+                            textAlign: TextAlign.center,
                             style: TextStyle(
                               color: Theme.of(context)
                                   .textTheme
@@ -802,52 +358,32 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       }
 
                       return GridView.builder(
-                        padding: const EdgeInsets.all(16.0),
+                        padding: const EdgeInsets.all(16),
                         gridDelegate:
                             const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
-                          crossAxisSpacing: 16.0,
-                          mainAxisSpacing: 16.0,
+                          crossAxisSpacing: 16,
+                          mainAxisSpacing: 16,
                           childAspectRatio: 0.75,
                         ),
-                        itemCount: filteredItems.length,
+                        itemCount: items.length,
                         itemBuilder: (context, index) {
-                          final itemData = filteredItems[index].data()
-                              as Map<String, dynamic>;
-                          final imageUrl =
-                              itemData['imageUrl'] as String? ?? '';
-                          final isClean =
-                              itemData['isClean'] as bool? ?? true;
-                          final colors = itemData['color'] is List
-                              ? (itemData['color'] as List).join(', ')
-                              : itemData['color'] as String? ?? 'Neznáma';
-                          final itemId = filteredItems[index].id;
-                          final name =
-                              itemData['name'] as String? ?? 'Neznáma položka';
+                          final data =
+                              items[index].data() as Map<String, dynamic>;
+                          final imageUrl = data['imageUrl'] as String? ?? '';
+                          final name = data['name'] as String? ?? 'Neznáma položka';
 
-                          // kategória (Tričko, Bunda, Tepláky…)
-                          final itemCategory =
-                              itemData['category'] as String? ?? '';
+                          final categoryName = data['category'] as String? ?? '';
+                          final seasonsList = _normalizeList(data['season']);
 
-                          // sezóny – môžu byť uložené ako list alebo string
-                          final dynamic seasonData = itemData['season'];
-                          String seasonText = '';
-                          if (seasonData is List) {
-                            seasonText =
-                                List<String>.from(seasonData).join(', ');
-                          } else if (seasonData is String) {
-                            seasonText = seasonData;
-                          }
-
-                          // Text v štýle "Bunda • Zima" alebo len "Bunda" / len sezóna
-                          String categoryLine = '';
-                          if (itemCategory.isNotEmpty &&
-                              seasonText.isNotEmpty) {
-                            categoryLine = '$itemCategory • $seasonText';
-                          } else if (itemCategory.isNotEmpty) {
-                            categoryLine = itemCategory;
-                          } else if (seasonText.isNotEmpty) {
-                            categoryLine = seasonText;
+                          String subline = '';
+                          if (categoryName.isNotEmpty &&
+                              seasonsList.isNotEmpty) {
+                            subline = '$categoryName • ${seasonsList.join(', ')}';
+                          } else if (categoryName.isNotEmpty) {
+                            subline = categoryName;
+                          } else if (seasonsList.isNotEmpty) {
+                            subline = seasonsList.join(', ');
                           }
 
                           return InkWell(
@@ -856,8 +392,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                 context,
                                 MaterialPageRoute(
                                   builder: (context) => ClothingDetailScreen(
-                                    clothingItemId: itemId,
-                                    clothingItemData: itemData,
+                                    clothingItemId: items[index].id,
+                                    clothingItemData: data,
                                   ),
                                 ),
                               );
@@ -865,87 +401,73 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             child: Card(
                               elevation: 4,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12.0),
-                                side: BorderSide(
-                                  color: isClean
-                                      ? Colors.green.shade400
-                                      : Colors.red.shade400,
-                                  width: 2.0,
-                                ),
+                                borderRadius: BorderRadius.circular(12),
                               ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   Expanded(
                                     child: ClipRRect(
-                                      borderRadius:
-                                          const BorderRadius.vertical(
-                                        top: Radius.circular(12.0),
+                                      borderRadius: const BorderRadius.vertical(
+                                        top: Radius.circular(12),
                                       ),
                                       child: imageUrl.isNotEmpty
                                           ? Image.network(
                                               imageUrl,
                                               fit: BoxFit.cover,
-                                              loadingBuilder: (context, child,
-                                                  loadingProgress) {
-                                                if (loadingProgress == null) {
-                                                  return child;
-                                                }
-                                                return Center(
-                                                  child:
-                                                      CircularProgressIndicator(
-                                                    value: loadingProgress
-                                                                .expectedTotalBytes !=
-                                                            null
-                                                        ? loadingProgress
-                                                                .cumulativeBytesLoaded /
-                                                            loadingProgress
-                                                                .expectedTotalBytes!
-                                                        : null,
-                                                  ),
-                                                );
-                                              },
-                                              errorBuilder: (context, error,
-                                                  stackTrace) {
-                                                debugPrint(
-                                                    'Image error: $error');
-
-                                                return Column(
-                                                  mainAxisAlignment:
-                                                      MainAxisAlignment.center,
-                                                  children: [
-                                                    const Icon(
-                                                      Icons.broken_image,
-                                                      size: 40,
-                                                    ),
-                                                    const SizedBox(height: 4),
-                                                    Text(
-                                                      '$error',
-                                                      textAlign:
-                                                          TextAlign.center,
-                                                      style: const TextStyle(
-                                                        fontSize: 8,
-                                                      ),
-                                                    ),
-                                                  ],
-                                                );
-                                              },
                                             )
-                                          : const Center(
-                                              child: Icon(
+                                          : Container(
+                                              color: Colors.grey.shade200,
+                                              child: const Icon(
                                                 Icons.image_not_supported,
                                                 size: 50,
-                                                color: Colors.grey,
                                               ),
                                             ),
                                     ),
                                   ),
                                   Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8.0,
-                                      vertical: 4.0,
-                                    ),
+                                    padding: const EdgeInsets.all(8),
                                     child: Text(
                                       name,
+                                      overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(
-            
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                  ),
+                                  if (subline.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 8, right: 8, bottom: 8),
+                                      child: Text(
+                                        subline,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  List<String> _normalizeList(dynamic value) {
+    if (value == null) return [];
+    if (value is List) return value.map((e) => e.toString()).toList();
+    if (value is String && value.isNotEmpty) return [value];
+    return [];
+  }
+}
