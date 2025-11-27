@@ -1,19 +1,23 @@
 // lib/screens/add_clothing_screen.dart
 
 import 'dart:io';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:outfitofTheDay/screens/stylist_chat_screen.dart';
 
-import '../constants/app_constants.dart';
+import 'package:outfitofTheDay/constants/app_constants.dart';
 
 class AddClothingScreen extends StatefulWidget {
   final Map<String, dynamic> initialData;
   final String imageUrl;
-  final String? itemId;       // nové
-  final bool isEditing;       // nové
+
+  /// Ak je nastavené, ide o editáciu existujúceho kúsku
+  final String? itemId;
+  final bool isEditing;
 
   const AddClothingScreen({
     Key? key,
@@ -38,13 +42,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   String? _selectedMainCategory;
   String? _selectedSubcategory;
-
   List<String> _selectedColors = [];
   List<String> _selectedStyles = [];
   List<String> _selectedPatterns = [];
+  List<String> _selectedSeasons = [];
 
-  // sezóna – iba jedna hodnota
-  String _selectedSeason = 'Celoročne';
+  bool _isClean = true;
 
   File? _localImageFile;
   String? _uploadedImageUrl;
@@ -60,52 +63,97 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   void _prefillFromInitialData() {
     final data = widget.initialData;
 
-    if (widget.isEditing && data.isNotEmpty) {
-      _nameController.text = (data['name'] ?? '') as String;
-      _brandController.text = (data['brand'] ?? '') as String;
+    _nameController.text = (data['name'] ?? '') as String;
+    _brandController.text = (data['brand'] ?? '') as String;
 
-      // hlavná kategória
-      final main = data['mainCategory'] as String?;
-      if (main != null) {
-        _selectedMainCategory = main;
+    final String? storedCategory = data['category'] as String?;
+    final String? storedMainCategory = data['mainCategory'] as String?;
+
+    // mainCategory
+    if (storedMainCategory != null &&
+        subcategoriesByCategory.containsKey(storedMainCategory)) {
+      _selectedMainCategory = storedMainCategory;
+    }
+
+    // ak nemáme mainCategory, skúsime nájsť podľa podkategórie
+    if (_selectedMainCategory == null && storedCategory != null) {
+      for (final entry in subcategoriesByCategory.entries) {
+        if (entry.value.contains(storedCategory)) {
+          _selectedMainCategory = entry.key;
+          break;
+        }
       }
+    }
 
-      // podkategória
-      final sub = data['category'] as String?;
-      if (sub != null) {
-        _selectedSubcategory = sub;
-      }
+    // podkategória – ak je platná
+    if (_selectedMainCategory != null &&
+        storedCategory != null &&
+        (subcategoriesByCategory[_selectedMainCategory!] ?? [])
+            .contains(storedCategory)) {
+      _selectedSubcategory = storedCategory;
+    }
 
-      // farby
-      _selectedColors = _normalizeList(data['color']);
+    // farby
+    final dynamic colorData = data['color'];
+    if (colorData is List) {
+      _selectedColors = List<String>.from(colorData);
+    } else if (colorData is String && colorData.isNotEmpty) {
+      _selectedColors = [colorData];
+    }
 
-      // štýl
-      _selectedStyles = _normalizeList(data['style']);
+    // štýly
+    final dynamic styleData = data['style'];
+    if (styleData is List) {
+      _selectedStyles = List<String>.from(styleData);
+    } else if (styleData is String && styleData.isNotEmpty) {
+      _selectedStyles = [styleData];
+    }
 
-      // pattern
-      _selectedPatterns = _normalizeList(data['pattern']);
+    // vzory
+    final dynamic patternData = data['pattern'];
+    if (patternData is List) {
+      _selectedPatterns = List<String>.from(patternData);
+    } else if (patternData is String && patternData.isNotEmpty) {
+      _selectedPatterns = [patternData];
+    }
 
-      // sezóna — len jedna
-      final s = _normalizeList(data['season']);
-      if (s.isNotEmpty) _selectedSeason = s.first;
+    // sezóny
+    final dynamic seasonData = data['season'];
+    if (seasonData is List) {
+      _selectedSeasons = List<String>.from(seasonData);
+    } else if (seasonData is String && seasonData.isNotEmpty) {
+      _selectedSeasons = [seasonData];
+    }
 
-      // obrázok
-      if (widget.imageUrl.isNotEmpty) {
-        _uploadedImageUrl = widget.imageUrl;
+    // ak nič nie je uložené, nastavíme default "Celoročne"
+    if (_selectedSeasons.isEmpty) {
+      _selectedSeasons = ['Celoročne'];
+    }
+
+    _isClean = (data['isClean'] as bool?) ?? true;
+
+    // obrázok – buď z parametra imageUrl, alebo z initialData
+    if (widget.imageUrl.isNotEmpty) {
+      _uploadedImageUrl = widget.imageUrl;
+    } else {
+      final String? storedImage = data['imageUrl'] as String?;
+      if (storedImage != null && storedImage.isNotEmpty) {
+        _uploadedImageUrl = storedImage;
       }
     }
   }
 
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _brandController.dispose();
+    super.dispose();
   }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
-      final picked = await _picker.pickImage(source: source, imageQuality: 80);
+      final picked =
+      await _picker.pickImage(source: source, imageQuality: 80);
       if (picked == null) return;
 
       setState(() {
@@ -122,7 +170,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   Future<String?> _uploadImageIfNeeded() async {
     if (_localImageFile == null) {
-      return _uploadedImageUrl;
+      return _uploadedImageUrl; // možno už máme URL
     }
 
     final user = _auth.currentUser;
@@ -159,7 +207,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     if (_selectedSubcategory == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Prosím, vyber podkategóriu.')),
+        const SnackBar(content: Text('Prosím, vyber typ / podkategóriu.')),
       );
       return;
     }
@@ -171,6 +219,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       return;
     }
 
+    if (_selectedSeasons.isEmpty) {
+      _selectedSeasons = ['Celoročne'];
+    }
+
     setState(() {
       _isSaving = true;
     });
@@ -178,55 +230,52 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     try {
       final imageUrl = await _uploadImageIfNeeded();
 
-      final dataToSave = {
+      final payload = {
         'name': _nameController.text.trim(),
         'mainCategory': _selectedMainCategory,
         'category': _selectedSubcategory,
         'color': _selectedColors,
         'style': _selectedStyles,
         'pattern': _selectedPatterns,
-        'season': _selectedSeason,
+        'season': _selectedSeasons,
         'brand': _brandController.text.trim(),
-        'uploadedAt': FieldValue.serverTimestamp(),
+        'isClean': _isClean,
+        'imageUrl': imageUrl ?? '',
       };
 
-      // NOVÉ: ak editujeme → update
       if (widget.isEditing && widget.itemId != null) {
+        // 🔁 EDITÁCIA EXISTUJÚCEHO KÚSKU
         await _firestore
             .collection('users')
             .doc(user.uid)
             .collection('wardrobe')
             .doc(widget.itemId!)
-            .update(dataToSave);
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Zmeny uložené')),
-        );
-
+            .update(payload);
       } else {
-        // nový kúsok → add()
+        // ➕ NOVÝ KÚSOK
         await _firestore
             .collection('users')
             .doc(user.uid)
             .collection('wardrobe')
             .add({
-          ...dataToSave,
-          'imageUrl': imageUrl ?? '',
+          ...payload,
           'wearCount': 0,
+          'uploadedAt': FieldValue.serverTimestamp(),
         });
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Kúsok bol pridaný')),
-        );
       }
 
       if (!mounted) return;
-      Navigator.of(context).pop();
 
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(widget.isEditing
+              ? 'Kúsok bol upravený.'
+              : 'Kúsok bol pridaný do šatníka.'),
+        ),
+      );
+      Navigator.of(context).pop();
     } catch (e) {
-      debugPrint('Chyba pri ukladaní: $e');
+      debugPrint('Chyba pri ukladaní kúsku: $e');
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Chyba pri ukladaní: $e')),
@@ -240,7 +289,107 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
+  /// Simulácia AI – len pre ukážku, ako bude AI predvyplňovať polia
+  void _simulateAI() {
+    setState(() {
+      _selectedMainCategory ??= 'Vrch';
+      _selectedSubcategory ??= 'Mikina';
+      _selectedColors = ['Čierna'];
+      _selectedStyles = ['Casual'];
+      _selectedPatterns = ['Bez vzoru'];
+      _selectedSeasons = ['Jar/Jeseň (prechodná)', 'Zima'];
 
+      if (_nameController.text.trim().isEmpty) {
+        _nameController.text = 'Čierna mikina (AI simulácia)';
+      }
+      if (_brandController.text.trim().isEmpty) {
+        _brandController.text = 'Nike';
+      }
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('AI (simulácia) predvyplnila údaje.'),
+      ),
+    );
+  }
+
+  void _showStyleInfo() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Štýly oblečenia'),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('• Casual – bežné, pohodlné oblečenie na každý deň.'),
+              SizedBox(height: 4),
+              Text('• Elegantný – košele, saká, šaty, veci do práce / na oslavy.'),
+              SizedBox(height: 4),
+              Text('• Športový – legíny, tepláky, funkčné tričká, tenisky na šport.'),
+              SizedBox(height: 4),
+              Text('• Streetwear – voľné mikiny, oversized, trendy kúsky do mesta.'),
+              SizedBox(height: 4),
+              Text('• Business – obleky, kostýmy, formálnejšie kúsky do kancelárie.'),
+              SizedBox(height: 4),
+              SizedBox(height: 12),
+              Text(
+                'Ak si stále nie si istý, ktorý štýl zvoliť, použi tlačidlo '
+                    '„Poradiť sa o tomto kúsku“ dole.',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Rozumiem'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showPatternInfo() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Vzory'),
+        content: const SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('• Bez vzoru – jednofarebný kúsok, žiadne potlače ani vzory.'),
+              SizedBox(height: 4),
+              Text('• Pruhy – horizontálne alebo vertikálne prúžky.'),
+              SizedBox(height: 4),
+              Text('• Bodky – klasické „polka dot“ alebo menšie bodky.'),
+              SizedBox(height: 4),
+              Text('• Kocky / káro – kockované košele, kárované saká atď.'),
+              SizedBox(height: 4),
+              Text('• Potlač / logo – veľké nápisy, logá značiek, obrázky.'),
+              SizedBox(height: 4),
+              Text('• Iný vzor – niečo, čo sa nehodí do vyšších kategórií.'),
+              SizedBox(height: 12),
+              Text(
+                'Ak si stále nie si istý, ktorý vzor zvoliť, použi tlačidlo '
+                    '„Poradiť sa o tomto kúsku“ dole.',
+                style: TextStyle(fontStyle: FontStyle.italic),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Rozumiem'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -257,24 +406,30 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-
-            // Obrázok
+            // obrázok + tlačidlá
             if (_localImageFile != null)
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
-                child: Image.file(_localImageFile!, height: 220, fit: BoxFit.cover),
+                child: Image.file(
+                  _localImageFile!,
+                  height: 220,
+                  fit: BoxFit.cover,
+                ),
               )
-            else if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
+            else if (_uploadedImageUrl != null &&
+                _uploadedImageUrl!.isNotEmpty)
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: Image.network(
                   _uploadedImageUrl!,
                   height: 220,
                   fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
+                  errorBuilder: (context, error, stackTrace) => Container(
                     height: 220,
                     color: Colors.grey.shade200,
-                    child: const Center(child: Icon(Icons.broken_image, size: 48)),
+                    child: const Center(
+                      child: Icon(Icons.broken_image_outlined, size: 48),
+                    ),
                   ),
                 ),
               )
@@ -285,12 +440,14 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   borderRadius: BorderRadius.circular(16),
                   color: Colors.grey.shade200,
                 ),
-                child:
-                    const Center(child: Icon(Icons.image_outlined, size: 48)),
+                child: const Center(
+                  child: Icon(
+                    Icons.image_outlined,
+                    size: 48,
+                  ),
+                ),
               ),
-
             const SizedBox(height: 8),
-
             Row(
               children: [
                 Expanded(
@@ -310,10 +467,18 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 ),
               ],
             ),
-
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: _simulateAI,
+                icon: const Icon(Icons.auto_awesome),
+                label: const Text('Simulovať AI'),
+              ),
+            ),
             const SizedBox(height: 16),
 
-            // Názov
+            // názov (voliteľné)
             TextField(
               controller: _nameController,
               decoration: const InputDecoration(
@@ -325,13 +490,21 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             const SizedBox(height: 16),
 
             // hlavná kategória
-            Text('Kategória:', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Kategória:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 6),
             DropdownButtonFormField<String>(
               value: _selectedMainCategory,
-              decoration: const InputDecoration(border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+              ),
               items: categories.map((value) {
-                return DropdownMenuItem(value: value, child: Text(value));
+                return DropdownMenuItem<String>(
+                  value: value,
+                  child: Text(value),
+                );
               }).toList(),
               onChanged: (value) {
                 setState(() {
@@ -340,19 +513,24 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 });
               },
             ),
-
             const SizedBox(height: 12),
 
-            // podkategória
             if (_selectedMainCategory != null) ...[
-              Text('Typ / podkategória:',
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Typ / podkategória:',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 6),
               DropdownButtonFormField<String>(
                 value: _selectedSubcategory,
-                decoration: const InputDecoration(border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                ),
                 items: currentSubcategories.map((value) {
-                  return DropdownMenuItem(value: value, child: Text(value));
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
                 }).toList(),
                 onChanged: (value) {
                   setState(() {
@@ -364,19 +542,22 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ],
 
             // farby
-            Text('Farby:', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Farby:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: colors.map((color) {
-                final selected = _selectedColors.contains(color);
+                final bool selected = _selectedColors.contains(color);
                 return FilterChip(
                   label: Text(color),
                   selected: selected,
-                  onSelected: (v) {
+                  onSelected: (value) {
                     setState(() {
-                      if (v) {
+                      if (value) {
                         _selectedColors.add(color);
                       } else {
                         _selectedColors.remove(color);
@@ -386,23 +567,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 12),
 
             // štýl
-            Text('Štýl:', style: Theme.of(context).textTheme.titleMedium),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Štýl:',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.info_outline, size: 20),
+                  tooltip: 'Vysvetlenie štýlov',
+                  onPressed: _showStyleInfo,
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: styles.map((style) {
-                final selected = _selectedStyles.contains(style);
+                final bool selected = _selectedStyles.contains(style);
                 return FilterChip(
                   label: Text(style),
                   selected: selected,
-                  onSelected: (v) {
+                  onSelected: (value) {
                     setState(() {
-                      if (v) {
+                      if (value) {
                         _selectedStyles.add(style);
                       } else {
                         _selectedStyles.remove(style);
@@ -412,23 +605,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 12),
 
-            // vzor
-            Text('Vzor:', style: Theme.of(context).textTheme.titleMedium),
+            // vzory
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Vzory:',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                IconButton(
+                  icon: const Icon(Icons.info_outline, size: 20),
+                  tooltip: 'Vysvetlenie vzorov',
+                  onPressed: _showPatternInfo,
+                ),
+              ],
+            ),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: patterns.map((pattern) {
-                final selected = _selectedPatterns.contains(pattern);
+                final bool selected = _selectedPatterns.contains(pattern);
                 return FilterChip(
                   label: Text(pattern),
                   selected: selected,
-                  onSelected: (v) {
+                  onSelected: (value) {
                     setState(() {
-                      if (v) {
+                      if (value) {
                         _selectedPatterns.add(pattern);
                       } else {
                         _selectedPatterns.remove(pattern);
@@ -438,33 +643,50 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 );
               }).toList(),
             ),
-
             const SizedBox(height: 12),
 
-            // sezóna (len jedna)
-            Text('Sezóna:', style: Theme.of(context).textTheme.titleMedium),
+            // sezóny – multi-select s logikou „Celoročne“
+            Text(
+              'Sezóny:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 6),
             Wrap(
               spacing: 8,
-              children: ['Celoročne', 'Jar/Jeseň', 'Leto', 'Zima']
-                  .map(
-                    (season) => ChoiceChip(
-                      label: Text(season),
-                      selected: _selectedSeason == season,
-                      onSelected: (_) {
-                        setState(() {
-                          _selectedSeason = season;
-                        });
-                      },
-                    ),
-                  )
-                  .toList(),
+              runSpacing: 8,
+              children: seasons.map((season) {
+                final bool selected = _selectedSeasons.contains(season);
+                return FilterChip(
+                  label: Text(season),
+                  selected: selected,
+                  onSelected: (value) {
+                    setState(() {
+                      if (season == 'Celoročne') {
+                        if (value) {
+                          _selectedSeasons = ['Celoročne'];
+                        } else {
+                          _selectedSeasons.remove('Celoročne');
+                        }
+                      } else {
+                        if (value) {
+                          _selectedSeasons.remove('Celoročne');
+                          _selectedSeasons.add(season);
+                        } else {
+                          _selectedSeasons.remove(season);
+                        }
+                      }
+                    });
+                  },
+                );
+              }).toList(),
             ),
-
             const SizedBox(height: 12),
 
             // značka
-            Text('Značka:', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Značka:',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 6),
             TextField(
               controller: _brandController,
@@ -473,20 +695,82 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 hintText: 'Napr. Nike, Zara, H&M…',
               ),
             ),
+            const SizedBox(height: 12),
 
-            const SizedBox(height: 24),
 
+
+            // uložiť
             ElevatedButton(
               onPressed: _isSaving ? null : _save,
               child: _isSaving
                   ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : Text(widget.isEditing ? 'Uložiť zmeny' : 'Uložiť do šatníka'),
+                height: 20,
+                width: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              )
+                  : Text(widget.isEditing
+                  ? 'Uložiť zmeny'
+                  : 'Uložiť do šatníka'),
             ),
+            const SizedBox(height: 8),
+
+            // poradiť sa o kúsku – otvorí AI chat s informáciami o tomto kúsku
+            TextButton.icon(
+              onPressed: () {
+                // poskladáme krátky popis kúsku pre chat
+                final buffer = StringBuffer();
+                buffer.writeln(
+                  'Rád by som sa poradil o jednom konkrétnom kúsku oblečenia.',
+                );
+
+                if (_nameController.text.trim().isNotEmpty) {
+                  buffer.writeln('Názov: ${_nameController.text.trim()}.');
+                }
+                if (_brandController.text.trim().isNotEmpty) {
+                  buffer.writeln('Značka: ${_brandController.text.trim()}.');
+                }
+                if (_selectedMainCategory != null) {
+                  buffer.writeln('Hlavná kategória: $_selectedMainCategory.');
+                }
+                if (_selectedSubcategory != null) {
+                  buffer.writeln('Typ / podkategória: $_selectedSubcategory.');
+                }
+                if (_selectedColors.isNotEmpty) {
+                  buffer.writeln('Farba: ${_selectedColors.join(", ")}.');
+                }
+                if (_selectedStyles.isNotEmpty) {
+                  buffer.writeln('Štýl: ${_selectedStyles.join(", ")}.');
+                }
+                if (_selectedPatterns.isNotEmpty) {
+                  buffer.writeln('Vzor: ${_selectedPatterns.join(", ")}.');
+                }
+                if (_selectedSeasons.isNotEmpty) {
+                  buffer.writeln('Sezóna: ${_selectedSeasons.join(", ")}.');
+                }
+
+                buffer.writeln(
+                  'Na základe týchto informácií mi prosím poraď, '
+                      'ako tento kúsok najlepšie kombinovať so zvyškom môjho šatníka '
+                      'a v akých situáciách alebo počasiu sa najviac hodí.',
+                );
+
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => StylistChatScreen(
+                      initialPrompt: buffer.toString(),
+                      autoSendInitialPrompt: true,
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.chat_bubble_outline),
+              label: const Text('Poradiť sa o tomto kúsku'),
+            ),
+
           ],
         ),
       ),

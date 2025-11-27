@@ -13,7 +13,7 @@ const List<String> categories = [
 /// (práve tieto názvy potom vidí AI: Tepláky, Bunda, Tenisky…)
 const Map<String, List<String>> subcategoriesByCategory = {
   'Vrch': [
-    'Tričko',
+    'Tričko s krátkym rukávom',
     'Tričko s dlhým rukávom',
     'Košeľa',
     'Mikina',
@@ -23,7 +23,6 @@ const Map<String, List<String>> subcategoriesByCategory = {
     'Vesta',
     'Sako',
     'Bunda',
-    'Zimná bunda',
     'Kabát',
     'Top',
   ],
@@ -89,14 +88,13 @@ const List<String> colors = [
 
 /// Štýly – dôležité aj pre AI (sporty vs. elegant atď.).
 const List<String> styles = [
-  'Casual',
-  'Sporty',
-  'Elegant',
-  'Business',
+  'Ležérny (casual)',
+  'Elegantný',
+  'Športový',
   'Streetwear',
-  'Party',
-  'Outdoor',
+  'Business / kancelársky',
 ];
+
 
 /// Vzory
 const List<String> patterns = [

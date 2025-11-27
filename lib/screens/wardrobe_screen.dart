@@ -118,7 +118,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
             final selectedPattern = _selectedPatternFilter[category];
 
             final bool showSeasonFilter =
-                _shouldShowSeasonFilter(category, selectedSub);
+            _shouldShowSeasonFilter(category, selectedSub);
 
             return Column(
               children: [
@@ -165,7 +165,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           ),
                           const SizedBox(width: 8),
                           ...subList.map(
-                            (sub) => Padding(
+                                (sub) => Padding(
                               padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
                                 label: Text(sub),
@@ -205,7 +205,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           ),
                           const SizedBox(width: 8),
                           ...seasons.map(
-                            (s) => Padding(
+                                (s) => Padding(
                               padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
                                 label: Text(s),
@@ -227,7 +227,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 if (selectedSub != null)
                   Padding(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -243,7 +243,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           ),
                           const SizedBox(width: 8),
                           ...styles.map(
-                            (st) => Padding(
+                                (st) => Padding(
                               padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
                                 label: Text(st),
@@ -265,7 +265,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 if (selectedSub != null)
                   Padding(
                     padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
                       child: Row(
@@ -281,7 +281,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           ),
                           const SizedBox(width: 8),
                           ...patterns.map(
-                            (pt) => Padding(
+                                (pt) => Padding(
                               padding: const EdgeInsets.only(left: 8),
                               child: ChoiceChip(
                                 label: Text(pt),
@@ -302,7 +302,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                 // 🔽 Triedenie – dropdown vpravo
                 Padding(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
@@ -313,10 +313,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         items: _sortOptions
                             .map(
                               (opt) => DropdownMenuItem<String>(
-                                value: opt,
-                                child: Text(opt),
-                              ),
-                            )
+                            value: opt,
+                            child: Text(opt),
+                          ),
+                        )
                             .toList(),
                         onChanged: (value) {
                           if (value == null) return;
@@ -348,7 +348,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       if (snapshot.hasError) {
                         return const Center(
                             child:
-                                Text('Nastala chyba pri načítaní položiek.'));
+                            Text('Nastala chyba pri načítaní položiek.'));
                       }
 
                       List<QueryDocumentSnapshot> items =
@@ -457,7 +457,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       return GridView.builder(
                         padding: const EdgeInsets.all(16),
                         gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
+                        const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           crossAxisSpacing: 16,
                           mainAxisSpacing: 16,
@@ -466,7 +466,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         itemCount: items.length,
                         itemBuilder: (context, index) {
                           final data =
-                              items[index].data() as Map<String, dynamic>;
+                          items[index].data() as Map<String, dynamic>;
                           final imageUrl =
                               data['imageUrl'] as String? ?? '';
                           final name =
@@ -475,13 +475,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           final categoryName =
                               data['category'] as String? ?? '';
                           final seasonsList =
-                              _normalizeList(data['season']);
+                          _normalizeList(data['season']);
 
                           String subline = '';
                           if (categoryName.isNotEmpty &&
                               seasonsList.isNotEmpty) {
                             subline =
-                                '$categoryName • ${seasonsList.join(', ')}';
+                            '$categoryName • ${seasonsList.join(', ')}';
                           } else if (categoryName.isNotEmpty) {
                             subline = categoryName;
                           } else if (seasonsList.isNotEmpty) {
@@ -507,4 +507,181 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                               ),
                               child: Column(
                                 crossAxisAlignment:
-                                    CrossAxisAlignment.st
+                                CrossAxisAlignment.stretch,
+                                children: [
+                                  Expanded(
+                                    child: ClipRRect(
+                                      borderRadius:
+                                      const BorderRadius.vertical(
+                                        top: Radius.circular(12),
+                                      ),
+                                      child: imageUrl.isNotEmpty
+                                          ? Image.network(
+                                        imageUrl,
+                                        fit: BoxFit.cover,
+                                      )
+                                          : Container(
+                                        color: Colors.grey.shade200,
+                                        child: const Icon(
+                                          Icons.image_not_supported,
+                                          size: 50,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Padding(
+                                    padding: const EdgeInsets.all(8),
+                                    child: Text(
+                                      name,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                  if (subline.isNotEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.only(
+                                          left: 8, right: 8, bottom: 8),
+                                      child: Text(
+                                        subline,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          color: Colors.grey.shade600,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          }).toList(),
+        ),
+      ),
+    );
+  }
+
+  List<String> _normalizeList(dynamic value) {
+    if (value == null) return [];
+    if (value is List) return value.map((e) => e.toString()).toList();
+    if (value is String && value.isNotEmpty) return [value];
+    return [];
+  }
+
+  /// Vyhľadávanie – ignoruje diakritiku, veľké písmená
+  bool _matchesSearch(Map<String, dynamic> data, String query) {
+    final q = _normalizeText(query);
+    if (q.isEmpty) return true;
+
+    final buffer = StringBuffer();
+
+    void addField(dynamic v) {
+      if (v == null) return;
+      if (v is List) {
+        buffer.write(' ');
+        buffer.write(v.join(' '));
+      } else {
+        buffer.write(' ');
+        buffer.write(v.toString());
+      }
+    }
+
+    addField(data['name']);
+    addField(data['brand']);
+    addField(data['mainCategory']);
+    addField(data['category']);
+    addField(data['color']);
+    addField(data['style']);
+    addField(data['pattern']);
+    addField(data['season']);
+
+    final text = _normalizeText(buffer.toString());
+    return text.contains(q);
+  }
+
+  /// Zjednotenie textu: malé písmená + odstránenie diakritiky
+  String _normalizeText(String input) {
+    final lower = input.toLowerCase();
+
+    const from = 'áäčďéěíĺľňóôŕřšťúůýžÁÄČĎÉĚÍĹĽŇÓÔŔŘŠŤÚŮÝŽ';
+    const to   = 'aacdeeillnoorrstuuyzAACDEEILLNOORRSTUUYZ';
+
+    String result = lower;
+    for (int i = 0; i < from.length; i++) {
+      result = result.replaceAll(from[i], to[i].toLowerCase());
+    }
+    return result;
+  }
+
+  /// Porovnanie dvoch dokumentov podľa zvoleného triedenia
+  int _compareDocs(
+      QueryDocumentSnapshot a,
+      QueryDocumentSnapshot b,
+      ) {
+    final dataA = a.data() as Map<String, dynamic>;
+    final dataB = b.data() as Map<String, dynamic>;
+
+    switch (_sortOption) {
+      case 'Najnovšie':
+        return _compareByUploadedAt(dataA, dataB, desc: true);
+      case 'Najstaršie':
+        return _compareByUploadedAt(dataA, dataB, desc: false);
+      case 'Značka':
+        return _compareString(
+          (dataA['brand'] as String?) ?? '',
+          (dataB['brand'] as String?) ?? '',
+        );
+      case 'Farba':
+        final firstColorA =
+        _normalizeList(dataA['color']).isNotEmpty ? _normalizeList(dataA['color']).first : '';
+        final firstColorB =
+        _normalizeList(dataB['color']).isNotEmpty ? _normalizeList(dataB['color']).first : '';
+        return _compareString(firstColorA, firstColorB);
+      case 'Najčastejšie nosené':
+        final wa = (dataA['wearCount'] is int) ? dataA['wearCount'] as int : 0;
+        final wb = (dataB['wearCount'] is int) ? dataB['wearCount'] as int : 0;
+        return wb.compareTo(wa); // desc – najviac hore
+      default:
+        return 0;
+    }
+  }
+
+  int _compareByUploadedAt(
+      Map<String, dynamic> a,
+      Map<String, dynamic> b, {
+        required bool desc,
+      }) {
+    final tsA = a['uploadedAt'];
+    final tsB = b['uploadedAt'];
+
+    DateTime da;
+    DateTime db;
+
+    if (tsA is Timestamp) {
+      da = tsA.toDate();
+    } else {
+      da = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    if (tsB is Timestamp) {
+      db = tsB.toDate();
+    } else {
+      db = DateTime.fromMillisecondsSinceEpoch(0);
+    }
+
+    final cmp = da.compareTo(db);
+    return desc ? -cmp : cmp;
+  }
+
+  int _compareString(String a, String b) {
+    return a.toLowerCase().compareTo(b.toLowerCase());
+  }
+}
