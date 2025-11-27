@@ -111,9 +111,8 @@ const List<String> patterns = [
 
 /// Sezóny
 const List<String> seasons = [
-  'Jar',
-  'Leto',
-  'Jeseň',
-  'Zima',
   'Celoročne',
+  'Jar/Jeseň (prechodná)',
+  'Leto',
+  'Zima',
 ];
