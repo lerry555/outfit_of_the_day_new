@@ -50,8 +50,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final _firestore = FirebaseFirestore.instance;
   final _auth = FirebaseAuth.instance.currentUser;
 
-  // Tu si pamätáme, ktorá podkategória je vybraná pre každý hlavný "tab"
+  // ktorá podkategória je vybraná pre každý hlavný tab (Vrch/Spodok/...)
   final Map<String, String?> _selectedSubCategory = {};
+
+  // sezónny filter pre každý hlavný tab (Vrch/Spodok/...)
+  // null = "Všetky"
+  final Map<String, String?> _selectedSeasonFilter = {};
 
   Future<void> _openAddClothingDialog() async {
     // Placeholder na pridanie oblečenia
@@ -78,6 +82,33 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         );
       },
     );
+  }
+
+  // Máme pri danej kombinácii main + sub zobraziť sezónny filter?
+  bool _shouldShowSeasonFilter(String mainCategory, String? subCategory) {
+    if (subCategory == null) return false;
+
+    // Bundy / kabáty
+    if (mainCategory == 'Vrch' &&
+        (subCategory == 'Bunda' || subCategory == 'Kabát')) {
+      return true;
+    }
+
+    // "ťažšia" obuv – topánky
+    if (mainCategory == 'Obuv' && subCategory == 'Topánky') {
+      return true;
+    }
+
+    // Zimné doplnky
+    if (mainCategory == 'Doplnky' &&
+        (subCategory == 'Čiapka' ||
+            subCategory == 'Šál' ||
+            subCategory == 'Rukavice')) {
+      return true;
+    }
+
+    // všade inde sezóny nefiltrujeme
+    return false;
   }
 
   @override
@@ -114,6 +145,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
             // Zoberieme zoznam podkategórií pre daný mainCategory (napr. Spodok -> Tepláky, Nohavice…)
             final List<String> subList = subCategories[category] ?? [];
             final String? selectedSub = _selectedSubCategory[category];
+            final String? selectedSeason = _selectedSeasonFilter[category];
+
+            final bool showSeasonFilter =
+                _shouldShowSeasonFilter(category, selectedSub);
 
             return Column(
               children: [
@@ -135,6 +170,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                             onSelected: (_) {
                               setState(() {
                                 _selectedSubCategory[category] = null;
+                                // ak zrušíme podkategóriu, sezónny filter tiež nedáva zmysel
+                                _selectedSeasonFilter[category] = null;
                               });
                             },
                           ),
@@ -149,6 +186,49 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                 onSelected: (_) {
                                   setState(() {
                                     _selectedSubCategory[category] = sub;
+                                    // pri zmene podkategórie resetneme sezónny filter na "Všetky"
+                                    _selectedSeasonFilter[category] = null;
+                                  });
+                                },
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                // Sezónny filter – len ak ide o bundy/topánky/zimné doplnky
+                if (showSeasonFilter)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 4.0,
+                      horizontal: 8.0,
+                    ),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          ChoiceChip(
+                            label: const Text('Všetky'),
+                            selected: selectedSeason == null,
+                            onSelected: (_) {
+                              setState(() {
+                                _selectedSeasonFilter[category] = null;
+                              });
+                            },
+                          ),
+                          const SizedBox(width: 8),
+                          ...seasons.map((season) {
+                            final bool selected = selectedSeason == season;
+                            return Padding(
+                              padding: const EdgeInsets.only(left: 8.0),
+                              child: ChoiceChip(
+                                label: Text(season),
+                                selected: selected,
+                                onSelected: (_) {
+                                  setState(() {
+                                    _selectedSeasonFilter[category] = season;
                                   });
                                 },
                               ),
@@ -181,25 +261,53 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
                       final allItems = snapshot.data?.docs ?? [];
 
-                      // Ak je vybraná podkategória, filtrujeme podľa field-u "category"
-                      final filteredItems = selectedSub == null
-                          ? allItems
-                          : allItems.where((doc) {
-                        final data =
-                        doc.data() as Map<String, dynamic>;
-                        final itemCategory =
-                            data['category'] as String? ?? '';
-                        return itemCategory == selectedSub;
-                      }).toList();
+                      // 1. filter podľa podkategórie (Tričko / Bunda / ...)
+                      List<QueryDocumentSnapshot> filteredItems;
+                      if (selectedSub == null) {
+                        filteredItems = allItems;
+                      } else {
+                        filteredItems = allItems.where((doc) {
+                          final data =
+                              doc.data() as Map<String, dynamic>;
+                          final itemCategory =
+                              data['category'] as String? ?? '';
+                          return itemCategory == selectedSub;
+                        }).toList();
+                      }
+
+                      // 2. filter podľa sezóny (Celoročne / Jar/Jeseň / Leto / Zima)
+                      if (showSeasonFilter && selectedSeason != null) {
+                        filteredItems = filteredItems.where((doc) {
+                          final data =
+                              doc.data() as Map<String, dynamic>;
+                          final dynamic seasonData = data['season'];
+
+                          if (seasonData is List) {
+                            final seasonsList =
+                                List<String>.from(seasonData);
+                            return seasonsList.contains(selectedSeason);
+                          } else if (seasonData is String) {
+                            return seasonData == selectedSeason;
+                          }
+                          return false;
+                        }).toList();
+                      }
 
                       if (filteredItems.isEmpty) {
-                        final emptyText = selectedSub == null
-                            ? 'V kategórii "$category" nemáte žiadne oblečenie.'
-                            : 'V podkategórii "$selectedSub" nemáte žiadne oblečenie.';
+                        String base = '';
+                        if (selectedSub == null) {
+                          base = 'V kategórii "$category"';
+                        } else {
+                          base = 'V podkategórii "$selectedSub"';
+                        }
+
+                        if (showSeasonFilter && selectedSeason != null) {
+                          base += ' pre sezónu "$selectedSeason"';
+                        }
 
                         return Center(
                           child: Text(
-                            emptyText,
+                            '$base nemáte žiadne oblečenie.',
                             style: TextStyle(
                               color: Theme.of(context)
                                   .textTheme
@@ -214,7 +322,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       return GridView.builder(
                         padding: const EdgeInsets.all(16.0),
                         gridDelegate:
-                        const SliverGridDelegateWithFixedCrossAxisCount(
+                            const SliverGridDelegateWithFixedCrossAxisCount(
                           crossAxisCount: 2,
                           crossAxisSpacing: 16.0,
                           mainAxisSpacing: 16.0,
@@ -223,7 +331,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         itemCount: filteredItems.length,
                         itemBuilder: (context, index) {
                           final itemData = filteredItems[index].data()
-                          as Map<String, dynamic>;
+                              as Map<String, dynamic>;
                           final imageUrl =
                               itemData['imageUrl'] as String? ?? '';
                           final isClean =
@@ -235,32 +343,30 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           final name =
                               itemData['name'] as String? ?? 'Neznáma položka';
 
-                          // ➜ kategória (Tričko, Bunda, Tepláky…)
+                          // kategória (Tričko, Bunda, Tepláky…)
                           final itemCategory =
                               itemData['category'] as String? ?? '';
 
-                          // ➜ typ sezóny (letná / prechodná / zimná) – zatiaľ dobrovoľné
-                          final seasonType =
-                          itemData['seasonType'] as String?;
-                          String seasonLabel = '';
-                          switch (seasonType) {
-                            case 'winter':
-                              seasonLabel = 'Zimná';
-                              break;
-                            case 'mid':
-                              seasonLabel = 'Prechodná';
-                              break;
-                            case 'summer':
-                              seasonLabel = 'Letná';
-                              break;
-                            default:
-                              seasonLabel = '';
+                          // sezóny – môžu byť uložené ako list alebo string
+                          final dynamic seasonData = itemData['season'];
+                          String seasonText = '';
+                          if (seasonData is List) {
+                            seasonText =
+                                List<String>.from(seasonData).join(', ');
+                          } else if (seasonData is String) {
+                            seasonText = seasonData;
                           }
 
-                          // Text v štýle "Bunda • Zimná" alebo len "Bunda"
-                          final String categoryLine = seasonLabel.isNotEmpty
-                              ? '$itemCategory • $seasonLabel'
-                              : itemCategory;
+                          // Text v štýle "Bunda • Zima" alebo len "Bunda" / len sezóna
+                          String categoryLine = '';
+                          if (itemCategory.isNotEmpty &&
+                              seasonText.isNotEmpty) {
+                            categoryLine = '$itemCategory • $seasonText';
+                          } else if (itemCategory.isNotEmpty) {
+                            categoryLine = itemCategory;
+                          } else if (seasonText.isNotEmpty) {
+                            categoryLine = seasonText;
+                          }
 
                           return InkWell(
                             onTap: () {
@@ -291,65 +397,65 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                   Expanded(
                                     child: ClipRRect(
                                       borderRadius:
-                                      const BorderRadius.vertical(
+                                          const BorderRadius.vertical(
                                         top: Radius.circular(12.0),
                                       ),
                                       child: imageUrl.isNotEmpty
                                           ? Image.network(
-                                        imageUrl,
-                                        fit: BoxFit.cover,
-                                        loadingBuilder: (context, child,
-                                            loadingProgress) {
-                                          if (loadingProgress == null) {
-                                            return child;
-                                          }
-                                          return Center(
-                                            child:
-                                            CircularProgressIndicator(
-                                              value: loadingProgress
-                                                  .expectedTotalBytes !=
-                                                  null
-                                                  ? loadingProgress
-                                                  .cumulativeBytesLoaded /
-                                                  loadingProgress
-                                                      .expectedTotalBytes!
-                                                  : null,
-                                            ),
-                                          );
-                                        },
-                                        errorBuilder: (context, error,
-                                            stackTrace) {
-                                          debugPrint(
-                                              'Image error: $error');
+                                              imageUrl,
+                                              fit: BoxFit.cover,
+                                              loadingBuilder: (context, child,
+                                                  loadingProgress) {
+                                                if (loadingProgress == null) {
+                                                  return child;
+                                                }
+                                                return Center(
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                    value: loadingProgress
+                                                                .expectedTotalBytes !=
+                                                            null
+                                                        ? loadingProgress
+                                                                .cumulativeBytesLoaded /
+                                                            loadingProgress
+                                                                .expectedTotalBytes!
+                                                        : null,
+                                                  ),
+                                                );
+                                              },
+                                              errorBuilder: (context, error,
+                                                  stackTrace) {
+                                                debugPrint(
+                                                    'Image error: $error');
 
-                                          return Column(
-                                            mainAxisAlignment:
-                                            MainAxisAlignment.center,
-                                            children: [
-                                              const Icon(
-                                                Icons.broken_image,
-                                                size: 40,
-                                              ),
-                                              const SizedBox(height: 4),
-                                              Text(
-                                                '$error',
-                                                textAlign:
-                                                TextAlign.center,
-                                                style: const TextStyle(
-                                                  fontSize: 8,
-                                                ),
-                                              ),
-                                            ],
-                                          );
-                                        },
-                                      )
+                                                return Column(
+                                                  mainAxisAlignment:
+                                                      MainAxisAlignment.center,
+                                                  children: [
+                                                    const Icon(
+                                                      Icons.broken_image,
+                                                      size: 40,
+                                                    ),
+                                                    const SizedBox(height: 4),
+                                                    Text(
+                                                      '$error',
+                                                      textAlign:
+                                                          TextAlign.center,
+                                                      style: const TextStyle(
+                                                        fontSize: 8,
+                                                      ),
+                                                    ),
+                                                  ],
+                                                );
+                                              },
+                                            )
                                           : const Center(
-                                        child: Icon(
-                                          Icons.image_not_supported,
-                                          size: 50,
-                                          color: Colors.grey,
-                                        ),
-                                      ),
+                                              child: Icon(
+                                                Icons.image_not_supported,
+                                                size: 50,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
                                     ),
                                   ),
                                   Padding(
@@ -360,113 +466,4 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                                     child: Text(
                                       name,
                                       style: const TextStyle(
-                                          fontWeight: FontWeight.bold),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  // ➜ tu zobrazíme "Bunda • Zimná" alebo podobne
-                                  if (categoryLine.isNotEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 8.0,
-                                      ),
-                                      child: Text(
-                                        categoryLine,
-                                        style: TextStyle(
-                                          color: Colors.grey.shade700,
-                                          fontSize: 12,
-                                        ),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                  Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 8.0,
-                                      vertical: 4.0,
-                                    ),
-                                    child: Text(
-                                      colors,
-                                      style: TextStyle(
-                                        color: Colors.grey.shade600,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ),
-                                  Row(
-                                    mainAxisAlignment:
-                                    MainAxisAlignment.spaceBetween,
-                                    children: [
-                                      Padding(
-                                        padding: const EdgeInsets.only(
-                                            left: 8.0),
-                                        child: Text(
-                                          isClean ? 'Čisté' : 'Špinavé',
-                                          style: TextStyle(
-                                            color: isClean
-                                                ? Colors.green.shade700
-                                                : Colors.red.shade700,
-                                            fontWeight: FontWeight.bold,
-                                          ),
-                                        ),
-                                      ),
-                                      IconButton(
-                                        icon: Icon(
-                                          isClean
-                                              ? Icons.check_circle
-                                              : Icons.warning,
-                                          color: isClean
-                                              ? Colors.green
-                                              : Colors.red,
-                                        ),
-                                        onPressed: () async {
-                                          try {
-                                            await _firestore
-                                                .collection('users')
-                                                .doc(_auth!.uid)
-                                                .collection('wardrobe')
-                                                .doc(itemId)
-                                                .update(
-                                              {'isClean': !isClean},
-                                            );
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Položka označená ako ${isClean ? 'špinavá' : 'čistá'}.',
-                                                ),
-                                              ),
-                                            );
-                                          } catch (e) {
-                                            ScaffoldMessenger.of(context)
-                                                .showSnackBar(
-                                              SnackBar(
-                                                content: Text(
-                                                  'Chyba pri aktualizácii stavu: ${e.toString()}',
-                                                ),
-                                              ),
-                                            );
-                                          }
-                                        },
-                                        tooltip: isClean
-                                            ? 'Označ ako špinavé'
-                                            : 'Označ ako čisté',
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          );
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            );
-          }).toList(),
-        ),
-      ),
-    );
-  }
-}
+            
