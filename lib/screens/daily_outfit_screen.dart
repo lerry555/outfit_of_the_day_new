@@ -13,11 +13,33 @@ import 'package:http/http.dart' as http;
 /// isTomorrow = false -> dnešný outfit
 /// isTomorrow = true  -> zajtrajší outfit
 class DailyOutfitScreen extends StatefulWidget {
+  /// Ak je true, generuje sa outfit na zajtra. Inak na dnes.
   final bool isTomorrow;
+
+  /// Ak je true, ide o outfit na konkrétnu udalosť (party, rande, práca...),
+  /// nie len bežný deň.
+  final bool isEvent;
+
+  /// Názov udalosti, napr. "Vianočný večierok v práci".
+  final String? eventTitle;
+
+  /// Typ udalosti, napr. "party", "rande", "práca" (do budúcna z kalendára).
+  final String? eventType;
+
+  /// Dátum udalosti (dnes / zajtra), môžeme ho neskôr využiť v AI logike.
+  final DateTime? eventDate;
+
+  /// Miesto udalosti (mesto, podnik...), aby AI vedel lepšie odhadnúť kontext.
+  final String? eventLocation;
 
   const DailyOutfitScreen({
     Key? key,
     required this.isTomorrow,
+    this.isEvent = false,
+    this.eventTitle,
+    this.eventType,
+    this.eventDate,
+    this.eventLocation,
   }) : super(key: key);
 
   @override
@@ -30,143 +52,49 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
 
   bool _isLoading = true;
   bool _isError = false;
-  String? _errorMessage;
+  String _errorMessage = '';
 
-  String? _aiText;
-  List<String> _outfitImages = [];
-
-  List<Map<String, dynamic>> _wardrobe = [];
   Map<String, dynamic> _userPreferences = {};
+  List<Map<String, dynamic>> _wardrobe = [];
   Position? _currentPosition;
+
+  String? _stylistResponse;
+  List<String> _outfitImageUrls = [];
+  List<Map<String, dynamic>> _chosenItems = [];
 
   @override
   void initState() {
     super.initState();
-
-    final ui.Locale loc = ui.PlatformDispatcher.instance.locale;
-    print("🔥🔥 INIT STATE — SYSTEM LOCALE: ${loc.languageCode}-${loc.countryCode}");
-    print("🔥🔥 INIT STATE — ALL LOCALES: ${ui.PlatformDispatcher.instance.locales}");
-
-    _loadDataAndGenerateOutfit();
+    _loadDataAndRequestOutfit();
   }
 
-
-  /// Helper: konvertuje všetky Timestampy na ISO string,
-  /// aby ich vedel jsonEncode() zakódovať.
-  Map<String, dynamic> _normalizeMapForJson(Map<String, dynamic> data) {
-    final result = <String, dynamic>{};
-
-    data.forEach((key, value) {
-      if (value is Timestamp) {
-        result[key] = value.toDate().toIso8601String();
-      } else if (value is Map<String, dynamic>) {
-        result[key] = _normalizeMapForJson(value);
-      } else if (value is List) {
-        result[key] = value.map((item) {
-          if (item is Timestamp) {
-            return item.toDate().toIso8601String();
-          } else if (item is Map<String, dynamic>) {
-            return _normalizeMapForJson(item);
-          } else {
-            return item;
-          }
-        }).toList();
-      } else {
-        result[key] = value;
-      }
+  Future<void> _loadDataAndRequestOutfit() async {
+    setState(() {
+      _isLoading = true;
+      _isError = false;
+      _errorMessage = '';
     });
 
-    return result;
-  }
-
-  Future<void> _loadDataAndGenerateOutfit() async {
-    print("🔥🔥 FUNCTION STARTED: _loadDataAndGenerateOutfit()");
-
-    final user = _auth.currentUser;
-    if (user == null) {
-      setState(() {
-        _isLoading = false;
-        _isError = true;
-        _errorMessage = 'Nie si prihlásený.';
-      });
-      return;
-    }
-
     try {
-      await Future.wait([
-        _loadWardrobe(),
-        _loadUserPreferences(),
-        _loadLocation(),
-      ]);
-
-      if (!mounted) return;
-
-      await _callStylistForOutfit();
+      await _determinePosition();
+      await _loadWardrobe();
+      await _loadUserPreferences();
+      await _requestOutfitFromStylist();
     } catch (e) {
-      debugPrint('Chyba v _loadDataAndGenerateOutfit: $e');
-      setState(() {
-        _isLoading = false;
-        _isError = true;
-        _errorMessage =
-        'Ups, niečo sa pokazilo pri generovaní outfitu. Skús to neskôr znova.';
-      });
-    }
-  }
-
-  Future<void> _loadWardrobe() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    try {
-      final snap = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('wardrobe')
-          .get();
-
-      final data = snap.docs.map((doc) {
-        final raw = doc.data();
-        final normalized =
-        _normalizeMapForJson(Map<String, dynamic>.from(raw));
-        normalized['id'] = doc.id;
-        return normalized;
-      }).toList();
-
-      _wardrobe = List<Map<String, dynamic>>.from(data);
-    } catch (e) {
-      debugPrint('Chyba pri načítaní šatníka: $e');
-      _wardrobe = [];
-    }
-  }
-
-  Future<void> _loadUserPreferences() async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    try {
-      final doc = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('settings')
-          .doc('preferences')
-          .get();
-
-      if (doc.exists) {
-        final raw = doc.data() ?? <String, dynamic>{};
-        _userPreferences =
-            _normalizeMapForJson(Map<String, dynamic>.from(raw));
-      } else {
-        _userPreferences = {};
+      debugPrint('Chyba pri načítaní dát/outfitu: $e');
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _isError = true;
+          _errorMessage = 'Ups, niečo sa pokazilo pri načítaní outfitu.';
+        });
       }
-    } catch (e) {
-      debugPrint('Chyba pri načítaní preferencií: $e');
-      _userPreferences = {};
     }
   }
 
-  Future<void> _loadLocation() async {
+  Future<void> _determinePosition() async {
     try {
-      final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
         debugPrint('Location services disabled');
         return;
@@ -190,17 +118,58 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
         desiredAccuracy: LocationAccuracy.high,
       );
       _currentPosition = position;
+      debugPrint(
+          '📍 Poloha: lat=${position.latitude}, lon=${position.longitude}');
     } catch (e) {
-      debugPrint('Chyba pri získavaní polohy: $e');
+      debugPrint('Chyba pri zisťovaní polohy: $e');
     }
   }
 
-  Future<void> _callStylistForOutfit() async {
+  Future<void> _loadWardrobe() async {
     final user = _auth.currentUser;
-    final ui.Locale loc = ui.PlatformDispatcher.instance.locale;
-    print("🔥🔥🔥 SYSTEM LOCALE DETECTED: ${loc.languageCode}-${loc.countryCode}");
-    print("🔥🔥🔥 ALL LOCALES: ${ui.PlatformDispatcher.instance.locales}");
-    print("🔥🔥 ENTERED _callStylistForOutfit() — LANGUAGE CHECK RUNNING");
+    if (user == null) return;
+
+    try {
+      final snapshot = await _firestore
+          .collection('wardrobe')
+          .doc(user.uid)
+          .collection('items')
+          .get();
+
+      final data = snapshot.docs
+          .map((doc) => {
+                'id': doc.id,
+                ...doc.data(),
+              })
+          .toList();
+
+      _wardrobe = List<Map<String, dynamic>>.from(data);
+    } catch (e) {
+      debugPrint('Chyba pri načítaní šatníka: $e');
+      _wardrobe = [];
+    }
+  }
+
+  Future<void> _loadUserPreferences() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc =
+          await _firestore.collection('users').doc(user.uid).get();
+
+      if (doc.exists) {
+        _userPreferences = doc.data() ?? {};
+      }
+    } catch (e) {
+      debugPrint('Chyba pri načítaní preferencií: $e');
+      _userPreferences = {};
+    }
+  }
+
+  Future<void> _requestOutfitFromStylist() async {
+    final user = _auth.currentUser;
+    debugPrint("🔥 _requestOutfitFromStylist spustené — LANGUAGE CHECK RUNNING");
 
     if (user == null) return;
 
@@ -209,7 +178,7 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
         _isLoading = false;
         _isError = true;
         _errorMessage =
-        'V šatníku zatiaľ nemáš žiadne oblečenie. Skús najprv pridať pár kúskov.';
+            'V šatníku zatiaľ nemáš žiadne oblečenie. Skús najprv pridať pár kúskov.';
       });
       return;
     }
@@ -217,24 +186,69 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
     const String functionUrl =
         'https://us-central1-outfitoftheday-4d401.cloudfunctions.net/chatWithStylist';
 
-    final String userQuery = widget.isTomorrow
-        ? 'Prosím, navrhni mi outfit na zajtra podľa počasia a môjho šatníka. Ide o denný outfit na bežný deň.'
-        : 'Prosím, navrhni mi outfit na dnešok od teraz do večera podľa počasia a môjho šatníka. Ide o dnešný bežný deň.';
+    // ✨ Pripravíme správu pre AI podľa toho,
+    // či ide o bežný deň alebo špeciálnu udalosť.
+    late final String userQuery;
+
+    if (widget.isEvent) {
+      // Špeciálny mód pre udalosti – AI sa snaží vybrať skôr "vylepšený" outfit.
+      final String whenText = widget.isTomorrow
+          ? 'na zajtrajšiu špeciálnu udalosť'
+          : 'na dnešnú špeciálnu udalosť';
+
+      final String titlePart =
+          (widget.eventTitle != null && widget.eventTitle!.trim().isNotEmpty)
+              ? ' Udalosť: ${widget.eventTitle}.'
+              : '';
+
+      final String typePart =
+          (widget.eventType != null && widget.eventType!.trim().isNotEmpty)
+              ? ' Typ udalosti: ${widget.eventType}.'
+              : '';
+
+      final String locationPart = (widget.eventLocation != null &&
+              widget.eventLocation!.trim().isNotEmpty)
+          ? ' Miesto: ${widget.eventLocation}.'
+          : '';
+
+      userQuery =
+          'Prosím, navrhni mi outfit $whenText podľa počasia a môjho šatníka.'
+          '$titlePart$typePart$locationPart '
+          'Outfit by mal pôsobiť vhodne na túto udalosť (môže byť o trochu viac štýlový alebo formálny, ak to dáva zmysel), '
+          'ale stále musí byť praktický vzhľadom na počasie.';
+    } else {
+      // Pôvodné správanie pre bežný deň (dnes / zajtra)
+      userQuery = widget.isTomorrow
+          ? 'Prosím, navrhni mi outfit na zajtra podľa počasia a môjho šatníka. Ide o denný outfit na bežný deň.'
+          : 'Prosím, navrhni mi outfit na dnešok od teraz do večera podľa počasia a môjho šatníka. Ide o dnešný bežný deň.';
+    }
 
     // 👇 Zistenie jazyka priamo zo systému (Android/iOS), nie z lokalizácie appky
     final ui.Locale systemLocale = ui.PlatformDispatcher.instance.locale;
-    final String languageCode = systemLocale.languageCode; // napr. "sk", "en", "de", "fr"...
+    final String languageCode =
+        systemLocale.languageCode; // napr. "sk", "en", "de", "fr"...
 
-    debugPrint('📱 System locale: ${systemLocale.toLanguageTag()} | languageCode: $languageCode');
+    debugPrint(
+        '📱 System locale: ${systemLocale.toLanguageTag()} | languageCode: $languageCode');
 
     final Map<String, dynamic> body = {
       'userQuery': userQuery,
       'wardrobe': _wardrobe,
       'userPreferences': _userPreferences,
       'isTomorrow': widget.isTomorrow,
+      'isEvent': widget.isEvent,
       'language': languageCode, // 🔥 ODTIAĽTO SA PRENESIE DO BACKENDU
     };
 
+    // Ak ide o špeciálnu udalosť, pošleme do backendu aj základné meta-dáta.
+    if (widget.isEvent) {
+      body['event'] = {
+        'title': widget.eventTitle,
+        'type': widget.eventType,
+        'date': widget.eventDate?.toIso8601String(),
+        'location': widget.eventLocation,
+      };
+    }
 
     if (_currentPosition != null) {
       body['location'] = {
@@ -259,157 +273,157 @@ class _DailyOutfitScreenState extends State<DailyOutfitScreen> {
           _isLoading = false;
           _isError = true;
           _errorMessage =
-          'Stylista teraz neodpovedá (chyba ${response.statusCode}). Skús to prosím neskôr znova.';
+              'Stylista teraz neodpovedá (chyba ${response.statusCode}). Skús to prosím neskôr znova.';
         });
         return;
       }
 
-      final data = jsonDecode(response.body) as Map<String, dynamic>? ??
-          <String, dynamic>{};
+      final data =
+          jsonDecode(response.body) as Map<String, dynamic>? ??
+              <String, dynamic>{};
 
       final text = data['text'] as String? ??
           'Pozrel som sa do tvojho šatníka a vybral som outfit, ale nepodarilo sa načítať detailný popis.';
 
       final outfitImagesDynamic =
           data['outfit_images'] as List<dynamic>? ?? [];
-      final images = outfitImagesDynamic
-          .map((e) => e.toString())
-          .where((e) => e.isNotEmpty)
+      final chosenItemsDynamic =
+          data['chosen_items'] as List<dynamic>? ?? [];
+
+      _outfitImageUrls = outfitImagesDynamic
+          .whereType<String>()
+          .toList();
+
+      _chosenItems = chosenItemsDynamic
+          .whereType<Map<String, dynamic>>()
           .toList();
 
       setState(() {
-        _aiText = text;
-        _outfitImages = images;
         _isLoading = false;
-        _isError = false;
+        _stylistResponse = text;
       });
     } catch (e) {
-      debugPrint('Chyba pri volaní chatWithStylist: $e');
+      debugPrint('Výnimka pri volaní chatWithStylist: $e');
+      if (!mounted) return;
       setState(() {
         _isLoading = false;
         _isError = true;
         _errorMessage =
-        'Ups, niečo sa pokazilo pri komunikácii s AI stylistom. Skús to neskôr znova.';
+            'Nepodarilo sa spojiť so stylistom. Skontroluj internet a skús znova.';
       });
     }
   }
 
-
-
-  /// Jednoduché zobrazenie jedného kusu outfitu bez textového labelu.
-  Widget _buildOutfitImage(String imageUrl) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12.0),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: AspectRatio(
-          aspectRatio: 3 / 2,
-          child: Image.network(
-            imageUrl,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: Colors.grey.shade200,
-              child: const Center(
-                child: Icon(Icons.broken_image_outlined),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
-    final title = widget.isTomorrow ? 'Outfit na zajtra' : 'Dnešný outfit';
+    final String title = widget.isEvent
+        ? (widget.isTomorrow ? 'Outfit na zajtrajšiu udalosť'
+                             : 'Outfit na dnešnú udalosť')
+        : (widget.isTomorrow ? 'Outfit na zajtra' : 'Dnešný outfit');
 
     return Scaffold(
       appBar: AppBar(
         title: Text(title),
       ),
       body: _isLoading
-          ? const Center(
-        child: CircularProgressIndicator(),
-      )
+          ? const Center(child: CircularProgressIndicator())
           : _isError
-          ? Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Text(
-            _errorMessage ?? 'Ups, niečo sa pokazilo.',
-            textAlign: TextAlign.center,
-          ),
-        ),
-      )
-          : SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (_outfitImages.isNotEmpty)
-              ..._outfitImages
-                  .map((url) => _buildOutfitImage(url))
-                  .toList()
-            else
-              Text(
-                'AI vybrala outfit, ale nenašla fotky kúskov. Skús skontrolovať, či majú položky v šatníku imageUrl.',
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            const SizedBox(height: 12),
-            if (_aiText != null) ...[
-              Text(
-                'Prečo tento outfit:',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                _aiText!,
-                style: Theme.of(context).textTheme.bodyMedium,
-              ),
-            ],
-            const SizedBox(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () {
-                      // TODO: uložiť outfit ako "OK, beriem" do Firestore (dailyOutfits)
-                      Navigator.pop(context);
-                    },
-                    child: const Text('OK, beriem'),
+              ? Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Text(
+                      _errorMessage,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      setState(() {
-                        _isLoading = true;
-                        _isError = false;
-                        _errorMessage = null;
-                        _aiText = null;
-                        _outfitImages = [];
-                      });
-                      _callStylistForOutfit();
-                    },
-                    child: const Text('Ukáž inú kombináciu'),
-                  ),
-                ),
-              ],
+                )
+              : _buildContent(),
+    );
+  }
+
+  Widget _buildContent() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (_stylistResponse != null) ...[
+            Text(
+              'Návrh od stylistu:',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              _stylistResponse!,
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+          ],
+          if (_outfitImageUrls.isNotEmpty) ...[
+            Text(
+              'Náhľad outfitu:',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 8),
             SizedBox(
-              width: double.infinity,
-              child: TextButton(
-                onPressed: () {
-                  // Neskôr: otvoriť chat so stylistom a odovzdať tento outfit
-                  Navigator.pop(context);
+              height: 220,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _outfitImageUrls.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 8),
+                itemBuilder: (context, index) {
+                  final url = _outfitImageUrls[index];
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      width: 160,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 160,
+                          color: Colors.grey[300],
+                          child: const Center(
+                            child: Icon(Icons.broken_image),
+                          ),
+                        );
+                      },
+                    ),
+                  );
                 },
-                child: const Text('Upraviť outfit v chate'),
               ),
             ),
+            const SizedBox(height: 16),
           ],
-        ),
+          if (_chosenItems.isNotEmpty) ...[
+            Text(
+              'Vybrané kúsky zo šatníka:',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Column(
+              children: _chosenItems.map((item) {
+                final name = item['name'] ?? 'Bez názvu';
+                final category = item['category'] ?? 'Neznáma kategória';
+                return ListTile(
+                  leading: const Icon(Icons.check),
+                  title: Text(name.toString()),
+                  subtitle: Text(category.toString()),
+                );
+              }).toList(),
+            ),
+          ],
+          const SizedBox(height: 16),
+          Center(
+            child: TextButton(
+              onPressed: () {
+                // Neskôr: otvoriť chat so stylistom a odovzdať tento outfit
+                Navigator.pop(context);
+              },
+              child: const Text('Upraviť outfit v chate'),
+            ),
+          ),
+        ],
       ),
     );
   }
