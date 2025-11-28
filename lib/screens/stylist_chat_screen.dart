@@ -27,10 +27,14 @@ class StylistChatScreen extends StatefulWidget {
   /// Ak je true a initialPrompt nie je null → správa sa odošle automaticky po načítaní dát
   final bool autoSendInitialPrompt;
 
+  /// Dáta o konkrétnom kúsku, o ktorom sa ideme radiť (napr. z "Poradiť sa o tomto kúsku")
+  final Map<String, dynamic>? initialItemData;
+
   const StylistChatScreen({
     Key? key,
     this.initialPrompt,
     this.autoSendInitialPrompt = false,
+    this.initialItemData,
   }) : super(key: key);
 
   @override
@@ -80,7 +84,34 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _isLoadingData = false;
     });
 
-    // Ak prišiel initialPrompt a máme ho poslať automaticky
+    // 🧥 Ak prišiel konkrétny kúsok (napr. z "Poradiť sa o tomto kúsku"),
+    // ukážeme ho hneď na začiatku – AI správa + fotka
+    if (widget.initialItemData != null) {
+      final item = widget.initialItemData!;
+      final String imageUrl = (item['imageUrl'] as String?) ?? '';
+      final String name = (item['name'] as String?) ?? '';
+      final String mainCategory = (item['mainCategory'] as String?) ?? '';
+      final String category = (item['category'] as String?) ?? '';
+
+      final buffer = StringBuffer();
+      buffer.writeln('Toto je kúsok, o ktorom sa ideme rozprávať.');
+
+      if (name.isNotEmpty) buffer.writeln('Názov: $name.');
+      if (mainCategory.isNotEmpty) buffer.writeln('Kategória: $mainCategory.');
+      if (category.isNotEmpty) buffer.writeln('Typ: $category.');
+
+      buffer.writeln('Čo by si chcel vedieť o tomto kúsku?');
+
+      _addMessage(
+        Message(
+          text: buffer.toString(),
+          imageUrls: imageUrl.isNotEmpty ? [imageUrl] : const [],
+          isUser: false,
+        ),
+      );
+    }
+
+    // Ak prišiel initialPrompt a máme ho poslať automaticky (napr. z iného miesta)
     if (widget.initialPrompt != null && widget.autoSendInitialPrompt) {
       Future.microtask(() {
         _handleSubmitted(widget.initialPrompt!.trim());
@@ -145,7 +176,6 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _currentPosition = position;
 
       // TODO: zavolať Cloud Function / OpenWeather a uložiť do _currentWeather
-      // zatiaľ necháme null, aby UI fungovalo aj bez nej
     } catch (e) {
       debugPrint('Chyba pri získavaní polohy: $e');
     }
@@ -199,17 +229,19 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           'Prepáč, teraz sa mi trochu zauzlili módne myšlienky. Skús to prosím ešte raz neskôr. 💫';
 
       final imageUrls = (response['imageUrls'] as List<dynamic>?)
-          ?.map((e) => e.toString())
-          .toList() ??
+              ?.map((e) => e.toString())
+              .toList() ??
           [];
 
-      _addMessage(Message(text: replyText, imageUrls: imageUrls, isUser: false));
+      _addMessage(
+        Message(text: replyText, imageUrls: imageUrls, isUser: false),
+      );
     } catch (e) {
       debugPrint('Chyba pri volaní stylist API: $e');
       _addMessage(
         Message(
           text:
-          'Ups, niečo sa pokazilo. Skús to prosím o chvíľku znova. 🌧️ (Technické info: $e)',
+              'Ups, niečo sa pokazilo. Skús to prosím o chvíľku znova. 🌧️ (Technické info: $e)',
           isUser: false,
         ),
       );
@@ -231,6 +263,19 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       throw Exception('User not logged in');
     }
 
+    // ⚙️ Konverzia šatníka do formátu, ktorý vie jsonEncode spracovať
+    final wardrobeForApi = wardrobe.map((item) {
+      return item.map((key, value) {
+        if (value is Timestamp) {
+          return MapEntry(
+            key,
+            value.toDate().toIso8601String(),
+          );
+        }
+        return MapEntry(key, value);
+      });
+    }).toList();
+
     // TODO: nahraď túto URL reálnou HTTPS Cloud Function adresou
     const String functionUrl =
         'https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/chatWithStylist';
@@ -238,14 +283,15 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     final body = {
       'userId': user.uid,
       'userMessage': userMessage,
-      'wardrobe': wardrobe,
+      'wardrobe': wardrobeForApi,
       'location': position == null
           ? null
           : {
-        'lat': position.latitude,
-        'lon': position.longitude,
-      },
+              'lat': position.latitude,
+              'lon': position.longitude,
+            },
       'weather': weather,
+      // v budúcnosti sem môžeme pridať aj widget.initialItemData
     };
 
     final response = await http.post(
@@ -266,10 +312,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   Widget _buildMessageBubble(Message message) {
     final alignment =
-    message.isUser ? Alignment.centerRight : Alignment.centerLeft;
-    final bgColor = message.isUser
-        ? const Color(0xFF4E5AE8)
-        : Colors.grey.shade200;
+        message.isUser ? Alignment.centerRight : Alignment.centerLeft;
+    final bgColor =
+        message.isUser ? const Color(0xFF4E5AE8) : Colors.grey.shade200;
     final textColor = message.isUser ? Colors.white : Colors.black87;
 
     return Align(
@@ -282,9 +327,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           borderRadius: BorderRadius.circular(16.0),
         ),
         child: Column(
-          crossAxisAlignment: message.isUser
-              ? CrossAxisAlignment.end
-              : CrossAxisAlignment.start,
+          crossAxisAlignment:
+              message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
             if (message.text.isNotEmpty)
               Text(
@@ -297,16 +341,16 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                 children: message.imageUrls
                     .map(
                       (url) => Container(
-                    margin: const EdgeInsets.only(top: 4.0),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8.0),
-                      child: Image.network(
-                        url,
-                        fit: BoxFit.cover,
+                        margin: const EdgeInsets.only(top: 4.0),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8.0),
+                          child: Image.network(
+                            url,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                )
+                    )
                     .toList(),
               ),
             ],
@@ -324,8 +368,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       ),
       body: Column(
         children: [
-          if (_isLoadingData)
-            const LinearProgressIndicator(minHeight: 2),
+          if (_isLoadingData) const LinearProgressIndicator(minHeight: 2),
           Expanded(
             child: ListView.builder(
               controller: _scrollController,
@@ -341,7 +384,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           SafeArea(
             child: Container(
               padding:
-              const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+                  const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
               color: Colors.white,
               child: Row(
                 children: [
@@ -359,17 +402,17 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                   IconButton(
                     icon: _isSending
                         ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
                         : const Icon(Icons.send),
                     color: const Color(0xFF4E5AE8),
                     onPressed: _isSending
                         ? null
                         : () => _handleSubmitted(
-                      _textController.text.trim(),
-                    ),
+                              _textController.text.trim(),
+                            ),
                   ),
                 ],
               ),
