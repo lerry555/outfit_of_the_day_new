@@ -22,28 +22,62 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final ImagePicker _picker = ImagePicker();
 
   File? _selectedOutfitImage;
+  bool _isAddingSampleWardrobe = false;
+
+  Future<void> _pickImage(ImageSource source) async {
+    final picker = ImagePicker();
+    final pickedFile = await picker.pickImage(source: source, imageQuality: 85);
+
+    if (pickedFile != null) {
+      setState(() {
+        _selectedOutfitImage = File(pickedFile.path);
+      });
+    }
+  }
+
+  Future<void> _navigateToAddClothing() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const AddClothingScreen(),
+      ),
+    );
+  }
+
+  Future<void> _navigateToWardrobe() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const WardrobeScreen(),
+      ),
+    );
+  }
+
+  String _getGreetingName(User? user) {
+    if (user == null) return 'Ahoj';
+    final displayName = user.displayName;
+    if (displayName == null || displayName.trim().isEmpty) {
+      return 'Ahoj';
+    }
+    final firstName = displayName.split(' ').first;
+    return 'Ahoj, $firstName';
+  }
 
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
-    final String greetingName =
-    (user?.displayName != null && user!.displayName!.trim().isNotEmpty)
-        ? user.displayName!.split(' ').first
-        : 'Ahoj';
+    final greetingName = _getGreetingName(user);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('#OOTD'),
+        title: const Text('Outfit Of The Day'),
         actions: [
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
               await _auth.signOut();
-              if (!mounted) return;
-              // Main widget cez StreamBuilder presmeruje na login
             },
           ),
         ],
@@ -53,7 +87,6 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Pozdrav
             Text(
               '$greetingName 👋',
               style: Theme.of(context).textTheme.headlineMedium,
@@ -65,74 +98,48 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            // KARTA: Dnešný outfit
+            // KARTA: Vybrať outfit
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
               elevation: 4,
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Icon(Icons.wb_sunny_outlined, size: 32),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Dnešný outfit',
-                                style: Theme.of(context).textTheme.titleLarge,
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'AI ti z tvojho šatníka vyberie outfit podľa počasia.',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const SelectOutfitScreen(),
                     ),
-                    const SizedBox(height: 16),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                  const DailyOutfitScreen(isTomorrow: false),
-                                ),
-                              );
-                            },
-                            child: const Text('Outfit na dnes'),
-                          ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.wb_sunny_outlined, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Vybrať outfit',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Vyber si outfit na dnes, zajtra alebo na špeciálnu udalosť. AI všetko prispôsobí počasiu.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) =>
-                                  const DailyOutfitScreen(isTomorrow: true),
-                                ),
-                              );
-                            },
-                            child: const Text('Outfit na zajtra'),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -176,10 +183,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         Expanded(
-                          child: ElevatedButton.icon(
+                          child: OutlinedButton.icon(
                             icon: const Icon(Icons.photo_camera_outlined),
                             onPressed: () => _pickImage(ImageSource.camera),
-                            label: const Text('Odfotiť outfit'),
+                            label: const Text('Odfotiť'),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -219,53 +226,127 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // Sekcia: Šatník
-            Text(
-              'Spravovať šatník',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.dry_cleaning_outlined),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const WardrobeScreen(),
+            // KARTA: Šatník
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 2,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: _navigateToWardrobe,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.checkroom_outlined, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Tvoj šatník',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Pozri si všetky kúsky, ktoré máš pridané. Môžeš ich upraviť alebo vymazať.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                    label: const Text('Môj šatník'),
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.chevron_right),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.add),
-                    onPressed: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) => const AddClothingScreen(
-                            initialData: <String, dynamic>{},
-                            imageUrl: '',
-                          ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
+            // KARTA: Pridať nové oblečenie
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 2,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: _navigateToAddClothing,
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.add_photo_alternate_outlined, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Pridať oblečenie',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Odfotíš alebo vyberieš z galérie, AI doplní kategóriu a sezónu.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
                         ),
-                      );
-                    },
-                    label: const Text('Pridať nový kus'),
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.chevron_right),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              icon: const Icon(Icons.auto_awesome),
-              onPressed: _addSampleWardrobe,
-              label: const Text('Pridať vzorový šatník'),
+
+            const SizedBox(height: 16),
+
+            // KARTA: Vzorový šatník (len pomocné tlačidlo pre testovanie)
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 1,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Nemáš ešte šatník?',
+                      style: Theme.of(context).textTheme.titleMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Môžeme ti pridať pár ukážkových kúskov na testovanie AI.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ElevatedButton.icon(
+                        onPressed:
+                            _isAddingSampleWardrobe ? null : _addSampleWardrobe,
+                        icon: _isAddingSampleWardrobe
+                            ? const SizedBox(
+                                height: 16,
+                                width: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Icon(Icons.auto_awesome),
+                        label: const Text('Pridať vzorový šatník'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ],
         ),
@@ -273,80 +354,97 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _pickImage(ImageSource source) async {
-    try {
-      final picked = await _picker.pickImage(source: source, imageQuality: 80);
-      if (picked == null) return;
-
-      setState(() {
-        _selectedOutfitImage = File(picked.path);
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Fotka outfitu pripravená. AI analýza bude doplnená.'),
-        ),
-      );
-    } catch (e) {
-      debugPrint('Chyba pri výbere obrázka: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nepodarilo sa načítať obrázok.')),
-      );
-    }
-  }
-
   Future<void> _addSampleWardrobe() async {
     final user = _auth.currentUser;
-    if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Nie si prihlásený.')),
-      );
-      return;
-    }
+    if (user == null) return;
+
+    setState(() {
+      _isAddingSampleWardrobe = true;
+    });
 
     try {
-      final ref =
-      _firestore.collection('users').doc(user.uid).collection('wardrobe');
+      final itemsRef = _firestore
+          .collection('wardrobe')
+          .doc(user.uid)
+          .collection('items');
 
       final batch = _firestore.batch();
 
-      final items = [
+      final sampleItems = [
         {
-          'name': 'Biele tričko',
+          'name': 'Čierne tričko',
           'category': 'top',
-          'type': 'tshirt',
-          'color': 'white',
+          'subCategory': 'tshirt',
+          'color': 'čierna',
+          'season': 'all_seasons',
           'style': 'casual',
-          'season': 'all',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
         },
         {
-          'name': 'Čierne rifle',
+          'name': 'Modré rifle',
           'category': 'bottom',
-          'type': 'jeans',
-          'color': 'black',
+          'subCategory': 'jeans',
+          'color': 'modrá',
+          'season': 'all_seasons',
           'style': 'casual',
-          'season': 'all',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
         },
         {
-          'name': 'Sivá mikina',
-          'category': 'mid_layer',
-          'type': 'hoodie',
-          'color': 'grey',
-          'style': 'casual',
-          'season': 'autumn',
+          'name': 'Biela košeľa',
+          'category': 'top',
+          'subCategory': 'shirt',
+          'color': 'biela',
+          'season': 'all_seasons',
+          'style': 'formal',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+        {
+          'name': 'Čierne elegantné nohavice',
+          'category': 'bottom',
+          'subCategory': 'trousers',
+          'color': 'čierna',
+          'season': 'all_seasons',
+          'style': 'formal',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
         },
         {
           'name': 'Biele tenisky',
           'category': 'shoes',
-          'type': 'sneakers',
-          'color': 'white',
+          'subCategory': 'sneakers',
+          'color': 'biela',
+          'season': 'spring_autumn',
           'style': 'casual',
-          'season': 'all',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+        {
+          'name': 'Čierne poltopánky',
+          'category': 'shoes',
+          'subCategory': 'elegant',
+          'color': 'čierna',
+          'season': 'all_seasons',
+          'style': 'formal',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
+        },
+        {
+          'name': 'Tmavomodrá bunda',
+          'category': 'outerwear',
+          'subCategory': 'jacket',
+          'color': 'tmavomodrá',
+          'season': 'winter',
+          'style': 'casual',
+          'imageUrl': null,
+          'createdAt': FieldValue.serverTimestamp(),
         },
       ];
 
-      for (final item in items) {
-        final docRef = ref.doc();
+      for (final item in sampleItems) {
+        final docRef = itemsRef.doc();
         batch.set(docRef, item);
       }
 
@@ -361,6 +459,12 @@ class _HomeScreenState extends State<HomeScreen> {
         const SnackBar(
             content: Text('Nepodarilo sa pridať vzorový šatník.')),
       );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAddingSampleWardrobe = false;
+        });
+      }
     }
   }
 }
