@@ -10,6 +10,7 @@ import 'package:image_picker/image_picker.dart';
 import 'add_clothing_screen.dart';
 import 'daily_outfit_screen.dart';
 import 'wardrobe_screen.dart';
+import 'select_outfit_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
