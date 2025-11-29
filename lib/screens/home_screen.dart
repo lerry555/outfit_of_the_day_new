@@ -8,9 +8,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'add_clothing_screen.dart';
-import 'daily_outfit_screen.dart';
 import 'wardrobe_screen.dart';
 import 'select_outfit_screen.dart';
+import 'calendar_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -28,7 +28,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _pickImage(ImageSource source) async {
     final picker = ImagePicker();
-    final pickedFile = await picker.pickImage(source: source, imageQuality: 85);
+    final pickedFile =
+    await picker.pickImage(source: source, imageQuality: 85);
 
     if (pickedFile != null) {
       setState(() {
@@ -146,6 +147,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
+            // KARTA: Kalendár udalostí
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 2,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const CalendarScreen(),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.event_note_outlined, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Kalendár udalostí',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Naplánuj si udalosti (práca, party, rande...) a AI ti potom navrhne outfit presne na ne.',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
             // KARTA: Ohodnoť môj outfit
             Card(
               shape: RoundedRectangleBorder(
@@ -167,12 +216,15 @@ class _HomeScreenState extends State<HomeScreen> {
                             children: [
                               Text(
                                 'Ohodnoť môj outfit',
-                                style: Theme.of(context).textTheme.titleLarge,
+                                style:
+                                Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 'Odfoti sa a neskôr ti AI povie, ako ti to pristane. (beta)',
-                                style: Theme.of(context).textTheme.bodySmall,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall,
                               ),
                             ],
                           ),
@@ -308,7 +360,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // KARTA: Vzorový šatník (len pomocné tlačidlo pre testovanie)
+            // KARTA: Vzorový šatník (testovacie tlačidlo)
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -332,14 +384,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     Align(
                       alignment: Alignment.centerLeft,
                       child: ElevatedButton.icon(
-                        onPressed:
-                            _isAddingSampleWardrobe ? null : _addSampleWardrobe,
+                        onPressed: _isAddingSampleWardrobe
+                            ? null
+                            : _addSampleWardrobe,
                         icon: _isAddingSampleWardrobe
                             ? const SizedBox(
-                                height: 16,
-                                width: 16,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                          ),
+                        )
                             : const Icon(Icons.auto_awesome),
                         label: const Text('Pridať vzorový šatník'),
                       ),
@@ -457,7 +512,8 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('Chyba pri pridávaní vzorového šatníka: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Nepodarilo sa pridať vzorový šatník.')),
+          content: Text('Nepodarilo sa pridať vzorový šatník.'),
+        ),
       );
     } finally {
       if (mounted) {
