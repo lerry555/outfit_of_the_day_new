@@ -7,6 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
+import 'trip_planner_screen.dart';
 import 'add_clothing_screen.dart';
 import 'wardrobe_screen.dart';
 import 'select_outfit_screen.dart';
@@ -195,6 +196,54 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
+            // 🔥 NOVÁ KARTA: Dovolenka / pracovná cesta
+            Card(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              elevation: 2,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) => const TripPlannerScreen(),
+                    ),
+                  );
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.flight_takeoff_outlined, size: 32),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Dovolenka / pracovná cesta',
+                              style: Theme.of(context).textTheme.titleLarge,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Zadaj destináciu a termín a ja ti pomôžem zbaliť sa podľa počasia. 🌦️🎒',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Icon(Icons.chevron_right),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
             // KARTA: Ohodnoť môj outfit
             Card(
               shape: RoundedRectangleBorder(
@@ -220,12 +269,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 4),
-                              Text(
-                                'Odfoti sa a neskôr ti AI povie, ako ti to pristane. (beta)',
-                                style: Theme.of(context)
-                                    .textTheme
-                                    .bodySmall,
-                              ),
+                          Text(
+                            'Odfoti sa a neskôr ti AI povie, ako ti to pristane. (beta)',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
                             ],
                           ),
                         ),
