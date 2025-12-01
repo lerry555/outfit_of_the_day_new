@@ -62,23 +62,117 @@ async function geocodeDestination(destinationName) {
 }
 
 // Počasie: One Call 3.0 daily forecast
+// Počasie: použijeme free endpoint /data/2.5/forecast (5 dní / 3h)
+// a premeníme ho na "daily" štruktúru podobnú One Call API
 async function getWeatherForecast(lat, lon) {
-  const url = `https://api.openweathermap.org/data/3.0/onecall?lat=${lat}&lon=${lon}&exclude=minutely,hourly,alerts&units=metric&appid=${OPENWEATHER_API_KEY}`;
+  const url = `https://api.openweathermap.org/data/2.5/forecast?lat=${lat}&lon=${lon}&units=metric&appid=${OPENWEATHER_API_KEY}`;
 
-  log("Weather URL:", url);
+  log("Weather URL (forecast 2.5):", url);
 
   const res = await fetch(url);
   if (!res.ok) {
+    const text = await res.text();
+    console.log("Weather API error body:", text);
     throw new Error(`Weather error: HTTP ${res.status}`);
   }
 
   const data = await res.json();
-  if (!data.daily || !Array.isArray(data.daily)) {
-    throw new Error("Weather error: daily forecast chýba");
+  if (!data.list || !Array.isArray(data.list)) {
+    throw new Error("Weather error: forecast list chýba");
   }
 
-  return data.daily;
+  // Zoskupíme predpoveď do dní (YYYY-MM-DD)
+  const buckets = {};
+  data.list.forEach((entry) => {
+    const dt = entry.dt; // unix seconds
+    const date = new Date(dt * 1000);
+    const key = date.toISOString().slice(0, 10); // "yyyy-mm-dd"
+
+    const temp = entry.main?.temp;
+    const weatherMain =
+      entry.weather && entry.weather[0] && entry.weather[0].main;
+    const pop = entry.pop ?? 0;
+
+    if (!buckets[key]) {
+      buckets[key] = {
+        dt, // vezmeme prvý timestamp dňa
+        tempsDay: [],
+        tempsNight: [],
+        minTemp: temp,
+        maxTemp: temp,
+        rainPops: [],
+        weatherMains: [],
+      };
+    }
+
+    const b = buckets[key];
+
+    // min/max
+    if (temp != null) {
+      if (temp < b.minTemp) b.minTemp = temp;
+      if (temp > b.maxTemp) b.maxTemp = temp;
+    }
+
+    // rozlíšenie deň/noc približne: 6:00–18:00 deň, inak noc
+    const hour = date.getUTCHours();
+    if (temp != null) {
+      if (hour >= 6 && hour < 18) {
+        b.tempsDay.push(temp);
+      } else {
+        b.tempsNight.push(temp);
+      }
+    }
+
+    if (typeof pop === "number") {
+      b.rainPops.push(pop);
+    }
+    if (weatherMain) {
+      b.weatherMains.push(weatherMain);
+    }
+  });
+
+  // Prevedieme buckets na pole "daily" objektov v štýle One Call
+  const daily = Object.values(buckets)
+    .map((b) => {
+      const avg = (arr) =>
+        arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null;
+
+      const avgDay = avg(b.tempsDay) ?? avg(b.tempsNight) ?? b.maxTemp;
+      const avgNight = avg(b.tempsNight) ?? avg(b.tempsDay) ?? b.minTemp;
+
+      // zoberieme najčastejší weatherMain, alebo prvý
+      let main = "Clear";
+      if (b.weatherMains.length > 0) {
+        const counts = {};
+        b.weatherMains.forEach((m) => {
+          counts[m] = (counts[m] || 0) + 1;
+        });
+        main = Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0];
+      }
+
+      const maxPop = b.rainPops.length
+        ? Math.max(...b.rainPops)
+        : 0;
+
+      return {
+        dt: b.dt,
+        temp: {
+          day: avgDay,
+          night: avgNight,
+          min: b.minTemp,
+          max: b.maxTemp,
+        },
+        weather: [{ main }],
+        pop: maxPop,
+      };
+    })
+    // zoradíme podľa dt
+    .sort((a, b) => a.dt - b.dt);
+
+  return daily;
 }
+
+
 
 // Filtrovanie dní podľa obdobia cesty
 function filterDailyByTrip(daily, startTs, endTs) {
@@ -211,22 +305,24 @@ async function generatePackingSuggestion({
     throw new Error("Chýba OPENAI_API_KEY v .env.");
   }
 
-  const systemPrompt = `
+const systemPrompt = `
 Si osobný AI fashion stylista a cestovný poradca.
-Tvojou úlohou je navrhnúť KONKRÉTNY zoznam vecí, čo si zbaliť na cestu,
-ktorý:
-- rešpektuje šatník používateľa (preferuj veci, ktoré už má),
-- zohľadňuje počasie (teploty, dážď, teplo/chlad),
-- zohľadňuje typ cesty (dovolenka vs. pracovná cesta),
-- zohľadňuje spôsob cestovania (lietadlo / auto / vlak / autobus).
+Tvojou úlohou je navrhnúť KONKRÉTNY zoznam OBLEČENIA, ktoré si má používateľ zbaliť na cestu.
+
+Dôležité:
+- Navrhuj LEN oblečenie a obuv (vrchy, spodky, topánky, bundy, mikiny, spodné prádlo, ponožky, doplnky ako čiapka, šál).
+- NERADÍŠ kozmetiku, hygienu, dokumenty, elektroniku, lieky, repelenty, krémy ani nič podobné.
+- Rešpektuj šatník používateľa (preferuj veci, ktoré už má).
+- Zohľadni počasie (teploty, dážď, teplo/chlad), typ cesty (dovolenka/pracovná cesta) a spôsob cestovania.
 
 Výstup musí byť:
 - v slovenčine,
 - krátky, prehľadný,
-- formou odrážok (• alebo -),
-- rozdelený do logických blokov (napr. Oblečenie hore, Spodok, Obuv, Doplnky, Hygiena, Dokumenty...),
-- nie román, ale praktický checklist.
+- formou odrážok,
+- rozdelený do blokov (napr. Vrch, Spodok, Obuv, Vrstvy naviac, Doplnky),
+- bez hygieny a doplnkov mimo oblečenia.
 `;
+
 
   const userPrompt = `
 Informácie o ceste:

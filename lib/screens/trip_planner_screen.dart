@@ -43,8 +43,7 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
 
       setState(() {
         _wardrobe = snapshot.docs
-            .map((d) => d.data())
-            .whereType<Map<String, dynamic>>()
+            .map((d) => Map<String, dynamic>.from(d.data()))
             .toList();
       });
     } catch (e) {
@@ -63,6 +62,35 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
     }
   }
 
+  /// Rekurzívne upraví hodnotu tak, aby bola JSON-enkódovateľná:
+  /// - Timestamp -> ISO string
+  /// - Map/List -> prejde do hĺbky
+  dynamic _cleanForJson(dynamic value) {
+    if (value is Timestamp) {
+      return value.toDate().toIso8601String();
+    } else if (value is Map) {
+      // premapujeme na nový Map
+      final result = <String, dynamic>{};
+      value.forEach((key, v) {
+        result[key.toString()] = _cleanForJson(v);
+      });
+      return result;
+    } else if (value is List) {
+      return value.map((v) => _cleanForJson(v)).toList();
+    } else {
+      return value;
+    }
+  }
+
+  /// Špeciálne pre Map<String, dynamic> – vráti Map<String, dynamic>
+  Map<String, dynamic> _cleanMapForJson(Map<String, dynamic> original) {
+    final result = <String, dynamic>{};
+    original.forEach((key, value) {
+      result[key] = _cleanForJson(value);
+    });
+    return result;
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = _auth.currentUser;
@@ -78,10 +106,8 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
       );
     }
 
-    final tripsRef = _firestore
-        .collection('users')
-        .doc(user.uid)
-        .collection('trips');
+    final tripsRef =
+    _firestore.collection('users').doc(user.uid).collection('trips');
 
     return Scaffold(
       appBar: AppBar(
@@ -128,7 +154,8 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
             separatorBuilder: (_, __) => const SizedBox(height: 12),
             itemBuilder: (context, index) {
               final doc = docs[index];
-              final data = doc.data() as Map<String, dynamic>;
+              final data =
+              Map<String, dynamic>.from(doc.data() as Map<String, dynamic>);
 
               final destination =
                   (data['destinationName'] as String?) ?? 'Neznáma destinácia';
@@ -264,10 +291,10 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                 final picked = await showDatePicker(
                   context: context,
                   initialDate: initial,
-                  firstDate: DateTime.now()
-                      .subtract(const Duration(days: 1)),
-                  lastDate: DateTime.now()
-                      .add(const Duration(days: 365 * 2)),
+                  firstDate:
+                  DateTime.now().subtract(const Duration(days: 1)),
+                  lastDate:
+                  DateTime.now().add(const Duration(days: 365 * 2)),
                 );
                 if (picked != null) {
                   setModalState(() {
@@ -277,9 +304,8 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                         endDate = startDate;
                       }
                     } else {
-                      endDate = picked.isBefore(startDate)
-                          ? startDate
-                          : picked;
+                      endDate =
+                      picked.isBefore(startDate) ? startDate : picked;
                     }
                   });
                 }
@@ -458,7 +484,8 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                                     .format(endDate),
                                 'notes': notesController.text.trim(),
                                 'packingSuggestion': '',
-                                'createdAt': FieldValue.serverTimestamp(),
+                                'createdAt':
+                                FieldValue.serverTimestamp(),
                               });
 
                               if (context.mounted) {
@@ -667,29 +694,21 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
       throw Exception('User not logged in');
     }
 
-    // Upravíme šatník do formátu, ktorý vie jsonEncode spracovať
-    final wardrobeForApi = wardrobe.map((item) {
-      return item.map((key, value) {
-        if (value is Timestamp) {
-          return MapEntry(
-            key,
-            value.toDate().toIso8601String(),
-          );
-        }
-        return MapEntry(key, value);
-      });
-    }).toList();
+    // 🔥 očistíme trip aj šatník od Timestampov atď.
+    final cleanedTrip = _cleanMapForJson(tripData);
+    final cleanedWardrobe =
+    wardrobe.map((item) => _cleanMapForJson(item)).toList();
 
-    // TODO: nahraď túto URL reálnou HTTPS Cloud Function adresou
     const String functionUrl =
         'https://us-central1-outfitoftheday-4d401.cloudfunctions.net/planTripPackingList';
 
-
     final body = {
       'userId': user.uid,
-      'trip': tripData,
-      'wardrobe': wardrobeForApi,
+      'trip': cleanedTrip,
+      'wardrobe': cleanedWardrobe,
     };
+
+    debugPrint('📦 Sending to planTripPackingList: $body');
 
     final response = await http.post(
       Uri.parse(functionUrl),
@@ -698,9 +717,20 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
     );
 
     if (response.statusCode != 200) {
+      // 👇 pokúsime sa vytiahnuť text chyby z JSONu od funkcie
+      String message = 'Packing API returned status ${response.statusCode}';
+      try {
+        final bodyJson = jsonDecode(response.body);
+        if (bodyJson is Map && bodyJson['error'] is String) {
+          message = bodyJson['error'] as String;
+        }
+      } catch (_) {
+        // ignore - necháme pôvodný message
+      }
+
       debugPrint(
           'Packing API error: ${response.statusCode} - ${response.body}');
-      throw Exception('Packing API returned status ${response.statusCode}');
+      throw Exception(message);
     }
 
     final data = jsonDecode(response.body) as Map<String, dynamic>;
@@ -712,4 +742,5 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
 
     return suggestion;
   }
+
 }
