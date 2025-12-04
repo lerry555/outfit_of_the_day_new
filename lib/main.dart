@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter_localizations/flutter_localizations.dart';
 
-import 'screens/home_screen.dart';
+import 'screens/main_navigation.dart';
+// import 'screens/auth_screen.dart'; // nechaj, ak používaš login
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -11,34 +11,41 @@ Future<void> main() async {
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({Key? key}) : super(key: key);
+
+  ThemeData _buildTheme() {
+    final base = ThemeData.light();
+    return base.copyWith(
+      colorScheme: base.colorScheme.copyWith(
+        primary: const Color(0xFF7C4DFF), // jemná fialová
+        secondary: const Color(0xFFFFC400),
+      ),
+      scaffoldBackgroundColor: const Color(0xFFF7F2FF),
+      appBarTheme: const AppBarTheme(
+        backgroundColor: Colors.white,
+        foregroundColor: Colors.black,
+        elevation: 0,
+      ),
+      // 🔧 TU BOLA CHYBA – CardTheme -> CardThemeData
+      cardTheme: base.cardTheme.copyWith(
+        color: Colors.white,
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      useMaterial3: true,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Outfit of the Day',
+      title: 'Outfit Of The Day',
       debugShowCheckedModeBanner: false,
-
-      // 🔤 Povieme Flutteru, že podporujeme viac jazykov
-      localizationsDelegates: const <LocalizationsDelegate<dynamic>>[
-        GlobalMaterialLocalizations.delegate,
-        GlobalWidgetsLocalizations.delegate,
-        GlobalCupertinoLocalizations.delegate,
-      ],
-
-      // 🌍 Zoznam jazykov, ktoré appka „rozumie“
-      supportedLocales: const <Locale>[
-        Locale('sk'),
-        Locale('cs'),
-        Locale('en'),
-        Locale('de'),
-        Locale('pl'),
-        Locale('fr'),
-        Locale('es'),
-      ],
-
-      // domovská obrazovka
-      home: const HomeScreen(),
+      theme: _buildTheme(),
+      // ak máš login flow, tu môže ísť AuthScreen / StreamBuilder na usera
+      home: const MainNavigation(),
     );
   }
 }

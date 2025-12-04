@@ -1,5 +1,3 @@
-// lib/screens/home_screen.dart
-
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -7,11 +5,10 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
-import 'trip_planner_screen.dart';
 import 'add_clothing_screen.dart';
 import 'wardrobe_screen.dart';
 import 'select_outfit_screen.dart';
-import 'calendar_screen.dart';
+import 'recommended_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -43,16 +40,28 @@ class _HomeScreenState extends State<HomeScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const AddClothingScreen(),
+        builder: (context) => const AddClothingScreen(
+          initialData: {},
+          imageUrl: '',
+        ),
       ),
     );
   }
 
-  Future<void> _navigateToWardrobe() async {
+  Future<void> _navigateToSelectOutfit() async {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => const WardrobeScreen(),
+        builder: (context) => const SelectOutfitScreen(),
+      ),
+    );
+  }
+
+  Future<void> _navigateToRecommendedFull() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const RecommendedScreen(initialTab: 0),
       ),
     );
   }
@@ -100,7 +109,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            // KARTA: Vybrať outfit
+            /// DNEŠNÝ OUTFIT
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -108,14 +117,7 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 4,
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const SelectOutfitScreen(),
-                    ),
-                  );
-                },
+                onTap: _navigateToSelectOutfit,
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Row(
@@ -127,18 +129,17 @@ class _HomeScreenState extends State<HomeScreen> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              'Vybrať outfit',
+                              'Dnešný outfit',
                               style: Theme.of(context).textTheme.titleLarge,
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              'Vyber si outfit na dnes, zajtra alebo na špeciálnu udalosť. AI všetko prispôsobí počasiu.',
+                              'Vyber si outfit na dnes, zajtra alebo na špeciálnu udalosť.',
                               style: Theme.of(context).textTheme.bodySmall,
                             ),
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
                       const Icon(Icons.chevron_right),
                     ],
                   ),
@@ -148,103 +149,83 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // KARTA: Kalendár udalostí
+            /// ODPORÚČANÉ PRE TEBA – PREVIEW
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
               ),
-              elevation: 2,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const CalendarScreen(),
-                    ),
-                  );
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.event_note_outlined, size: 32),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Kalendár udalostí',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Naplánuj si udalosti (práca, party, rande...) a AI ti potom navrhne outfit presne na ne.',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
+              elevation: 3,
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            'Odporúčané pre teba',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleLarge
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
+                        TextButton(
+                          onPressed: _navigateToRecommendedFull,
+                          child: const Text('Všetko'),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'Keď pridáš veci do šatníka, AI ti tu začne odporúčať kúsky, ktoré ti budú sedieť.',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Container(
+                            height: 80,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              color: Colors.grey.shade200,
+                            ),
+                            child: const Center(
+                              child: Text(
+                                'AI outfit 1',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Container(
+                            height: 80,
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(12),
+                              color: Colors.grey.shade200,
+                            ),
+                            child: const Center(
+                              child: Text(
+                                'AI outfit 2',
+                                textAlign: TextAlign.center,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
               ),
             ),
 
             const SizedBox(height: 16),
 
-            // 🔥 NOVÁ KARTA: Dovolenka / pracovná cesta
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 2,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => const TripPlannerScreen(),
-                    ),
-                  );
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.flight_takeoff_outlined, size: 32),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Dovolenka / pracovná cesta',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Zadaj destináciu a termín a ja ti pomôžem zbaliť sa podľa počasia. 🌦️🎒',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // KARTA: Ohodnoť môj outfit
+            /// OHODNOŤ OUTFIT
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -269,10 +250,12 @@ class _HomeScreenState extends State<HomeScreen> {
                                 Theme.of(context).textTheme.titleLarge,
                               ),
                               const SizedBox(height: 4),
-                          Text(
-                            'Odfoti sa a neskôr ti AI povie, ako ti to pristane. (beta)',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
+                              Text(
+                                'Odfoti sa a neskôr ti AI povie, ako ti to pristane. (beta)',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall,
+                              ),
                             ],
                           ),
                         ),
@@ -325,48 +308,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // KARTA: Šatník
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 2,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: _navigateToWardrobe,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.checkroom_outlined, size: 32),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Tvoj šatník',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Pozri si všetky kúsky, ktoré máš pridané. Môžeš ich upraviť alebo vymazať.',
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // KARTA: Pridať nové oblečenie
+            /// PRIDAŤ OBLEČENIE
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -379,7 +321,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: const EdgeInsets.all(16.0),
                   child: Row(
                     children: [
-                      const Icon(Icons.add_photo_alternate_outlined, size: 32),
+                      const Icon(Icons.add_photo_alternate_outlined,
+                          size: 32),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
@@ -397,7 +340,6 @@ class _HomeScreenState extends State<HomeScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(width: 12),
                       const Icon(Icons.chevron_right),
                     ],
                   ),
@@ -407,7 +349,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
             const SizedBox(height: 16),
 
-            // KARTA: Vzorový šatník (testovacie tlačidlo)
+            /// VZOROVÝ ŠATNÍK
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
