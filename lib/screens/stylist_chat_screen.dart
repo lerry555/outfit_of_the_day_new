@@ -7,7 +7,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 
-/// Jednoduchý model správy v chate ( text + obrázky + info či je to užívateľ )
+/// Jednoduchý model správy v chate (text + obrázky + info či je to užívateľ)
 class Message {
   final String text;
   final List<String> imageUrls;
@@ -48,14 +48,20 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
+  final List<Message> _messages = [];
+
   bool _isSending = false;
   bool _isLoadingData = true;
 
-  List<Message> _messages = [];
+  /// Šatník používateľa
   List<Map<String, dynamic>> _wardrobe = [];
 
+  /// Poloha + počasie (pripravené do budúcna)
   Position? _currentPosition;
-  Map<String, dynamic>? _currentWeather; // zatiaľ voliteľné / budúce použitie
+  Map<String, dynamic>? _currentWeather;
+
+  /// Preferencie používateľa (obľúbené farby, štýly atď.)
+  Map<String, dynamic>? _userPreferences;
 
   @override
   void initState() {
@@ -75,6 +81,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       await Future.wait([
         _loadWardrobeFromFirestore(),
         _loadLocationAndMaybeWeather(),
+        _loadUserPreferencesFromFirestore(),
       ]);
     } catch (e) {
       debugPrint('Chyba pri init dát: $e');
@@ -181,6 +188,44 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
   }
 
+  Future<void> _loadUserPreferencesFromFirestore() async {
+    final user = _auth.currentUser;
+    if (user == null) return;
+
+    try {
+      final doc = await _firestore.collection('users').doc(user.uid).get();
+      if (!doc.exists) {
+        _userPreferences = null;
+        return;
+      }
+
+      final data = doc.data() ?? {};
+
+      _userPreferences = {
+        'favoriteColors':
+        (data['favoriteColors'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+            [],
+        'preferredStyles':
+        (data['preferredStyles'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+            [],
+        'dislikedColorCombinations':
+        (data['dislikedColorCombinations'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+            [],
+      };
+
+      debugPrint('User preferences načítané: $_userPreferences');
+    } catch (e) {
+      debugPrint('Chyba pri načítaní user preferences: $e');
+      _userPreferences = null;
+    }
+  }
+
   void _addMessage(Message message) {
     setState(() {
       _messages.add(message);
@@ -225,13 +270,26 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         weather: _currentWeather,
       );
 
-      final replyText = response['replyText'] as String? ??
-          'Prepáč, teraz sa mi trochu zauzlili módne myšlienky. Skús to prosím ešte raz neskôr. 💫';
+      // 1) preferujeme nový formát: replyText + imageUrls
+      String? replyText = response['replyText'] as String?;
+      List<String> imageUrls = [];
 
-      final imageUrls = (response['imageUrls'] as List<dynamic>?)
-              ?.map((e) => e.toString())
-              .toList() ??
-          [];
+      if (response['imageUrls'] is List) {
+        imageUrls = (response['imageUrls'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList();
+      }
+
+      // 2) fallback na starý formát: text + outfit_images
+      replyText ??= response['text'] as String?;
+      if (imageUrls.isEmpty && response['outfit_images'] is List) {
+        imageUrls = (response['outfit_images'] as List<dynamic>)
+            .map((e) => e.toString())
+            .toList();
+      }
+
+      replyText ??=
+      'Prepáč, teraz sa mi trochu zauzlili módne myšlienky. Skús to prosím ešte raz neskôr. 💫';
 
       _addMessage(
         Message(text: replyText, imageUrls: imageUrls, isUser: false),
@@ -241,7 +299,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _addMessage(
         Message(
           text:
-              'Ups, niečo sa pokazilo. Skús to prosím o chvíľku znova. 🌧️ (Technické info: $e)',
+          'Ups, niečo sa pokazilo. Skús to prosím o chvíľku znova. 🌧️ (Technické info: $e)',
           isUser: false,
         ),
       );
@@ -278,20 +336,23 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
     // TODO: nahraď túto URL reálnou HTTPS Cloud Function adresou
     const String functionUrl =
-        'https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/chatWithStylist';
+        'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/chatWithStylist';
+
+
 
     final body = {
       'userId': user.uid,
       'userMessage': userMessage,
       'wardrobe': wardrobeForApi,
+      'userPreferences': _userPreferences,
       'location': position == null
           ? null
           : {
-              'lat': position.latitude,
-              'lon': position.longitude,
-            },
+        'lat': position.latitude,
+        'lon': position.longitude,
+      },
       'weather': weather,
-      // v budúcnosti sem môžeme pridať aj widget.initialItemData
+      'focusItem': widget.initialItemData,
     };
 
     final response = await http.post(
@@ -312,9 +373,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   Widget _buildMessageBubble(Message message) {
     final alignment =
-        message.isUser ? Alignment.centerRight : Alignment.centerLeft;
+    message.isUser ? Alignment.centerRight : Alignment.centerLeft;
     final bgColor =
-        message.isUser ? const Color(0xFF4E5AE8) : Colors.grey.shade200;
+    message.isUser ? const Color(0xFF4E5AE8) : Colors.grey.shade200;
     final textColor = message.isUser ? Colors.white : Colors.black87;
 
     return Align(
@@ -328,7 +389,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         ),
         child: Column(
           crossAxisAlignment:
-              message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          message.isUser ? CrossAxisAlignment.end : CrossAxisAlignment.start,
           children: [
             if (message.text.isNotEmpty)
               Text(
@@ -337,21 +398,33 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
               ),
             if (message.imageUrls.isNotEmpty) ...[
               const SizedBox(height: 8),
-              Column(
-                children: message.imageUrls
-                    .map(
-                      (url) => Container(
-                        margin: const EdgeInsets.only(top: 4.0),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(8.0),
-                          child: Image.network(
-                            url,
-                            fit: BoxFit.cover,
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: message.imageUrls.map((url) {
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      url,
+                      width: 120,
+                      height: 160,
+                      fit: BoxFit.cover,
+                      errorBuilder: (context, error, stackTrace) {
+                        return Container(
+                          width: 120,
+                          height: 160,
+                          color: Colors.black12,
+                          alignment: Alignment.center,
+                          child: const Text(
+                            'Obrázok sa nepodarilo načítať',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(fontSize: 12),
                           ),
-                        ),
-                      ),
-                    )
-                    .toList(),
+                        );
+                      },
+                    ),
+                  );
+                }).toList(),
               ),
             ],
           ],
@@ -384,7 +457,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           SafeArea(
             child: Container(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
+              const EdgeInsets.symmetric(horizontal: 8.0, vertical: 4.0),
               color: Colors.white,
               child: Row(
                 children: [
@@ -394,25 +467,26 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                       textInputAction: TextInputAction.send,
                       onSubmitted: (value) =>
                           _handleSubmitted(value.trim()),
-                      decoration: const InputDecoration.collapsed(
-                        hintText: 'Spýtaj sa stylistu…',
+                      decoration: const InputDecoration(
+                        hintText: 'Napíš otázku pre stylistu...',
+                        border: InputBorder.none,
                       ),
                     ),
                   ),
                   IconButton(
                     icon: _isSending
                         ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                         : const Icon(Icons.send),
                     color: const Color(0xFF4E5AE8),
                     onPressed: _isSending
                         ? null
                         : () => _handleSubmitted(
-                              _textController.text.trim(),
-                            ),
+                      _textController.text.trim(),
+                    ),
                   ),
                 ],
               ),
