@@ -288,12 +288,20 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             .toList();
       }
 
+      // 🧹 Očistíme obrázky – vyhodíme prázdne URL a duplikáty
+      imageUrls = imageUrls
+          .map((u) => u.trim())
+          .where((u) => u.isNotEmpty)
+          .toSet()
+          .toList();
+
       replyText ??=
       'Prepáč, teraz sa mi trochu zauzlili módne myšlienky. Skús to prosím ešte raz neskôr. 💫';
 
       _addMessage(
         Message(text: replyText, imageUrls: imageUrls, isUser: false),
       );
+
     } catch (e) {
       debugPrint('Chyba pri volaní stylist API: $e');
       _addMessage(
