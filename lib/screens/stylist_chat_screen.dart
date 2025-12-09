@@ -329,9 +329,21 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       throw Exception('User not logged in');
     }
 
-    // ⚙️ Konverzia šatníka do formátu, ktorý vie jsonEncode spracovať
+    // ⚙️ Konverzia šatníka do formátu pre API
+    // + ak existuje cleanImageUrl, použijeme ju namiesto pôvodnej imageUrl
     final wardrobeForApi = wardrobe.map((item) {
-      return item.map((key, value) {
+      // spravíme si kópiu mapy, aby sme nepísali do originálu
+      final Map<String, dynamic> processed =
+      Map<String, dynamic>.from(item);
+
+      final clean = processed['cleanImageUrl'];
+      if (clean is String && clean.isNotEmpty) {
+        // prepíšeme imageUrl na čistú verziu
+        processed['imageUrl'] = clean;
+      }
+
+      // Firebase Timestamp -> ISO8601 string
+      return processed.map((key, value) {
         if (value is Timestamp) {
           return MapEntry(
             key,
@@ -342,11 +354,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       });
     }).toList();
 
-    // TODO: nahraď túto URL reálnou HTTPS Cloud Function adresou
     const String functionUrl =
         'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/chatWithStylist';
-
-
 
     final body = {
       'userId': user.uid,
@@ -378,6 +387,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     final data = jsonDecode(response.body) as Map<String, dynamic>;
     return data;
   }
+
 
   Widget _buildMessageBubble(Message message) {
     final alignment =

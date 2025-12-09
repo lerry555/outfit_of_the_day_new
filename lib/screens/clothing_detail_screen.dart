@@ -18,7 +18,21 @@ class ClothingDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final String name = clothingItemData['name'] as String? ?? 'Neznámy kúsok';
-    final String? imageUrl = clothingItemData['imageUrl'] as String?;
+
+    // 🔹 Pôvodná URL z Firestore
+    final String? originalImageUrl =
+    clothingItemData['imageUrl'] as String?;
+
+    // 🔹 URL s odrezaným pozadím, ak existuje
+    final String? cleanImageUrl =
+    clothingItemData['cleanImageUrl'] as String?;
+
+    // 🔹 Finálna URL na zobrazenie – preferujeme cleanImageUrl
+    final String? displayImageUrl =
+    (cleanImageUrl != null && cleanImageUrl.isNotEmpty)
+        ? cleanImageUrl
+        : originalImageUrl;
+
     final String mainCategory =
         clothingItemData['mainCategory'] as String? ?? '';
     final String category = clothingItemData['category'] as String? ?? '';
@@ -30,12 +44,12 @@ class ClothingDetailScreen extends StatelessWidget {
 
     final String brand = clothingItemData['brand'] as String? ?? '';
     final int wearCount =
-        clothingItemData['wearCount'] is int ? clothingItemData['wearCount'] : 0;
+    clothingItemData['wearCount'] is int ? clothingItemData['wearCount'] : 0;
 
     final Timestamp? uploadedAtTs =
-        clothingItemData['uploadedAt'] as Timestamp?;
+    clothingItemData['uploadedAt'] as Timestamp?;
     final DateTime? uploadedAt =
-        uploadedAtTs != null ? uploadedAtTs.toDate() : null;
+    uploadedAtTs != null ? uploadedAtTs.toDate() : null;
 
     String categoryLine = '';
     if (category.isNotEmpty && seasons.isNotEmpty) {
@@ -64,19 +78,20 @@ class ClothingDetailScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // Obrázok
-            if (imageUrl != null && imageUrl.isNotEmpty)
+            // 🖼 Obrázok – použijeme displayImageUrl (clean > original)
+            if (displayImageUrl != null && displayImageUrl.isNotEmpty)
               ClipRRect(
                 borderRadius: BorderRadius.circular(16),
                 child: Image.network(
-                  imageUrl,
+                  displayImageUrl,
                   height: 260,
                   fit: BoxFit.cover,
                   errorBuilder: (_, __, ___) => Container(
                     height: 260,
                     color: Colors.grey.shade200,
                     child: const Center(
-                        child: Icon(Icons.broken_image, size: 48)),
+                      child: Icon(Icons.broken_image, size: 48),
+                    ),
                   ),
                 ),
               )
@@ -120,8 +135,11 @@ class ClothingDetailScreen extends StatelessWidget {
             if (stylePatternLine.isNotEmpty)
               Row(
                 children: [
-                  Icon(Icons.style_outlined,
-                      size: 18, color: Colors.grey.shade700),
+                  Icon(
+                    Icons.style_outlined,
+                    size: 18,
+                    color: Colors.grey.shade700,
+                  ),
                   const SizedBox(width: 6),
                   Expanded(
                     child: Text(
@@ -167,8 +185,10 @@ class ClothingDetailScreen extends StatelessWidget {
               Text('Sezóna nosenia',
                   style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text(seasons.join(', '),
-                  style: Theme.of(context).textTheme.bodyMedium),
+              Text(
+                seasons.join(', '),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
               const SizedBox(height: 16),
             ],
 
@@ -176,8 +196,10 @@ class ClothingDetailScreen extends StatelessWidget {
             if (styles.isNotEmpty) ...[
               Text('Štýl', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text(styles.join(', '),
-                  style: Theme.of(context).textTheme.bodyMedium),
+              Text(
+                styles.join(', '),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
               const SizedBox(height: 16),
             ],
 
@@ -185,8 +207,10 @@ class ClothingDetailScreen extends StatelessWidget {
             if (patterns.isNotEmpty) ...[
               Text('Vzor', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 4),
-              Text(patterns.join(', '),
-                  style: Theme.of(context).textTheme.bodyMedium),
+              Text(
+                patterns.join(', '),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
               const SizedBox(height: 16),
             ],
 
@@ -195,12 +219,17 @@ class ClothingDetailScreen extends StatelessWidget {
             // Upraviť kúsok
             ElevatedButton(
               onPressed: () {
+                // Pri editácii – ak existuje cleanImageUrl, kľudne ju tiež pošleme,
+                // ale ako fallback nechávame pôvodné imageUrl.
+                final String editImageUrl =
+                    originalImageUrl ?? cleanImageUrl ?? '';
+
                 Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => AddClothingScreen(
                       initialData: clothingItemData,
-                      imageUrl: clothingItemData['imageUrl'] ?? '',
+                      imageUrl: editImageUrl,
                       itemId: clothingItemId,
                       isEditing: true,
                     ),

@@ -467,8 +467,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         itemBuilder: (context, index) {
                           final data =
                           items[index].data() as Map<String, dynamic>;
-                          final imageUrl =
-                              data['imageUrl'] as String? ?? '';
+                          final imageUrl = (data['cleanImageUrl'] as String?)?.isNotEmpty == true
+                              ? data['cleanImageUrl'] as String
+                              : data['imageUrl'] as String? ?? '';
+
                           final name =
                               data['name'] as String? ?? 'Neznáma položka';
 

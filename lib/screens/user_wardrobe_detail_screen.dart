@@ -24,7 +24,11 @@ class UserWardrobeDetailScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(isMyPublicWardrobe ? 'Môj verejný šatník' : 'Šatník: ${userName ?? userId}'),
+        title: Text(
+          isMyPublicWardrobe
+              ? 'Môj verejný šatník'
+              : 'Šatník: ${userName ?? userId}',
+        ),
       ),
       body: StreamBuilder<QuerySnapshot>(
         stream: FirebaseFirestore.instance
@@ -33,7 +37,9 @@ class UserWardrobeDetailScreen extends StatelessWidget {
             .snapshots(),
         builder: (context, snapshot) {
           if (snapshot.hasError) {
-            return Center(child: Text('Chyba pri načítavaní: ${snapshot.error}'));
+            return Center(
+              child: Text('Chyba pri načítavaní: ${snapshot.error}'),
+            );
           }
 
           if (snapshot.connectionState == ConnectionState.waiting) {
@@ -41,7 +47,9 @@ class UserWardrobeDetailScreen extends StatelessWidget {
           }
 
           if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-            return const Center(child: Text('Používateľ zatiaľ nič nezdieľal.'));
+            return const Center(
+              child: Text('Používateľ zatiaľ nič nezdieľal.'),
+            );
           }
 
           return GridView.builder(
@@ -55,10 +63,19 @@ class UserWardrobeDetailScreen extends StatelessWidget {
             itemCount: snapshot.data!.docs.length,
             itemBuilder: (context, index) {
               final DocumentSnapshot doc = snapshot.data!.docs[index];
-              final Map<String, dynamic> itemData = doc.data() as Map<String, dynamic>;
+              final Map<String, dynamic> itemData =
+              doc.data() as Map<String, dynamic>;
 
-              final String imageUrl = itemData['imageUrl'] as String? ?? '';
-              final String itemCategory = itemData['category'] as String? ?? 'Neznáma kategória';
+              // 👇 TU JE DÔLEŽITÁ ZMENA
+              // Ak existuje cleanImageUrl (obrázok bez pozadia), použijeme ten.
+              // Inak fallback na pôvodné imageUrl.
+              final String imageUrl =
+              (itemData['cleanImageUrl'] as String?)?.isNotEmpty == true
+                  ? itemData['cleanImageUrl'] as String
+                  : itemData['imageUrl'] as String? ?? '';
+
+              final String itemCategory =
+                  itemData['category'] as String? ?? 'Neznáma kategória';
 
               return Card(
                 elevation: 4.0,
@@ -82,7 +99,9 @@ class UserWardrobeDetailScreen extends StatelessWidget {
                     children: [
                       Expanded(
                         child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(10.0)),
+                          borderRadius: const BorderRadius.vertical(
+                            top: Radius.circular(10.0),
+                          ),
                           child: imageUrl.isNotEmpty
                               ? Image.network(
                             imageUrl,
@@ -95,7 +114,9 @@ class UserWardrobeDetailScreen extends StatelessWidget {
                         padding: const EdgeInsets.all(8.0),
                         child: Text(
                           itemCategory,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
                           textAlign: TextAlign.center,
                         ),
                       ),

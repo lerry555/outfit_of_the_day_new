@@ -1,10 +1,19 @@
-// functions/index.js
+// functions/index.js - čistá verzia
 
 const { onRequest } = require("firebase-functions/v2/https");
 const logger = require("firebase-functions/logger");
+const admin = require("firebase-admin");
+
+// Inicializácia Firebase Admin SDK (Firestore + Storage)
+if (!admin.apps.length) {
+  admin.initializeApp();
+}
+
+const db = admin.firestore();
+const storage = admin.storage();
 
 // ---------------------------------------------------------------------------
-// Pomocná funkcia – volanie OpenAI chat modelu cez HTTP
+// Pomocná funkcia – volanie OpenAI chat modelu (text)
 // ---------------------------------------------------------------------------
 async function callOpenAiChat(systemPrompt, userPrompt) {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -19,14 +28,8 @@ async function callOpenAiChat(systemPrompt, userPrompt) {
   const body = {
     model: "gpt-4o-mini",
     messages: [
-      {
-        role: "system",
-        content: systemPrompt,
-      },
-      {
-        role: "user",
-        content: userPrompt,
-      },
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
     ],
     temperature: 0.7,
   };
@@ -60,17 +63,18 @@ async function callOpenAiChat(systemPrompt, userPrompt) {
 }
 
 // ---------------------------------------------------------------------------
-// Pomocná funkcia – načítanie počasia z OpenWeather, ak treba
+// Pomocná funkcia – počasie z OpenWeather
 // ---------------------------------------------------------------------------
 async function fetchWeatherFromOpenWeather(location, existingWeather) {
-  // Ak už klient poslal validné počasie, necháme ho tak
   if (existingWeather && Object.keys(existingWeather).length > 0) {
     return existingWeather;
   }
 
   const apiKey = process.env.OPENWEATHER_API_KEY;
   if (!apiKey) {
-    logger.warn("OPENWEATHER_API_KEY nie je nastavený – neviem načítať počasie.");
+    logger.warn(
+      "OPENWEATHER_API_KEY nie je nastavený – neviem načítať počasie."
+    );
     return existingWeather || null;
   }
 
@@ -124,7 +128,142 @@ async function fetchWeatherFromOpenWeather(location, existingWeather) {
 }
 
 // ---------------------------------------------------------------------------
-// 1) „Analýza“ oblečenia – zatiaľ textový mód (neposielame reálny obrázok)
+// Pomocné – zaradenie a zoradenie outfit_images
+// ---------------------------------------------------------------------------
+
+function classifyWardrobeItem(url, wardrobe) {
+  if (!Array.isArray(wardrobe)) {
+    return { slot: "accessory", order: 8 };
+  }
+
+  const item = wardrobe.find(
+    (piece) => piece && (piece.imageUrl === url || piece.imageUrl === String(url))
+  );
+
+  const text = [
+    item?.mainCategory || "",
+    item?.category || "",
+    item?.subCategory || "",
+    item?.type || "",
+    item?.name || "",
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  let slot = "accessory";
+  let order = 8;
+
+  if (text.includes("čiap") || text.includes("cap") || text.includes("hat")) {
+    slot = "hat";
+    order = 1;
+  } else if (text.includes("šál") || text.includes("scarf")) {
+    slot = "scarf";
+    order = 2;
+  } else if (
+    text.includes("bunda") ||
+    text.includes("kabát") ||
+    text.includes("coat") ||
+    text.includes("jacket")
+  ) {
+    slot = "jacket";
+    order = 3;
+  } else if (
+    text.includes("mikina") ||
+    text.includes("sveter") ||
+    text.includes("hoodie") ||
+    text.includes("sweater")
+  ) {
+    slot = "hoodie";
+    order = 4;
+  } else if (
+    text.includes("tričko") ||
+    text.includes("tricko") ||
+    text.includes("košeľa") ||
+    text.includes("kosela") ||
+    text.includes("shirt") ||
+    text.includes("t-shirt")
+  ) {
+    slot = "shirt";
+    order = 5;
+  } else if (
+    text.includes("rifle") ||
+    text.includes("nohavice") ||
+    text.includes("tepláky") ||
+    text.includes("teplaky") ||
+    text.includes("jeans") ||
+    text.includes("pants") ||
+    text.includes("legíny") ||
+    text.includes("leginy") ||
+    text.includes("shorts")
+  ) {
+    slot = "pants";
+    order = 6;
+  } else if (
+    text.includes("topánky") ||
+    text.includes("topanky") ||
+    text.includes("tenisky") ||
+    text.includes("sneakers") ||
+    text.includes("boty") ||
+    text.includes("obuv") ||
+    text.includes("shoes") ||
+    text.includes("boots") ||
+    text.includes("čižmy") ||
+    text.includes("cizmy")
+  ) {
+    slot = "shoes";
+    order = 7;
+  }
+
+  return { slot, order };
+}
+
+function normalizeOutfitImages(outfitImages, wardrobe) {
+  if (!Array.isArray(outfitImages)) return [];
+
+  const unique = Array.from(
+    new Set(
+      outfitImages
+        .map((u) => (typeof u === "string" ? u.trim() : ""))
+        .filter((u) => u.length > 0)
+    )
+  );
+
+  const items = unique.map((url, index) => {
+    const { slot, order } = classifyWardrobeItem(url, wardrobe);
+    return { url, slot, order, originalIndex: index };
+  });
+
+  items.sort((a, b) => {
+    if (a.order === b.order) {
+      return a.originalIndex - b.originalIndex;
+    }
+    return a.order - b.order;
+  });
+
+  const usedSlots = new Set();
+  const result = [];
+
+  for (const item of items) {
+    if (item.slot === "shoes" && usedSlots.has("shoes")) {
+      continue;
+    }
+    result.push(item.url);
+    usedSlots.add(item.slot);
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// 1) analyzeClothingImage – zatiaľ textový režim
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 1) analyzeClothingImage – vizuálna analýza oblečenia (OpenAI vision)
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// 1) analyzeClothingImage – OpenAI vision + normalizácia farieb
 // ---------------------------------------------------------------------------
 
 exports.analyzeClothingImage = onRequest(
@@ -143,45 +282,195 @@ exports.analyzeClothingImage = onRequest(
       return res.status(400).send("Chýba imageUrl v tele požiadavky.");
     }
 
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      logger.error("Chýba OPENAI_API_KEY v prostredí!");
+      return res
+        .status(500)
+        .send("Server nemá nastavený OPENAI_API_KEY.");
+    }
+
     try {
       const systemPrompt = `
-Si módny stylista a expert na oblečenie.
-Používateľ ti dá URL alebo textový popis obrázka s oblečením.
-Tvojou úlohou je vrátiť ČISTÝ JSON, nič iné.
+Si profesionálny módny stylista a expert na rozpoznávanie oblečenia z fotografií.
+Tvojou úlohou je analyzovať obrázok a vrátiť STRICTNÝ JSON podľa zadaného formátu,
+bez akéhokoľvek textu okolo.
 
-Formát JSON odpovede:
+Používaj iba tieto farby (v slovenčine):
+["biela","čierna","sivá","béžová","hnedá","modrá","tmavomodrá","svetlomodrá","červená","bordová","ružová","fialová","zelená","khaki","žltá","oranžová","zlatá","strieborná"].
+
+────────────────────────────────────────────────────────
+1) TYP OBLEČENIA – veľmi presné pravidlá
+────────────────────────────────────────────────────────
+- Tričko: krátky rukáv, tenšia látka, žiadna kapucňa.
+- Dlhé tričko / longsleeve: dlhý rukáv, tenká látka, žiadna kapucňa.
+- Mikina: dlhý rukáv, hrubší materiál, často kapucňa.
+- Košeľa: golier + zapínanie.
+- Nohavice: dlhé nohavice.
+- Kraťasy: krátke nohavice.
+- Rifle/džínsy: rifľovina, švy typické pre džínsy.
+Vždy sa snaž určiť čo najpresnejší typ.
+
+────────────────────────────────────────────────────────
+2) FARBY – určuj IBA farbu látky (dominantnú)
+────────────────────────────────────────────────────────
+- Ignoruj farbu potlače (texty, logá, obrázky).
+- Pri tričku, ktoré je čierne a má bielu potlač, farby = ["čierna"].
+- Ak sú použité 2 materiálové farby, môžeš uviesť 1–2 najdominantnejšie.
+- Nepíš farby, ktoré na odeve nie sú.
+
+NORMALIZÁCIA ODTIEŇOV DO SLOVENSKÝCH NÁZVOV:
+- burgundy, maroon, wine, dark red → "bordová"
+- navy, midnight blue, dark blue, indigo → "tmavomodrá"
+- sky blue, baby blue, light blue → "svetlomodrá"
+- denim (džínsovina) → "modrá"
+- olive, army, military green → "khaki"
+- cream, ivory, off white, off-white → "béžová"
+- tan, camel, sand, nude → "béžová"
+- charcoal, anthracite → "sivá"
+- silver, metallic, metallic grey → "strieborná"
+
+Ak je odtieň medzi dvoma farbami, zvoľ najbližšiu z povoleného zoznamu farieb.
+
+────────────────────────────────────────────────────────
+3) PATTERN / VZOR (patterns)
+────────────────────────────────────────────────────────
+- Ak je na odeve text alebo logo → použi "textová potlač".
+- Ak je úplne jednofarebný → "jednofarebné".
+- Ak sú pruhy → "pruhované".
+- Ak je káro / kocky → "káro".
+- Ak je maskáč → "maskáčové".
+- Ak je iná grafika → "grafická potlač".
+
+────────────────────────────────────────────────────────
+4) ŠTÝL (style)
+────────────────────────────────────────────────────────
+Používaj tieto štýly:
+- "casual"
+- "streetwear"
+- "sport"
+- "elegant"
+- "smart casual"
+
+Pravidlá:
+- "casual" → pridaj pre väčšinu bežných tričiek, mikín, riflí a podobného oblečenia.
+- "streetwear" → pridaj, ak je výrazná grafika, logo, urban / relaxed vzhľad.
+  Ak pridáš "streetwear", VŽDY pridaj aj "casual".
+- "sport" → iba pri zjavne športovom kúsku (funkčné materiály, športový dizajn).
+- "elegant" alebo "smart casual" → len pri formálnejších košeliach, sakách, nohaviciach.
+Nikdy nepridávaj protichodné štýly (napr. súčasne elegant a streetwear).
+
+────────────────────────────────────────────────────────
+5) SEZÓNA (season)
+────────────────────────────────────────────────────────
+Urči podľa typu:
+- tričko → ["jar","leto","jeseň"]
+- mikina → ["jeseň","zima","jar"]
+- rifle/nohavice → ["celoročne"]
+- tenisky → ["jar","leto","jeseň"]
+- zimná obuv / hrubá bunda → ["zima"]
+Ak si istý, že sa dá nosiť celý rok, môžeš použiť ["celoročne"].
+
+────────────────────────────────────────────────────────
+6) ZNAČKA (brand)
+────────────────────────────────────────────────────────
+- Ak vidíš logo alebo názov značky (napr. na štítku), uveď ho ako string.
+- Ak značka nie je jasná, použi prázdny string "".
+
+────────────────────────────────────────────────────────
+7) VÝSTUP – MUSÍ BYŤ STRICTNÝ JSON:
+────────────────────────────────────────────────────────
+Vráť výhradne JSON objekt v tomto tvare:
+
 {
-  "type": "mikina",
-  "colors": ["čierna", "biela"],
-  "style": ["streetwear", "casual"],
-  "season": ["jeseň", "zima"],
-  "occasions": ["bežný deň", "do mesta", "na voľný čas"],
-  "patterns": ["logo"]
+  "type": "tričko",
+  "colors": ["bordová"],
+  "style": ["casual","streetwear"],
+  "season": ["jar","leto","jeseň"],
+  "occasions": ["bežný deň","voľný čas","do mesta"],
+  "patterns": ["jednofarebné"],
+  "brand": "Primark"
 }
 
-Odpovedaj LEN JSONom, bez textu mimo JSON.
+- "colors" musí obsahovať iba farby zo zoznamu na začiatku (v slovenčine).
+- "style" musí byť zo sady ["casual","streetwear","sport","elegant","smart casual"].
+- "season" a "occasions" vyplň logicky podľa typu.
+- Nepridávaj žiaden text mimo JSON.
 `;
 
-      const userPrompt = `
-Používateľ ti posiela popis alebo URL oblečenia:
-"${imageUrl}"
+      const openAiBody = {
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: systemPrompt,
+          },
+          {
+            role: "user",
+            content: [
+              {
+                type: "text",
+                text:
+                  "Toto je fotka jedného kusu oblečenia z môjho šatníka. " +
+                  "Analyzuj ju podľa pravidiel a vráť výhradne JSON objekt v požadovanom formáte.",
+              },
+              {
+                type: "image_url",
+                image_url: {
+                  url: imageUrl,
+                },
+              },
+            ],
+          },
+        ],
+        temperature: 0.1,
+      };
 
-Na základe toho vyplň JSON podľa štruktúry vyššie.
-`;
+      const response = await fetch(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: "Bearer " + apiKey,
+          },
+          body: JSON.stringify(openAiBody),
+        }
+      );
 
-      const text = await callOpenAiChat(systemPrompt, userPrompt);
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error(
+          "OpenAI analyzeClothingImage error:",
+          response.status,
+          errorText
+        );
+        return res
+          .status(500)
+          .send(
+            `OpenAI analyzeClothingImage error ${response.status}: ${errorText}`
+          );
+      }
+
+      const data = await response.json();
+      const choice = data.choices && data.choices[0];
+      const text = choice?.message?.content;
+
+      if (!text) {
+        throw new Error(
+          "OpenAI API nevrátilo žiaden text v odpovedi (analyzeClothingImage)."
+        );
+      }
 
       try {
         const jsonResponse = JSON.parse(text);
         return res.status(200).send(jsonResponse);
       } catch (e) {
-        logger.error("OpenAI nevrátil platný JSON:", text);
-        return res.status(200).send({
-          rawText: text,
-        });
+        logger.error("analyzeClothingImage – neplatný JSON, raw:", text);
+        return res.status(200).send({ rawText: text });
       }
     } catch (error) {
-      logger.error("Chyba pri analýze obrázka:", error);
+      logger.error("Chyba pri analyzeClothingImage:", error);
       return res.status(500).send(
         "Chyba servera pri analýze obrázka. Detail: " +
           (error.message || String(error))
@@ -190,8 +479,10 @@ Na základe toho vyplň JSON podľa štruktúry vyššie.
   }
 );
 
+
+
 // ---------------------------------------------------------------------------
-// 2) CHAT S AI STYLISTOM – hlavná funkcia pre tvoj chat v appke
+// 2) chatWithStylist – AI chat
 // ---------------------------------------------------------------------------
 
 exports.chatWithStylist = onRequest(
@@ -206,7 +497,6 @@ exports.chatWithStylist = onRequest(
 
     const { wardrobe, userPreferences, location, weather, focusItem } = req.body;
 
-    // Skúsime si doplniť počasie podľa polohy, ak nie je poslané
     const finalWeather = await fetchWeatherFromOpenWeather(location, weather);
 
     logger.info("chatWithStylist input:", {
@@ -216,7 +506,6 @@ exports.chatWithStylist = onRequest(
       hasFinalWeather: !!finalWeather,
     });
 
-    // Podporujeme obidva názvy: userQuery aj userMessage
     const userQuery = req.body.userQuery || req.body.userMessage;
 
     if (!userQuery) {
@@ -231,79 +520,41 @@ Si profesionálny módny stylista v mobilnej aplikácii.
 
 Tvoje správanie:
 - Buď profesionálny, ale veľmi priateľský a ľudský.
-- Reaguj na emócie používateľa (ak dá smajlík, pochop to; ak sa smeje, môžeš sa „zasmiať“ tiež).
-- Môžeš používať jemný humor, ale nikdy neurážaj používateľa a nepreháňaj to.
+- Reaguj na emócie používateľa.
 - Nepredpokladaj nič, čo používateľ nepovedal.
-
-Meno a komunikácia:
-- Ak ti používateľ napíše, ako ťa chce volať (napr. "budem ťa volať Fero"), chápeš to tak, že je to prezývka pre teba. Túto prezývku môžeš pri ďalšej komunikácii používateľovi pripomenúť občas, nie v každej správe.
-- Nezamieňaj si svoje meno s menom používateľa.
-- Ak používateľ nepovie svoje meno, nijako ho neoslovuj menom.
 
 Práca s počasím:
 - Informácie o počasí máš v objekte "weather" v kontexte.
 - Tento objekt "weather" už pripravil backend podľa používateľovej polohy (OpenWeather).
-- Ak je "weather" v kontexte definovaný (nie je null, nie je undefined a nie je prázdny objekt {}), BER TO TAK, že počasie poznáš.
-- V takom prípade NESMIEŠ sa pýtať používateľa, aké je počasie. Namiesto toho pracuj s dátami z objektu "weather".
+- Ak je "weather" definovaný a nie je prázdny objekt, BER TO TAK, že počasie poznáš.
+- V takom prípade sa na počasie NEPÝTAJ, ale pracuj s tým, čo máš.
 - Pýtať sa na počasie môžeš iba vtedy, keď je "weather" úplne prázdny alebo neexistuje.
-- Pri vysvetlení outfitu sa snaž použiť konkrétne informácie (napr. teplota, či prší, či fúka vietor), ak sú v "weather" dostupné.
-
-Kedy navrhovať outfity:
-- Outfity alebo konkrétne kombinácie navrhuj až vtedy, keď používateľ jasne naznačí, že chce pomoc s oblečením (napr. "čo si mám obliecť", "poradíš outfit", "pomôž mi s oblečením", "aké oblečenie na..." a podobne).
-- Ak sa používateľ len rozpráva o bežných veciach (smalltalk), odpovedaj priateľsky ako kamarát a nespomínaj v KAŽDEJ správe, že mu vieš pomôcť s outfitom. Pripomeň to iba občas alebo keď to dáva zmysel.
 
 Logika outfitov:
-- Pri návrhu outfitu nikdy nepoužívaj duplikované kúsky (napr. dvoje rovnaké nohavice naraz).
-- Konkrétny kúsok je definovaný napríklad jeho "id" alebo "imageUrl" – rovnaká "imageUrl" NESMIE byť v outfite dvakrát.
-- Typický outfit má: vrch (top), spodok (bottom), obuv, voliteľne vrstvy (mikina, sveter, bunda) a doplnky.
-- Ak dostaneš šatník (wardrobe), primárne používaj kúsky z neho.
-- Nikdy nevymýšľaj nové oblečenie, ktoré v šatníku neexistuje. Používaj iba to, čo je v "wardrobe".
-- Každý kúsok v šatníku môže mať okrem iného aj pole "imageUrl" – je to URL fotky daného oblečenia. Pri návrhu outfitu POUŽÍVAJ tieto URL.
+- Nepoužívaj duplikované kúsky (rovnaká imageUrl nesmie byť dvakrát).
+- V jednom outfite vyber maximálne jedny topánky.
+- Používaj výhradne kúsky z "wardrobe" – nevymýšľaj oblečenie, ktoré tam nie je.
+- Každý kúsok môže mať pole "imageUrl" – pri outfite POUŽÍVAJ tieto URL.
 
-Farby a opis:
-- Farby nikdy nevymýšľaj.
-- Ak má kúsok v dátach farby (napr. v poliach "colors", "color", "colorName"), opisuj ho podľa týchto farieb.
-- Nesmieš povedať, že kúsok je napríklad "modrý", ak v jeho dátach farba neobsahuje "modrá".
-- Ak nevieš farbu, radšej ju nešpecifikuj (napr. povedz "mikina" namiesto "modrá mikina").
+Farby:
+- Farby používaj iba vtedy, ak sú v dátach kúsku (napr. pole "colors", "color", "colorName").
+- Ak farba chýba, opisuj bez konkrétnej farby alebo neutrálne (napr. "mikina").
 
-Obrázky outfitu:
-- Keď používateľ požiada o KONKRÉTNY outfit (napr. "porad mi čo si mám obliecť teraz vonka"), okrem textového vysvetlenia vráť aj pole "outfit_images".
-- "outfit_images" musí byť pole URL obrázkov z používateľovho šatníka, zoradené v tomto poradí:
-  1. čiapka (ak je),
-  2. šál (ak je),
-  3. bunda / kabát,
-  4. mikina / sveter,
-  5. tričko / košeľa,
-  6. nohavice / rifle / tepláky,
-  7. topánky,
-  8. doplnky (napr. batoh, kabelka, čiapka s brmbolcom a pod.).
-- Ak nejaký typ kúsku v šatníku nie je, jednoducho ho preskoč, ale poradie ostatných dodrž.
-- Každá položka v "outfit_images" je čisté URL (string) na fotku daného kúsku.
-- V "outfit_images" nesmie byť rovnaká URL dvakrát.
-- Ak šatník (wardrobe) neobsahuje žiadne imageUrl, nechaj "outfit_images": [].
+Konzistencia:
+- Najprv vyber konkrétne kúsky do outfitu.
+- Pole "outfit_images" musí obsahovať URL práve tých kúskov, o ktorých píšeš v texte.
+- Nespomínaj v texte bundu, ak žiadnu bundu do "outfit_images" nezaradíš.
 
-Vysvetlenie:
-- Keď navrhneš outfit, vždy STRUČNE vysvetli, prečo ho odporúčaš – zohľadni počasie (ak je k dispozícii), typ udalosti, pohodlie, štýl a farby.
-- Ak máš informácie o počasí, zmysluplne ich použi (napr. "vonku sú 2 °C a fúka, preto odporúčam...").
-- Ak nemáš informácie o počasí (objekt "weather" je prázdny), nesťažuj sa na to. Jednoducho sa slušne spýtaj napríklad:
-  "Povieš mi, prosím, aké je asi počasie (teplota, vietor, prší/neprší)?"
-- Nepíš romány – stačí 3 až 6 viet praktického vysvetlenia.
+Outfit images:
+- Vráť "outfit_images" ako pole URL z "wardrobe".
+- Backend ich ešte usporiada, ale ty tam nedávaj duplicity.
 
-Smalltalk:
-- Ak sa používateľ pýta na bežné veci (deň, nálada, život), odpovedaj krátko a priateľsky.
-- Môžeš mu občas pripomenúť, že mu vieš pomôcť aj s oblečením, ale nie stále.
-
-Doplňujúce otázky:
-- Ak nemáš dosť informácií na dobrý outfit, polož 1 až 3 doplňujúce otázky (napr. kam ideš, aký štýl chceš). Ak však máš v kontexte "weather", na počasie sa už NEPÝTAJ.
-
-Formát odpovede:
-- VŽDY odpovedaj len v čistom JSON formáte:
-  {
-    "text": "sem daj odpoveď v slovenčine",
-    "outfit_images": ["url1", "url2", ...]
-  }
-- Aj pri smalltalku vyplň pole "text" a "outfit_images" môže byť prázdne pole.
-- Nikdy nepridávaj žiadny text mimo JSON (žiadne vysvetlenia okolo, žiadne markdowny, žiadne komentáre mimo JSON).
+Formát:
+- Odpovedaj LEN v JSON:
+{
+  "text": "odpoveď v slovenčine",
+  "outfit_images": ["url1", "url2", ...]
+}
 `;
 
       const context = `
@@ -343,9 +594,11 @@ Na základe system promptu a tohto kontextu vráť odpoveď VÝHRADNE v JSON for
           jsonResponse.text ||
           "Stylista nemá momentálne žiadnu konkrétnu odpoveď.";
 
-        const outfitImages = Array.isArray(jsonResponse.outfit_images)
+        const rawOutfitImages = Array.isArray(jsonResponse.outfit_images)
           ? jsonResponse.outfit_images
           : [];
+
+        const outfitImages = normalizeOutfitImages(rawOutfitImages, wardrobe);
 
         return res.status(200).send({
           replyText,
@@ -354,7 +607,6 @@ Na základe system promptu a tohto kontextu vráť odpoveď VÝHRADNE v JSON for
       } catch (e) {
         logger.error("OpenAI nevrátil platný JSON:", text);
 
-        // Fallback – pošleme čistý text ako odpoveď
         return res.status(200).send({
           replyText: text,
           imageUrls: [],
@@ -366,6 +618,104 @@ Na základe system promptu a tohto kontextu vráť odpoveď VÝHRADNE v JSON for
         "Chyba servera pri komunikácii s AI stylistom. Detail: " +
           (error.message || String(error))
       );
+    }
+  }
+);
+
+// ---------------------------------------------------------------------------
+// 3) processClothingImage – odrezanie pozadia cez ClipDrop (async, všetky await
+//     sú PRÁVE TU vo vnútri funkcie)
+// ---------------------------------------------------------------------------
+
+exports.processClothingImage = onRequest(
+  {
+    region: "us-east1",
+    invoker: "public",
+  },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      return res.status(405).send("Použi POST.");
+    }
+
+    const { imageUrl, itemId, userId } = req.body;
+
+    if (!imageUrl || !itemId || !userId) {
+      return res
+        .status(400)
+        .send("Chýba imageUrl, itemId alebo userId v tele požiadavky.");
+    }
+
+    try {
+      const clipApiKey = process.env.CLIPDROP_API_KEY;
+      if (!clipApiKey) {
+        throw new Error("Chýba CLIPDROP_API_KEY v prostredí.");
+      }
+
+      // 1) Stiahni pôvodný obrázok
+      const originalResponse = await fetch(imageUrl);
+      if (!originalResponse.ok) {
+        const txt = await originalResponse.text();
+        throw new Error("Nepodarilo sa stiahnuť obrázok: " + txt);
+      }
+      const originalBuffer = Buffer.from(
+        await originalResponse.arrayBuffer()
+      );
+
+      // 2) Priprav form-data pre ClipDrop (pole 'image_file')
+      const form = new FormData();
+      const blob = new Blob([originalBuffer], { type: "image/jpeg" });
+      form.append("image_file", blob, "input.jpg");
+
+      // 3) Zavolaj ClipDrop Remove Background API
+      const clipResponse = await fetch(
+        "https://clipdrop-api.co/remove-background/v1",
+        {
+          method: "POST",
+          headers: {
+            "x-api-key": clipApiKey,
+          },
+          body: form,
+        }
+      );
+
+      if (!clipResponse.ok) {
+        const errorTxt = await clipResponse.text();
+        throw new Error("ClipDrop error: " + errorTxt);
+      }
+
+      const cleanBuffer = Buffer.from(await clipResponse.arrayBuffer());
+
+      // 4) Ulož vyrezaný obrázok do Storage
+      const bucket = storage.bucket(); // default bucket
+      const cleanPath = `users/${userId}/wardrobe_clean/${itemId}.png`;
+      const file = bucket.file(cleanPath);
+
+      await file.save(cleanBuffer, {
+        contentType: "image/png",
+        public: true,
+      });
+
+      const cleanImageUrl =
+        `https://storage.googleapis.com/${bucket.name}/${cleanPath}`;
+
+      // 5) Ulož cleanImageUrl k danému kusu v Firestore
+      await db
+        .collection("users")
+        .doc(userId)
+        .collection("wardrobe")
+        .doc(itemId)
+        .update({
+          cleanImageUrl,
+          bgRemoved: true,
+        });
+
+      return res.status(200).send({
+        success: true,
+        cleanImageUrl,
+      });
+    } catch (err) {
+      logger.error("processClothingImage error:", err);
+      return res.status(500).send("Chyba: " + (err.message || String(err)));
     }
   }
 );
