@@ -229,7 +229,6 @@ class ClothingDetailScreen extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (context) => AddClothingScreen(
                       initialData: clothingItemData,
-                      imageUrl: editImageUrl,
                       itemId: clothingItemId,
                       isEditing: true,
                     ),
