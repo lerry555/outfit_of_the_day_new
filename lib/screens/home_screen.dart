@@ -1,3 +1,5 @@
+// lib/screens/home_screen.dart
+
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -81,12 +83,14 @@ class _HomeScreenState extends State<HomeScreen> {
         await wardrobeCollection.add(item);
       }
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Vzorový šatník bol pridaný.'),
         ),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Nepodarilo sa pridať vzorový šatník.'),
@@ -316,7 +320,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(height: 16),
 
-            /// Pridať nové oblečenie
+            /// ✅ Pridať nové oblečenie (BOTTOM SHEET)
             Card(
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(16),
@@ -324,13 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
               elevation: 4,
               child: InkWell(
                 borderRadius: BorderRadius.circular(16),
-                onTap: () {
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (context) => const AddClothingScreen(),
-                    ),
-                  );
-                },
+                onTap: () => AddClothingScreen.openFromPicker(context),
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
                   child: Row(

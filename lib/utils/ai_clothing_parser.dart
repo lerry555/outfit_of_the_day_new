@@ -1,4 +1,5 @@
 // lib/utils/ai_clothing_parser.dart
+import '../constants/app_constants.dart';
 
 class AiParserInput {
   final String rawType;
@@ -7,25 +8,21 @@ class AiParserInput {
   final List<String> seasons;
   final String brand;
 
-  /// NOVÉ (voliteľné): backend môže poslať canonical_type (napr. mikina_s_kapucnou)
-  final String? canonicalType;
-
   AiParserInput({
     required this.rawType,
     required this.aiName,
     required this.userName,
     required this.seasons,
     required this.brand,
-    this.canonicalType,
   });
 }
 
-class AiParserResult {
+class AiMappedCategory {
   final String mainGroupKey;
   final String categoryKey;
   final String subCategoryKey;
 
-  AiParserResult({
+  AiMappedCategory({
     required this.mainGroupKey,
     required this.categoryKey,
     required this.subCategoryKey,
@@ -33,182 +30,147 @@ class AiParserResult {
 }
 
 class AiClothingParser {
-  /// (do budúcna) – mapovanie, ak by backend posielal canonical_type
-  static AiParserResult? fromCanonicalType(String canonicalType) {
-    final ct = canonicalType.trim().toLowerCase();
+  /// 1) Najlepšia cesta: canonical_type == subCategoryKey (napr. "rifle")
+  /// Potom už len nájsť categoryKey + mainGroupKey podľa stromu v app_constants.dart
+  static AiMappedCategory? fromCanonicalType(String canonicalType) {
+    final subKey = canonicalType.trim();
+    if (subKey.isEmpty) return null;
 
-    switch (ct) {
-    // TRIČKÁ
-      case 'tricko_kratky_rukav':
-      case 'tricko':
-      case 'tshirt':
-      case 't-shirt':
-      case 'tee':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'tricka_topy',
-          subCategoryKey: 'tricko_kratky_rukav',
-        );
+    // canonical_type musí byť jeden z našich subCategoryTree kľúčov
+    final catKey = _findCategoryForSubKey(subKey);
+    if (catKey == null) return null;
 
-      case 'tricko_dlhy_rukav':
-      case 'tricko_long_sleeve':
-      case 'longsleeve':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'tricka_topy',
-          subCategoryKey: 'tricko_dlhy_rukav',
-        );
+    final mainKey = _findMainGroupForCategory(catKey);
+    if (mainKey == null) return null;
 
-    // MIKINY
-      case 'mikina_klasicka':
-      case 'mikina_bez_kapucne':
-      case 'sweatshirt':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'mikiny',
-          subCategoryKey: 'mikina_klasicka',
-        );
+    return AiMappedCategory(
+      mainGroupKey: mainKey,
+      categoryKey: catKey,
+      subCategoryKey: subKey,
+    );
+  }
 
-      case 'mikina_s_kapucnou':
-      case 'hoodie':
-      case 'mikina_hoodie':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'mikiny',
-          subCategoryKey: 'mikina_s_kapucnou',
-        );
+  /// 2) Fallback: keď canonical_type chýba, mapujeme podľa textu
+  static AiMappedCategory? mapType(AiParserInput input) {
+    final combined = [
+      input.rawType,
+      input.aiName,
+      input.userName,
+      input.brand,
+      input.seasons.join(' '),
+    ].join(' ');
 
-    // BUNDY
-      case 'bunda_prechodna':
-      case 'prechodna_bunda':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'bundy_kabaty',
-          subCategoryKey: 'bunda_prechodna',
-        );
+    final t = _norm(combined);
 
-      case 'bunda_zimna':
-      case 'zimna_bunda':
-      case 'puffer':
-      case 'parka':
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'bundy_kabaty',
-          subCategoryKey: 'bunda_zimna',
-        );
+    // --- NOHAVICE / RIFLE ---
+    if (_hasAny(t, ['rifle', 'jeans', 'dzins', 'dzin', 'denim'])) {
+      return fromCanonicalType('rifle');
+    }
+    if (_hasAny(t, ['skinny'])) {
+      return fromCanonicalType('rifle_skinny');
+    }
+    if (_hasAny(t, ['wide leg', 'wideleg', 'wide'])) {
+      return fromCanonicalType('rifle_wide_leg');
+    }
+    if (_hasAny(t, ['mom jeans', 'mom'])) {
+      return fromCanonicalType('rifle_mom');
+    }
+    if (_hasAny(t, ['chino'])) {
+      return fromCanonicalType('nohavice_chino');
+    }
+    if (_hasAny(t, ['teplaky', 'tepláky', 'sweatpant', 'jogger', 'joggery'])) {
+      // ak chceš striktne: teplaky = nohavice_teplakove, joggery = nohavice_joggery
+      if (_hasAny(t, ['jogger', 'joggery'])) return fromCanonicalType('nohavice_joggery');
+      return fromCanonicalType('nohavice_teplakove');
+    }
+    if (_hasAny(t, ['cargo'])) {
+      return fromCanonicalType('nohavice_cargo');
+    }
+    if (_hasAny(t, ['elegant', 'oblek', 'formal'])) {
+      return fromCanonicalType('nohavice_elegantne');
+    }
+    if (_hasAny(t, ['nohavice', 'pants', 'trousers'])) {
+      // všeobecné nohavice – zvolíme elegantné vs teplákové vs chino sa rieši vyššie,
+      // inak nechajme aspoň rifle alebo elegantné? ja dávam elegantné nie, radšej "rifle" nie.
+      return fromCanonicalType('nohavice_elegantne');
+    }
 
-    // OBUV (zimná)
-      case 'zimne_topanky':
-      case 'winter_boots':
-      case 'snow_boots':
-        return AiParserResult(
-          mainGroupKey: 'obuv',
-          categoryKey: 'cizmy',
-          subCategoryKey: 'cizmy_vysoke',
-        );
+    // --- TRIČKÁ ---
+    if (_hasAny(t, ['tricko', 'tri\u010dko', 't-shirt', 'tshirt'])) {
+      if (_hasAny(t, ['dlhy rukav', 'dlh\u00fd ruk\u00e1v', 'long sleeve'])) {
+        return fromCanonicalType('tricko_dlhy_rukav');
+      }
+      return fromCanonicalType('tricko');
+    }
+    if (_hasAny(t, ['tielko', 'tank'])) return fromCanonicalType('tielko');
+    if (_hasAny(t, ['polo'])) return fromCanonicalType('polo_tricko');
+
+    // --- MIKINY ---
+    if (_hasAny(t, ['mikina', 'hoodie', 'sweatshirt'])) {
+      if (_hasAny(t, ['kapuc', 'hood'])) return fromCanonicalType('mikina_s_kapucnou');
+      if (_hasAny(t, ['zip', 'zips'])) return fromCanonicalType('mikina_na_zips');
+      if (_hasAny(t, ['oversize'])) return fromCanonicalType('mikina_oversize');
+      return fromCanonicalType('mikina_klasicka');
+    }
+
+    // --- BUNDY ---
+    if (_hasAny(t, ['bunda', 'jacket', 'coat', 'kabat', 'kab\u00e1t'])) {
+      if (_hasAny(t, ['riflova', 'rif\u013eov\u00e1', 'denim'])) return fromCanonicalType('bunda_riflova');
+      if (_hasAny(t, ['kozena', 'ko\u017een\u00e1', 'leather'])) return fromCanonicalType('bunda_kozena');
+      if (_hasAny(t, ['bomber'])) return fromCanonicalType('bunda_bomber');
+
+      // zimná vs prechodná – dáme jednoduchý fallback, ale finálne to má riešiť prompt
+      if (_hasAny(t, ['puffer', 'parka', 'zimna', 'zimn\u00e1'])) return fromCanonicalType('bunda_zimna');
+      if (_hasAny(t, ['prechodna', 'prechodn\u00e1'])) return fromCanonicalType('bunda_prechodna');
+
+      // keď nič, radšej prechodná než generic
+      return fromCanonicalType('bunda_prechodna');
+    }
+
+    // --- OBUV ---
+    if (_hasAny(t, ['tenisky', 'sneaker'])) return fromCanonicalType('tenisky_fashion');
+    if (_hasAny(t, ['cizmy', 'či\u017emy', 'boots'])) return fromCanonicalType('cizmy_clenkove');
+    if (_hasAny(t, ['sandale', 'sand\u00e1le'])) return fromCanonicalType('sandale');
+
+    // --- DOPLNKY ---
+    if (_hasAny(t, ['ciapka', 'čiapka', 'beanie', 'hat'])) return fromCanonicalType('ciapka');
+    if (_hasAny(t, ['sal', '\u0161\u00e1l', 'scarf'])) return fromCanonicalType('sal');
+    if (_hasAny(t, ['opasok', 'belt'])) return fromCanonicalType('opasok');
+
+    return null;
+  }
+
+  // ----------------- helpers -----------------
+
+  static String _norm(String s) {
+    var out = s.toLowerCase().trim();
+    out = out.replaceAll('\n', ' ');
+    out = out.replaceAll(RegExp(r'\s+'), ' ');
+    return out;
+  }
+
+  static bool _hasAny(String text, List<String> needles) {
+    for (final n in needles) {
+      if (text.contains(_norm(n))) return true;
+    }
+    return false;
+  }
+
+  static String? _findCategoryForSubKey(String subKey) {
+    for (final entry in subCategoryTree.entries) {
+      if (entry.value.contains(subKey)) {
+        return entry.key; // categoryKey
+      }
     }
     return null;
   }
 
-  /// ✅ NOVÉ: bezpečná wrapper funkcia
-  /// - Ak príde canonicalType a vieme ho mapnúť → použijeme ho (priorita).
-  /// - Inak pokračujeme tvojím pôvodným heuristickým mapovaním mapType().
-  static AiParserResult? mapTypePreferCanonical(AiParserInput input) {
-    final ct = input.canonicalType?.trim();
-    if (ct != null && ct.isNotEmpty) {
-      final mapped = fromCanonicalType(ct);
-      if (mapped != null) return mapped;
-    }
-    return mapType(input);
-  }
-
-  /// Heuristické mapovanie podľa textu z AI (type + názov + značka + sezóny)
-  /// ⚠️ Nechávam 1:1 tvoju pôvodnú logiku (bez zmien).
-  static AiParserResult? mapType(AiParserInput input) {
-    final buffer = StringBuffer();
-    if (input.rawType.isNotEmpty) buffer.write('${input.rawType} ');
-    if (input.aiName.isNotEmpty) buffer.write('${input.aiName} ');
-    if (input.userName.isNotEmpty) buffer.write('${input.userName} ');
-    if (input.brand.isNotEmpty) buffer.write('${input.brand} ');
-
-    final text = buffer.toString().toLowerCase().trim();
-    if (text.isEmpty) return null;
-
-    bool has(String s) => text.contains(s);
-    bool hasAny(List<String> list) => list.any((s) => text.contains(s));
-
-    final lowerSeasons = input.seasons.map((s) => s.toLowerCase()).toList();
-    bool hasSeason(String s) => lowerSeasons.contains(s);
-
-    final bool hasWinter = hasSeason('zima');
-    final bool hasSpring = hasSeason('jar');
-    final bool hasAutumn =
-        lowerSeasons.contains('jeseň') || lowerSeasons.contains('jesen');
-
-    // 1) Zimná obuv / čižmy
-    if (hasAny(['zimná obuv', 'zimna obuv', 'snow boots', 'winter boots']) ||
-        (hasAny(['čižmy', 'cizmy', 'boots', 'boot']) && hasWinter)) {
-      return AiParserResult(
-        mainGroupKey: 'obuv',
-        categoryKey: 'cizmy',
-        subCategoryKey: 'cizmy_vysoke',
-      );
-    }
-
-    // 2) Bundy & kabáty
-    if (hasAny(['bunda', 'jacket', 'coat', 'parka', 'puffer'])) {
-      // hrubá zimná bunda
-      if (hasWinter && !hasSpring && !hasAutumn) {
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'bundy_kabaty',
-          subCategoryKey: 'bunda_zimna',
-        );
+  static String? _findMainGroupForCategory(String categoryKey) {
+    for (final entry in categoryTree.entries) {
+      if (entry.value.contains(categoryKey)) {
+        return entry.key; // mainGroupKey
       }
-      // default prechodná
-      return AiParserResult(
-        mainGroupKey: 'oblecenie',
-        categoryKey: 'bundy_kabaty',
-        subCategoryKey: 'bunda_prechodna',
-      );
     }
-
-    // 3) Mikiny
-    if (hasAny(['mikina', 'sweatshirt', 'hoodie'])) {
-      // mikina s kapucňou (hood / kapucňa / klub)
-      if (hasAny(['kapuc', 'hood', 'chelsea', 'fc'])) {
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'mikiny',
-          subCategoryKey: 'mikina_s_kapucnou',
-        );
-      }
-      return AiParserResult(
-        mainGroupKey: 'oblecenie',
-        categoryKey: 'mikiny',
-        subCategoryKey: 'mikina_klasicka',
-      );
-    }
-
-    // 4) Tričká
-    if (hasAny(['tričko', 'tricko', 't-shirt', 'tshirt', 'tee'])) {
-      // dlhý rukáv
-      if (hasAny(
-          ['dlhý rukáv', 'dlhy rukav', 'longsleeve', 'long sleeve'])) {
-        return AiParserResult(
-          mainGroupKey: 'oblecenie',
-          categoryKey: 'tricka_topy',
-          subCategoryKey: 'tricko_dlhy_rukav',
-        );
-      }
-      // krátky rukáv ako default
-      return AiParserResult(
-        mainGroupKey: 'oblecenie',
-        categoryKey: 'tricka_topy',
-        subCategoryKey: 'tricko_kratky_rukav',
-      );
-    }
-
     return null;
   }
 }
