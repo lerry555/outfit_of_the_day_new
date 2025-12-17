@@ -8,6 +8,9 @@ class CategoryPicker extends StatelessWidget {
   final String? initialCategory;     // napr. "bundy_kabaty"
   final String? initialSubCategory;  // napr. "bunda_zimna"
 
+  /// ✅ Keď true, skryje "Typ oblečenia" (subCategory) z UI
+  final bool hideSubCategory;
+
   /// onChanged dostane vždy mapu:
   /// { "mainGroup": ..., "category": ..., "subCategory": ... }
   final void Function(Map<String, String?> data) onChanged;
@@ -18,6 +21,7 @@ class CategoryPicker extends StatelessWidget {
     required this.initialCategory,
     required this.initialSubCategory,
     required this.onChanged,
+    this.hideSubCategory = false,
   }) : super(key: key);
 
   @override
@@ -92,37 +96,40 @@ class CategoryPicker extends StatelessWidget {
             });
           },
         ),
-        const SizedBox(height: 16),
 
-        Text(
-          'Typ oblečenia',
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 4),
-        DropdownButtonFormField<String>(
-          value: availableSubCategories.contains(selectedSubCategory)
-              ? selectedSubCategory
-              : null,
-          decoration: const InputDecoration(
-            border: OutlineInputBorder(),
+        // ✅ Typ oblečenia zobrazíme len ak ho nechceš skryť
+        if (!hideSubCategory) ...[
+          const SizedBox(height: 16),
+          Text(
+            'Typ oblečenia',
+            style: Theme.of(context).textTheme.titleMedium,
           ),
-          items: availableSubCategories.map((subKey) {
-            final label = subCategoryLabels[subKey] ?? subKey;
-            return DropdownMenuItem<String>(
-              value: subKey,
-              child: Text(label),
-            );
-          }).toList(),
-          onChanged: (selectedMainGroup == null || selectedCategory == null)
-              ? null
-              : (value) {
-            onChanged({
-              'mainGroup': selectedMainGroup,
-              'category': selectedCategory,
-              'subCategory': value,
-            });
-          },
-        ),
+          const SizedBox(height: 4),
+          DropdownButtonFormField<String>(
+            value: availableSubCategories.contains(selectedSubCategory)
+                ? selectedSubCategory
+                : null,
+            decoration: const InputDecoration(
+              border: OutlineInputBorder(),
+            ),
+            items: availableSubCategories.map((subKey) {
+              final label = subCategoryLabels[subKey] ?? subKey;
+              return DropdownMenuItem<String>(
+                value: subKey,
+                child: Text(label),
+              );
+            }).toList(),
+            onChanged: (selectedMainGroup == null || selectedCategory == null)
+                ? null
+                : (value) {
+              onChanged({
+                'mainGroup': selectedMainGroup,
+                'category': selectedCategory,
+                'subCategory': value,
+              });
+            },
+          ),
+        ],
       ],
     );
   }

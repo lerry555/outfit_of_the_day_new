@@ -113,12 +113,82 @@ class _AddClothingScreenHostState extends State<AddClothingScreenHost> {
 }
 
 class _AddClothingScreenState extends State<AddClothingScreen> {
+  // ---------------------------------------------------------
+  // ✅ SEASONS RULES (celoročne vs. 4 sezóny)
+  // ---------------------------------------------------------
+  List<String> _sanitizeSeasons(List<String> input) {
+    final set = input.toSet();
+
+    const four = {'jar', 'leto', 'jeseň', 'zima'};
+
+    // Ak je vybraté "celoročne", nič iné tam nesmie byť
+    if (set.contains('celoročne')) {
+      return ['celoročne'];
+    }
+
+    // Ak user vybral všetky 4 sezóny -> je to celoročne
+    if (set.containsAll(four)) {
+      return ['celoročne'];
+    }
+
+    // Inak necháme len sezóny v povolenom poradí
+    return allowedSeasons.where((s) => set.contains(s)).toList();
+  }
+
+  // ---------------------------------------------------------
+  // SEARCH NORMALIZE (bez mäkčeňov)
+  // ---------------------------------------------------------
+  String _normalizeForSearch(String input) {
+    var s = input.toLowerCase().trim();
+
+    const map = {
+      'á': 'a',
+      'ä': 'a',
+      'č': 'c',
+      'ď': 'd',
+      'é': 'e',
+      'ě': 'e',
+      'í': 'i',
+      'ĺ': 'l',
+      'ľ': 'l',
+      'ň': 'n',
+      'ó': 'o',
+      'ô': 'o',
+      'ŕ': 'r',
+      'ř': 'r',
+      'š': 's',
+      'ť': 't',
+      'ú': 'u',
+      'ů': 'u',
+      'ü': 'u',
+      'ý': 'y',
+      'ž': 'z',
+    };
+
+    final buffer = StringBuffer();
+    for (final ch in s.split('')) {
+      buffer.write(map[ch] ?? ch);
+    }
+    return buffer.toString();
+  }
+
+  bool _matchesPresetLabel(String label, String query) {
+    final l = _normalizeForSearch(label);
+    final q = _normalizeForSearch(query);
+    return q.isEmpty ? true : l.contains(q);
+  }
+
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
 
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _brandController = TextEditingController();
+
+  // ✅ Názov musí byť vybraný z nášho zoznamu (žiadne vlastné názvy)
+  bool _isSystemNameSelected = false;
+  String? _selectedSystemNameLabel;
+  String? _selectedSystemSubCategoryKey;
 
   File? _localImageFile;
   String? _uploadedImageUrl;
@@ -130,7 +200,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   List<String> _selectedColors = [];
   List<String> _selectedStyles = [];
-  List<String> _selectedPatterns = [];
+  List<String> _selectedPatterns = []; // ✅ teraz držíme max 1 položku
   List<String> _selectedSeasons = [];
 
   bool _isAiLoading = false;
@@ -251,19 +321,48 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedCategoryKey = cat.isEmpty ? null : cat;
       _selectedSubCategoryKey = sub.isEmpty ? null : sub;
 
-      _selectedColors = (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedStyles = (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedPatterns = (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedSeasons = (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedColors =
+          (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedStyles =
+          (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedPatterns =
+          (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      if (_selectedPatterns.length > 1) {
+        _selectedPatterns = [_selectedPatterns.first];
+      }
+
+      final loadedSeasons =
+          (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedSeasons = _sanitizeSeasons(loadedSeasons);
 
       _uploadedImageUrl = widget.imageUrl;
-      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty ? null : (d['storagePath'] ?? '').toString();
+      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
+          ? null
+          : (d['storagePath'] ?? '').toString();
       _aiCompleted = true;
 
-      _lastTypeLabel = _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
+      _lastTypeLabel =
+      _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
     }
 
     _loadBrandSuggestions();
+
+    // ✅ Ak je názov už vyplnený (napr. z editácie / AI), označ ho ako validný len keď je z nášho zoznamu
+    _syncSystemNameValidity();
+
+    // ✅ Ak user začne písať mimo vybraného návrhu, zruš validáciu
+    _nameController.addListener(() {
+      final current = _nameController.text.trim();
+      if (_selectedSystemNameLabel != null && current != _selectedSystemNameLabel) {
+        if (_isSystemNameSelected) {
+          setState(() {
+            _isSystemNameSelected = false;
+            _selectedSystemNameLabel = null;
+            _selectedSystemSubCategoryKey = null;
+          });
+        }
+      }
+    });
   }
 
   @override
@@ -376,7 +475,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         // Fake odfajkávame len po krok 3
         if (_activeStepIndex <= _maxFakeDoneIndex) {
           _done[_activeStepIndex] = true; // ✅ rovno zelená fajka
-          _activeStepIndex = (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
+          _activeStepIndex =
+              (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
         }
         // krok 4 (Pripravujem formulár) necháme len na realitu
       });
@@ -415,8 +515,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final ref = _storage.ref().child(storagePath);
 
     try {
-      final task = await ref.putFile(_localImageFile!).timeout(const Duration(seconds: 25));
-      final url = await task.ref.getDownloadURL().timeout(const Duration(seconds: 15));
+      final task =
+      await ref.putFile(_localImageFile!).timeout(const Duration(seconds: 25));
+      final url =
+      await task.ref.getDownloadURL().timeout(const Duration(seconds: 15));
 
       setState(() {
         _uploadedImageUrl = url;
@@ -425,7 +527,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       return url;
     } on TimeoutException {
-      throw Exception('Upload trvá príliš dlho (timeout). Skontroluj internet a skús znova.');
+      throw Exception(
+          'Upload trvá príliš dlho (timeout). Skontroluj internet a skús znova.');
     } on FirebaseException catch (e) {
       throw Exception('Upload do Storage zlyhal: ${e.code} – ${e.message ?? ''}');
     } catch (e) {
@@ -447,7 +550,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       return;
     }
 
-    if (_localImageFile == null && (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
+    if (_localImageFile == null &&
+        (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
       return;
     }
 
@@ -493,7 +597,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       final m = decoded;
 
-      final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
+      final String prettyType =
+      (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
       final String rawType = (m['type'] ?? '').toString().trim();
       final String canonical = (m['canonical_type'] ?? '').toString().trim();
       final String brandFromAi = (m['brand'] ?? '').toString().trim();
@@ -506,6 +611,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (_nameController.text.trim().isEmpty && prettyType.isNotEmpty) {
         _nameController.text = prettyType;
         _lastTypeLabel = prettyType;
+        _syncSystemNameValidity();
       }
 
       if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
@@ -544,16 +650,24 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       // farby/štýly/vzory/sezóny
       if (colorsFromAi.isNotEmpty) {
-        _selectedColors = colorsFromAi.where((c) => allowedColors.contains(c)).toList();
+        _selectedColors =
+            colorsFromAi.where((c) => allowedColors.contains(c)).toList();
       }
       if (stylesFromAi.isNotEmpty) {
-        _selectedStyles = stylesFromAi.where((s) => allowedStyles.contains(s)).toList();
+        _selectedStyles =
+            stylesFromAi.where((s) => allowedStyles.contains(s)).toList();
       }
+
+      // ✅ Vzor = len 1
       if (patternsFromAi.isNotEmpty) {
-        _selectedPatterns = patternsFromAi.where((p) => allowedPatterns.contains(p)).toList();
+        final filteredPatterns =
+        patternsFromAi.where((p) => allowedPatterns.contains(p)).toList();
+        _selectedPatterns = filteredPatterns.isEmpty ? [] : [filteredPatterns.first];
       }
+
       if (seasonsFromAi.isNotEmpty) {
-        _selectedSeasons = seasonsFromAi.where((s) => allowedSeasons.contains(s)).toList();
+        final raw = seasonsFromAi.where((s) => allowedSeasons.contains(s)).toList();
+        _selectedSeasons = _sanitizeSeasons(raw);
       }
 
       _reachMilestone(3);
@@ -608,6 +722,15 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         return;
       }
 
+      // ✅ Názov musí byť z nášho zoznamu
+      _syncSystemNameValidity();
+      if (!_isSystemNameSelected) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vyber názov zo zoznamu.')),
+        );
+        return;
+      }
+
       if (_selectedMainGroupKey == null ||
           _selectedCategoryKey == null ||
           _selectedSubCategoryKey == null) {
@@ -620,6 +743,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final brand = _brandController.text.trim();
       await _saveBrandSuggestion(brand);
 
+      final safeSeasons = _sanitizeSeasons(_selectedSeasons);
+
       final data = <String, dynamic>{
         'name': _nameController.text.trim(),
         'brand': brand,
@@ -631,15 +756,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'subCategoryKey': _selectedSubCategoryKey,
         'colors': _selectedColors,
         'styles': _selectedStyles,
-        'patterns': _selectedPatterns,
-        'seasons': _selectedSeasons.isEmpty ? ['celoročne'] : _selectedSeasons,
+        'patterns': _selectedPatterns, // ✅ max 1
+        'seasons': safeSeasons.isEmpty ? ['celoročne'] : safeSeasons,
         'imageUrl': imageUrl,
         if (_uploadedStoragePath != null) 'storagePath': _uploadedStoragePath,
         'updatedAt': FieldValue.serverTimestamp(),
         if (!widget.isEditing) 'createdAt': FieldValue.serverTimestamp(),
       };
 
-      final ref = _firestore.collection('users').doc(user.uid).collection('wardrobe');
+      final ref =
+      _firestore.collection('users').doc(user.uid).collection('wardrobe');
 
       if (widget.isEditing && widget.itemId != null) {
         await ref.doc(widget.itemId).set(data, SetOptions(merge: true));
@@ -676,7 +802,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
           Widget leading;
           if (done) {
-            leading = const Icon(Icons.check_circle, color: Colors.green, size: 20);
+            leading =
+            const Icon(Icons.check_circle, color: Colors.green, size: 20);
           } else if (isActive) {
             leading = const SizedBox(
               width: 20,
@@ -684,7 +811,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               child: CircularProgressIndicator(strokeWidth: 2),
             );
           } else {
-            leading = const Icon(Icons.radio_button_unchecked, color: Colors.grey, size: 20);
+            leading = const Icon(Icons.radio_button_unchecked,
+                color: Colors.grey, size: 20);
           }
 
           return Padding(
@@ -734,6 +862,233 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
+  // ---------------------------------------------------------
+  // SYSTEM NAME PICKER (názov musí byť z nášho zoznamu)
+  // ---------------------------------------------------------
+  List<String> get _systemNameOptions {
+    final set = <String>{};
+    for (final v in subCategoryLabels.values) {
+      final s = v.toString().trim();
+      if (s.isNotEmpty) set.add(s);
+    }
+    final list = set.toList()..sort();
+    return list;
+  }
+
+  String? _findSubCategoryKeyForLabel(String label) {
+    final target = label.trim();
+    for (final entry in subCategoryLabels.entries) {
+      if (entry.value == target) return entry.key;
+    }
+    return null;
+  }
+
+  void _syncSystemNameValidity() {
+    final current = _nameController.text.trim();
+    if (current.isEmpty) {
+      _isSystemNameSelected = false;
+      _selectedSystemNameLabel = null;
+      _selectedSystemSubCategoryKey = null;
+      return;
+    }
+
+    final subKey = _findSubCategoryKeyForLabel(current);
+    if (subKey != null) {
+      _isSystemNameSelected = true;
+      _selectedSystemNameLabel = current;
+      _selectedSystemSubCategoryKey = subKey;
+    } else {
+      _isSystemNameSelected = false;
+      _selectedSystemNameLabel = null;
+      _selectedSystemSubCategoryKey = null;
+    }
+  }
+
+  void _applyRulesFromSystemName(String label) {
+    final chosen = label.trim();
+    final subKey = _findSubCategoryKeyForLabel(chosen);
+
+    setState(() {
+      _nameController.text = chosen;
+      _lastTypeLabel = chosen;
+
+      _isSystemNameSelected = true;
+      _selectedSystemNameLabel = chosen;
+      _selectedSystemSubCategoryKey = subKey;
+
+      // 1) Kategória/typ: najlepšie cez subKey (canonical)
+      if (subKey != null) {
+        final mapped = AiClothingParser.fromCanonicalType(subKey);
+        if (mapped != null) {
+          _selectedMainGroupKey = mapped.mainGroupKey;
+          _selectedCategoryKey = mapped.categoryKey;
+          _selectedSubCategoryKey = mapped.subCategoryKey;
+        }
+      }
+
+      // 2) Fallback mapovanie podľa textu
+      if (_selectedMainGroupKey == null ||
+          _selectedCategoryKey == null ||
+          _selectedSubCategoryKey == null) {
+        final mapped = AiClothingParser.mapType(
+          AiParserInput(
+            rawType: '',
+            aiName: '',
+            userName: chosen,
+            seasons: _selectedSeasons,
+            brand: _brandController.text.trim(),
+          ),
+        );
+        if (mapped != null) {
+          _selectedMainGroupKey = mapped.mainGroupKey;
+          _selectedCategoryKey = mapped.categoryKey;
+          _selectedSubCategoryKey = mapped.subCategoryKey;
+        }
+      }
+
+      // 3) Sezóny podľa názvu (deterministicky)
+      final n = chosen.toLowerCase();
+
+      List<String>? forcedSeasons;
+      if (subKey != null) {
+        final k = subKey.toLowerCase();
+        if (k.contains('zim')) forcedSeasons = ['zima'];
+        if (k.contains('prechod')) forcedSeasons = ['jar', 'jeseň'];
+        if (k.contains('let')) forcedSeasons = ['leto'];
+        if (k.contains('jarn')) forcedSeasons = ['jar'];
+        if (k.contains('jesen') || k.contains('jese')) forcedSeasons = ['jeseň'];
+        if (k.contains('celoroc') || k.contains('celoro')) {
+          forcedSeasons = ['jar', 'leto', 'jeseň', 'zima'];
+        }
+      }
+
+      forcedSeasons ??= () {
+        if (n.contains('zimn')) return ['zima'];
+        if (n.contains('prechod')) return ['jar', 'jeseň'];
+        if (n.contains('letn')) return ['leto'];
+        if (n.contains('jarn')) return ['jar'];
+        if (n.contains('jesen') || n.contains('jese')) return ['jeseň'];
+        if (n.contains('celoroč') || n.contains('celoroc') || n.contains('celoro')) {
+          return ['jar', 'leto', 'jeseň', 'zima'];
+        }
+        return null;
+      }();
+
+      if (forcedSeasons != null) {
+        final raw = forcedSeasons.where((s) => allowedSeasons.contains(s)).toList();
+        _selectedSeasons = _sanitizeSeasons(raw);
+      }
+    });
+  }
+
+  Future<void> _openSystemNamePicker() async {
+    final options = _systemNameOptions;
+    final controller = TextEditingController(text: _nameController.text.trim());
+
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final query = controller.text.trim();
+
+            List<String> filtered = options;
+            if (query.isNotEmpty) {
+              final q = _normalizeForSearch(query);
+              filtered = options
+                  .where((o) => _normalizeForSearch(o).contains(q))
+                  .toList();
+            }
+
+            return SafeArea(
+              child: Padding(
+                padding: EdgeInsets.only(
+                  left: 16,
+                  right: 16,
+                  top: 8,
+                  bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: controller,
+                      autofocus: true,
+                      decoration: const InputDecoration(
+                        hintText: 'Začni písať (napr. zi...)',
+                        prefixIcon: Icon(Icons.search),
+                      ),
+                      onChanged: (_) => setSheetState(() {}),
+                    ),
+                    const SizedBox(height: 8),
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: filtered.length,
+                        itemBuilder: (ctx, i) {
+                          final label = filtered[i];
+                          final selected = (_selectedSystemNameLabel == label);
+                          return ListTile(
+                            title: Text(label),
+                            trailing:
+                            selected ? const Icon(Icons.check_circle) : null,
+                            onTap: () => Navigator.of(ctx).pop(label),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    if (result == null) return;
+    _applyRulesFromSystemName(result);
+  }
+
+  Widget _buildSystemNameField() {
+    final text = _nameController.text.trim();
+    final display = text.isEmpty ? 'Vyber názov zo zoznamu' : text;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: _openSystemNamePicker,
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: 'Názov',
+          border: const OutlineInputBorder(),
+          helperText: text.isEmpty ? 'Vyber názov zo zoznamu' : null,
+          errorText: (text.isNotEmpty && !_isSystemNameSelected)
+              ? 'Vyber názov zo zoznamu'
+              : null,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                display,
+                style: TextStyle(
+                  color: text.isEmpty ? Theme.of(context).hintColor : null,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.arrow_drop_down),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _brandAutoComplete() {
     final options = _brandOptions;
 
@@ -763,7 +1118,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 ? const Icon(Icons.arrow_drop_down)
                 : const Padding(
               padding: EdgeInsets.all(12),
-              child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
             ),
           ),
           onChanged: (v) => _brandController.text = v,
@@ -778,10 +1137,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
-
-
   // =========================
-  // ✅ Rolovateľné multi-select okná (Farby / Štýly / Vzor / Sezóny)
+  // ✅ Rolovateľné multi-select okná (Farby / Štýly / Sezóny)
   // =========================
   Widget _buildMultiSelectField({
     required String label,
@@ -789,10 +1146,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     required List<String> selected,
     required ValueChanged<List<String>> onChanged,
   }) {
-    // ✅ nech to nepôsobí "lacno" (žiadne čiarky), vizuálne bližšie ku kategórii
     final text = selected.isEmpty
         ? 'Vyber...'
-        : (selected.length == 1 ? selected.first : '${selected.length} vybrané');
+        : () {
+      const maxVisible = 3;
+      if (selected.length <= maxVisible) {
+        return selected.join(', ');
+      }
+      final visible = selected.take(maxVisible).join(', ');
+      final rest = selected.length - maxVisible;
+      return '$visible +$rest';
+    }();
 
     return InkWell(
       borderRadius: BorderRadius.circular(12),
@@ -801,6 +1165,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           title: label,
           options: options,
           initialSelected: selected,
+          enforceSeasonRules: (label == 'Sezóny'),
         );
         if (result != null) {
           onChanged(result);
@@ -833,6 +1198,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     required String title,
     required List<String> options,
     required List<String> initialSelected,
+    bool enforceSeasonRules = false,
   }) async {
     final result = await showModalBottomSheet<List<String>>(
       context: context,
@@ -842,7 +1208,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (ctx) {
-        // ✅ Tieto premenné musia žiť mimo builderu StatefulBuilder, aby sa neresetovali.
         final tempSelected = <String>{...initialSelected};
         String query = '';
 
@@ -858,10 +1223,45 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           builder: (ctx, setSheetState) {
             void toggle(String value, bool v) {
               setSheetState(() {
+                if (!enforceSeasonRules) {
+                  if (v) {
+                    tempSelected.add(value);
+                  } else {
+                    tempSelected.remove(value);
+                  }
+                  return;
+                }
+
+                // ✅ SEASON RULES LIVE (hneď v okne)
+                const four = {'jar', 'leto', 'jeseň', 'zima'};
+
+                if (value == 'celoročne') {
+                  if (v) {
+                    tempSelected
+                      ..clear()
+                      ..add('celoročne');
+                  } else {
+                    tempSelected.remove('celoročne');
+                  }
+                  return;
+                }
+
+                // vyberám normálnu sezónu
+                if (tempSelected.contains('celoročne')) {
+                  tempSelected.remove('celoročne');
+                }
+
                 if (v) {
                   tempSelected.add(value);
                 } else {
                   tempSelected.remove(value);
+                }
+
+                // ak máme všetky 4 -> preklop na celoročne
+                if (tempSelected.containsAll(four)) {
+                  tempSelected
+                    ..clear()
+                    ..add('celoročne');
                 }
               });
             }
@@ -879,23 +1279,18 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        title,
-                        style: Theme.of(ctx).textTheme.titleMedium,
-                      ),
+                      Text(title, style: Theme.of(ctx).textTheme.titleMedium),
                       const SizedBox(height: 10),
                       TextField(
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search),
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
                           hintText: 'Hľadať...',
-                          // ✅ viac "kategória" look: bez hrubého rámčeka
-                          border: const UnderlineInputBorder(),
+                          border: UnderlineInputBorder(),
                         ),
                         onChanged: (v) => setSheetState(() => query = v),
                       ),
                       const SizedBox(height: 10),
                       Expanded(
-                        // ✅ drž si filtrovaný zoznam len raz (stabilné a rýchle)
                         child: Builder(builder: (ctx) {
                           final items = filtered();
                           return ListView.builder(
@@ -905,13 +1300,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                               final checked = tempSelected.contains(o);
                               final primary = Theme.of(ctx).colorScheme.primary;
 
-                              // ✅ rovnaký "riadkový" štýl ako kategórie (žiadne deliace čiary)
                               return ListTile(
                                 contentPadding: EdgeInsets.zero,
-                                title: Text(
-                                  o,
-                                  style: Theme.of(ctx).textTheme.bodyLarge,
-                                ),
+                                title: Text(o, style: Theme.of(ctx).textTheme.bodyLarge),
                                 trailing: checked
                                     ? Icon(Icons.check_circle_rounded, color: primary)
                                     : const SizedBox(width: 24, height: 24),
@@ -950,10 +1341,162 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       },
     );
 
-    // ✅ Zachovaj poradie podľa "options" (aby UI zostalo stabilné)
     if (result == null) return null;
-    final setRes = result.toSet();
-    return options.where((o) => setRes.contains(o)).toList();
+    final ordered = options.where((o) => result.contains(o)).toList();
+
+    // ✅ ešte posledná poistka
+    if (enforceSeasonRules) return _sanitizeSeasons(ordered);
+    return ordered;
+  }
+
+  // =========================
+  // ✅ Single-select okno (Vzor)
+  // =========================
+  Widget _buildSingleSelectField({
+    required String label,
+    required List<String> options,
+    required String? selected,
+    required ValueChanged<String?> onChanged,
+  }) {
+    final text = (selected == null || selected.isEmpty) ? 'Vyber...' : selected;
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        final result = await _openSingleSelectBottomSheet(
+          title: label,
+          options: options,
+          selected: selected,
+        );
+        if (result != null) {
+          onChanged(result);
+        }
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.keyboard_arrow_down_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _openSingleSelectBottomSheet({
+    required String title,
+    required List<String> options,
+    required String? selected,
+  }) async {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        String query = '';
+
+        List<String> filtered() {
+          final q = query.trim().toLowerCase();
+          if (q.isEmpty) return options;
+          return options.where((o) => o.toLowerCase().contains(q)).toList();
+        }
+
+        final height = MediaQuery.of(ctx).size.height * 0.75;
+
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            final items = filtered();
+            final primary = Theme.of(ctx).colorScheme.primary;
+
+            return SafeArea(
+              child: SizedBox(
+                height: height,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    bottom: 12 + MediaQuery.of(ctx).viewInsets.bottom,
+                    top: 4,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: Theme.of(ctx).textTheme.titleMedium),
+                      const SizedBox(height: 10),
+                      TextField(
+                        decoration: const InputDecoration(
+                          prefixIcon: Icon(Icons.search),
+                          hintText: 'Hľadať...',
+                          border: UnderlineInputBorder(),
+                        ),
+                        onChanged: (v) => setSheetState(() => query = v),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: items.length,
+                          itemBuilder: (ctx, i) {
+                            final o = items[i];
+                            final checked = (selected == o);
+
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(o, style: Theme.of(ctx).textTheme.bodyLarge),
+                              trailing: checked
+                                  ? Icon(Icons.check_circle_rounded, color: primary)
+                                  : const SizedBox(width: 24, height: 24),
+                              onTap: () => Navigator.of(ctx).pop(o),
+                            );
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(null),
+                            child: const Text('Zrušiť'),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(''),
+                            child: const Text('Vymazať'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(ctx).pop(selected ?? ''),
+                            child: const Text('Hotovo'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    ).then((value) {
+      if (value == null) return null;
+      if (value.isEmpty) return '';
+      return value;
+    });
   }
 
   Widget _buildForm() {
@@ -982,17 +1525,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ),
           ),
         const SizedBox(height: 16),
-        TextField(
-          controller: _nameController,
-          decoration: const InputDecoration(
-            labelText: 'Názov',
-            border: OutlineInputBorder(),
-          ),
-        ),
+        _buildSystemNameField(),
         const SizedBox(height: 12),
         _brandAutoComplete(),
         const SizedBox(height: 12),
         CategoryPicker(
+          hideSubCategory: true,
           initialMainGroup: _selectedMainGroupKey,
           initialCategory: _selectedCategoryKey,
           initialSubCategory: _selectedSubCategoryKey,
@@ -1001,9 +1539,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             final cat = data['category'];
             final sub = data['subCategory'];
 
-            final subLabel = (sub != null && sub.isNotEmpty)
-                ? (subCategoryLabels[sub] ?? sub)
-                : '';
+            final subLabel =
+            (sub != null && sub.isNotEmpty) ? (subCategoryLabels[sub] ?? sub) : '';
 
             setState(() {
               _selectedMainGroupKey = main;
@@ -1015,6 +1552,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 if (subLabel.isNotEmpty) {
                   _nameController.text = subLabel;
                   _lastTypeLabel = subLabel;
+                  _syncSystemNameValidity();
                 }
               }
             });
@@ -1035,18 +1573,30 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           onChanged: (v) => setState(() => _selectedStyles = v),
         ),
         const SizedBox(height: 12),
-        _buildMultiSelectField(
+
+        // ✅ VZOR = SINGLE select
+        _buildSingleSelectField(
           label: 'Vzor',
           options: allowedPatterns,
-          selected: _selectedPatterns,
-          onChanged: (v) => setState(() => _selectedPatterns = v),
+          selected: _selectedPatterns.isEmpty ? null : _selectedPatterns.first,
+          onChanged: (v) {
+            setState(() {
+              if (v == null) return;
+              if (v.isEmpty) {
+                _selectedPatterns = [];
+              } else {
+                _selectedPatterns = [v];
+              }
+            });
+          },
         ),
+
         const SizedBox(height: 12),
         _buildMultiSelectField(
           label: 'Sezóny',
           options: allowedSeasons,
           selected: _selectedSeasons,
-          onChanged: (v) => setState(() => _selectedSeasons = v),
+          onChanged: (v) => setState(() => _selectedSeasons = _sanitizeSeasons(v)),
         ),
         const SizedBox(height: 12),
         Row(
