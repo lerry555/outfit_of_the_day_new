@@ -38,7 +38,7 @@ class AddClothingScreen extends StatefulWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
-      builder: (_) {
+      builder: (sheetCtx) {
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
@@ -48,12 +48,12 @@ class AddClothingScreen extends StatefulWidget {
                 ListTile(
                   leading: const Icon(Icons.photo_library_outlined),
                   title: const Text('Z galérie'),
-                  onTap: () => Navigator.pop(context, 'gallery'),
+                  onTap: () => Navigator.pop(sheetCtx, 'gallery'),
                 ),
                 ListTile(
                   leading: const Icon(Icons.camera_alt_outlined),
                   title: const Text('Odfotiť'),
-                  onTap: () => Navigator.pop(context, 'camera'),
+                  onTap: () => Navigator.pop(sheetCtx, 'camera'),
                 ),
               ],
             ),
@@ -83,7 +83,6 @@ class AddClothingScreen extends StatefulWidget {
   State<AddClothingScreen> createState() => _AddClothingScreenState();
 }
 
-/// Pomocný wrapper, aby sme vedeli odovzdať File hneď do AddClothingScreen bez hackov.
 class _AddClothingEntryPoint extends StatelessWidget {
   final File localFile;
   const _AddClothingEntryPoint({required this.localFile});
@@ -106,9 +105,7 @@ class _AddClothingScreenHostState extends State<AddClothingScreenHost> {
   @override
   Widget build(BuildContext context) {
     return AddClothingScreen(
-      initialData: {
-        '_localFilePath': widget.localFile.path,
-      },
+      initialData: {'_localFilePath': widget.localFile.path},
       imageUrl: null,
       isEditing: false,
     );
@@ -125,11 +122,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   File? _localImageFile;
   String? _uploadedImageUrl;
-
-  // ✅ kvôli background triggeru
   String? _uploadedStoragePath;
 
-  // Form selections
   String? _selectedMainGroupKey;
   String? _selectedCategoryKey;
   String? _selectedSubCategoryKey;
@@ -139,13 +133,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _selectedPatterns = [];
   List<String> _selectedSeasons = [];
 
-  // AI state
   bool _isAiLoading = false;
   bool _aiCompleted = false;
   bool _aiFailed = false;
   String? _aiError;
 
-  // ✅ “checklist” progress (pôsobí plynule, bez preskakovania)
+  // ✅ checklist
   final List<String> _progressSteps = const [
     'Analyzujem obrázok',
     'Rozpoznávam typ kúsku',
@@ -154,40 +147,26 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     'Pripravujem formulár',
   ];
 
-  // čo je už fajknuté
-  final List<bool> _progressDone = [false, false, false, false, false];
+  /// ✅ iba tieto "done" budú ovplyvňovať UI (zelené fajky)
+  final List<bool> _done = [false, false, false, false, false];
 
-  // milestone: kedy AI reálne dosiahlo danú “fázu”
-  final List<bool> _milestoneReached = [false, false, false, false, false];
-
-  // minimálne časy (aby sa kroky neodfajkli naraz)
-  // (je to úmyselne “feels good” tempo)
-  final List<int> _minStepMs = const [
-    650,  // 1) analyzujem obrázok
-    900,  // 2) rozpoznávam typ
-    700,  // 3) zaraďujem do kategórie
-    700,  // 4) kontrolujem farby/vzor/sezónu
-    500,  // 5) pripravujem formulár
-  ];
-
-  // ktorý krok je “aktívny” (spinner)
+  /// ✅ ktorý krok práve beží (spinner)
   int _activeStepIndex = 0;
 
-  Timer? _progressTimer;
-  int _lastStepFlipMs = 0;
-  Stopwatch? _progressWatch;
+  Timer? _uxTimer;
 
-  // ✅ AI výsledky (pripravíme si ich, ale UI ukážeme až po animácii checklistu)
-  Map<String, dynamic>? _pendingAiResult;
-  bool _aiResultReady = false;
+  /// 🔧 tu si uprav rýchlosť progresu (2 sekundy)
+  final int _uxIntervalMs = 2000;
+
+  /// 🔧 fake odfajkne len kroky 0..3, posledný krok (4) je len reálne
+  final int _maxFakeDoneIndex = 3;
 
   String? _lastTypeLabel;
 
-  // ✅ Brand autocomplete data
+  // Brand autocomplete
   List<String> _brandOptions = [];
   bool _brandsLoaded = false;
 
-  // Default seed brands
   static const List<String> _seedBrands = [
     'Adidas',
     'Nike',
@@ -248,7 +227,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   void initState() {
     super.initState();
 
-    // Ak prichádzame z openFromPicker, dostaneme path v initialData
     final path = (widget.initialData?['_localFilePath'] ?? '').toString();
     if (!widget.isEditing && path.isNotEmpty) {
       _localImageFile = File(path);
@@ -273,23 +251,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedCategoryKey = cat.isEmpty ? null : cat;
       _selectedSubCategoryKey = sub.isEmpty ? null : sub;
 
-      _selectedColors =
-          (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedStyles =
-          (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedPatterns =
-          (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedSeasons =
-          (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedColors = (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedStyles = (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedPatterns = (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedSeasons = (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
 
       _uploadedImageUrl = widget.imageUrl;
-      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
-          ? null
-          : (d['storagePath'] ?? '').toString();
-
+      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty ? null : (d['storagePath'] ?? '').toString();
       _aiCompleted = true;
-      _lastTypeLabel =
-      _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
+
+      _lastTypeLabel = _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
     }
 
     _loadBrandSuggestions();
@@ -297,7 +268,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   @override
   void dispose() {
-    _progressTimer?.cancel();
+    _uxTimer?.cancel();
     _nameController.dispose();
     _brandController.dispose();
     super.dispose();
@@ -310,7 +281,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   // ---------------------------------------------------------
-  // BRAND SUGGESTIONS (Firestore)
+  // BRAND SUGGESTIONS
   // ---------------------------------------------------------
   Future<void> _loadBrandSuggestions() async {
     final user = _auth.currentUser;
@@ -365,7 +336,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final brand = brandRaw.trim();
     if (brand.isEmpty) return;
 
-    // Lokálne doplň hneď (UI)
     if (!_brandOptions.map((e) => e.toLowerCase()).contains(brand.toLowerCase())) {
       setState(() {
         _brandOptions = [..._brandOptions, brand]..sort();
@@ -385,9 +355,47 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'brands': FieldValue.arrayUnion([brand]),
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
-    } catch (_) {
-      // nič – appka funguje aj bez toho
+    } catch (_) {}
+  }
+
+  // ---------------------------------------------------------
+  // ✅ PROGRESS (spinner + zelené fajky)
+  // ---------------------------------------------------------
+  void _resetProgress() {
+    for (int i = 0; i < _done.length; i++) {
+      _done[i] = false;
     }
+    _activeStepIndex = 0;
+
+    _uxTimer?.cancel();
+    _uxTimer = Timer.periodic(Duration(milliseconds: _uxIntervalMs), (_) {
+      if (!mounted) return;
+      if (!_isAiLoading) return;
+
+      setState(() {
+        // Fake odfajkávame len po krok 3
+        if (_activeStepIndex <= _maxFakeDoneIndex) {
+          _done[_activeStepIndex] = true; // ✅ rovno zelená fajka
+          _activeStepIndex = (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
+        }
+        // krok 4 (Pripravujem formulár) necháme len na realitu
+      });
+    });
+  }
+
+  void _stopProgressTimers() {
+    _uxTimer?.cancel();
+    _uxTimer = null;
+  }
+
+  void _reachMilestone(int index) {
+    if (!mounted) return;
+    setState(() {
+      _done[index] = true;
+      if (_activeStepIndex <= index && index < _progressSteps.length - 1) {
+        _activeStepIndex = index + 1;
+      }
+    });
   }
 
   // ---------------------------------------------------------
@@ -406,84 +414,23 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final storagePath = 'wardrobe/${user.uid}/$fileName';
     final ref = _storage.ref().child(storagePath);
 
-    final task = await ref.putFile(_localImageFile!);
-    final url = await task.ref.getDownloadURL();
+    try {
+      final task = await ref.putFile(_localImageFile!).timeout(const Duration(seconds: 25));
+      final url = await task.ref.getDownloadURL().timeout(const Duration(seconds: 15));
 
-    setState(() {
-      _uploadedImageUrl = url;
-      _uploadedStoragePath = storagePath;
-    });
+      setState(() {
+        _uploadedImageUrl = url;
+        _uploadedStoragePath = storagePath;
+      });
 
-    return url;
-  }
-
-  // ---------------------------------------------------------
-  // ✅ PROGRESS ENGINE (plynulé odfajkávanie)
-  // - milestony nastavuje AI časť
-  // - odfajkávanie riadi timer, krok po kroku, s min časom
-  // - formulár sa ukáže až keď: AI výsledok je ready + posledná fajka hotová
-  // ---------------------------------------------------------
-  void _resetProgressEngine() {
-    for (var i = 0; i < _progressDone.length; i++) {
-      _progressDone[i] = false;
-      _milestoneReached[i] = false;
+      return url;
+    } on TimeoutException {
+      throw Exception('Upload trvá príliš dlho (timeout). Skontroluj internet a skús znova.');
+    } on FirebaseException catch (e) {
+      throw Exception('Upload do Storage zlyhal: ${e.code} – ${e.message ?? ''}');
+    } catch (e) {
+      throw Exception('Upload do Storage zlyhal: $e');
     }
-    _activeStepIndex = 0;
-    _aiResultReady = false;
-    _pendingAiResult = null;
-
-    _progressTimer?.cancel();
-    _progressWatch?.stop();
-
-    _progressWatch = Stopwatch()..start();
-    _lastStepFlipMs = 0;
-
-    _progressTimer = Timer.periodic(const Duration(milliseconds: 80), (_) {
-      if (!mounted) return;
-      final sw = _progressWatch;
-      if (sw == null) return;
-
-      final nowMs = sw.elapsedMilliseconds;
-
-      // nájdi prvý nehotový krok
-      final next = _progressDone.indexWhere((x) => x == false);
-
-      // všetko hotové
-      if (next == -1) {
-        // ak už máme AI výsledok -> zobraz form (hneď)
-        if (_aiResultReady) {
-          _progressTimer?.cancel();
-          _progressTimer = null;
-          setState(() {
-            _isAiLoading = false;
-            _aiCompleted = true;
-            _aiFailed = false;
-          });
-        }
-        return;
-      }
-
-      // aktívny krok je prvý nehotový
-      if (_activeStepIndex != next) {
-        _activeStepIndex = next;
-      }
-
-      // “next” krok sa môže odfajknúť iba ak:
-      // 1) milestoneReached[next] = true
-      // 2) uplynul min čas od posledného odfajknutia
-      final canFlipByTime = (nowMs - _lastStepFlipMs) >= _minStepMs[next];
-      if (_milestoneReached[next] && canFlipByTime) {
-        _progressDone[next] = true;
-        _lastStepFlipMs = nowMs;
-      }
-
-      setState(() {});
-    });
-  }
-
-  void _reachMilestone(int i) {
-    if (i < 0 || i >= _milestoneReached.length) return;
-    _milestoneReached[i] = true;
   }
 
   // ---------------------------------------------------------
@@ -500,8 +447,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       return;
     }
 
-    if (_localImageFile == null &&
-        (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
+    if (_localImageFile == null && (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
       return;
     }
 
@@ -512,24 +458,27 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _aiError = null;
     });
 
-    _resetProgressEngine();
+    _resetProgress();
 
     try {
-      // 1) upload + url
+      // 0) upload
       final imageUrl = await _ensureImageUrl();
       if (imageUrl == null || imageUrl.isEmpty) {
         throw Exception('Nepodarilo sa získať URL obrázka.');
       }
-      _reachMilestone(0); // ✅ “Analyzujem obrázok” môže časom odfajknúť
+      _reachMilestone(0);
 
+      // 1) AI call
       const endpoint =
           'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/analyzeClothingImage';
 
-      final resp = await http.post(
+      final resp = await http
+          .post(
         Uri.parse(endpoint),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'imageUrl': imageUrl}),
-      );
+      )
+          .timeout(const Duration(seconds: 30));
 
       if (resp.statusCode != 200) {
         throw Exception('AI zlyhalo: ${resp.statusCode} ${resp.body}');
@@ -540,103 +489,106 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         throw Exception('AI odpoveď nie je JSON objekt.');
       }
 
-      _reachMilestone(1); // ✅ rozpoznávanie typu máme (AI odpoveď prišla)
+      _reachMilestone(1);
 
-      _pendingAiResult = decoded;
+      final m = decoded;
 
-      // teraz pripravíme dáta do formu (ale UI ukážeme až po checklist animácii)
-      await _applyAiResult(decoded);
+      final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
+      final String rawType = (m['type'] ?? '').toString().trim();
+      final String canonical = (m['canonical_type'] ?? '').toString().trim();
+      final String brandFromAi = (m['brand'] ?? '').toString().trim();
 
-      // po vyplnení kategórie:
+      final colorsFromAi = _toStringList(m['colors'] ?? m['color']);
+      final stylesFromAi = _toStringList(m['style'] ?? m['styles']);
+      final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
+      final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
+
+      if (_nameController.text.trim().isEmpty && prettyType.isNotEmpty) {
+        _nameController.text = prettyType;
+        _lastTypeLabel = prettyType;
+      }
+
+      if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
+        _brandController.text = brandFromAi;
+        await _saveBrandSuggestion(brandFromAi);
+      }
+
+      // kategória
+      if (canonical.isNotEmpty) {
+        final mapped = AiClothingParser.fromCanonicalType(canonical);
+        if (mapped != null) {
+          _selectedMainGroupKey = mapped.mainGroupKey;
+          _selectedCategoryKey = mapped.categoryKey;
+          _selectedSubCategoryKey = mapped.subCategoryKey;
+        }
+      }
+
+      if (_selectedMainGroupKey == null || _selectedCategoryKey == null) {
+        final mapped = AiClothingParser.mapType(
+          AiParserInput(
+            rawType: rawType,
+            aiName: prettyType,
+            userName: _nameController.text.trim(),
+            seasons: seasonsFromAi,
+            brand: brandFromAi,
+          ),
+        );
+        if (mapped != null) {
+          _selectedMainGroupKey = mapped.mainGroupKey;
+          _selectedCategoryKey = mapped.categoryKey;
+          _selectedSubCategoryKey = mapped.subCategoryKey;
+        }
+      }
+
       _reachMilestone(2);
 
-      // po vyplnení farieb/štýlov/vzorov/sezóny:
+      // farby/štýly/vzory/sezóny
+      if (colorsFromAi.isNotEmpty) {
+        _selectedColors = colorsFromAi.where((c) => allowedColors.contains(c)).toList();
+      }
+      if (stylesFromAi.isNotEmpty) {
+        _selectedStyles = stylesFromAi.where((s) => allowedStyles.contains(s)).toList();
+      }
+      if (patternsFromAi.isNotEmpty) {
+        _selectedPatterns = patternsFromAi.where((p) => allowedPatterns.contains(p)).toList();
+      }
+      if (seasonsFromAi.isNotEmpty) {
+        _selectedSeasons = seasonsFromAi.where((s) => allowedSeasons.contains(s)).toList();
+      }
+
       _reachMilestone(3);
 
-      // “pripravujem formulár” – pustíme až keď máme všetko pripravené
+      // ✅ posledný krok: odfajkni až keď je fakt hotovo
       _reachMilestone(4);
-      _aiResultReady = true;
 
-      if (mounted) setState(() {});
-    } catch (e) {
+      // ✅ nech user VIDÍ, že sa odfajkol aj posledný krok
+      await Future.delayed(const Duration(milliseconds: 450));
+
       if (!mounted) return;
-      _progressTimer?.cancel();
-      _progressTimer = null;
-
+      _stopProgressTimers();
+      setState(() {
+        _aiCompleted = true;
+        _aiFailed = false;
+        _isAiLoading = false;
+      });
+    } on TimeoutException {
+      _stopProgressTimers();
+      if (!mounted) return;
+      setState(() {
+        _aiFailed = true;
+        _aiCompleted = false;
+        _isAiLoading = false;
+        _aiError = 'Sieťový timeout. Skontroluj internet a skús znova.';
+      });
+    } catch (e) {
+      _stopProgressTimers();
+      if (!mounted) return;
       setState(() {
         _aiFailed = true;
         _aiCompleted = false;
         _isAiLoading = false;
         _aiError = e.toString();
       });
-    }
-  }
-
-  Future<void> _applyAiResult(Map<String, dynamic> m) async {
-    final String prettyType =
-    (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
-    final String rawType = (m['type'] ?? '').toString().trim();
-    final String canonical = (m['canonical_type'] ?? '').toString().trim();
-    final String brandFromAi = (m['brand'] ?? '').toString().trim();
-
-    final colorsFromAi = _toStringList(m['colors'] ?? m['color']);
-    final stylesFromAi = _toStringList(m['style'] ?? m['styles']);
-    final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
-    final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
-
-    // názov
-    if (_nameController.text.trim().isEmpty && prettyType.isNotEmpty) {
-      _nameController.text = prettyType;
-      _lastTypeLabel = prettyType;
-    }
-
-    // značka
-    if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
-      _brandController.text = brandFromAi;
-      await _saveBrandSuggestion(brandFromAi);
-    }
-
-    // kategória podľa canonical / fallback parser
-    if (canonical.isNotEmpty) {
-      final mapped = AiClothingParser.fromCanonicalType(canonical);
-      if (mapped != null) {
-        _selectedMainGroupKey = mapped.mainGroupKey;
-        _selectedCategoryKey = mapped.categoryKey;
-        _selectedSubCategoryKey = mapped.subCategoryKey;
-      }
-    }
-
-    if (_selectedMainGroupKey == null || _selectedCategoryKey == null) {
-      final mapped = AiClothingParser.mapType(
-        AiParserInput(
-          rawType: rawType,
-          aiName: prettyType,
-          userName: _nameController.text.trim(),
-          seasons: seasonsFromAi,
-          brand: brandFromAi,
-        ),
-      );
-      if (mapped != null) {
-        _selectedMainGroupKey = mapped.mainGroupKey;
-        _selectedCategoryKey = mapped.categoryKey;
-        _selectedSubCategoryKey = mapped.subCategoryKey;
-      }
-    }
-
-    // farby/štýly/vzory/sezóny
-    if (colorsFromAi.isNotEmpty) {
-      _selectedColors = colorsFromAi.where((c) => allowedColors.contains(c)).toList();
-    }
-    if (stylesFromAi.isNotEmpty) {
-      _selectedStyles = stylesFromAi.where((s) => allowedStyles.contains(s)).toList();
-    }
-    if (patternsFromAi.isNotEmpty) {
-      _selectedPatterns =
-          patternsFromAi.where((p) => allowedPatterns.contains(p)).toList();
-    }
-    if (seasonsFromAi.isNotEmpty) {
-      _selectedSeasons =
-          seasonsFromAi.where((s) => allowedSeasons.contains(s)).toList();
     }
   }
 
@@ -706,7 +658,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   // ---------------------------------------------------------
-  // UI helpers
+  // UI
   // ---------------------------------------------------------
   Widget _buildProgressChecklist() {
     return Column(
@@ -719,23 +671,27 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         ),
         const SizedBox(height: 8),
         ...List.generate(_progressSteps.length, (i) {
-          final done = _progressDone[i];
+          final done = _done[i];
           final isActive = !done && i == _activeStepIndex;
+
+          Widget leading;
+          if (done) {
+            leading = const Icon(Icons.check_circle, color: Colors.green, size: 20);
+          } else if (isActive) {
+            leading = const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            );
+          } else {
+            leading = const Icon(Icons.radio_button_unchecked, color: Colors.grey, size: 20);
+          }
 
           return Padding(
             padding: const EdgeInsets.symmetric(vertical: 6),
             child: Row(
               children: [
-                if (done)
-                  const Icon(Icons.check_circle, color: Colors.green, size: 20)
-                else if (isActive)
-                  const SizedBox(
-                    width: 20,
-                    height: 20,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                else
-                  const Icon(Icons.radio_button_unchecked, color: Colors.grey, size: 20),
+                leading,
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
@@ -785,9 +741,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       initialValue: TextEditingValue(text: _brandController.text),
       optionsBuilder: (TextEditingValue textEditingValue) {
         final q = textEditingValue.text.trim().toLowerCase();
-        if (q.isEmpty) {
-          return options.take(25);
-        }
+        if (q.isEmpty) return options.take(25);
         return options.where((b) => b.toLowerCase().contains(q)).take(50);
       },
       onSelected: (String selection) {
@@ -796,9 +750,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       },
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
         controller.text = _brandController.text;
-        controller.selection = TextSelection.fromPosition(
-          TextPosition(offset: controller.text.length),
-        );
+        controller.selection =
+            TextSelection.fromPosition(TextPosition(offset: controller.text.length));
 
         return TextField(
           controller: controller,
@@ -810,16 +763,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 ? const Icon(Icons.arrow_drop_down)
                 : const Padding(
               padding: EdgeInsets.all(12),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
+              child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
             ),
           ),
-          onChanged: (v) {
-            _brandController.text = v;
-          },
+          onChanged: (v) => _brandController.text = v,
           onEditingComplete: () {
             final txt = controller.text.trim();
             _brandController.text = txt;
@@ -831,12 +778,189 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
+
+
+  // =========================
+  // ✅ Rolovateľné multi-select okná (Farby / Štýly / Vzor / Sezóny)
+  // =========================
+  Widget _buildMultiSelectField({
+    required String label,
+    required List<String> options,
+    required List<String> selected,
+    required ValueChanged<List<String>> onChanged,
+  }) {
+    // ✅ nech to nepôsobí "lacno" (žiadne čiarky), vizuálne bližšie ku kategórii
+    final text = selected.isEmpty
+        ? 'Vyber...'
+        : (selected.length == 1 ? selected.first : '${selected.length} vybrané');
+
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: () async {
+        final result = await _openMultiSelectBottomSheet(
+          title: label,
+          options: options,
+          initialSelected: selected,
+        );
+        if (result != null) {
+          onChanged(result);
+        }
+      },
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          border: const OutlineInputBorder(),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(Icons.keyboard_arrow_down_rounded),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<String>?> _openMultiSelectBottomSheet({
+    required String title,
+    required List<String> options,
+    required List<String> initialSelected,
+  }) async {
+    final result = await showModalBottomSheet<List<String>>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) {
+        // ✅ Tieto premenné musia žiť mimo builderu StatefulBuilder, aby sa neresetovali.
+        final tempSelected = <String>{...initialSelected};
+        String query = '';
+
+        List<String> filtered() {
+          final q = query.trim().toLowerCase();
+          if (q.isEmpty) return options;
+          return options.where((o) => o.toLowerCase().contains(q)).toList();
+        }
+
+        final height = MediaQuery.of(ctx).size.height * 0.75;
+
+        return StatefulBuilder(
+          builder: (ctx, setSheetState) {
+            void toggle(String value, bool v) {
+              setSheetState(() {
+                if (v) {
+                  tempSelected.add(value);
+                } else {
+                  tempSelected.remove(value);
+                }
+              });
+            }
+
+            return SafeArea(
+              child: SizedBox(
+                height: height,
+                child: Padding(
+                  padding: EdgeInsets.only(
+                    left: 16,
+                    right: 16,
+                    bottom: 12 + MediaQuery.of(ctx).viewInsets.bottom,
+                    top: 4,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: Theme.of(ctx).textTheme.titleMedium,
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search),
+                          hintText: 'Hľadať...',
+                          // ✅ viac "kategória" look: bez hrubého rámčeka
+                          border: const UnderlineInputBorder(),
+                        ),
+                        onChanged: (v) => setSheetState(() => query = v),
+                      ),
+                      const SizedBox(height: 10),
+                      Expanded(
+                        // ✅ drž si filtrovaný zoznam len raz (stabilné a rýchle)
+                        child: Builder(builder: (ctx) {
+                          final items = filtered();
+                          return ListView.builder(
+                            itemCount: items.length,
+                            itemBuilder: (ctx, i) {
+                              final o = items[i];
+                              final checked = tempSelected.contains(o);
+                              final primary = Theme.of(ctx).colorScheme.primary;
+
+                              // ✅ rovnaký "riadkový" štýl ako kategórie (žiadne deliace čiary)
+                              return ListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: Text(
+                                  o,
+                                  style: Theme.of(ctx).textTheme.bodyLarge,
+                                ),
+                                trailing: checked
+                                    ? Icon(Icons.check_circle_rounded, color: primary)
+                                    : const SizedBox(width: 24, height: 24),
+                                onTap: () => toggle(o, !checked),
+                              );
+                            },
+                          );
+                        }),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.of(ctx).pop(null),
+                            child: const Text('Zrušiť'),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () => setSheetState(() => tempSelected.clear()),
+                            child: const Text('Vymazať'),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(ctx).pop(tempSelected.toList()),
+                            child: const Text('Hotovo'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    // ✅ Zachovaj poradie podľa "options" (aby UI zostalo stabilné)
+    if (result == null) return null;
+    final setRes = result.toSet();
+    return options.where((o) => setRes.contains(o)).toList();
+  }
+
   Widget _buildForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 16),
-
         if (_localImageFile != null)
           ClipRRect(
             borderRadius: BorderRadius.circular(16),
@@ -857,9 +981,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               fit: BoxFit.cover,
             ),
           ),
-
         const SizedBox(height: 16),
-
         TextField(
           controller: _nameController,
           decoration: const InputDecoration(
@@ -868,10 +990,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           ),
         ),
         const SizedBox(height: 12),
-
         _brandAutoComplete(),
         const SizedBox(height: 12),
-
         CategoryPicker(
           initialMainGroup: _selectedMainGroupKey,
           initialCategory: _selectedCategoryKey,
@@ -881,8 +1001,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             final cat = data['category'];
             final sub = data['subCategory'];
 
-            final subLabel =
-            (sub != null && sub.isNotEmpty) ? (subCategoryLabels[sub] ?? sub) : '';
+            final subLabel = (sub != null && sub.isNotEmpty)
+                ? (subCategoryLabels[sub] ?? sub)
+                : '';
 
             setState(() {
               _selectedMainGroupKey = main;
@@ -899,109 +1020,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             });
           },
         ),
-
         const SizedBox(height: 12),
-
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: allowedColors.map((c) {
-            final selected = _selectedColors.contains(c);
-            return FilterChip(
-              label: Text(c),
-              selected: selected,
-              onSelected: (v) {
-                setState(() {
-                  final next = List<String>.from(_selectedColors);
-                  if (v) {
-                    if (!next.contains(c)) next.add(c);
-                  } else {
-                    next.remove(c);
-                  }
-                  _selectedColors = next;
-                });
-              },
-            );
-          }).toList(),
+        _buildMultiSelectField(
+          label: 'Farby',
+          options: allowedColors,
+          selected: _selectedColors,
+          onChanged: (v) => setState(() => _selectedColors = v),
         ),
-
         const SizedBox(height: 12),
-
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: allowedStyles.map((s) {
-            final selected = _selectedStyles.contains(s);
-            return FilterChip(
-              label: Text(s),
-              selected: selected,
-              onSelected: (v) {
-                setState(() {
-                  final next = List<String>.from(_selectedStyles);
-                  if (v) {
-                    if (!next.contains(s)) next.add(s);
-                  } else {
-                    next.remove(s);
-                  }
-                  _selectedStyles = next;
-                });
-              },
-            );
-          }).toList(),
+        _buildMultiSelectField(
+          label: 'Štýly',
+          options: allowedStyles,
+          selected: _selectedStyles,
+          onChanged: (v) => setState(() => _selectedStyles = v),
         ),
-
         const SizedBox(height: 12),
-
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: allowedPatterns.map((p) {
-            final selected = _selectedPatterns.contains(p);
-            return FilterChip(
-              label: Text(p),
-              selected: selected,
-              onSelected: (v) {
-                setState(() {
-                  final next = List<String>.from(_selectedPatterns);
-                  if (v) {
-                    if (!next.contains(p)) next.add(p);
-                  } else {
-                    next.remove(p);
-                  }
-                  _selectedPatterns = next;
-                });
-              },
-            );
-          }).toList(),
+        _buildMultiSelectField(
+          label: 'Vzor',
+          options: allowedPatterns,
+          selected: _selectedPatterns,
+          onChanged: (v) => setState(() => _selectedPatterns = v),
         ),
-
         const SizedBox(height: 12),
-
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: allowedSeasons.map((s) {
-            final selected = _selectedSeasons.contains(s);
-            return FilterChip(
-              label: Text(s),
-              selected: selected,
-              onSelected: (v) {
-                setState(() {
-                  final next = List<String>.from(_selectedSeasons);
-                  if (v) {
-                    if (!next.contains(s)) next.add(s);
-                  } else {
-                    next.remove(s);
-                  }
-                  _selectedSeasons = next;
-                });
-              },
-            );
-          }).toList(),
+        _buildMultiSelectField(
+          label: 'Sezóny',
+          options: allowedSeasons,
+          selected: _selectedSeasons,
+          onChanged: (v) => setState(() => _selectedSeasons = v),
         ),
-
         const SizedBox(height: 12),
-
         Row(
           children: [
             Expanded(
@@ -1012,9 +1059,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ),
           ],
         ),
-
         const SizedBox(height: 8),
-
         if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
           TextButton.icon(
             onPressed: () {
@@ -1089,7 +1134,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                     ),
                   ],
                 ),
-
               if (showLoader) ...[
                 if (_localImageFile != null)
                   ClipRRect(
@@ -1113,7 +1157,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   ),
                 _buildProgressChecklist(),
               ],
-
               if (_aiFailed) _buildAiError(),
               if (showForm) _buildForm(),
             ],
