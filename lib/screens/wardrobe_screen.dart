@@ -1,5 +1,3 @@
-// lib/screens/wardrobe_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,7 +16,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   final _firestore = FirebaseFirestore.instance;
   final _authUser = FirebaseAuth.instance.currentUser;
 
-  // Globálne (na úrovni tabu) – vyhľadávanie + triedenie
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
@@ -35,6 +32,60 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Legend bottom sheet
+  // ---------------------------------------------------------------------------
+  void _showProcessingLegend(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Úprava fotiek',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: const [
+                    SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
+                      ),
+                    ),
+                    SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        'Modrý kruh znamená, že fotka sa ešte spracováva na pozadí '
+                            '(vymazanie pozadia alebo vytvorenie produktovej fotky). '
+                            'Keď úprava skončí, kruh zmizne a zostane finálna verzia fotky.',
+                        style: TextStyle(height: 1.35),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
   }
 
   // -----------------------------
@@ -70,7 +121,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     addField(data['name']);
     addField(data['brand']);
 
-    // nové polia
     addField(data['mainGroupLabel']);
     addField(data['categoryLabel']);
     addField(data['subCategoryLabel']);
@@ -78,7 +128,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     addField(data['categoryKey']);
     addField(data['subCategoryKey']);
 
-    // legacy polia (ak ešte existujú)
     addField(data['mainCategory']);
     addField(data['category']);
 
@@ -114,10 +163,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       case 'Najstaršie':
         return _compareByUploadedAt(a, b, desc: false);
       case 'Značka':
-        return _compareString(
-          (a['brand'] as String?) ?? '',
-          (b['brand'] as String?) ?? '',
-        );
+        return _compareString((a['brand'] as String?) ?? '', (b['brand'] as String?) ?? '');
       case 'Farba':
         final ca = _normalizeList(a['color']);
         final cb = _normalizeList(b['color']);
@@ -133,8 +179,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     }
   }
 
-  int _compareByUploadedAt(Map<String, dynamic> a, Map<String, dynamic> b,
-      {required bool desc}) {
+  int _compareByUploadedAt(Map<String, dynamic> a, Map<String, dynamic> b, {required bool desc}) {
     final ta = a['uploadedAt'];
     final tb = b['uploadedAt'];
 
@@ -158,7 +203,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   Map<String, dynamic> _normalizeKeysForDisplay(Map<String, dynamic> raw) {
     final data = Map<String, dynamic>.from(raw);
 
-    // 1) ak už máme nové kľúče, je to OK
     final String? mainGroup = data['mainGroup'] as String?;
     final String? categoryKey = data['categoryKey'] as String?;
     final String? subCategoryKey = data['subCategoryKey'] as String?;
@@ -167,17 +211,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         categoryKey != null &&
         subCategoryKey != null &&
         mainCategoryGroups.containsKey(mainGroup)) {
-      // Doplníme labely ak chýbajú (aby UI bolo konzistentné)
       data['mainGroupLabel'] =
           (data['mainGroupLabel'] as String?) ?? (mainCategoryGroups[mainGroup] ?? mainGroup);
       data['categoryLabel'] =
           (data['categoryLabel'] as String?) ?? (categoryLabels[categoryKey] ?? categoryKey);
-      data['subCategoryLabel'] = (data['subCategoryLabel'] as String?) ??
-          (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
+      data['subCategoryLabel'] =
+          (data['subCategoryLabel'] as String?) ?? (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
       return data;
     }
 
-    // 2) Ak chýbajú nové kľúče, ale existujú labely – skúsiť nájsť kľúče podľa labelov
     final String? categoryLabel = data['categoryLabel'] as String?;
     final String? subLabel = data['subCategoryLabel'] as String?;
     final String? mainLabel = data['mainGroupLabel'] as String?;
@@ -190,7 +232,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         orElse: () => const MapEntry('', ''),
       )
           .key;
-      if (mgKey != null && mgKey.isEmpty) mgKey = null;
+      if (mgKey.isEmpty) mgKey = null;
     }
 
     String? ck;
@@ -201,7 +243,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         orElse: () => const MapEntry('', ''),
       )
           .key;
-      if (ck != null && ck.isEmpty) ck = null;
+      if (ck.isEmpty) ck = null;
     }
 
     String? sk;
@@ -212,27 +254,20 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         orElse: () => const MapEntry('', ''),
       )
           .key;
-      if (sk != null && sk.isEmpty) sk = null;
+      if (sk.isEmpty) sk = null;
     }
 
-    // 3) Legacy mapping: mainCategory/category (starý Wardrobe screen)
-    // Starý systém používal "mainCategory" (napr. Vrch/Spodok/Obuv/Doplnky)
-    // a "category" (napr. Tričko, Mikina, Svetre, ...)
     final String legacyMain = (data['mainCategory'] as String?) ?? '';
     final String legacyCat = (data['category'] as String?) ?? '';
 
-    // map starého mainCategory na nový mainGroup
     mgKey ??= _legacyMainToNewMainGroup(legacyMain);
 
-    // map starého "category" (napr. Mikina/Tričko/Svetre...) na categoryKey/subCategoryKey default
     if (mgKey != null && mgKey.isNotEmpty) {
       final mapped = _legacyCategoryToNewKeys(legacyCat, mgKey);
       ck ??= mapped['categoryKey'];
       sk ??= mapped['subCategoryKey'];
     }
 
-    // 4) Posledná poistka: ak aspoň vieme mainGroup, dáme do prvej kategórie toho mainGroup
-    // (užívateľ to uvidí – a v detaile môže prehodiť typ)
     if (mgKey != null && mgKey.isNotEmpty) {
       final cats = categoryTree[mgKey] ?? [];
       ck ??= cats.isNotEmpty ? cats.first : null;
@@ -247,25 +282,16 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     if (ck != null) data['categoryKey'] = ck;
     if (sk != null) data['subCategoryKey'] = sk;
 
-    // doplň labely
-    if (mgKey != null) {
-      data['mainGroupLabel'] = mainCategoryGroups[mgKey] ?? mgKey;
-    }
-    if (ck != null) {
-      data['categoryLabel'] = categoryLabels[ck] ?? ck;
-    }
-    if (sk != null) {
-      data['subCategoryLabel'] = subCategoryLabels[sk] ?? sk;
-    }
+    if (mgKey != null) data['mainGroupLabel'] = mainCategoryGroups[mgKey] ?? mgKey;
+    if (ck != null) data['categoryLabel'] = categoryLabels[ck] ?? ck;
+    if (sk != null) data['subCategoryLabel'] = subCategoryLabels[sk] ?? sk;
 
     return data;
   }
 
   String? _legacyMainToNewMainGroup(String legacyMain) {
     final lm = _normalizeText(legacyMain);
-    if (lm == _normalizeText('Vrch') || lm == _normalizeText('Spodok')) {
-      return 'oblecenie';
-    }
+    if (lm == _normalizeText('Vrch') || lm == _normalizeText('Spodok')) return 'oblecenie';
     if (lm == _normalizeText('Obuv')) return 'obuv';
     if (lm == _normalizeText('Doplnky')) return 'doplnky';
     return null;
@@ -274,7 +300,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String mainGroup) {
     final lc = _normalizeText(legacyCategory);
 
-    // oblecenie
     if (mainGroup == 'oblecenie') {
       if (lc.contains(_normalizeText('tričko')) || lc.contains(_normalizeText('tricko')) || lc.contains('tshirt')) {
         return {'categoryKey': 'tricka_topy', 'subCategoryKey': 'tricko'};
@@ -285,18 +310,28 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       if (lc.contains(_normalizeText('mikina')) || lc.contains('hoodie') || lc.contains('sweat')) {
         return {'categoryKey': 'mikiny', 'subCategoryKey': 'mikina_klasicka'};
       }
-      if (lc.contains(_normalizeText('sveter')) || lc.contains(_normalizeText('svetre')) || lc.contains(_normalizeText('rolák')) || lc.contains(_normalizeText('rolak'))) {
-        // dôležité: rolák musí ísť do svetrov
+      if (lc.contains(_normalizeText('sveter')) ||
+          lc.contains(_normalizeText('svetre')) ||
+          lc.contains(_normalizeText('rolák')) ||
+          lc.contains(_normalizeText('rolak'))) {
         return {'categoryKey': 'svetre', 'subCategoryKey': 'sveter_rolak'};
       }
-      if (lc.contains(_normalizeText('bunda')) || lc.contains(_normalizeText('kabát')) || lc.contains(_normalizeText('kabat')) || lc.contains('jacket') || lc.contains('coat')) {
+      if (lc.contains(_normalizeText('bunda')) ||
+          lc.contains(_normalizeText('kabát')) ||
+          lc.contains(_normalizeText('kabat')) ||
+          lc.contains('jacket') ||
+          lc.contains('coat')) {
         return {'categoryKey': 'bundy_kabaty', 'subCategoryKey': 'bunda_prechodna'};
       }
       if (lc.contains(_normalizeText('nohavice')) || lc.contains(_normalizeText('rifle')) || lc.contains('jeans') || lc.contains('pants')) {
         return {'categoryKey': 'nohavice', 'subCategoryKey': 'rifle'};
       }
-      if (lc.contains(_normalizeText('šortky')) || lc.contains(_normalizeText('sortky')) || lc.contains(_normalizeText('kraťasy')) || lc.contains(_normalizeText('kratasy')) ||
-          lc.contains(_normalizeText('sukňa')) || lc.contains(_normalizeText('sukna'))) {
+      if (lc.contains(_normalizeText('šortky')) ||
+          lc.contains(_normalizeText('sortky')) ||
+          lc.contains(_normalizeText('kraťasy')) ||
+          lc.contains(_normalizeText('kratasy')) ||
+          lc.contains(_normalizeText('sukňa')) ||
+          lc.contains(_normalizeText('sukna'))) {
         return {'categoryKey': 'sortky_sukne', 'subCategoryKey': 'sortky'};
       }
       if (lc.contains(_normalizeText('šaty')) || lc.contains(_normalizeText('saty')) || lc.contains('dress') || lc.contains(_normalizeText('overal'))) {
@@ -305,7 +340,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       return {'categoryKey': null, 'subCategoryKey': null};
     }
 
-    // obuv
     if (mainGroup == 'obuv') {
       if (lc.contains(_normalizeText('tenisky')) || lc.contains('sneaker')) {
         return {'categoryKey': 'tenisky', 'subCategoryKey': 'tenisky_fashion'};
@@ -319,7 +353,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       return {'categoryKey': null, 'subCategoryKey': null};
     }
 
-    // doplnky
     if (mainGroup == 'doplnky') {
       if (lc.contains(_normalizeText('čiapka')) || lc.contains(_normalizeText('ciapka')) || lc.contains('beanie')) {
         return {'categoryKey': 'dopl_hlava', 'subCategoryKey': 'ciapka'};
@@ -339,9 +372,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       return {'categoryKey': null, 'subCategoryKey': null};
     }
 
-    // sport
     if (mainGroup == 'sport') {
-      // jednoduché defaulty
       return {'categoryKey': 'sport_oblecenie', 'subCategoryKey': 'sport_tricko'};
     }
 
@@ -359,7 +390,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       );
     }
 
-    // Tab-y sú nové main groups – kľúče z app_constants
     final mainGroupKeys = <String>[
       'oblecenie',
       'obuv',
@@ -372,18 +402,22 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Môj šatník'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.info_outline),
+              onPressed: () => _showProcessingLegend(context),
+              tooltip: 'Čo znamená ten kruh?',
+            ),
+          ],
           bottom: TabBar(
             isScrollable: true,
-            tabs: mainGroupKeys
-                .map((k) => Tab(text: mainCategoryGroups[k] ?? k))
-                .toList(),
+            tabs: mainGroupKeys.map((k) => Tab(text: mainCategoryGroups[k] ?? k)).toList(),
           ),
         ),
         body: TabBarView(
           children: mainGroupKeys.map((mainGroupKey) {
             return Column(
               children: [
-                // 🔎 vyhľadávanie (v rámci daného tabu)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
                   child: TextField(
@@ -391,18 +425,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     decoration: InputDecoration(
                       prefixIcon: const Icon(Icons.search),
                       hintText: 'Hľadať v šatníku…',
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(24),
-                      ),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
                       isDense: true,
                     ),
-                    onChanged: (value) {
-                      setState(() => _searchQuery = value);
-                    },
+                    onChanged: (value) => setState(() => _searchQuery = value),
                   ),
                 ),
-
-                // Triedenie
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
                   child: Row(
@@ -412,12 +440,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       const SizedBox(width: 8),
                       DropdownButton<String>(
                         value: _sortOption,
-                        items: _sortOptions
-                            .map((opt) => DropdownMenuItem<String>(
-                          value: opt,
-                          child: Text(opt),
-                        ))
-                            .toList(),
+                        items: _sortOptions.map((opt) {
+                          return DropdownMenuItem<String>(value: opt, child: Text(opt));
+                        }).toList(),
                         onChanged: (value) {
                           if (value == null) return;
                           setState(() => _sortOption = value);
@@ -426,8 +451,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     ],
                   ),
                 ),
-
-                // Stream jedným query pre celý mainGroup → groupovanie do sekcií
                 Expanded(
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _firestore
@@ -441,31 +464,25 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         return const Center(child: CircularProgressIndicator());
                       }
                       if (snapshot.hasError) {
-                        return const Center(
-                          child: Text('Nastala chyba pri načítaní šatníka.'),
-                        );
+                        return const Center(child: Text('Nastala chyba pri načítaní šatníka.'));
                       }
 
                       final docs = snapshot.data?.docs ?? [];
 
-                      // premapujeme + vyfiltrujeme podľa search
                       final normalized = <Map<String, dynamic>>[];
                       for (final d in docs) {
                         final m = d.data() as Map<String, dynamic>;
                         final data = _normalizeKeysForDisplay(m);
                         data['__id'] = d.id;
 
-                        if (_searchQuery.trim().isNotEmpty &&
-                            !_matchesSearch(data, _searchQuery.trim())) {
+                        if (_searchQuery.trim().isNotEmpty && !_matchesSearch(data, _searchQuery.trim())) {
                           continue;
                         }
                         normalized.add(data);
                       }
 
-                      // zoradíme (globálne) a potom rozdelíme do sekcií
                       normalized.sort((a, b) => _compareDocs(a, b));
 
-                      // group by categoryKey
                       final Map<String, List<Map<String, dynamic>>> byCategory = {};
                       for (final item in normalized) {
                         final ck = (item['categoryKey'] as String?) ?? '';
@@ -476,18 +493,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
                       final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
 
-                      // Ak nič nemá – prázdna obrazovka
                       final totalCount = byCategory.values.fold<int>(0, (p, e) => p + e.length);
                       if (totalCount == 0) {
                         return Center(
                           child: Text(
                             'Zatiaľ tu nemáš žiadne kúsky.',
                             style: TextStyle(
-                              color: Theme.of(context)
-                                  .textTheme
-                                  .bodyLarge
-                                  ?.color
-                                  ?.withOpacity(0.6),
+                              color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.6),
                             ),
                           ),
                         );
@@ -541,6 +553,32 @@ class _CategorySection extends StatelessWidget {
     required this.onOpenAll,
   });
 
+  List<String> _normalizeList(dynamic value) {
+    if (value == null) return [];
+    if (value is List) return value.map((e) => e.toString()).toList();
+    if (value is String && value.isNotEmpty) return [value];
+    return [];
+  }
+
+  String _statusFromProcessing(Map<String, dynamic> data, String key) {
+    // prefer nested map: processing: { cutout: "...", product: "..." }
+    final p = data['processing'];
+    if (p is Map) {
+      final m = p.cast<String, dynamic>();
+      final v = (m[key] ?? '').toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    // legacy dotted fields (ak by náhodou existovali)
+    final dotted = data['processing.$key'];
+    if (dotted != null) {
+      final v = dotted.toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  bool _isUrlFilled(String? s) => s != null && s.trim().isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final preview = items.take(4).toList();
@@ -555,10 +593,7 @@ class _CategorySection extends StatelessWidget {
               Expanded(
                 child: Text(
                   title,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                 ),
               ),
               TextButton(
@@ -581,10 +616,48 @@ class _CategorySection extends StatelessWidget {
             itemBuilder: (context, index) {
               final data = preview[index];
 
+              // -----------------------------
+              // IMAGE priority
+              // -----------------------------
+              final String? productImage = data['productImageUrl'] as String?;
+              final String? cleanImage = data['cleanImageUrl'] as String?;
+              final String? cutoutImage = data['cutoutImageUrl'] as String?;
+              final String? originalImage = data['originalImageUrl'] as String?;
+              final String? legacyImage = data['imageUrl'] as String?;
+
               final imageUrl =
-              (data['cleanImageUrl'] as String?)?.isNotEmpty == true
-                  ? data['cleanImageUrl'] as String
-                  : (data['imageUrl'] as String?) ?? '';
+              (_isUrlFilled(productImage))
+                  ? productImage!
+                  : (_isUrlFilled(cleanImage))
+                  ? cleanImage!
+                  : (_isUrlFilled(cutoutImage))
+                  ? cutoutImage!
+                  : (_isUrlFilled(originalImage))
+                  ? originalImage!
+                  : (legacyImage ?? '');
+
+              // -----------------------------
+              // ✅ Spinner logic (CUTOUT + PRODUCT)
+              // -----------------------------
+              final cutoutStatus = _statusFromProcessing(data, 'cutout'); // queued|running|done|error
+              final productStatus = _statusFromProcessing(data, 'product'); // queued|running|done|error|disabled
+
+              final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
+              final bool hasProduct = _isUrlFilled(productImage);
+
+              final bool cutoutInProgress =
+                  !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+
+              final bool productInProgress =
+                  hasCutoutOrClean &&
+                      !hasProduct &&
+                      (productStatus == 'queued' || productStatus == 'running');
+
+              final bool showSpinner = cutoutInProgress || productInProgress;
+
+              final bool showError =
+                  (!showSpinner) &&
+                      (cutoutStatus == 'error' || productStatus == 'error');
 
               final name = (data['name'] as String?)?.trim().isNotEmpty == true
                   ? data['name'] as String
@@ -618,19 +691,46 @@ class _CategorySection extends StatelessWidget {
                 },
                 child: Card(
                   elevation: 4,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Expanded(
                         child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(
-                            top: Radius.circular(12),
-                          ),
+                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                           child: imageUrl.isNotEmpty
-                              ? Image.network(imageUrl, fit: BoxFit.cover)
+                              ? Stack(
+                            children: [
+                              Positioned.fill(
+                                child: Image.network(imageUrl, fit: BoxFit.cover),
+                              ),
+
+                              if (showSpinner)
+                                const Positioned(
+                                  top: 8,
+                                  right: 8,
+                                  child: SizedBox(
+                                    width: 12,
+                                    height: 12,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 1.6,
+                                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
+                                    ),
+                                  ),
+                                ),
+
+                              if (showError)
+                                const Positioned(
+                                  top: 6,
+                                  right: 6,
+                                  child: Icon(
+                                    Icons.error_outline,
+                                    size: 16,
+                                    color: Colors.redAccent,
+                                  ),
+                                ),
+                            ],
+                          )
                               : Container(
                             color: Colors.grey.shade200,
                             child: const Icon(Icons.image_not_supported, size: 50),
@@ -651,10 +751,7 @@ class _CategorySection extends StatelessWidget {
                           child: Text(
                             subline,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.grey.shade600,
-                              fontSize: 12,
-                            ),
+                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
                           ),
                         ),
                     ],
@@ -666,13 +763,6 @@ class _CategorySection extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
   }
 }
 
@@ -809,6 +899,23 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     return a.toLowerCase().compareTo(b.toLowerCase());
   }
 
+  String _statusFromProcessing(Map<String, dynamic> data, String key) {
+    final p = data['processing'];
+    if (p is Map) {
+      final m = p.cast<String, dynamic>();
+      final v = (m[key] ?? '').toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    final dotted = data['processing.$key'];
+    if (dotted != null) {
+      final v = dotted.toString().trim();
+      if (v.isNotEmpty) return v;
+    }
+    return '';
+  }
+
+  bool _isUrlFilled(String? s) => s != null && s.trim().isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
     final title = categoryLabels[widget.categoryKey] ?? widget.categoryKey;
@@ -824,7 +931,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       appBar: AppBar(title: Text(title)),
       body: Column(
         children: [
-          // search
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: TextField(
@@ -838,8 +944,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
               onChanged: (v) => setState(() => _searchQuery = v),
             ),
           ),
-
-          // subcategory chips
           if (subKeys.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -868,8 +972,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                 ),
               ),
             ),
-
-          // filters (season/style/pattern) – len keď chceme, a aby to nebolo preplnené
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
             child: Row(
@@ -879,18 +981,12 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                 const SizedBox(width: 8),
                 DropdownButton<String>(
                   value: _sortOption,
-                  items: _sortOptions
-                      .map((opt) => DropdownMenuItem<String>(
-                    value: opt,
-                    child: Text(opt),
-                  ))
-                      .toList(),
+                  items: _sortOptions.map((opt) => DropdownMenuItem<String>(value: opt, child: Text(opt))).toList(),
                   onChanged: (v) => setState(() => _sortOption = v ?? _sortOption),
                 ),
               ],
             ),
           ),
-
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: _firestore
@@ -908,22 +1004,16 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   return const Center(child: Text('Chyba pri načítaní položiek.'));
                 }
 
-                final docs = snapshot.data?.docs ?? [];
-
-                var items = docs.map((d) {
+                var items = (snapshot.data?.docs ?? []).map((d) {
                   final m = d.data() as Map<String, dynamic>;
                   m['__id'] = d.id;
                   return m;
                 }).toList();
 
-                // subcategory filter
                 if (_selectedSubKey != null) {
-                  items = items
-                      .where((m) => (m['subCategoryKey'] as String?) == _selectedSubKey)
-                      .toList();
+                  items = items.where((m) => (m['subCategoryKey'] as String?) == _selectedSubKey).toList();
                 }
 
-                // season
                 if (_selectedSeason != null) {
                   items = items.where((m) {
                     final s = m['season'];
@@ -933,7 +1023,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   }).toList();
                 }
 
-                // style
                 if (_selectedStyle != null) {
                   items = items.where((m) {
                     final s = m['style'];
@@ -943,7 +1032,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   }).toList();
                 }
 
-                // pattern
                 if (_selectedPattern != null) {
                   items = items.where((m) {
                     final p = m['pattern'];
@@ -953,21 +1041,17 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   }).toList();
                 }
 
-                // search
                 if (_searchQuery.trim().isNotEmpty) {
                   items = items.where((m) => _matchesSearch(m, _searchQuery.trim())).toList();
                 }
 
-                // sort
                 items.sort((a, b) => _compareDocs(a, b));
 
                 if (items.isEmpty) {
                   return Center(
                     child: Text(
                       'V tejto kategórii zatiaľ nič nemáš.',
-                      style: TextStyle(
-                        color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.6),
-                      ),
+                      style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.6)),
                     ),
                   );
                 }
@@ -984,10 +1068,43 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   itemBuilder: (context, index) {
                     final data = items[index];
 
+                    // IMAGE priority (rovnaké ako v preview)
+                    final String? productImage = data['productImageUrl'] as String?;
+                    final String? cleanImage = data['cleanImageUrl'] as String?;
+                    final String? cutoutImage = data['cutoutImageUrl'] as String?;
+                    final String? originalImage = data['originalImageUrl'] as String?;
+                    final String? legacyImage = data['imageUrl'] as String?;
+
                     final imageUrl =
-                    (data['cleanImageUrl'] as String?)?.isNotEmpty == true
-                        ? data['cleanImageUrl'] as String
-                        : (data['imageUrl'] as String?) ?? '';
+                    (_isUrlFilled(productImage))
+                        ? productImage!
+                        : (_isUrlFilled(cleanImage))
+                        ? cleanImage!
+                        : (_isUrlFilled(cutoutImage))
+                        ? cutoutImage!
+                        : (_isUrlFilled(originalImage))
+                        ? originalImage!
+                        : (legacyImage ?? '');
+
+                    final cutoutStatus = _statusFromProcessing(data, 'cutout');
+                    final productStatus = _statusFromProcessing(data, 'product');
+
+                    final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
+                    final bool hasProduct = _isUrlFilled(productImage);
+
+                    final bool cutoutInProgress =
+                        !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+
+                    final bool productInProgress =
+                        hasCutoutOrClean &&
+                            !hasProduct &&
+                            (productStatus == 'queued' || productStatus == 'running');
+
+                    final bool showSpinner = cutoutInProgress || productInProgress;
+
+                    final bool showError =
+                        (!showSpinner) &&
+                            (cutoutStatus == 'error' || productStatus == 'error');
 
                     final name = (data['name'] as String?)?.trim().isNotEmpty == true
                         ? data['name'] as String
@@ -1021,7 +1138,36 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                               child: ClipRRect(
                                 borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
                                 child: imageUrl.isNotEmpty
-                                    ? Image.network(imageUrl, fit: BoxFit.cover)
+                                    ? Stack(
+                                  children: [
+                                    Positioned.fill(
+                                      child: Image.network(imageUrl, fit: BoxFit.cover),
+                                    ),
+                                    if (showSpinner)
+                                      const Positioned(
+                                        top: 8,
+                                        right: 8,
+                                        child: SizedBox(
+                                          width: 12,
+                                          height: 12,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 1.6,
+                                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
+                                          ),
+                                        ),
+                                      ),
+                                    if (showError)
+                                      const Positioned(
+                                        top: 6,
+                                        right: 6,
+                                        child: Icon(
+                                          Icons.error_outline,
+                                          size: 16,
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                  ],
+                                )
                                     : Container(
                                   color: Colors.grey.shade200,
                                   child: const Icon(Icons.image_not_supported, size: 50),

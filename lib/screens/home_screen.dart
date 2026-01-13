@@ -8,13 +8,15 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 
 import 'add_clothing_screen.dart';
-import 'wardrobe_screen.dart';
 import 'select_outfit_screen.dart';
 import 'recommended_screen.dart';
 import 'friends_screen.dart';
 import 'messages_screen.dart';
 import 'user_preferences_screen.dart';
 import 'stylist_chat_screen.dart'; // 👈 AI chat screen
+
+// ✅ NOVÉ: Outfit Builder (figurína)
+import 'outfit_builder_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -42,6 +44,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _saveOutfitImage() async {
     // TODO: Implement saving the outfit image to Firebase Storage or Firestore
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('Ukladanie outfitu zatiaľ nie je implementované.'),
@@ -110,255 +113,309 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = _auth.currentUser;
     final greetingName = _getGreetingName(user);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Outfit Of The Day'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              await _auth.signOut();
-            },
-          ),
-        ],
-      ),
-      drawer: Drawer(
-        child: SafeArea(
-          child: ListView(
-            padding: EdgeInsets.zero,
-            children: [
-              const DrawerHeader(
-                child: Text(
-                  'Menu',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+    return WillPopScope(
+      onWillPop: () async {
+        // ✅ Na Home screene dovolíme zavrieť appku
+        return true;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Outfit Of The Day'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.logout),
+              onPressed: () async {
+                await _auth.signOut();
+              },
+            ),
+          ],
+        ),
+        drawer: Drawer(
+          child: SafeArea(
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: [
+                const DrawerHeader(
+                  child: Text(
+                    'Menu',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                  ),
                 ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.people_outline),
-                title: const Text('Priatelia'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const FriendsScreen(),
-                    ),
-                  );
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.diversity_2),
-                title: const Text('Správy a zladenie outfitov'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const MessagesScreen(),
-                    ),
-                  );
-                },
-              ),
-              const Divider(),
-              ListTile(
-                leading: const Icon(Icons.settings),
-                title: const Text('Nastavenia'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => const UserPreferencesScreen(),
-                    ),
-                  );
-                },
-              ),
-            ],
+                ListTile(
+                  leading: const Icon(Icons.people_outline),
+                  title: const Text('Priatelia'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const FriendsScreen(),
+                      ),
+                    );
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.diversity_2),
+                  title: const Text('Správy a zladenie outfitov'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const MessagesScreen(),
+                      ),
+                    );
+                  },
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.settings),
+                  title: const Text('Nastavenia'),
+                  onTap: () {
+                    Navigator.of(context).pop();
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const UserPreferencesScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
         ),
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              '$greetingName 👋',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              'Poďme vybrať tvoj dnešný outfit.',
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-
-            /// DNEŠNÝ OUTFIT
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '$greetingName 👋',
+                style: Theme.of(context).textTheme.headlineMedium,
               ),
-              elevation: 4,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
+              const SizedBox(height: 4),
+              Text(
+                'Poďme vybrať tvoj dnešný outfit.',
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+
+              /// DNEŠNÝ OUTFIT
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (context) => const SelectOutfitScreen(),
+                      ),
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.checkroom, size: 40),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            'Vybrať dnešný outfit',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              /// ✅ NOVÉ: OUTFIT BUILDER (FIGURÍNA)
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const OutfitBuilderScreen(),
+                      ),
+                    );
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.accessibility_new, size: 40),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Outfit Builder (figurína)',
+                                style: Theme.of(context).textTheme.titleMedium,
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Vyskúšaj kombinácie vrstiev a kúskov na figuríne.',
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodySmall
+                                    ?.copyWith(color: Colors.black54),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              /// RECOMMENDED
+              Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                elevation: 4,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: _openRecommended,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.star_border, size: 40),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            'Odporúčané kúsky a outfity',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                        ),
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              /// 🧠 AI STYLISTA – HLAVNÁ KARTA
+              InkWell(
                 onTap: () {
-                  Navigator.of(context).push(
+                  Navigator.push(
+                    context,
                     MaterialPageRoute(
-                      builder: (context) => const SelectOutfitScreen(),
+                      builder: (_) => const StylistChatScreen(),
                     ),
                   );
                 },
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.black,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   child: Row(
                     children: [
-                      const Icon(Icons.checkroom, size: 40),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          'Vybrať dnešný outfit',
-                          style: Theme.of(context).textTheme.titleMedium,
+                      Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withOpacity(0.15),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: const Icon(
+                          Icons.smart_toy_outlined,
+                          color: Colors.white,
+                          size: 32,
                         ),
                       ),
-                      const Icon(Icons.chevron_right),
+                      const SizedBox(width: 16),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "AI Stylista",
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              "Opýtaj sa ma čokoľvek o móde, kombináciách a outfitoch.",
+                              style: TextStyle(
+                                color: Colors.white70,
+                                fontSize: 14,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Icon(
+                        Icons.arrow_forward_ios,
+                        color: Colors.white70,
+                        size: 18,
+                      ),
                     ],
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            /// RECOMMENDED
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 4,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: _openRecommended,
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.star_border, size: 40),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          'Odporúčané kúsky a outfity',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                      ),
-                      const Icon(Icons.chevron_right),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            /// 🧠 AI STYLISTA – NOVÁ HLAVNÁ KARTA
-            InkWell(
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const StylistChatScreen(),
-                  ),
-                );
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(20),
-                decoration: BoxDecoration(
-                  color: Colors.black,
+              /// ✅ Pridať nové oblečenie (BOTTOM SHEET)
+              Card(
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Icon(
-                        Icons.smart_toy_outlined,
-                        color: Colors.white,
-                        size: 32,
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    const Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            "AI Stylista",
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
+                elevation: 4,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(16),
+                  onTap: () => AddClothingScreen.openFromPicker(context),
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.add_photo_alternate_outlined, size: 40),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: Text(
+                            'Pridať nové oblečenie',
+                            style: Theme.of(context).textTheme.titleMedium,
                           ),
-                          SizedBox(height: 4),
-                          Text(
-                            "Opýtaj sa ma čokoľvek o móde, kombináciách a outfitoch.",
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 14,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Icon(
-                      Icons.arrow_forward_ios,
-                      color: Colors.white70,
-                      size: 18,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            /// ✅ Pridať nové oblečenie (BOTTOM SHEET)
-            Card(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              elevation: 4,
-              child: InkWell(
-                borderRadius: BorderRadius.circular(16),
-                onTap: () => AddClothingScreen.openFromPicker(context),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.add_photo_alternate_outlined, size: 40),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: Text(
-                          'Pridať nové oblečenie',
-                          style: Theme.of(context).textTheme.titleMedium,
                         ),
-                      ),
-                      const Icon(Icons.chevron_right),
-                    ],
+                        const Icon(Icons.chevron_right),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            const SizedBox(height: 16),
+              const SizedBox(height: 16),
 
-            /// VZOROVÝ ŠATNÍK – len pomoc pre testovanie
-            if (_isAddingSampleWardrobe)
-              const Center(child: CircularProgressIndicator())
-            else
-              TextButton.icon(
-                onPressed: _addSampleWardrobe,
-                icon: const Icon(Icons.download),
-                label: const Text('Pridať vzorový šatník (na testovanie)'),
-              ),
-          ],
+              /// VZOROVÝ ŠATNÍK – len pomoc pre testovanie
+              if (_isAddingSampleWardrobe)
+                const Center(child: CircularProgressIndicator())
+              else
+                TextButton.icon(
+                  onPressed: _addSampleWardrobe,
+                  icon: const Icon(Icons.download),
+                  label: const Text('Pridať vzorový šatník (na testovanie)'),
+                ),
+            ],
+          ),
         ),
       ),
     );
