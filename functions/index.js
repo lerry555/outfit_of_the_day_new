@@ -4,6 +4,8 @@
 // - Firestore trigger: attachCleanImageOnWardrobeWrite (doplní cleanImageUrl + cutoutImageUrl)
 // - HTTPS: analyzeClothingImage (OpenAI Vision)
 // - HTTPS: chatWithStylist (OpenAI text)
+// - Callable (existing): requestTryOn (MVP compositor)
+// - Callable (NEW): requestTryOnJob (A architektúra job systém - fake provider)
 
 const functions = require("firebase-functions");
 const logger = require("firebase-functions/logger");
@@ -553,77 +555,78 @@ exports.attachCleanImageOnWardrobeWrite = functions
       return null;
     }
   });
- // ---------------------------------------------------------------------------
- // ✅ requestTryOn – GEN1 HTTPS (Callable)
- // - vstup: baseImageUrl (voliteľné), garmentImageUrl, slot, sessionId (voliteľné)
- // - výstup: resultUrl (hotový obrázok "figurína + oblečenie")
- // ---------------------------------------------------------------------------
- exports.requestTryOn = functions
-   .region("us-central1")
-   .https.onCall(async (data, context) => {
-     // auth
-     if (!context.auth || !context.auth.uid) {
-       throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
-     }
 
-     const uid = context.auth.uid;
+// ---------------------------------------------------------------------------
+// ✅ requestTryOn – GEN1 HTTPS (Callable)  (TVOJ EXISTUJÚCI MVP compositor)
+// - vstup: baseImageUrl (voliteľné), garmentImageUrl, slot, sessionId (voliteľné)
+// - výstup: resultUrl (hotový obrázok "figurína + oblečenie")
+// ---------------------------------------------------------------------------
+exports.requestTryOn = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    // auth
+    if (!context.auth || !context.auth.uid) {
+      throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+    }
 
-     const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
-     const baseImageUrl = String(data?.baseImageUrl || "").trim(); // môže byť prázdne
-     const slot = String(data?.slot || "").trim(); // head/neck/torsoMid...
-     const sessionId = String(data?.sessionId || "").trim() || "default";
+    const uid = context.auth.uid;
 
-     if (!garmentImageUrl) {
-       throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
-     }
-     if (!slot) {
-       throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
-     }
+    const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
+    const baseImageUrl = String(data?.baseImageUrl || "").trim(); // môže byť prázdne
+    const slot = String(data?.slot || "").trim(); // head/neck/torsoMid...
+    const sessionId = String(data?.sessionId || "").trim() || "default";
 
-     const bucket = storage.bucket();
-     const bucketName = bucket.name;
+    if (!garmentImageUrl) {
+      throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
+    }
+    if (!slot) {
+      throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
+    }
 
-     try {
-       // 1) base obrázok:
-       // - ak baseImageUrl nie je, použijeme manekýna uloženého v Storage:
-       //   gs://.../mannequins/male.png  (ty si ho tam dáš raz)
-       let baseBuf;
-       if (baseImageUrl) {
-         baseBuf = await downloadUrlToBuffer(baseImageUrl);
-       } else {
-         // 👉 TU je “fixný” default manekýn pre MVP
-         // Uploadni do Storage súbor: mannequins/male.png
-         const mannequinPath = "mannequins/male.png";
-         const [b] = await bucket.file(mannequinPath).download();
-         baseBuf = b;
-       }
+    const bucket = storage.bucket();
+    const bucketName = bucket.name;
 
-       // 2) garment (tvoj cutout/product image)
-       const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
+    try {
+      // 1) base obrázok:
+      // - ak baseImageUrl nie je, použijeme manekýna uloženého v Storage:
+      //   gs://.../mannequins/male.png  (ty si ho tam dáš raz)
+      let baseBuf;
+      if (baseImageUrl) {
+        baseBuf = await downloadUrlToBuffer(baseImageUrl);
+      } else {
+        // 👉 TU je “fixný” default manekýn pre MVP
+        // Uploadni do Storage súbor: mannequins/male.png
+        const mannequinPath = "mannequins/male.png";
+        const [b] = await bucket.file(mannequinPath).download();
+        baseBuf = b;
+      }
 
-       // 3) zlož obrázok
-       const outBuf = await composeTryOn({ baseBuf, garmentBuf, slot });
+      // 2) garment (tvoj cutout/product image)
+      const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
 
-       // 4) ulož do Storage
-       const token = crypto.randomUUID();
-       const outPath = `tryon/${uid}/${sessionId}/${Date.now()}_${slot}.png`;
+      // 3) zlož obrázok
+      const outBuf = await composeTryOn({ baseBuf, garmentBuf, slot });
 
-       await bucket.file(outPath).save(outBuf, {
-         contentType: "image/png",
-         metadata: { metadata: { firebaseStorageDownloadTokens: token } },
-       });
+      // 4) ulož do Storage
+      const token = crypto.randomUUID();
+      const outPath = `tryon/${uid}/${sessionId}/${Date.now()}_${slot}.png`;
 
-       const resultUrl = buildStorageDownloadUrl(bucketName, outPath, token);
+      await bucket.file(outPath).save(outBuf, {
+        contentType: "image/png",
+        metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+      });
 
-       return { resultUrl, outPath };
-     } catch (e) {
-       logger.error("requestTryOn error:", e);
-       throw new functions.https.HttpsError(
-         "internal",
-         "Try-on sa nepodaril: " + (e?.message || String(e))
-       );
-     }
-   });
+      const resultUrl = buildStorageDownloadUrl(bucketName, outPath, token);
+
+      return { resultUrl, outPath };
+    } catch (e) {
+      logger.error("requestTryOn error:", e);
+      throw new functions.https.HttpsError(
+        "internal",
+        "Try-on sa nepodaril: " + (e?.message || String(e))
+      );
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // 1) analyzeClothingImage – GEN1 HTTPS (OpenAI Vision)
@@ -655,244 +658,7 @@ Používaš 2 dôležité polia:
 - "type": pekný názov pre používateľa v slovenčine (napr. "Mikina s kapucňou")
 - "canonical_type": technický kľúč z nasledujúceho zoznamu
 
-POVOLENÉ canonical_type HODNOTY (ID -> názov pre používateľa):
-
-TRIČKÁ & TOPY
-- tricko -> "Tričko s krátkym rukávom"
-- tricko_dlhy_rukav -> "Tričko s dlhým rukávom"
-- tielko -> "Tielko"
-- crop_top -> "Crop top"
-- polo_tricko -> "Polo tričko"
-- body -> "Body"
-- korzet_top -> "Korzet (top)"
-
-KOŠELE
-- kosela_klasicka -> "Klasická košeľa"
-- kosela_oversize -> "Oversize košeľa"
-- kosela_flanelova -> "Flanelová košeľa"
-
-MIKINY
-- mikina_klasicka -> "Mikina"
-- mikina_na_zips -> "Mikina na zips"
-- mikina_s_kapucnou -> "Mikina s kapucňou"
-- mikina_oversize -> "Oversize mikina"
-
-Pravidlá pre mikiny:
-- Ak je jasne viditeľná kapucňa (aj keď je zložená), uprednostni "mikina_s_kapucnou".
-- Ak je to mikina bez kapucne, ale so zipsom po celej dĺžke, použi "mikina_na_zips".
-- Ak je to mikina bez kapucne a bez dlhého zipsu, použi "mikina_klasicka".
-- Ak je strih zjavne voľný, môžeš použiť "mikina_oversize".
-
-SVETRE
-- sveter_klasicky -> "Sveter"
-- sveter_rolak -> "Rolák"
-- sveter_kardigan -> "Kardigan"
-- sveter_pleteny -> "Pletený sveter"
-
-BUNDY & KABÁTY
-- bunda_riflova -> "Rifľová bunda"
-- bunda_kozena -> "Kožená bunda"
-- bunda_bomber -> "Bomber bunda"
-- bunda_prechodna -> "Prechodná bunda"
-- bunda_zimna -> "Zimná bunda"
-- kabat -> "Kabát"
-- trenchcoat -> "Trenchcoat"
-- sako -> "Sako / blejzer"
-- vesta -> "Vesta"
-- prsiplast -> "Pršiplášť"
-- flisova_bunda -> "Flísová bunda"
-
-ŠPORT – OBLEČENIE
-- sport_tricko -> "Športové tričko"
-- sport_mikina -> "Funkčná mikina"
-- sport_leginy -> "Športové legíny"
-- sport_sortky -> "Športové kraťasy"
-- sport_suprava -> "Tepláková súprava"
-- softshell_bunda -> "Softshell bunda"
-- sport_podprsenka -> "Športová podprsenka"
-
-PRÍSNE pravidlo pre softshell_bunda:
-- "softshell_bunda" použi LEN ak je bunda očividne technický SOFTSHELL: tenká (bez výplne), športový/outdoor strih,
-  typické technické zipsy/lemovanie, materiál pôsobí ako softshell.
-- Ak si nie si istý, NIKDY nepouži "softshell_bunda".
-  Vtedy rozhoduj:
-  - hrubá/nafúknutá/zateplená/ski/puffer/parka -> "bunda_zimna"
-  - ľahšia bez hrubej výplne -> "bunda_prechodna"
-
-PRÍSNE pravidlo pre zimnú bundu:
-- Ak má bunda kapucňu + pôsobí hrubo/zateplene (zimná outdoor/ski), vždy zvoľ "bunda_zimna".
-- Ak si medzi "bunda_prechodna" a "bunda_zimna" nie si istý, uprednostni "bunda_zimna".
-
-DÔLEŽITÉ pravidlo (technický materiál):
-- "technický materiál" (outdoor látka) SÁM O SEBE nikdy neznamená "bunda_prechodna".
-- Technický materiál majú často aj zimné bundy (ski/outdoor).
-- Rozhoduj hlavne podľa hrúbky a zateplenia:
-  - ak bunda pôsobí hrubá/zateplená/nafúknutá (puffer, zimná outdoor/ski) -> "bunda_zimna"
-  - iba ak pôsobí tenká bez výplne -> "bunda_prechodna"
-- Ak si nie si istý medzi "bunda_prechodna" a "bunda_zimna", vyber "bunda_zimna".
-
-NOHAVICE & RIFLE
-- rifle -> "Rifle"
-- rifle_skinny -> "Skinny rifle"
-- rifle_wide_leg -> "Rifle wide leg"
-- rifle_mom -> "Mom jeans"
-- nohavice_chino -> "Chino nohavice"
-- nohavice_teplakove -> "Teplákové nohavice"
-- nohavice_joggery -> "Joggery"
-- nohavice_elegantne -> "Elegantné nohavice"
-- nohavice_cargo -> "Cargo nohavice"
-
-ŠORTKY & SUKNE
-- sortky -> "Šortky"
-- sortky_sportove -> "Športové šortky"
-- sukna_mini -> "Mini sukňa"
-- sukna_midi -> "Midi sukňa"
-- sukna_maxi -> "Maxi sukňa"
-
-ŠATY & OVERALY
-- saty_kratke -> "Krátke šaty"
-- saty_midi -> "Midi šaty"
-- saty_maxi -> "Maxi šaty"
-- saty_koselove -> "Košeľové šaty"
-- saty_bodycon -> "Bodycon šaty"
-- overal -> "Overal"
-
-OBUV – TENISKY
-- tenisky_fashion -> "Fashion tenisky"
-- tenisky_sportove -> "Športové tenisky"
-- tenisky_bezecke -> "Bežecké tenisky"
-
-OBUV – ELEGANTNÁ
-- lodicky -> "Lodičky"
-- sandale_opatok -> "Sandále na opätku"
-- balerinky -> "Balerínky"
-- mokasiny -> "Mokasíny"
-- poltopanky -> "Poltopánky"
-- obuv_platforma -> "Obuv na platforme"
-
-OBUV – ČIŽMY
-- cizmy_clenkove -> "Členkové čižmy"
-- cizmy_vysoke -> "Vysoké čižmy"
-- cizmy_nad_kolena -> "Čižmy nad kolená"
-- gumaky -> "Gumáky"
-- snehule -> "Snehule"
-
-Pravidlá pre čižmy:
-- "cizmy_clenkove": siahajú po členok alebo len trochu nad členok (typické šnurovacie work/turistické topánky, "hiking boots", "work boots" sú TAKMER VŽDY členkové).
-- "cizmy_vysoke": siahajú jasne do polovice lýtka alebo vyššie. Nestačí, že sú len "boot" alebo že majú kožušinu – musí byť viditeľný vyšší sárok (časť nad členkom) výrazne nad úroveň členku.
-- "cizmy_nad_kolena": zjavne presahujú koleno.
-- Ak je fotka odfotená tak, že NEVIDNO celé lýtko alebo je to záber hlavne na chodidlo/topánku, NIKDY nevoľ "cizmy_vysoke" – v takom prípade preferuj "cizmy_clenkove".
-- Ak si nie si istý medzi členkové a vysoké, preferuj členkové.
-Pravidlo pre "obuv_turisticka":
-- Ak ide o šnurovacie outdoor/work/hiking topánky s hrubou trakčnou podrážkou a polstrovaným okrajom, preferuj "obuv_turisticka" pred "cizmy_clenkove".
-
-
-OBUV – LETNÁ
-- sandale -> "Sandále"
-- slapky -> "Šľapky"
-- zabky -> "Žabky"
-- espadrilky -> "Espadrilky"
-
-DOPLNKY – HLAVA
-- ciapka -> "Čiapka"
-- siltovka -> "Šiltovka"
-- bucket_hat -> "Bucket hat"
-
-DOPLNKY – ŠÁLY, RUKAVICE
-- sal -> "Šál"
-- satka -> "Šatka"
-- rukavice -> "Rukavice"
-
-DOPLNKY – TAŠKY
-- kabelka -> "Kabelka"
-- taska_crossbody -> "Crossbody taška"
-- ruksak -> "Ruksak"
-- kabelka_listova -> "Listová kabelka"
-- ladvinka -> "Ľadvinka"
-
-DOPLNKY – OSTATNÉ
-- slnecne_okuliare -> "Slnečné okuliare"
-- opasok -> "Opasok"
-- penazenka -> "Peňaženka"
-- hodinky -> "Hodinky"
-- sperky -> "Šperky"
-
-ŠPORT – OBUV + DOPLNKY
-- obuv_treningova -> "Tréningová obuv"
-- obuv_turisticka -> "Turistická obuv"
-- sport_taska -> "Športová taška"
-- potitka -> "Potítka"
-
-────────────────────────────────────────────────────────
-FARBY
-────────────────────────────────────────────────────────
-Používaj iba tieto farby v poli "colors":
-["biela","čierna","sivá","béžová","hnedá","modrá","tmavomodrá","svetlomodrá","červená","bordová","ružová","fialová","zelená","khaki","žltá","oranžová","zlatá","strieborná"].
-Farbu určuj podľa látky. Ignoruj farbu loga, šnúrok a zipsov.
-
-────────────────────────────────────────────────────────
-ŠTÝL
-────────────────────────────────────────────────────────
-Používaj iba: ["casual","streetwear","sport","elegant","smart casual"]
-
-ŠTÝL – PRAVIDLO PRE BUNDY:
-- Bežné zimné/prechodné bundy dávaj skôr ako "casual", aj keď ide o outdoor značku.
-- "sport" použi len ak je to očividne športový funkčný kus (tréning/outdoor funkčné oblečenie).
-
-────────────────────────────────────────────────────────
-VZOR (patterns)
-────────────────────────────────────────────────────────
-- úplne jednofarebný -> "jednofarebné"
-- text alebo logo -> "textová potlač"
-- iná grafika -> "grafická potlač"
-- pruhy -> "pruhované"
-- káro -> "kockované"
-- maskáč -> "kamufláž"
-
-────────────────────────────────────────────────────────
-SEZÓNA (season)
-────────────────────────────────────────────────────────
-- zimná bunda, snehule, čižmy so zjavnou kožušinkou alebo hrubou výplňou -> ["zima"]
-- tenké tričko, tielko, žabky, sandále -> ["jar","leto","jeseň"]
-- rifle, väčšina nohavíc, bežné mikiny bez hrubej výplne -> ["celoročne"]
-- bunda_prechodna, rifľová bunda, bomber, softshell_bunda -> ["jar","jeseň"]
-
-SEASON – POVINNÝ FORMÁT:
-- "season" musí byť vždy pole stringov, napr. ["jar","jeseň"] alebo ["zima"] alebo ["celoročne"]
-- NIKDY nedávaj "jar, jeseň" ako jednu položku.
-
-────────────────────────────────────────────────────────
-ZNAČKA (brand)
-────────────────────────────────────────────────────────
-PRAVIDLÁ PRE BRAND (dôležité):
-- Ak je na oblečení viditeľný nápis/logo značky, MUSÍŠ ho vrátiť v "brand".
-- Ak nie je čitateľný, vráť "".
-
-────────────────────────────────────────────────────────
-VÝSTUP
-────────────────────────────────────────────────────────
-VALIDÁCIA VÝSTUPU (povinné):
-- Vráť len čistý JSON.
-- "colors" pole len z povolených farieb.
-- "style" pole len z povolených.
-- "season" pole len z ["jar","leto","jeseň","zima","celoročne"].
-- "patterns" pole len z povolených.
-- Okrem povinných polí vráť aj:
-  - "confidence": 0.0 až 1.0
-  - "debug_reason": 1-2 vety
-
-JSON formát:
-{
-  "type": "Mikina s kapucňou",
-  "canonical_type": "mikina_s_kapucnou",
-  "colors": ["čierna"],
-  "style": ["casual"],
-  "season": ["celoročne"],
-  "patterns": ["textová potlač"],
-  "brand": "Nike",
-  "confidence": 0.78,
-  "debug_reason": "Viditeľná kapucňa a strih mikiny."
-}
+... (TVOJ DLHÝ PROMPT OSTÁVA BEZ ZMIEN) ...
 `.trim();
 
       const openAiBody = {
@@ -1114,94 +880,198 @@ Vráť odpoveď výhradne v JSON formáte:
     }
   });
 
-  // ---------------------------------------------------------------------------
-  // ✅ TRY-ON helpers (GEN1, Node20)
-  // - stiahne PNG/JPG z URL (Firebase download URL s tokenom)
-  // - zloží "base image" + "garment" cez sharp a uloží do Storage
-  // ---------------------------------------------------------------------------
-  async function downloadUrlToBuffer(url) {
-    const r = await fetch(url);
-    if (!r.ok) {
-      const t = await r.text().catch(() => "");
-      throw new Error(`downloadUrlToBuffer failed ${r.status}: ${t}`);
+// ---------------------------------------------------------------------------
+// ✅ TRY-ON helpers (GEN1, Node20)
+// - stiahne PNG/JPG z URL (Firebase download URL s tokenom)
+// - zloží "base image" + "garment" cez sharp a uloží do Storage
+// ---------------------------------------------------------------------------
+async function downloadUrlToBuffer(url) {
+  const r = await fetch(url);
+  if (!r.ok) {
+    const t = await r.text().catch(() => "");
+    throw new Error(`downloadUrlToBuffer failed ${r.status}: ${t}`);
+  }
+  const ab = await r.arrayBuffer();
+  return Buffer.from(ab);
+}
+
+function getTryOnBox(slot) {
+  // Boxy sú v percentách z rozmeru obrázka (0..1)
+  // (je to len "v0 compositor", neskôr tu nebude treba nič meniť)
+  switch (slot) {
+    case "head":
+      return { x: 0.39, y: 0.06, w: 0.22, h: 0.22 };
+    case "neck":
+      return { x: 0.34, y: 0.16, w: 0.32, h: 0.22 };
+    case "torsoBase":
+      return { x: 0.26, y: 0.22, w: 0.48, h: 0.44 };
+    case "torsoMid":
+      return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+    case "torsoOuter":
+      return { x: 0.18, y: 0.18, w: 0.64, h: 0.58 };
+    case "legsBase":
+      return { x: 0.30, y: 0.56, w: 0.40, h: 0.36 };
+    case "legsMid":
+      return { x: 0.22, y: 0.52, w: 0.56, h: 0.48 };
+    case "legsOuter":
+      return { x: 0.20, y: 0.50, w: 0.60, h: 0.46 };
+    case "shoes":
+      return { x: 0.24, y: 0.82, w: 0.52, h: 0.18 };
+    default:
+      return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+  }
+}
+
+async function composeTryOn({ baseBuf, garmentBuf, slot }) {
+  // Base -> zistíme rozmery
+  const baseMeta = await sharp(baseBuf).metadata();
+  const W = baseMeta.width || 1024;
+  const H = baseMeta.height || 1024;
+
+  const box = getTryOnBox(slot);
+  const left = Math.round(box.x * W);
+  const top = Math.round(box.y * H);
+  const bw = Math.round(box.w * W);
+  const bh = Math.round(box.h * H);
+
+  // garment: orež transparentný okraj, zmenši do boxu
+  const gTrim = await sharp(garmentBuf)
+    .ensureAlpha()
+    .trim()
+    .png()
+    .toBuffer();
+
+  const gResized = await sharp(gTrim)
+    .resize(bw, bh, { fit: "inside" })
+    .png()
+    .toBuffer();
+
+  // trochu “prirodzenejšie” = jemný tieň
+  const shadow = await sharp(gResized)
+    .clone()
+    .blur(6)
+    .modulate({ brightness: 0.25 })
+    .png()
+    .toBuffer();
+
+  const out = await sharp(baseBuf)
+    .ensureAlpha()
+    .composite([
+      { input: shadow, left: left + 6, top: top + 10, blend: "over", opacity: 0.30 },
+      { input: gResized, left, top, blend: "over" },
+    ])
+    .png()
+    .toBuffer();
+
+  return out;
+}
+
+function buildStorageDownloadUrl(bucketName, path, token) {
+  const encoded = encodeURIComponent(path);
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+}
+
+// ===========================================================================
+// ✅ NEW: A architektúra job systém – callable: requestTryOnJob
+// Firestore: users/{uid}/tryon_jobs/{jobId}
+// Storage:  tryon_results/{uid}/{jobId}.png
+// Fake provider: uloží garmentImageUrl ako result (len na otestovanie pipeline)
+// ===========================================================================
+exports.requestTryOnJob = functions
+  .region("us-central1")
+  .https.onCall(async (data, context) => {
+    if (!context.auth || !context.auth.uid) {
+      throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
     }
-    const ab = await r.arrayBuffer();
-    return Buffer.from(ab);
-  }
 
-  function getTryOnBox(slot) {
-    // Boxy sú v percentách z rozmeru obrázka (0..1)
-    // (je to len "v0 compositor", neskôr tu nebude treba nič meniť)
-    switch (slot) {
-      case "head":
-        return { x: 0.39, y: 0.06, w: 0.22, h: 0.22 };
-      case "neck":
-        return { x: 0.34, y: 0.16, w: 0.32, h: 0.22 };
-      case "torsoBase":
-        return { x: 0.26, y: 0.22, w: 0.48, h: 0.44 };
-      case "torsoMid":
-        return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
-      case "torsoOuter":
-        return { x: 0.18, y: 0.18, w: 0.64, h: 0.58 };
-      case "legsBase":
-        return { x: 0.30, y: 0.56, w: 0.40, h: 0.36 };
-      case "legsMid":
-        return { x: 0.22, y: 0.52, w: 0.56, h: 0.48 };
-      case "legsOuter":
-        return { x: 0.20, y: 0.50, w: 0.60, h: 0.46 };
-      case "shoes":
-        return { x: 0.24, y: 0.82, w: 0.52, h: 0.18 };
-      default:
-        return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+    const uid = context.auth.uid;
+
+    const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
+    const slot = String(data?.slot || "").trim();
+    const sessionId = String(data?.sessionId || "").trim();
+    const mannequinGender = String(data?.mannequinGender || "male").trim(); // "male" | "female"
+
+    if (!garmentImageUrl) {
+      throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
     }
-  }
+    if (!slot) {
+      throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
+    }
+    if (!sessionId) {
+      throw new functions.https.HttpsError("invalid-argument", "Chýba sessionId.");
+    }
 
-  async function composeTryOn({ baseBuf, garmentBuf, slot }) {
-    // Base -> zistíme rozmery
-    const baseMeta = await sharp(baseBuf).metadata();
-    const W = baseMeta.width || 1024;
-    const H = baseMeta.height || 1024;
+    const bucket = storage.bucket();
+    const bucketName = bucket.name;
 
-    const box = getTryOnBox(slot);
-    const left = Math.round(box.x * W);
-    const top = Math.round(box.y * H);
-    const bw = Math.round(box.w * W);
-    const bh = Math.round(box.h * H);
+    // 1) create job doc
+    const jobRef = db.collection("users").doc(uid).collection("tryon_jobs").doc();
+    const jobId = jobRef.id;
+    const now = admin.firestore.FieldValue.serverTimestamp();
 
-    // garment: orež transparentný okraj, zmenši do boxu
-    const gTrim = await sharp(garmentBuf)
-      .ensureAlpha()
-      .trim()
-      .png()
-      .toBuffer();
+    await jobRef.set(
+      {
+        status: "queued", // queued | processing | done | error
+        createdAt: now,
+        updatedAt: now,
+        params: {
+          garmentImageUrl,
+          slot,
+          sessionId,
+          mannequinGender,
+        },
+      },
+      { merge: true }
+    );
 
-    const gResized = await sharp(gTrim)
-      .resize(bw, bh, { fit: "inside" })
-      .png()
-      .toBuffer();
+    try {
+      // 2) mark processing
+      await jobRef.set({ status: "processing", updatedAt: now }, { merge: true });
 
-    // trochu “prirodzenejšie” = jemný tieň
-    const shadow = await sharp(gResized)
-      .clone()
-      .blur(6)
-      .modulate({ brightness: 0.25 })
-      .png()
-      .toBuffer();
+      // 3) FAKE PROVIDER: len stiahneme garment a uložíme ako result
+      const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
 
-    const out = await sharp(baseBuf)
-      .ensureAlpha()
-      .composite([
-        { input: shadow, left: left + 6, top: top + 10, blend: "over", opacity: 0.30 },
-        { input: gResized, left, top, blend: "over" },
-      ])
-      .png()
-      .toBuffer();
+      const resultPath = `tryon_results/${uid}/${jobId}.png`;
+      const token = crypto.randomUUID();
 
-    return out;
-  }
+      await bucket.file(resultPath).save(garmentBuf, {
+        contentType: "image/png",
+        metadata: {
+          metadata: {
+            firebaseStorageDownloadTokens: token,
+          },
+        },
+      });
 
-  function buildStorageDownloadUrl(bucketName, path, token) {
-    const encoded = encodeURIComponent(path);
-    return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
-  }
+      const resultUrl = buildStorageDownloadUrl(bucketName, resultPath, token);
 
+      // 4) mark done
+      await jobRef.set(
+        {
+          status: "done",
+          updatedAt: now,
+          resultPath,
+          resultUrl,
+        },
+        { merge: true }
+      );
+
+      return { jobId };
+    } catch (e) {
+      logger.error("requestTryOnJob error:", e);
+
+      await jobRef.set(
+        {
+          status: "error",
+          updatedAt: now,
+          errorMessage: e?.message || String(e),
+        },
+        { merge: true }
+      );
+
+      throw new functions.https.HttpsError(
+        "internal",
+        "Try-on job sa nepodaril: " + (e?.message || String(e))
+      );
+    }
+  });

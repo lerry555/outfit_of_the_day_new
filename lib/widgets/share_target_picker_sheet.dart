@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 
 /// ✅ Unikátny názov aby sa to nebilo s ničím v appke
 enum ShareDestination {
-  outfitBuilder,
   stylistChat,
   wishlist,
 }
@@ -39,15 +38,6 @@ class ShareTargetPickerSheet extends StatelessWidget {
                   ?.copyWith(color: Colors.black54),
             ),
             const SizedBox(height: 14),
-
-            _option(
-              context,
-              icon: Icons.accessibility_new,
-              title: 'Outfit Builder (figurína)',
-              subtitle: 'Vyberieš typ kúsku a hneď ho uvidíš na figuríne.',
-              onTap: () => Navigator.pop(context, ShareDestination.outfitBuilder),
-            ),
-            const SizedBox(height: 6),
 
             _option(
               context,

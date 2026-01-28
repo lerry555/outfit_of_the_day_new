@@ -1,20 +1,27 @@
 // lib/screens/outfit_builder_screen.dart
+import '../config/feature_flags.dart';
 import 'dart:ui';
 import 'dart:typed_data';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
 // ✅ Firebase
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+
+
 
 // ✅ HTTP na stiahnutie obrázka (trim)
 import 'package:http/http.dart' as http;
+
 
 class OutfitBuilderScreen extends StatefulWidget {
   final String? incomingExternalUrl;
 
   const OutfitBuilderScreen({super.key, this.incomingExternalUrl});
+  
 
   @override
   State<OutfitBuilderScreen> createState() => _OutfitBuilderScreenState();
@@ -50,6 +57,31 @@ extension _TierX on SubLayerTier {
   }
 }
 
+extension _OutfitSlotX on OutfitSlot {
+  String get backendKey {
+    switch (this) {
+      case OutfitSlot.head:
+        return 'head';
+      case OutfitSlot.neck:
+        return 'neck';
+      case OutfitSlot.torsoBase:
+        return 'torsoBase';
+      case OutfitSlot.torsoMid:
+        return 'torsoMid';
+      case OutfitSlot.torsoOuter:
+        return 'torsoOuter';
+      case OutfitSlot.legsBase:
+        return 'legsBase';
+      case OutfitSlot.legsMid:
+        return 'legsMid';
+      case OutfitSlot.legsOuter:
+        return 'legsOuter';
+      case OutfitSlot.shoes:
+        return 'shoes';
+    }
+  }
+}
+
 class OutfitPick {
   final String label;
   final String mainGroupKey;
@@ -64,27 +96,59 @@ class OutfitPick {
   });
 }
 
-/// ✅ vybraný kúsok zo šatníka (id + názov + image url)
 class WardrobePickedItem {
   final String id;
   final String title;
-  final String? imageUrl;
+  final String? previewImageUrl;
+  final String? cutoutImageUrl;
 
   const WardrobePickedItem({
     required this.id,
     required this.title,
-    required this.imageUrl,
+    required this.previewImageUrl,
+    required this.cutoutImageUrl,
   });
 }
 
 class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
-  // ---------------------------------------------------------------------------
-  // ✅ Nastav si cestu ku šatníku tu (ak to máš inak, zmeň len toto)
-  // Predvolený predpoklad: users/{uid}/wardrobe
-  // ---------------------------------------------------------------------------
   static const String kWardrobePath = 'wardrobe';
 
-  final String _mannequinAsset = 'assets/mannequins/male.png';
+  // ✅ Male/Female mannequin
+  String _mannequinGender = 'male'; // 'male' | 'female'
+  String get _mannequinAsset =>
+      _mannequinGender == 'female' ? 'assets/mannequins/female.png' : 'assets/mannequins/male.png';
+
+  ({Alignment align, double widthFactor}) _placementForSlot(OutfitSlot slot) {
+    switch (slot) {
+      case OutfitSlot.head:
+        return (align: const Alignment(0, -0.76), widthFactor: 0.20);
+      case OutfitSlot.neck:
+        return (align: const Alignment(0, -0.60), widthFactor: 0.26);
+      case OutfitSlot.torsoBase:
+        return (align: const Alignment(0, -0.26), widthFactor: 0.30);
+      case OutfitSlot.torsoMid:
+        return (align: const Alignment(0, -0.22), widthFactor: 0.36);
+      case OutfitSlot.torsoOuter:
+        return (align: const Alignment(0, -0.12), widthFactor: 0.40);
+      case OutfitSlot.legsBase:
+        return (align: const Alignment(0, 0.34), widthFactor: 0.30);
+      case OutfitSlot.legsMid:
+        return (align: const Alignment(0, 0.42), widthFactor: 0.46);
+      case OutfitSlot.legsOuter:
+        return (align: const Alignment(0, 0.38), widthFactor: 0.48);
+      case OutfitSlot.shoes:
+        return (align: const Alignment(0, 0.90), widthFactor: 0.42);
+    }
+  }
+
+
+  // ✅ Try-On (result overlay)
+  bool _tryOnBusy = false;
+  String? _tryOnStatus;
+  String? _tryOnResultUrl;
+  String? _tryOnJobId;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _tryOnJobSub;
+  OutfitSlot? _tryOnSlot; // ✅ na ktorý slot sa má try-on overlay zarovnať
 
   FocusRegion focus = FocusRegion.none;
   SubLayerTier? tier;
@@ -95,13 +159,17 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
 
   Alignment _menuAnchor = Alignment.center;
 
-  /// ✅ tu držíme vybrané kúsky pre vrstvy
   final Map<OutfitSlot, WardrobePickedItem?> _selectedBySlot = {
     for (final s in OutfitSlot.values) s: null,
   };
 
-  /// ✅ cache trimmed PNG bytes podľa URL (aby sme netrimovali stále dookola)
   final Map<String, Future<Uint8List?>> _trimFutureCache = {};
+
+  @override
+  void dispose() {
+    _tryOnJobSub?.cancel();
+    super.dispose();
+  }
 
   void _clearAll() {
     setState(() {
@@ -112,7 +180,16 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
       tier = null;
       headScope = HeadScope.head;
       _resetZoom();
+
+      _tryOnBusy = false;
+      _tryOnStatus = null;
+      _tryOnResultUrl = null;
+      _tryOnJobId = null;
+      _tryOnSlot = null;
     });
+
+    _tryOnJobSub?.cancel();
+    _tryOnJobSub = null;
   }
 
   void _resetZoom() {
@@ -120,14 +197,12 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     _zoomed = false;
   }
 
-  /// ✅ Hitbox – aby sa neklikalo “mimo”
   bool _isInsideMannequinHitBox(double xNorm, double yNorm) {
     double minX = 0.16;
     double maxX = 0.84;
     double minY = 0.02;
     double maxY = 0.99;
 
-    // Dole rozšírime kvôli topánkam
     if (yNorm >= 0.70) {
       minX = 0.10;
       maxX = 0.90;
@@ -137,7 +212,6 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     return xNorm >= minX && xNorm <= maxX && yNorm >= minY && yNorm <= maxY;
   }
 
-  // ✅ ZOOM: presne na bod kliknutia (centrovanie)
   void _zoomToPoint({
     required double xNorm,
     required double yNorm,
@@ -214,7 +288,6 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
       final focusChanged = newFocus != focus;
       focus = newFocus;
 
-      // ✅ po prepnutí trupu/noh sa nepredvolí vrstva
       if (focusChanged && (focus == FocusRegion.torso || focus == FocusRegion.legs)) {
         tier = null;
       }
@@ -259,20 +332,16 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     switch (focus) {
       case FocusRegion.head:
         return headScope == HeadScope.head ? OutfitSlot.head : OutfitSlot.neck;
-
       case FocusRegion.feet:
         return OutfitSlot.shoes;
-
       case FocusRegion.torso:
         if (tier == SubLayerTier.base) return OutfitSlot.torsoBase;
         if (tier == SubLayerTier.mid) return OutfitSlot.torsoMid;
         return OutfitSlot.torsoOuter;
-
       case FocusRegion.legs:
         if (tier == SubLayerTier.base) return OutfitSlot.legsBase;
         if (tier == SubLayerTier.mid) return OutfitSlot.legsMid;
         return OutfitSlot.legsOuter;
-
       case FocusRegion.none:
         return OutfitSlot.torsoMid;
     }
@@ -429,7 +498,13 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     final slot = _slotForCurrentContext();
     setState(() {
       _selectedBySlot[slot] = selected;
+      // _tryOnSlot = slot;
+      _tryOnResultUrl = null;
+      _tryOnStatus = null;
+
     });
+
+// await _startTryOnForPickedItem(uid: user.uid, slot: slot, picked: selected);
 
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -437,12 +512,81 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     );
   }
 
+
   // ---------------------------------------------------------------------------
-  // ✅ TRIM: orež transparentné okraje (bez extra knižníc)
-  // - stiahne bytes z URL
-  // - dekóduje na RGBA
-  // - nájde bounding box alpha>threshold
-  // - vyrobí nový PNG (cropped)
+  // ✅ TRY-ON (fallback na existujúce requestTryOn)
+  // ---------------------------------------------------------------------------
+  Future<void> _startTryOnForPickedItem({
+    required String uid,
+    required OutfitSlot slot,
+    required WardrobePickedItem picked,
+  }) async {
+    final garmentUrl = (picked.cutoutImageUrl ?? picked.previewImageUrl ?? '').trim();
+    if (garmentUrl.isEmpty) {
+      setState(() {
+        _tryOnBusy = false;
+        _tryOnStatus = 'error';
+      });
+      return;
+    }
+
+    await _tryOnJobSub?.cancel();
+    _tryOnJobSub = null;
+
+    setState(() {
+      _tryOnBusy = true;
+      _tryOnStatus = 'processing';
+      _tryOnResultUrl = null;
+      _tryOnJobId = null;
+      _tryOnSlot = slot; // ✅ uložíme, kam to patrí
+    });
+
+
+    try {
+      // ✅ zatiaľ voláme tvoje existujúce callable: requestTryOn -> {resultUrl}
+      final functions = FirebaseFunctions.instanceFor(region: 'us-central1');
+      final callable = functions.httpsCallable('requestTryOn');
+
+      final res = await callable.call({
+        'garmentImageUrl': garmentUrl,
+        'slot': slot.backendKey,
+        'sessionId': 'builder_${DateTime.now().millisecondsSinceEpoch}',
+        'baseImageUrl': '',
+        'mannequinGender': _mannequinGender,
+      });
+
+
+
+      final data = res.data;
+      String? url;
+      if (data is Map) {
+        url = (data['resultUrl'] ?? data['url'])?.toString();
+      }
+
+      if (url == null || url.trim().isEmpty) {
+        throw Exception('Backend nevrátil resultUrl.');
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _tryOnBusy = false;
+        _tryOnStatus = 'done';
+        _tryOnResultUrl = url!.trim();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tryOnBusy = false;
+        _tryOnStatus = 'error';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Try-On sa nepodaril: $e')),
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // ✅ TRIM
   // ---------------------------------------------------------------------------
   Future<Uint8List?> _trimmedBytesForUrl(String url) {
     _trimFutureCache[url] ??= _downloadAndTrim(url);
@@ -466,12 +610,10 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
       final h = img.height;
       final data = bd.buffer.asUint8List();
 
-      // alpha threshold (0..255). 8 = jemný “feather” ignorujeme.
       const int aThr = 8;
 
       int minX = w, minY = h, maxX = -1, maxY = -1;
 
-      // scan RGBA
       for (int y = 0; y < h; y++) {
         final row = y * w * 4;
         for (int x = 0; x < w; x++) {
@@ -486,13 +628,11 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
         }
       }
 
-      // ak nič nenájdem (divné), vráť originál
       if (maxX < 0 || maxY < 0) {
         final png = await img.toByteData(format: ImageByteFormat.png);
         return png?.buffer.asUint8List();
       }
 
-      // pridaj malý padding aby sa neodsekli okraje (2px)
       const pad = 2;
       minX = (minX - pad).clamp(0, w - 1);
       minY = (minY - pad).clamp(0, h - 1);
@@ -520,18 +660,13 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // ✅ Jednoduché overlay zobrazenie na figuríne (MVP)
-  // - teraz s TRIM + lepšie mierky
-  // ---------------------------------------------------------------------------
   Widget _buildOverlay(OutfitSlot slot) {
     final item = _selectedBySlot[slot];
     if (item == null) return const SizedBox.shrink();
 
-    final url = item.imageUrl;
-    if (url == null || url.trim().isEmpty) return const SizedBox.shrink();
+    final url = (item.previewImageUrl ?? '').trim();
+    if (url.isEmpty) return const SizedBox.shrink();
 
-    // Lepšie default umiestnenia (po trim bude všetko pôsobiť menšie prirodzene)
     Alignment align;
     double widthFactor;
 
@@ -540,43 +675,34 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
         align = const Alignment(0, -0.76);
         widthFactor = 0.20;
         break;
-
       case OutfitSlot.neck:
         align = const Alignment(0, -0.60);
         widthFactor = 0.26;
         break;
-
       case OutfitSlot.torsoBase:
-        align = const Alignment(0, -0.18);
-        widthFactor = 0.38;
+        align = const Alignment(0, -0.26);
+        widthFactor = 0.30;
         break;
-
       case OutfitSlot.torsoMid:
-      // ✅ tričká/košele boli veľké – zmenšené
-        align = const Alignment(0, -0.14);
-        widthFactor = 0.40;
+        align = const Alignment(0, -0.22);
+        widthFactor = 0.36;
         break;
-
       case OutfitSlot.torsoOuter:
         align = const Alignment(0, -0.12);
-        widthFactor = 0.50;
+        widthFactor = 0.40;
         break;
-
       case OutfitSlot.legsBase:
         align = const Alignment(0, 0.34);
         widthFactor = 0.30;
         break;
-
       case OutfitSlot.legsMid:
         align = const Alignment(0, 0.42);
         widthFactor = 0.46;
         break;
-
       case OutfitSlot.legsOuter:
         align = const Alignment(0, 0.38);
         widthFactor = 0.48;
         break;
-
       case OutfitSlot.shoes:
         align = const Alignment(0, 0.90);
         widthFactor = 0.42;
@@ -597,6 +723,29 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
     );
   }
 
+  Widget _buildTryOnOverlay() {
+    final url = (_tryOnResultUrl ?? '').trim();
+    final slot = _tryOnSlot;
+    if (url.isEmpty || slot == null) return const SizedBox.shrink();
+
+    final p = _placementForSlot(slot);
+
+    return Align(
+      alignment: p.align,
+      child: FractionallySizedBox(
+        widthFactor: p.widthFactor,
+        child: IgnorePointer(
+          child: _TrimmedNetworkImage(
+            url: url,
+            getTrimmedBytes: _trimmedBytesForUrl,
+          ),
+        ),
+      ),
+    );
+  }
+
+
+
   @override
   Widget build(BuildContext context) {
     const accent = Color(0xFFF0D36B);
@@ -609,6 +758,21 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
         elevation: 0,
         title: const Text('Outfit Builder'),
         actions: [
+          IconButton(
+            tooltip: _mannequinGender == 'female' ? 'Female figurína' : 'Male figurína',
+            icon: Icon(_mannequinGender == 'female' ? Icons.female : Icons.male),
+            onPressed: () {
+              setState(() {
+                _mannequinGender = _mannequinGender == 'male' ? 'female' : 'male';
+                _tryOnResultUrl = null;
+                _tryOnStatus = null;
+                _tryOnBusy = false;
+                _tryOnJobId = null;
+              });
+              _tryOnJobSub?.cancel();
+              _tryOnJobSub = null;
+            },
+          ),
           IconButton(
             tooltip: 'Vymazať',
             icon: const Icon(Icons.delete_outline),
@@ -643,29 +807,42 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
                           child: Stack(
                             alignment: Alignment.center,
                             children: [
-                              Image.asset(
-                                _mannequinAsset,
-                                fit: BoxFit.contain,
-                                filterQuality: FilterQuality.high,
-                                errorBuilder: (_, __, ___) {
-                                  return const Icon(Icons.accessibility_new, color: Colors.white24, size: 220);
-                                },
-                              ),
+                              // ✅ Ak máme Try-On výsledok, zobraz len jeho (backend už obsahuje figurínu),
+                              //    aby nevznikla "figurína vo figuríne".
+                              if ((_tryOnResultUrl ?? '').trim().isNotEmpty)
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: Image.network(
+                                      _tryOnResultUrl!.trim(),
+                                      fit: BoxFit.contain,
+                                      filterQuality: FilterQuality.high,
+                                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                                    ),
+                                  ),
+                                )
+                              else ...[
+                                // ✅ Inak klasika: naša figurína + lokálne overlaye
+                                Image.asset(
+                                  _mannequinAsset,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.high,
+                                  errorBuilder: (_, __, ___) {
+                                    return const Icon(Icons.accessibility_new, color: Colors.white24, size: 220);
+                                  },
+                                ),
 
-                              // ✅ Overlays (poradie: base -> mid -> outer)
-                              _buildOverlay(OutfitSlot.torsoBase),
-                              _buildOverlay(OutfitSlot.legsBase),
-
-                              _buildOverlay(OutfitSlot.torsoMid),
-                              _buildOverlay(OutfitSlot.legsMid),
-
-                              _buildOverlay(OutfitSlot.torsoOuter),
-                              _buildOverlay(OutfitSlot.legsOuter),
-
-                              _buildOverlay(OutfitSlot.shoes),
-                              _buildOverlay(OutfitSlot.neck),
-                              _buildOverlay(OutfitSlot.head),
+                                _buildOverlay(OutfitSlot.torsoBase),
+                                _buildOverlay(OutfitSlot.legsBase),
+                                _buildOverlay(OutfitSlot.torsoMid),
+                                _buildOverlay(OutfitSlot.legsMid),
+                                _buildOverlay(OutfitSlot.torsoOuter),
+                                _buildOverlay(OutfitSlot.legsOuter),
+                                _buildOverlay(OutfitSlot.shoes),
+                                _buildOverlay(OutfitSlot.neck),
+                                _buildOverlay(OutfitSlot.head),
+                              ],
                             ],
+
                           ),
                         ),
                       ),
@@ -681,6 +858,43 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
                       icon: Icons.zoom_out_map,
                       label: 'Reset',
                       onTap: () => setState(_resetZoom),
+                    ),
+                  ),
+
+                if (_tryOnBusy || ((_tryOnStatus ?? '').isNotEmpty))
+                  Positioned(
+                    left: 12,
+                    top: 12,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(14),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.06),
+                            border: Border.all(color: Colors.white.withOpacity(0.10)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_tryOnBusy)
+                                const SizedBox(
+                                  width: 14,
+                                  height: 14,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              else
+                                const Icon(Icons.check_circle, size: 16, color: Colors.white70),
+                              const SizedBox(width: 8),
+                              Text(
+                                _tryOnBusy ? 'Try-On…' : 'Try-On: ${_tryOnStatus ?? ''}',
+                                style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w700),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
 
@@ -785,7 +999,8 @@ class _OutfitBuilderScreenState extends State<OutfitBuilderScreen> {
                               const SizedBox(width: 10),
                               const Expanded(
                                 child: Text(
-                                  'Klikni na hlavu, trup, nohy alebo topánky a vyber typ.',
+                              'Outfit Builder slúži na vizuálny náhľad outfitu.\n'
+                              'Realistická AI figurína je vo vývoji a pribudne v budúcnosti.',
                                   style: TextStyle(color: Colors.white70, fontSize: 12),
                                 ),
                               ),
@@ -820,7 +1035,6 @@ class _TrimmedNetworkImage extends StatelessWidget {
       builder: (context, snap) {
         final b = snap.data;
         if (b == null) {
-          // fallback: priamo network (keď trim zlyhá)
           return Image.network(
             url,
             fit: BoxFit.contain,
@@ -1205,12 +1419,19 @@ class _WardrobePickerSheetState extends State<_WardrobePickerSheet> {
     super.dispose();
   }
 
-  String? _bestImageUrl(Map<String, dynamic> d) {
-    // productImageUrl -> clean/cutout -> original imageUrl
+  String? _bestPreviewUrl(Map<String, dynamic> d) {
     final a = (d['productImageUrl'] ?? d['product_image_url']) as String?;
     final b = (d['cleanImageUrl'] ?? d['cutoutImageUrl'] ?? d['cutout_image_url']) as String?;
     final c = (d['imageUrl'] ?? d['image_url']) as String?;
     return (a != null && a.isNotEmpty) ? a : (b != null && b.isNotEmpty) ? b : c;
+  }
+
+  String? _cutoutUrl(Map<String, dynamic> d) {
+    final cut = (d['cutoutImageUrl'] ?? d['cutout_image_url']) as String?;
+    final clean = (d['cleanImageUrl'] ?? d['clean_image_url']) as String?;
+    final preview = _bestPreviewUrl(d);
+    final v = (cut != null && cut.isNotEmpty) ? cut : (clean != null && clean.isNotEmpty) ? clean : preview;
+    return (v != null && v.isNotEmpty) ? v : null;
   }
 
   bool _matchesType(Map<String, dynamic> d) {
@@ -1277,7 +1498,6 @@ class _WardrobePickerSheetState extends State<_WardrobePickerSheet> {
                     ],
                   ),
                 ),
-
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
                   child: TextField(
@@ -1302,7 +1522,6 @@ class _WardrobePickerSheetState extends State<_WardrobePickerSheet> {
                     ),
                   ),
                 ),
-
                 Flexible(
                   child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                     stream: ref.orderBy('createdAt', descending: true).limit(250).snapshots(),
@@ -1346,16 +1565,22 @@ class _WardrobePickerSheetState extends State<_WardrobePickerSheet> {
 
                           final name = (data['name'] ?? data['title'] ?? 'Kúsok bez názvu').toString();
                           final brand = (data['brand'] ?? '').toString();
-                          final img = _bestImageUrl(data);
+                          final preview = _bestPreviewUrl(data);
+                          final cutout = _cutoutUrl(data);
 
                           return _WardrobeRow(
                             title: name,
                             subtitle: brand.isEmpty ? null : brand,
-                            imageUrl: img,
+                            imageUrl: preview,
                             onTap: () {
                               Navigator.pop(
                                 context,
-                                WardrobePickedItem(id: doc.id, title: name, imageUrl: img),
+                                WardrobePickedItem(
+                                  id: doc.id,
+                                  title: name,
+                                  previewImageUrl: preview,
+                                  cutoutImageUrl: cutout,
+                                ),
                               );
                             },
                           );
