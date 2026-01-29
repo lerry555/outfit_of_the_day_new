@@ -47,3 +47,4 @@ flutter:
   generate: true
   assets:
     - assets/mannequins/
+    - assets/hero/
