@@ -1,6 +1,9 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
@@ -35,13 +38,92 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   }
 
   // ---------------------------------------------------------------------------
+  // ✅ DELETE helpers
+  // ---------------------------------------------------------------------------
+  Future<void> _confirmAndDelete(BuildContext context, Map<String, dynamic> data) async {
+    if (_authUser == null) return;
+
+    final id = data['__id'] as String?;
+    if (id == null || id.isEmpty) return;
+
+    final name = (data['name'] as String?)?.trim().isNotEmpty == true
+        ? (data['name'] as String)
+        : (data['subCategoryLabel'] as String?) ?? 'Tento kúsok';
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Vymazať oblečenie?'),
+        content: Text('Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Zrušiť'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Vymazať'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      // 1) Delete Firestore document
+      await _firestore
+          .collection('users')
+          .doc(_authUser!.uid)
+          .collection('wardrobe')
+          .doc(id)
+          .delete();
+
+      // 2) Best-effort delete Storage files (ak sú to Firebase Storage URL)
+      final urls = <String?>[
+        data['productImageUrl'] as String?,
+        data['cleanImageUrl'] as String?,
+        data['cutoutImageUrl'] as String?,
+        data['originalImageUrl'] as String?,
+        data['imageUrl'] as String?, // legacy
+      ];
+
+      for (final u in urls) {
+        await _tryDeleteStorageUrl(u);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kúsok bol vymazaný.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nepodarilo sa vymazať kúsok: $e')),
+      );
+    }
+  }
+
+  Future<void> _tryDeleteStorageUrl(String? url) async {
+    final u = url?.trim();
+    if (u == null || u.isEmpty) return;
+
+    try {
+      final ref = FirebaseStorage.instance.refFromURL(u);
+      await ref.delete();
+    } catch (_) {
+      // ticho ignorujeme: nie je Storage URL, alebo už neexistuje, alebo nemáme práva
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Legend bottom sheet
   // ---------------------------------------------------------------------------
   void _showProcessingLegend(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      showDragHandle: true,
-      backgroundColor: Colors.white,
+      backgroundColor: const Color(0xFF121212),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
@@ -52,15 +134,17 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
+              children: const [
+                _SheetHandle(),
+                SizedBox(height: 12),
+                Text(
                   'Úprava fotiek',
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
                 ),
-                const SizedBox(height: 10),
+                SizedBox(height: 10),
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
-                  children: const [
+                  children: [
                     SizedBox(
                       width: 18,
                       height: 18,
@@ -75,7 +159,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                         'Modrý kruh znamená, že fotka sa ešte spracováva na pozadí '
                             '(vymazanie pozadia alebo vytvorenie produktovej fotky). '
                             'Keď úprava skončí, kruh zmizne a zostane finálna verzia fotky.',
-                        style: TextStyle(height: 1.35),
+                        style: TextStyle(color: Colors.white70, height: 1.35),
                       ),
                     ),
                   ],
@@ -215,8 +299,8 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
           (data['mainGroupLabel'] as String?) ?? (mainCategoryGroups[mainGroup] ?? mainGroup);
       data['categoryLabel'] =
           (data['categoryLabel'] as String?) ?? (categoryLabels[categoryKey] ?? categoryKey);
-      data['subCategoryLabel'] =
-          (data['subCategoryLabel'] as String?) ?? (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
+      data['subCategoryLabel'] = (data['subCategoryLabel'] as String?) ??
+          (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
       return data;
     }
 
@@ -400,157 +484,452 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     return DefaultTabController(
       length: mainGroupKeys.length,
       child: Scaffold(
-        appBar: AppBar(
-          title: const Text('Môj šatník'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.info_outline),
-              onPressed: () => _showProcessingLegend(context),
-              tooltip: 'Čo znamená ten kruh?',
+        backgroundColor: const Color(0xFF0E0E0E),
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: Image.asset(
+                'assets/backgrounds/luxury_dark.png',
+                fit: BoxFit.cover,
+              ),
             ),
-          ],
-          bottom: TabBar(
-            isScrollable: true,
-            tabs: mainGroupKeys.map((k) => Tab(text: mainCategoryGroups[k] ?? k)).toList(),
-          ),
-        ),
-        body: TabBarView(
-          children: mainGroupKeys.map((mainGroupKey) {
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      prefixIcon: const Icon(Icons.search),
-                      hintText: 'Hľadať v šatníku…',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                      isDense: true,
-                    ),
-                    onChanged: (value) => setState(() => _searchQuery = value),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      const Text('Triediť podľa: '),
-                      const SizedBox(width: 8),
-                      DropdownButton<String>(
-                        value: _sortOption,
-                        items: _sortOptions.map((opt) {
-                          return DropdownMenuItem<String>(value: opt, child: Text(opt));
-                        }).toList(),
-                        onChanged: (value) {
-                          if (value == null) return;
-                          setState(() => _sortOption = value);
-                        },
-                      ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withOpacity(0.62),
+                      Colors.black.withOpacity(0.20),
+                      Colors.black.withOpacity(0.72),
                     ],
                   ),
                 ),
-                Expanded(
-                  child: StreamBuilder<QuerySnapshot>(
-                    stream: _firestore
-                        .collection('users')
-                        .doc(_authUser!.uid)
-                        .collection('wardrobe')
-                        .where('mainGroup', isEqualTo: mainGroupKey)
-                        .snapshots(),
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState == ConnectionState.waiting) {
-                        return const Center(child: CircularProgressIndicator());
-                      }
-                      if (snapshot.hasError) {
-                        return const Center(child: Text('Nastala chyba pri načítaní šatníka.'));
-                      }
-
-                      final docs = snapshot.data?.docs ?? [];
-
-                      final normalized = <Map<String, dynamic>>[];
-                      for (final d in docs) {
-                        final m = d.data() as Map<String, dynamic>;
-                        final data = _normalizeKeysForDisplay(m);
-                        data['__id'] = d.id;
-
-                        if (_searchQuery.trim().isNotEmpty && !_matchesSearch(data, _searchQuery.trim())) {
-                          continue;
-                        }
-                        normalized.add(data);
-                      }
-
-                      normalized.sort((a, b) => _compareDocs(a, b));
-
-                      final Map<String, List<Map<String, dynamic>>> byCategory = {};
-                      for (final item in normalized) {
-                        final ck = (item['categoryKey'] as String?) ?? '';
-                        if (ck.isEmpty) continue;
-                        byCategory.putIfAbsent(ck, () => []);
-                        byCategory[ck]!.add(item);
-                      }
-
-                      final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
-
-                      final totalCount = byCategory.values.fold<int>(0, (p, e) => p + e.length);
-                      if (totalCount == 0) {
-                        return Center(
-                          child: Text(
-                            'Zatiaľ tu nemáš žiadne kúsky.',
-                            style: TextStyle(
-                              color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.6),
-                            ),
-                          ),
-                        );
-                      }
-
-                      return ListView(
-                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-                        children: [
-                          for (final ck in categoryKeysInOrder)
-                            if ((byCategory[ck] ?? []).isNotEmpty)
-                              _CategorySection(
-                                title: categoryLabels[ck] ?? ck,
-                                items: byCategory[ck]!,
-                                onOpenAll: () {
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => WardrobeCategoryScreen(
-                                        mainGroupKey: mainGroupKey,
-                                        categoryKey: ck,
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                        ],
-                      );
-                    },
+              ),
+            ),
+            SafeArea(
+              child: Column(
+                children: [
+                  // ✅ glass appbar
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: _GlassAppBar(
+                      title: 'Môj šatník',
+                      onInfo: () => _showProcessingLegend(context),
+                    ),
                   ),
-                ),
-              ],
-            );
-          }).toList(),
+
+                  // ✅ tabs in glass pill
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    child: _GlassTabs(
+                      tabs: mainGroupKeys.map((k) => mainCategoryGroups[k] ?? k).toList(),
+                    ),
+                  ),
+
+                  Expanded(
+                    child: TabBarView(
+                      children: mainGroupKeys.map((mainGroupKey) {
+                        return _WardrobeTabBody(
+                          firestore: _firestore,
+                          authUid: _authUser!.uid,
+                          mainGroupKey: mainGroupKey,
+                          sortOption: _sortOption,
+                          sortOptions: _sortOptions,
+                          searchController: _searchController,
+                          searchQuery: _searchQuery,
+                          onSearchChanged: (v) => setState(() => _searchQuery = v),
+                          onSortChanged: (v) => setState(() => _sortOption = v),
+                          normalizeKeysForDisplay: _normalizeKeysForDisplay,
+                          matchesSearch: _matchesSearch,
+                          compareDocs: _compareDocs,
+                          onDeleteItem: (item) => _confirmAndDelete(context, item),
+                        );
+                      }).toList(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// -----------------------------------------------------------------------------
-// Sekcia v liste: Nadpis + preview (4 kúsky) + "Zobraziť všetko"
-// -----------------------------------------------------------------------------
-class _CategorySection extends StatelessWidget {
+/// ============================================================================
+/// Tab body (search + sort + content)
+/// ============================================================================
+class _WardrobeTabBody extends StatelessWidget {
+  final FirebaseFirestore firestore;
+  final String authUid;
+  final String mainGroupKey;
+
+  final String sortOption;
+  final List<String> sortOptions;
+
+  final TextEditingController searchController;
+  final String searchQuery;
+
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<String> onSortChanged;
+
+  final Map<String, dynamic> Function(Map<String, dynamic> raw) normalizeKeysForDisplay;
+  final bool Function(Map<String, dynamic> data, String query) matchesSearch;
+  final int Function(Map<String, dynamic> a, Map<String, dynamic> b) compareDocs;
+
+  final void Function(Map<String, dynamic> item) onDeleteItem;
+
+  const _WardrobeTabBody({
+    required this.firestore,
+    required this.authUid,
+    required this.mainGroupKey,
+    required this.sortOption,
+    required this.sortOptions,
+    required this.searchController,
+    required this.searchQuery,
+    required this.onSearchChanged,
+    required this.onSortChanged,
+    required this.normalizeKeysForDisplay,
+    required this.matchesSearch,
+    required this.compareDocs,
+    required this.onDeleteItem,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        // ✅ search + sort in one glass row
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+          child: _GlassSearchAndSort(
+            controller: searchController,
+            hint: 'Hľadať v šatníku…',
+            sortValue: sortOption,
+            sortOptions: sortOptions,
+            onSearchChanged: onSearchChanged,
+            onSortChanged: onSortChanged,
+          ),
+        ),
+
+        Expanded(
+          child: StreamBuilder<QuerySnapshot>(
+            stream: firestore
+                .collection('users')
+                .doc(authUid)
+                .collection('wardrobe')
+                .where('mainGroup', isEqualTo: mainGroupKey)
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(
+                  child: SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                );
+              }
+              if (snapshot.hasError) {
+                return const Center(
+                  child: Text(
+                    'Nastala chyba pri načítaní šatníka.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                );
+              }
+
+              final docs = snapshot.data?.docs ?? [];
+
+              final normalized = <Map<String, dynamic>>[];
+              for (final d in docs) {
+                final m = d.data() as Map<String, dynamic>;
+                final data = normalizeKeysForDisplay(m);
+                data['__id'] = d.id;
+
+                if (searchQuery.trim().isNotEmpty && !matchesSearch(data, searchQuery.trim())) {
+                  continue;
+                }
+                normalized.add(data);
+              }
+
+              normalized.sort((a, b) => compareDocs(a, b));
+
+              // group by categoryKey
+              final Map<String, List<Map<String, dynamic>>> byCategory = {};
+              for (final item in normalized) {
+                final ck = (item['categoryKey'] as String?) ?? '';
+                if (ck.isEmpty) continue;
+                byCategory.putIfAbsent(ck, () => []);
+                byCategory[ck]!.add(item);
+              }
+
+              final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
+
+              final totalCount = byCategory.values.fold<int>(0, (p, e) => p + e.length);
+              if (totalCount == 0) {
+                return const Center(
+                  child: Text(
+                    'Zatiaľ tu nemáš žiadne kúsky.',
+                    style: TextStyle(color: Colors.white70),
+                  ),
+                );
+              }
+
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+                children: [
+                  for (final ck in categoryKeysInOrder)
+                    if ((byCategory[ck] ?? []).isNotEmpty)
+                      _CategorySectionGlass(
+                        title: categoryLabels[ck] ?? ck,
+                        items: byCategory[ck]!,
+                        onOpenAll: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => WardrobeCategoryScreen(
+                                mainGroupKey: mainGroupKey,
+                                categoryKey: ck,
+                              ),
+                            ),
+                          );
+                        },
+                        onDeleteItem: onDeleteItem,
+                      ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// ============================================================================
+/// GLASS UI pieces
+/// ============================================================================
+class _GlassAppBar extends StatelessWidget {
+  final String title;
+  final VoidCallback onInfo;
+
+  const _GlassAppBar({required this.title, required this.onInfo});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            border: Border.all(color: Colors.white10),
+            borderRadius: BorderRadius.circular(18),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                ),
+              ),
+              IconButton(
+                onPressed: onInfo,
+                tooltip: 'Čo znamená ten kruh?',
+                icon: const Icon(Icons.info_outline, color: Colors.white70),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassTabs extends StatelessWidget {
+  final List<String> tabs;
+  const _GlassTabs({required this.tabs});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: TabBar(
+            isScrollable: true,
+            indicator: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: Colors.white.withOpacity(0.90),
+            ),
+            labelColor: Colors.black,
+            unselectedLabelColor: Colors.white70,
+            labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            tabs: tabs.map((t) => Tab(text: t)).toList(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassSearchAndSort extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+
+  final String sortValue;
+  final List<String> sortOptions;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<String> onSortChanged;
+
+  const _GlassSearchAndSort({
+    required this.controller,
+    required this.hint,
+    required this.sortValue,
+    required this.sortOptions,
+    required this.onSearchChanged,
+    required this.onSortChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            children: [
+              TextField(
+                controller: controller,
+                style: const TextStyle(color: Colors.white),
+                cursorColor: Colors.white70,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                  hintText: hint,
+                  hintStyle: const TextStyle(color: Colors.white54),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.06),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: onSearchChanged,
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  const Icon(Icons.sort, color: Colors.white60, size: 18),
+                  const SizedBox(width: 8),
+                  const Text('Triediť:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                  const Spacer(),
+                  _GlassDropdown(
+                    value: sortValue,
+                    items: sortOptions,
+                    onChanged: onSortChanged,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassDropdown extends StatelessWidget {
+  final String value;
+  final List<String> items;
+  final ValueChanged<String> onChanged;
+
+  const _GlassDropdown({
+    required this.value,
+    required this.items,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.06),
+        border: Border.all(color: Colors.white10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<String>(
+          value: value,
+          dropdownColor: const Color(0xFF1A1A1A),
+          iconEnabledColor: Colors.white70,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+          items: items.map((opt) {
+            return DropdownMenuItem<String>(value: opt, child: Text(opt));
+          }).toList(),
+          onChanged: (v) {
+            if (v == null) return;
+            onChanged(v);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Container(
+        width: 44,
+        height: 4,
+        decoration: BoxDecoration(
+          color: Colors.white24,
+          borderRadius: BorderRadius.circular(999),
+        ),
+      ),
+    );
+  }
+}
+/// ============================================================================
+/// CATEGORY SECTION (glass) + preview HORIZONTAL (3 vedľa seba)
+/// ============================================================================
+class _CategorySectionGlass extends StatelessWidget {
   final String title;
   final List<Map<String, dynamic>> items;
   final VoidCallback onOpenAll;
+  final void Function(Map<String, dynamic> item) onDeleteItem;
 
-  const _CategorySection({
+  const _CategorySectionGlass({
     required this.title,
     required this.items,
     required this.onOpenAll,
+    required this.onDeleteItem,
   });
 
   List<String> _normalizeList(dynamic value) {
@@ -561,14 +940,12 @@ class _CategorySection extends StatelessWidget {
   }
 
   String _statusFromProcessing(Map<String, dynamic> data, String key) {
-    // prefer nested map: processing: { cutout: "...", product: "..." }
     final p = data['processing'];
     if (p is Map) {
       final m = p.cast<String, dynamic>();
       final v = (m[key] ?? '').toString().trim();
       if (v.isNotEmpty) return v;
     }
-    // legacy dotted fields (ak by náhodou existovali)
     final dotted = data['processing.$key'];
     if (dotted != null) {
       final v = dotted.toString().trim();
@@ -581,194 +958,311 @@ class _CategorySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final preview = items.take(4).toList();
+    // koľko zobrazíme v preview (scroll do strany)
+    final preview = items.take(12).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                ),
-              ),
-              TextButton(
-                onPressed: onOpenAll,
-                child: Text('Zobraziť všetko (${items.length})'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          GridView.builder(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: preview.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              crossAxisSpacing: 12,
-              mainAxisSpacing: 12,
-              childAspectRatio: 0.75,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(22),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: Colors.white10),
+              color: Colors.white.withOpacity(0.06),
             ),
-            itemBuilder: (context, index) {
-              final data = preview[index];
-
-              // -----------------------------
-              // IMAGE priority
-              // -----------------------------
-              final String? productImage = data['productImageUrl'] as String?;
-              final String? cleanImage = data['cleanImageUrl'] as String?;
-              final String? cutoutImage = data['cutoutImageUrl'] as String?;
-              final String? originalImage = data['originalImageUrl'] as String?;
-              final String? legacyImage = data['imageUrl'] as String?;
-
-              final imageUrl =
-              (_isUrlFilled(productImage))
-                  ? productImage!
-                  : (_isUrlFilled(cleanImage))
-                  ? cleanImage!
-                  : (_isUrlFilled(cutoutImage))
-                  ? cutoutImage!
-                  : (_isUrlFilled(originalImage))
-                  ? originalImage!
-                  : (legacyImage ?? '');
-
-              // -----------------------------
-              // ✅ Spinner logic (CUTOUT + PRODUCT)
-              // -----------------------------
-              final cutoutStatus = _statusFromProcessing(data, 'cutout'); // queued|running|done|error
-              final productStatus = _statusFromProcessing(data, 'product'); // queued|running|done|error|disabled
-
-              final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
-              final bool hasProduct = _isUrlFilled(productImage);
-
-              final bool cutoutInProgress =
-                  !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
-
-              final bool productInProgress =
-                  hasCutoutOrClean &&
-                      !hasProduct &&
-                      (productStatus == 'queued' || productStatus == 'running');
-
-              final bool showSpinner = cutoutInProgress || productInProgress;
-
-              final bool showError =
-                  (!showSpinner) &&
-                      (cutoutStatus == 'error' || productStatus == 'error');
-
-              final name = (data['name'] as String?)?.trim().isNotEmpty == true
-                  ? data['name'] as String
-                  : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
-
-              final categoryLine = (data['categoryLabel'] as String?) ?? '';
-              final seasons = _normalizeList(data['season']);
-              String subline = '';
-              if (categoryLine.isNotEmpty && seasons.isNotEmpty) {
-                subline = '$categoryLine • ${seasons.join(', ')}';
-              } else if (categoryLine.isNotEmpty) {
-                subline = categoryLine;
-              } else if (seasons.isNotEmpty) {
-                subline = seasons.join(', ');
-              }
-
-              return InkWell(
-                onTap: () {
-                  final id = data['__id'] as String?;
-                  if (id == null) return;
-
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ClothingDetailScreen(
-                        clothingItemId: id,
-                        clothingItemData: data,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
                       ),
                     ),
-                  );
-                },
-                child: Card(
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(
-                        child: ClipRRect(
-                          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                          child: imageUrl.isNotEmpty
-                              ? Stack(
-                            children: [
-                              Positioned.fill(
-                                child: Image.network(imageUrl, fit: BoxFit.cover),
-                              ),
+                    TextButton(
+                      onPressed: onOpenAll,
+                      child: Text(
+                        'Zobraziť všetko (${items.length})',
+                        style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
 
-                              if (showSpinner)
-                                const Positioned(
-                                  top: 8,
-                                  right: 8,
-                                  child: SizedBox(
-                                    width: 12,
-                                    height: 12,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 1.6,
-                                      valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
+                // ✅ 3 vedľa seba + horizontal scroll
+                LayoutBuilder(
+                  builder: (context, c) {
+                    // aby vyšli 3 tiles vedľa seba s medzerami
+                    const gap = 12.0;
+                    final available = c.maxWidth;
+                    final tileWidth = (available - gap * 2) / 3; // 3 tiles => 2 medzery
+                    final tileHeight = tileWidth / 0.78; // približne rovnaký pomer ako v gride
+
+                    return SizedBox(
+                      height: tileHeight,
+                      child: ListView.separated(
+                        scrollDirection: Axis.horizontal,
+                        itemCount: preview.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: gap),
+                        itemBuilder: (context, index) {
+                          final data = preview[index];
+
+                          // IMAGE priority
+                          final String? productImage = data['productImageUrl'] as String?;
+                          final String? cleanImage = data['cleanImageUrl'] as String?;
+                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
+                          final String? originalImage = data['originalImageUrl'] as String?;
+                          final String? legacyImage = data['imageUrl'] as String?;
+
+                          final imageUrl = (_isUrlFilled(productImage))
+                              ? productImage!
+                              : (_isUrlFilled(cleanImage))
+                              ? cleanImage!
+                              : (_isUrlFilled(cutoutImage))
+                              ? cutoutImage!
+                              : (_isUrlFilled(originalImage))
+                              ? originalImage!
+                              : (legacyImage ?? '');
+
+                          // Spinner logic
+                          final cutoutStatus = _statusFromProcessing(data, 'cutout');
+                          final productStatus = _statusFromProcessing(data, 'product');
+
+                          final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
+                          final bool hasProduct = _isUrlFilled(productImage);
+
+                          final bool cutoutInProgress =
+                              !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+
+                          final bool productInProgress =
+                              hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
+
+                          final bool showSpinner = cutoutInProgress || productInProgress;
+                          final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
+
+                          final name = (data['name'] as String?)?.trim().isNotEmpty == true
+                              ? data['name'] as String
+                              : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
+
+                          final categoryLine = (data['categoryLabel'] as String?) ?? '';
+                          final seasons = _normalizeList(data['season']);
+                          String subline = '';
+                          if (categoryLine.isNotEmpty && seasons.isNotEmpty) {
+                            subline = '$categoryLine • ${seasons.join(', ')}';
+                          } else if (categoryLine.isNotEmpty) {
+                            subline = categoryLine;
+                          } else if (seasons.isNotEmpty) {
+                            subline = seasons.join(', ');
+                          }
+
+                          return SizedBox(
+                            width: tileWidth,
+                            child: _WardrobeTileGlass(
+                              data: data,
+                              imageUrl: imageUrl,
+                              title: name,
+                              subtitle: subline,
+                              showSpinner: showSpinner,
+                              showError: showError,
+                              onDelete: () => onDeleteItem(data),
+                              onOpenDetail: () {
+                                final id = data['__id'] as String?;
+                                if (id == null) return;
+
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => ClothingDetailScreen(
+                                      clothingItemId: id,
+                                      clothingItemData: data,
                                     ),
                                   ),
-                                ),
-
-                              if (showError)
-                                const Positioned(
-                                  top: 6,
-                                  right: 6,
-                                  child: Icon(
-                                    Icons.error_outline,
-                                    size: 16,
-                                    color: Colors.redAccent,
-                                  ),
-                                ),
-                            ],
-                          )
-                              : Container(
-                            color: Colors.grey.shade200,
-                            child: const Icon(Icons.image_not_supported, size: 50),
-                          ),
-                        ),
+                                );
+                              },
+                            ),
+                          );
+                        },
                       ),
-                      Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          name,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                      if (subline.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-                          child: Text(
-                            subline,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                          ),
-                        ),
-                    ],
-                  ),
+                    );
+                  },
                 ),
-              );
-            },
+              ],
+            ),
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-// -----------------------------------------------------------------------------
-// Screen: všetky kúsky v jednej kategórii (podkategórie + filtre)
-// -----------------------------------------------------------------------------
+/// ============================================================================
+/// Glass tile card used both in preview and category screen
+/// ============================================================================
+class _WardrobeTileGlass extends StatelessWidget {
+  final Map<String, dynamic> data;
+  final String imageUrl;
+  final String title;
+  final String subtitle;
+  final bool showSpinner;
+  final bool showError;
+  final VoidCallback onDelete;
+  final VoidCallback onOpenDetail;
+
+  const _WardrobeTileGlass({
+    required this.data,
+    required this.imageUrl,
+    required this.title,
+    required this.subtitle,
+    required this.showSpinner,
+    required this.showError,
+    required this.onDelete,
+    required this.onOpenDetail,
+  });
+
+  Widget _topLeftSpinner() {
+    return const Positioned(
+      top: 10,
+      left: 10,
+      child: SizedBox(
+        width: 12,
+        height: 12,
+        child: CircularProgressIndicator(
+          strokeWidth: 1.6,
+          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
+        ),
+      ),
+    );
+  }
+
+  Widget _topRightDeleteButton() {
+    return Positioned(
+      top: 6,
+      right: 6,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onDelete,
+        child: Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.30),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: const Icon(
+            Icons.delete_outline,
+            size: 16,
+            color: Colors.white,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onOpenDetail,
+      borderRadius: BorderRadius.circular(18),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(18),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: imageUrl.trim().isNotEmpty
+                              ? Image.network(imageUrl, fit: BoxFit.cover)
+                              : Container(
+                            color: Colors.white.withOpacity(0.06),
+                            child: const Center(
+                              child: Icon(Icons.image_not_supported, size: 42, color: Colors.white38),
+                            ),
+                          ),
+                        ),
+                        if (showSpinner) _topLeftSpinner(),
+                        _topRightDeleteButton(),
+                        if (showError)
+                          const Positioned(
+                            bottom: 8,
+                            right: 8,
+                            child: Icon(Icons.error_outline, size: 16, color: Colors.redAccent),
+                          ),
+                        Positioned(
+                          left: 0,
+                          right: 0,
+                          bottom: 0,
+                          height: 60,
+                          child: IgnorePointer(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                gradient: LinearGradient(
+                                  begin: Alignment.topCenter,
+                                  end: Alignment.bottomCenter,
+                                  colors: [
+                                    Colors.transparent,
+                                    Colors.black.withOpacity(0.55),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                if (subtitle.trim().isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                    child: Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600),
+                    ),
+                  )
+                else
+                  const SizedBox(height: 10),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// ============================================================================
+/// Screen: všetky kúsky v jednej kategórii (podkategórie + filtre)
+/// ============================================================================
 class WardrobeCategoryScreen extends StatefulWidget {
   final String mainGroupKey;
   final String categoryKey;
@@ -788,9 +1282,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
   final _authUser = FirebaseAuth.instance.currentUser;
 
   String? _selectedSubKey;
-  String? _selectedSeason;
-  String? _selectedStyle;
-  String? _selectedPattern;
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -808,6 +1299,78 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _confirmAndDelete(BuildContext context, Map<String, dynamic> data) async {
+    if (_authUser == null) return;
+
+    final id = data['__id'] as String?;
+    if (id == null || id.isEmpty) return;
+
+    final name = (data['name'] as String?)?.trim().isNotEmpty == true
+        ? (data['name'] as String)
+        : (data['subCategoryLabel'] as String?) ?? 'Tento kúsok';
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Vymazať oblečenie?'),
+        content: Text('Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Zrušiť'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+            child: const Text('Vymazať'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(_authUser!.uid)
+          .collection('wardrobe')
+          .doc(id)
+          .delete();
+
+      final urls = <String?>[
+        data['productImageUrl'] as String?,
+        data['cleanImageUrl'] as String?,
+        data['cutoutImageUrl'] as String?,
+        data['originalImageUrl'] as String?,
+        data['imageUrl'] as String?,
+      ];
+      for (final u in urls) {
+        await _tryDeleteStorageUrl(u);
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Kúsok bol vymazaný.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nepodarilo sa vymazať kúsok: $e')),
+      );
+    }
+  }
+
+  Future<void> _tryDeleteStorageUrl(String? url) async {
+    final u = url?.trim();
+    if (u == null || u.isEmpty) return;
+
+    try {
+      final ref = FirebaseStorage.instance.refFromURL(u);
+      await ref.delete();
+    } catch (_) {}
   }
 
   List<String> _normalizeList(dynamic value) {
@@ -865,13 +1428,13 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       case 'Najstaršie':
         return _compareByUploadedAt(a, b, desc: false);
       case 'Značka':
-        return _compareString((a['brand'] as String?) ?? '', (b['brand'] as String?) ?? '');
+        return ((a['brand'] as String?) ?? '').toLowerCase().compareTo(((b['brand'] as String?) ?? '').toLowerCase());
       case 'Farba':
         final ca = _normalizeList(a['color']);
         final cb = _normalizeList(b['color']);
         final firstA = ca.isNotEmpty ? ca.first : '';
         final firstB = cb.isNotEmpty ? cb.first : '';
-        return _compareString(firstA, firstB);
+        return firstA.toLowerCase().compareTo(firstB.toLowerCase());
       case 'Najčastejšie nosené':
         final wa = (a['wearCount'] is int) ? a['wearCount'] as int : 0;
         final wb = (b['wearCount'] is int) ? b['wearCount'] as int : 0;
@@ -893,10 +1456,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
 
     final cmp = da.compareTo(db);
     return desc ? -cmp : cmp;
-  }
-
-  int _compareString(String a, String b) {
-    return a.toLowerCase().compareTo(b.toLowerCase());
   }
 
   String _statusFromProcessing(Map<String, dynamic> data, String key) {
@@ -928,279 +1487,284 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Column(
+      backgroundColor: const Color(0xFF0E0E0E),
+      body: Stack(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: 'Hľadať v kategórii…',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(24)),
-                isDense: true,
-              ),
-              onChanged: (v) => setState(() => _searchQuery = v),
+          Positioned.fill(
+            child: Image.asset(
+              'assets/backgrounds/luxury_dark.png',
+              fit: BoxFit.cover,
             ),
           ),
-          if (subKeys.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    ChoiceChip(
-                      label: const Text('Všetko'),
-                      selected: _selectedSubKey == null,
-                      onSelected: (_) => setState(() => _selectedSubKey = null),
-                    ),
-                    const SizedBox(width: 8),
-                    ...subKeys.map((sk) {
-                      final label = subCategoryLabels[sk] ?? sk;
-                      return Padding(
-                        padding: const EdgeInsets.only(left: 8),
-                        child: ChoiceChip(
-                          label: Text(label),
-                          selected: _selectedSubKey == sk,
-                          onSelected: (_) => setState(() => _selectedSubKey = sk),
-                        ),
-                      );
-                    }),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.62),
+                    Colors.black.withOpacity(0.20),
+                    Colors.black.withOpacity(0.72),
                   ],
                 ),
               ),
             ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
+          ),
+          SafeArea(
+            child: Column(
               children: [
-                const Text('Triediť: '),
-                const SizedBox(width: 8),
-                DropdownButton<String>(
-                  value: _sortOption,
-                  items: _sortOptions.map((opt) => DropdownMenuItem<String>(value: opt, child: Text(opt))).toList(),
-                  onChanged: (v) => setState(() => _sortOption = v ?? _sortOption),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.arrow_back, color: Colors.white),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          title,
+                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: _GlassSearchAndSort(
+                    controller: _searchController,
+                    hint: 'Hľadať v kategórii…',
+                    sortValue: _sortOption,
+                    sortOptions: _sortOptions,
+                    onSearchChanged: (v) => setState(() => _searchQuery = v),
+                    onSortChanged: (v) => setState(() => _sortOption = v),
+                  ),
+                ),
+                if (subKeys.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    child: _GlassChipsRow(
+                      children: [
+                        _GlassChoiceChip(
+                          label: 'Všetko',
+                          selected: _selectedSubKey == null,
+                          onTap: () => setState(() => _selectedSubKey = null),
+                        ),
+                        ...subKeys.map((sk) {
+                          final label = subCategoryLabels[sk] ?? sk;
+                          return _GlassChoiceChip(
+                            label: label,
+                            selected: _selectedSubKey == sk,
+                            onTap: () => setState(() => _selectedSubKey = sk),
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
+                Expanded(
+                  child: StreamBuilder<QuerySnapshot>(
+                    stream: _firestore
+                        .collection('users')
+                        .doc(_authUser!.uid)
+                        .collection('wardrobe')
+                        .where('mainGroup', isEqualTo: widget.mainGroupKey)
+                        .where('categoryKey', isEqualTo: widget.categoryKey)
+                        .snapshots(),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const Center(
+                          child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                        );
+                      }
+                      if (snapshot.hasError) {
+                        return const Center(
+                          child: Text('Chyba pri načítaní položiek.', style: TextStyle(color: Colors.white70)),
+                        );
+                      }
+
+                      var items = (snapshot.data?.docs ?? []).map((d) {
+                        final m = d.data() as Map<String, dynamic>;
+                        m['__id'] = d.id;
+                        return m;
+                      }).toList();
+
+                      if (_selectedSubKey != null) {
+                        items = items.where((m) => (m['subCategoryKey'] as String?) == _selectedSubKey).toList();
+                      }
+
+                      if (_searchQuery.trim().isNotEmpty) {
+                        items = items.where((m) => _matchesSearch(m, _searchQuery.trim())).toList();
+                      }
+
+                      items.sort((a, b) => _compareDocs(a, b));
+
+                      if (items.isEmpty) {
+                        return const Center(
+                          child: Text('V tejto kategórii zatiaľ nič nemáš.', style: TextStyle(color: Colors.white70)),
+                        );
+                      }
+
+                      return GridView.builder(
+                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 0.78,
+                        ),
+                        itemCount: items.length,
+                        itemBuilder: (context, index) {
+                          final data = items[index];
+
+                          final String? productImage = data['productImageUrl'] as String?;
+                          final String? cleanImage = data['cleanImageUrl'] as String?;
+                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
+                          final String? originalImage = data['originalImageUrl'] as String?;
+                          final String? legacyImage = data['imageUrl'] as String?;
+
+                          final imageUrl = (_isUrlFilled(productImage))
+                              ? productImage!
+                              : (_isUrlFilled(cleanImage))
+                              ? cleanImage!
+                              : (_isUrlFilled(cutoutImage))
+                              ? cutoutImage!
+                              : (_isUrlFilled(originalImage))
+                              ? originalImage!
+                              : (legacyImage ?? '');
+
+                          final cutoutStatus = _statusFromProcessing(data, 'cutout');
+                          final productStatus = _statusFromProcessing(data, 'product');
+
+                          final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
+                          final bool hasProduct = _isUrlFilled(productImage);
+
+                          final bool cutoutInProgress =
+                              !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+
+                          final bool productInProgress =
+                              hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
+
+                          final bool showSpinner = cutoutInProgress || productInProgress;
+                          final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
+
+                          final name = (data['name'] as String?)?.trim().isNotEmpty == true
+                              ? data['name'] as String
+                              : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
+
+                          final seasons = _normalizeList(data['season']);
+                          final subline = seasons.isNotEmpty ? seasons.join(', ') : '';
+
+                          return _WardrobeTileGlass(
+                            data: data,
+                            imageUrl: imageUrl,
+                            title: name,
+                            subtitle: subline,
+                            showSpinner: showSpinner,
+                            showError: showError,
+                            onDelete: () => _confirmAndDelete(context, data),
+                            onOpenDetail: () {
+                              final id = data['__id'] as String?;
+                              if (id == null) return;
+
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ClothingDetailScreen(
+                                    clothingItemId: id,
+                                    clothingItemData: data,
+                                  ),
+                                ),
+                              );
+                            },
+                          );
+                        },
+                      );
+                    },
+                  ),
                 ),
               ],
             ),
           ),
-          Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: _firestore
-                  .collection('users')
-                  .doc(_authUser!.uid)
-                  .collection('wardrobe')
-                  .where('mainGroup', isEqualTo: widget.mainGroupKey)
-                  .where('categoryKey', isEqualTo: widget.categoryKey)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                if (snapshot.hasError) {
-                  return const Center(child: Text('Chyba pri načítaní položiek.'));
-                }
-
-                var items = (snapshot.data?.docs ?? []).map((d) {
-                  final m = d.data() as Map<String, dynamic>;
-                  m['__id'] = d.id;
-                  return m;
-                }).toList();
-
-                if (_selectedSubKey != null) {
-                  items = items.where((m) => (m['subCategoryKey'] as String?) == _selectedSubKey).toList();
-                }
-
-                if (_selectedSeason != null) {
-                  items = items.where((m) {
-                    final s = m['season'];
-                    if (s is String) return s == _selectedSeason;
-                    if (s is List) return List<String>.from(s).contains(_selectedSeason);
-                    return false;
-                  }).toList();
-                }
-
-                if (_selectedStyle != null) {
-                  items = items.where((m) {
-                    final s = m['style'];
-                    if (s is String) return s == _selectedStyle;
-                    if (s is List) return List<String>.from(s).contains(_selectedStyle);
-                    return false;
-                  }).toList();
-                }
-
-                if (_selectedPattern != null) {
-                  items = items.where((m) {
-                    final p = m['pattern'];
-                    if (p is String) return p == _selectedPattern;
-                    if (p is List) return List<String>.from(p).contains(_selectedPattern);
-                    return false;
-                  }).toList();
-                }
-
-                if (_searchQuery.trim().isNotEmpty) {
-                  items = items.where((m) => _matchesSearch(m, _searchQuery.trim())).toList();
-                }
-
-                items.sort((a, b) => _compareDocs(a, b));
-
-                if (items.isEmpty) {
-                  return Center(
-                    child: Text(
-                      'V tejto kategórii zatiaľ nič nemáš.',
-                      style: TextStyle(color: Theme.of(context).textTheme.bodyLarge?.color?.withOpacity(0.6)),
-                    ),
-                  );
-                }
-
-                return GridView.builder(
-                  padding: const EdgeInsets.all(12),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
-                    crossAxisSpacing: 12,
-                    mainAxisSpacing: 12,
-                    childAspectRatio: 0.75,
-                  ),
-                  itemCount: items.length,
-                  itemBuilder: (context, index) {
-                    final data = items[index];
-
-                    // IMAGE priority (rovnaké ako v preview)
-                    final String? productImage = data['productImageUrl'] as String?;
-                    final String? cleanImage = data['cleanImageUrl'] as String?;
-                    final String? cutoutImage = data['cutoutImageUrl'] as String?;
-                    final String? originalImage = data['originalImageUrl'] as String?;
-                    final String? legacyImage = data['imageUrl'] as String?;
-
-                    final imageUrl =
-                    (_isUrlFilled(productImage))
-                        ? productImage!
-                        : (_isUrlFilled(cleanImage))
-                        ? cleanImage!
-                        : (_isUrlFilled(cutoutImage))
-                        ? cutoutImage!
-                        : (_isUrlFilled(originalImage))
-                        ? originalImage!
-                        : (legacyImage ?? '');
-
-                    final cutoutStatus = _statusFromProcessing(data, 'cutout');
-                    final productStatus = _statusFromProcessing(data, 'product');
-
-                    final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
-                    final bool hasProduct = _isUrlFilled(productImage);
-
-                    final bool cutoutInProgress =
-                        !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
-
-                    final bool productInProgress =
-                        hasCutoutOrClean &&
-                            !hasProduct &&
-                            (productStatus == 'queued' || productStatus == 'running');
-
-                    final bool showSpinner = cutoutInProgress || productInProgress;
-
-                    final bool showError =
-                        (!showSpinner) &&
-                            (cutoutStatus == 'error' || productStatus == 'error');
-
-                    final name = (data['name'] as String?)?.trim().isNotEmpty == true
-                        ? data['name'] as String
-                        : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
-
-                    final seasons = _normalizeList(data['season']);
-                    final subline = seasons.isNotEmpty ? seasons.join(', ') : '';
-
-                    return InkWell(
-                      onTap: () {
-                        final id = data['__id'] as String?;
-                        if (id == null) return;
-
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ClothingDetailScreen(
-                              clothingItemId: id,
-                              clothingItemData: data,
-                            ),
-                          ),
-                        );
-                      },
-                      child: Card(
-                        elevation: 4,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              child: ClipRRect(
-                                borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-                                child: imageUrl.isNotEmpty
-                                    ? Stack(
-                                  children: [
-                                    Positioned.fill(
-                                      child: Image.network(imageUrl, fit: BoxFit.cover),
-                                    ),
-                                    if (showSpinner)
-                                      const Positioned(
-                                        top: 8,
-                                        right: 8,
-                                        child: SizedBox(
-                                          width: 12,
-                                          height: 12,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 1.6,
-                                            valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
-                                          ),
-                                        ),
-                                      ),
-                                    if (showError)
-                                      const Positioned(
-                                        top: 6,
-                                        right: 6,
-                                        child: Icon(
-                                          Icons.error_outline,
-                                          size: 16,
-                                          color: Colors.redAccent,
-                                        ),
-                                      ),
-                                  ],
-                                )
-                                    : Container(
-                                  color: Colors.grey.shade200,
-                                  child: const Icon(Icons.image_not_supported, size: 50),
-                                ),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(8),
-                              child: Text(
-                                name,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                            if (subline.isNotEmpty)
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-                                child: Text(
-                                  subline,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: Colors.grey.shade600, fontSize: 12),
-                                ),
-                              ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-          ),
         ],
+      ),
+    );
+  }
+}
+
+/// ============================================================================
+/// Glass chips row + chip
+/// ============================================================================
+class _GlassChipsRow extends StatelessWidget {
+  final List<Widget> children;
+  const _GlassChipsRow({required this.children});
+
+  @override
+  Widget build(BuildContext context) {
+    final spaced = <Widget>[];
+    for (int i = 0; i < children.length; i++) {
+      spaced.add(children[i]);
+      if (i != children.length - 1) {
+        spaced.add(const SizedBox(width: 8));
+      }
+    }
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: Colors.white.withOpacity(0.06),
+            border: Border.all(color: Colors.white10),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: spaced),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GlassChoiceChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _GlassChoiceChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          color: selected ? Colors.white.withOpacity(0.92) : Colors.white.withOpacity(0.06),
+          border: Border.all(color: selected ? Colors.white24 : Colors.white10),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.black : Colors.white70,
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
       ),
     );
   }

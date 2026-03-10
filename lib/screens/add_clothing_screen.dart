@@ -1,22 +1,76 @@
+// lib/screens/add_clothing_screen.dart
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-
+import 'dart:typed_data';
+import 'dart:ui';
+import 'dart:ui' show Rect;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // compute
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
-
+import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:image/image.dart' as img;
+
+import 'package:crop_your_image/crop_your_image.dart';
 
 import '../constants/app_constants.dart';
 import '../utils/ai_clothing_parser.dart';
 import '../widgets/category_picker.dart';
 import 'stylist_chat_screen.dart';
+
+/// ✅ ROTATE helper mimo UI thread (encode/decode je ťažké)
+Uint8List _rotateJpgBytes(Map<String, dynamic> args) {
+  final Uint8List bytes = args['bytes'] as Uint8List;
+  final int angle = args['angle'] as int;
+
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return bytes;
+
+  final rotated = img.copyRotate(decoded, angle: angle);
+  return Uint8List.fromList(img.encodeJpg(rotated, quality: 95));
+}
+
+/// ✅ PREP helper mimo UI thread:
+/// - decode + resize na rozumnú veľkosť (zrýchli crop UI)
+/// - používa sa LEN pre editáciu, nie finálny upload
+Uint8List _prepareJpgForEditing(Map<String, dynamic> args) {
+  final Uint8List bytes = args['bytes'] as Uint8List;
+  final int maxSide = args['maxSide'] as int;
+
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return bytes;
+
+  final int w = decoded.width;
+  final int h = decoded.height;
+  final int longest = w > h ? w : h;
+
+  img.Image out = decoded;
+
+  // ✅ zmenšujeme len keď je fotka fakt veľká (typicky z mobilu)
+  if (longest > maxSide) {
+    final double scale = maxSide / longest;
+    final int nw = (w * scale).round();
+    final int nh = (h * scale).round();
+
+    out = img.copyResize(
+      decoded,
+      width: nw,
+      height: nh,
+      interpolation: img.Interpolation.average,
+    );
+  }
+
+  return Uint8List.fromList(
+    img.encodeJpg(out, quality: 95),
+  );
+}
 
 class AddClothingScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
@@ -32,72 +86,265 @@ class AddClothingScreen extends StatefulWidget {
     this.isEditing = false,
   });
 
-  /// ✅ Bottom sheet picker (galéria / kamera) -> potom otvorí Preflight (otáčanie)
+  static const String _luxuryBgAsset = 'assets/backgrounds/luxury_dark.png';
+
+  /// ✅ Bottom sheet picker (kamera prvá) -> potom otvorí Preflight (otáčanie + crop)
   static Future<void> openFromPicker(BuildContext context) async {
     final picker = ImagePicker();
 
     final choice = await showModalBottomSheet<String>(
       context: context,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: Colors.transparent,
+      showDragHandle: false,
       builder: (sheetCtx) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(12),
-                  margin: const EdgeInsets.only(bottom: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.04),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.black.withOpacity(0.08)),
+        Widget glassCard({
+          required Widget child,
+          EdgeInsets? padding,
+          double opacity = 0.06,
+          BorderRadius? radius,
+        }) {
+          return ClipRRect(
+            borderRadius: radius ?? BorderRadius.circular(24),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+              child: Container(
+                padding: padding ?? const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  borderRadius: radius ?? BorderRadius.circular(24),
+                  color: Colors.white.withOpacity(opacity),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: child,
+              ),
+            ),
+          );
+        }
+
+        Widget actionCard({
+          required IconData icon,
+          required String title,
+          required String subtitle,
+          required VoidCallback onTap,
+          bool primary = false,
+        }) {
+          return InkWell(
+            borderRadius: BorderRadius.circular(26),
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.all(18),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(26),
+                color: Colors.white.withOpacity(primary ? 0.10 : 0.06),
+                border: Border.all(
+                  color: primary
+                      ? Colors.white.withOpacity(0.16)
+                      : Colors.white10,
+                ),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.10),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: Icon(icon, color: Colors.white, size: 26),
                   ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 5),
+                        Text(
+                          subtitle,
+                          style: const TextStyle(
+                            color: Colors.white60,
+                            fontSize: 13,
+                            height: 1.3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Container(
+                    width: 38,
+                    height: 38,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.08),
+                      border: Border.all(color: Colors.white10),
+                    ),
+                    child: const Icon(
+                      Icons.arrow_forward_ios_rounded,
+                      color: Colors.white70,
+                      size: 15,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return Container(
+          height: MediaQuery.of(sheetCtx).size.height,
+          decoration: const BoxDecoration(color: Color(0xFF0C0C0C)),
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: Image.asset(
+                  AddClothingScreen._luxuryBgAsset,
+                  fit: BoxFit.cover,
+                ),
+              ),
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        Colors.black.withOpacity(0.80),
+                        Colors.black.withOpacity(0.42),
+                        Colors.black.withOpacity(0.88),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              SafeArea(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
-                      Text(
-                        'Tipy pre najlepšiu fotku',
-                        style: TextStyle(fontWeight: FontWeight.w700),
+                    children: [
+                      Row(
+                        children: [
+                          InkWell(
+                            borderRadius: BorderRadius.circular(999),
+                            onTap: () => Navigator.pop(sheetCtx),
+                            child: Container(
+                              width: 42,
+                              height: 42,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: Colors.white.withOpacity(0.08),
+                                border: Border.all(color: Colors.white10),
+                              ),
+                              child: const Icon(
+                                Icons.arrow_back_rounded,
+                                color: Colors.white,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Pridať nový kúsok",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                                SizedBox(height: 3),
+                                Text(
+                                  "Vyber spôsob pridania oblečenia",
+                                  style: TextStyle(
+                                    color: Colors.white60,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                      SizedBox(height: 8),
-                      _TipRow(
-                        icon: Icons.stay_current_portrait,
-                        text: 'Foť oblečenie ideálne na výšku.',
+                      const SizedBox(height: 90),
+
+                      glassCard(
+                        padding: const EdgeInsets.all(16),
+                        child: const Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.lightbulb_outline_rounded,
+                                  color: Colors.white70,
+                                  size: 18,
+                                ),
+                                SizedBox(width: 8),
+                                Text(
+                                  "Tipy pre najlepšiu fotku",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 12),
+                            _TipRow(
+                              icon: Icons.check_rounded,
+                              text: "Celý kúsok maj v zábere",
+                            ),
+                            _TipRow(
+                              icon: Icons.check_rounded,
+                              text: "Jednoduché pozadie",
+                            ),
+                            _TipRow(
+                              icon: Icons.check_rounded,
+                              text: "Dobré svetlo",
+                            ),
+                          ],
+                        ),
                       ),
-                      _TipRow(
-                        icon: Icons.crop_free,
-                        text: 'Nech je celý kúsok v zábere.',
+
+                      const SizedBox(height: 28),
+
+                      actionCard(
+                        icon: Icons.camera_alt_rounded,
+                        title: "Odfotiť",
+                        subtitle: "Použiť kameru",
+                        primary: true,
+                        onTap: () => Navigator.pop(sheetCtx, 'camera'),
                       ),
-                      _TipRow(
-                        icon: Icons.wallpaper,
-                        text: 'Jednofarebné pozadie = lepší výsledok.',
+
+                      const SizedBox(height: 14),
+
+                      actionCard(
+                        icon: Icons.photo_library_rounded,
+                        title: "Vybrať z galérie",
+                        subtitle: "Použiť existujúcu fotku oblečenia",
+                        onTap: () => Navigator.pop(sheetCtx, 'gallery'),
                       ),
-                      _TipRow(
-                        icon: Icons.wb_sunny_outlined,
-                        text: 'Radšej denné svetlo, minimum tieňov.',
-                      ),
-                      SizedBox(height: 6),
                     ],
                   ),
                 ),
-                ListTile(
-                  leading: const Icon(Icons.photo_library_outlined),
-                  title: const Text('Z galérie'),
-                  onTap: () => Navigator.pop(sheetCtx, 'gallery'),
-                ),
-                ListTile(
-                  leading: const Icon(Icons.camera_alt_outlined),
-                  title: const Text('Odfotiť'),
-                  onTap: () => Navigator.pop(sheetCtx, 'camera'),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         );
       },
@@ -105,17 +352,38 @@ class AddClothingScreen extends StatefulWidget {
 
     if (choice == null) return;
 
-    final XFile? x = await picker.pickImage(
-      source: choice == 'camera' ? ImageSource.camera : ImageSource.gallery,
-      imageQuality: 90,
-    );
+    File? pickedFile;
 
-    if (x == null) return;
+    if (choice == 'camera') {
+      final XFile? x = await picker.pickImage(
+        source: ImageSource.camera,
+        imageQuality: 90,
+      );
+
+      if (x == null) return;
+      pickedFile = File(x.path);
+    } else if (choice == 'gallery') {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: false,
+        dialogTitle: 'Vyber fotku',
+      );
+
+      if (result == null || result.files.isEmpty) return;
+
+      final path = result.files.single.path;
+      if (path == null) return;
+
+      pickedFile = File(path);
+    }
+
+    if (pickedFile == null) return;
 
     // ignore: use_build_context_synchronously
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _PhotoPreflightScreen(localFile: File(x.path)),
+        builder: (_) => _PhotoPreflightScreen(localFile: pickedFile!),
       ),
     );
   }
@@ -132,16 +400,20 @@ class _TipRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: Colors.black54),
+          Icon(icon, size: 18, color: Colors.white70),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               text,
-              style: const TextStyle(fontSize: 13, color: Colors.black87),
+              style: const TextStyle(
+                fontSize: 13,
+                color: Colors.white70,
+                height: 1.3,
+              ),
             ),
           ),
         ],
@@ -150,6 +422,68 @@ class _TipRow extends StatelessWidget {
   }
 }
 
+Widget _pickerCard({
+  required IconData icon,
+  required String title,
+  required String subtitle,
+  required VoidCallback onTap,
+}) {
+  return InkWell(
+    borderRadius: BorderRadius.circular(20),
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(20),
+        color: Colors.white.withOpacity(0.06),
+        border: Border.all(color: Colors.white12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Icon(icon, color: Colors.white),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 13,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+/// =======================================================
+/// ✅ PRE-FLIGHT (otáčanie + crop v appke)
+/// - Rotate = okamžitý (len vizuálne, bez sekania)
+/// - Rotácia sa "upečie" do bytes iba pri Orezať alebo Potvrdiť
+/// - Crop bez hýbania obrázka (interactive: false)
+/// =======================================================
 class _PhotoPreflightScreen extends StatefulWidget {
   final File localFile;
   const _PhotoPreflightScreen({required this.localFile});
@@ -159,146 +493,544 @@ class _PhotoPreflightScreen extends StatefulWidget {
 }
 
 class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
-  int _quarterTurns = 0;
+  // ✅ luxury theme
+  static const _bgAsset = 'assets/backgrounds/luxury_dark.png';
+
   bool _saving = false;
 
-  Future<File> _applyRotationIfNeeded(File input) async {
-    final turns = _quarterTurns % 4;
-    if (turns == 0) return input;
+  Uint8List? _imageBytes;
+  Uint8List? _rawBytes;
+  bool _prepped = false;
 
-    final bytes = await input.readAsBytes();
-    final decoded = img.decodeImage(bytes);
-    if (decoded == null) return input;
+  int _quarterTurns = 0;
 
-    // clockwise by 90deg * turns
-    final rotated = img.copyRotate(decoded, angle: 90 * turns);
+  final CropController _cropController = CropController();
+  bool _isCropping = false;
 
-    final dir = await getTemporaryDirectory();
-    final ext = p.extension(input.path).toLowerCase();
-    final outExt = (ext == '.png') ? '.png' : '.jpg';
+  bool _cropPreparing = false;
+  Uint8List? _cropBytesReady;
 
-    final outPath = p.join(
-      dir.path,
-      'ootd_rotated_${DateTime.now().millisecondsSinceEpoch}$outExt',
-    );
-
-    final outFile = File(outPath);
-
-    if (outExt == '.png') {
-      await outFile.writeAsBytes(img.encodePng(rotated));
-    } else {
-      await outFile.writeAsBytes(img.encodeJpg(rotated, quality: 95));
-    }
-
-    return outFile;
+  @override
+  void initState() {
+    super.initState();
+    _loadInitial();
   }
 
-  Future<void> _continue() async {
+  Future<void> _loadInitial() async {
+    final b = await widget.localFile.readAsBytes();
+    if (!mounted) return;
+
+    setState(() {
+      _rawBytes = Uint8List.fromList(b);
+      _imageBytes = Uint8List.fromList(b);
+      _prepped = false;
+    });
+
+    _prepareBaseBytesInBackground();
+  }
+
+  Future<void> _prepareBaseBytesInBackground() async {
+    if (_rawBytes == null) return;
+
+    try {
+      final prepared = await compute(_prepareJpgForEditing, {
+        'bytes': _rawBytes!,
+        'maxSide': 2048,
+      });
+
+      if (!mounted) return;
+      setState(() {
+        _imageBytes = prepared;
+        _prepped = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _prepped = true);
+    }
+  }
+
+  Future<Uint8List> _bakeRotationIfNeeded(Uint8List inputBytes) async {
+    final turns = _quarterTurns % 4;
+    if (turns == 0) return inputBytes;
+
+    final angle = 90 * turns;
+
+    final out = await compute(_rotateJpgBytes, {
+      'bytes': inputBytes,
+      'angle': angle,
+    });
+
+    return out;
+  }
+
+  Future<void> _continueWithBytes(Uint8List bytes) async {
+    final dir = await getTemporaryDirectory();
+    final outPath = p.join(
+      dir.path,
+      'ootd_preflight_${DateTime.now().millisecondsSinceEpoch}.jpg',
+    );
+    final outFile = File(outPath);
+    await outFile.writeAsBytes(bytes, flush: true);
+
+    if (!mounted) return;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => _AddClothingEntryPoint(localFile: outFile),
+      ),
+    );
+  }
+
+  Future<void> _enterCropMode() async {
+    if (_saving) return;
+    if (_imageBytes == null) return;
+
+    setState(() {
+      _isCropping = true;
+      _cropPreparing = true;
+      _cropBytesReady = null;
+    });
+
+    try {
+      final baked = await _bakeRotationIfNeeded(_imageBytes!);
+
+      if (!mounted) return;
+      setState(() {
+        _cropBytesReady = baked;
+        _quarterTurns = 0;
+        _cropPreparing = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _cropPreparing = false;
+        _isCropping = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Nepodarilo sa pripraviť orez. ($e)')),
+      );
+    }
+  }
+
+  Future<void> _exitCropMode() async {
+    if (_saving) return;
+    setState(() {
+      _isCropping = false;
+      _cropPreparing = false;
+      _cropBytesReady = null;
+    });
+  }
+
+  Future<void> _confirm() async {
+    if (_saving) return;
+    if (_imageBytes == null) return;
+
+    if (_isCropping) {
+      if (_cropPreparing) return;
+      setState(() => _saving = true);
+      _cropController.crop();
+      return;
+    }
+
     setState(() => _saving = true);
     try {
-      final fileToUse = await _applyRotationIfNeeded(widget.localFile);
+      final baked = await _bakeRotationIfNeeded(_imageBytes!);
       if (!mounted) return;
 
-      Navigator.of(context).pushReplacement(
-        MaterialPageRoute(
-          builder: (_) => _AddClothingEntryPoint(localFile: fileToUse),
-        ),
-      );
+      _quarterTurns = 0;
+      await _continueWithBytes(baked);
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Nepodarilo sa pripraviť fotku. Skús to prosím znova. ($e)'),
-        ),
+        SnackBar(content: Text('Nepodarilo sa pripraviť fotku. ($e)')),
       );
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Úprava fotky'),
+  Widget _glassCard({required Widget child, EdgeInsets? padding}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: padding ?? const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: Colors.white10),
+            color: Colors.white.withOpacity(0.06),
+          ),
+          child: child,
+        ),
       ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: const [
-                  Icon(Icons.info_outline, size: 18, color: Colors.black54),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Fotku môžeš pred spracovaním otočiť.',
-                      style: TextStyle(color: Colors.black54),
-                    ),
+    );
+  }
+
+  Widget _pillButton({
+    required IconData icon,
+    required String text,
+    required VoidCallback? onTap,
+    bool active = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(999),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.white10),
+              color: active
+                  ? Colors.white.withOpacity(0.16)
+                  : Colors.white.withOpacity(0.07),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: Colors.white70),
+                const SizedBox(width: 8),
+                Text(
+                  text,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
                   ),
-                ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _primaryButton({
+    required String text,
+    required VoidCallback? onTap,
+    bool loading = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(999),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.92),
+          borderRadius: BorderRadius.circular(999),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            if (loading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(Icons.check, size: 18, color: Colors.black87),
+            const SizedBox(width: 10),
+            Text(
+              text,
+              style: const TextStyle(
+                color: Colors.black,
+                fontWeight: FontWeight.bold,
               ),
             ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Container(
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.03),
-                    borderRadius: BorderRadius.circular(18),
-                    border: Border.all(color: Colors.black.withOpacity(0.08)),
+            const SizedBox(width: 10),
+            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.black54),
+          ],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bytes = _imageBytes;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF0E0E0E),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(_bgAsset, fit: BoxFit.cover),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.72),
+                    Colors.black.withOpacity(0.18),
+                    Colors.black.withOpacity(0.82),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                  child: _glassCard(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    child: Row(
+                      children: [
+                        InkWell(
+                          borderRadius: BorderRadius.circular(999),
+                          onTap: () => Navigator.pop(context),
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(999),
+                              border: Border.all(color: Colors.white10),
+                            ),
+                            child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Úprava fotky',
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                _isCropping
+                                    ? 'Orež oblečenie čo najpresnejšie'
+                                    : 'Otoč alebo orež pred spracovaním',
+                                style: const TextStyle(
+                                  color: Colors.white60,
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: Colors.white.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(999),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: Text(
+                            _isCropping ? 'OREZ' : 'NÁHĽAD',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 11.5,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.2,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(18),
-                    child: Center(
-                      child: RotatedBox(
-                        quarterTurns: _quarterTurns,
-                        child: Image.file(
-                          widget.localFile,
-                          fit: BoxFit.contain,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  child: _glassCard(
+                    padding: const EdgeInsets.all(14),
+                    child: const Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(Icons.auto_awesome_outlined, size: 18, color: Colors.white70),
+                        SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            'Tip: Nech je kúsok celý v zábere a čo najmenej pozadia. '
+                                'Výsledok bude čistejší a AI presnejšia.',
+                            style: TextStyle(color: Colors.white70, height: 1.35),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    child: _glassCard(
+                      padding: const EdgeInsets.all(12),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(18),
+                        child: Stack(
+                          children: [
+                            Positioned.fill(
+                              child: bytes == null
+                                  ? const Center(child: CircularProgressIndicator())
+                                  : _isCropping
+                                  ? (_cropPreparing || _cropBytesReady == null)
+                                  ? Center(
+                                child: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    ),
+                                    SizedBox(height: 10),
+                                    Text(
+                                      'Pripravujem orez…',
+                                      style: TextStyle(
+                                        color: Colors.white70,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                                  : Crop(
+                                controller: _cropController,
+                                image: _cropBytesReady!,
+                                onCropped: (CropResult result) async {
+                                  final Uint8List? croppedBytes =
+                                  result is CropSuccess ? result.croppedImage : null;
+
+                                  if (croppedBytes == null) {
+                                    if (!mounted) return;
+                                    setState(() => _saving = false);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('Orezanie bolo zrušené.'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _imageBytes = croppedBytes;
+                                    _isCropping = false;
+                                    _cropPreparing = false;
+                                    _cropBytesReady = null;
+                                    _saving = false;
+                                    _quarterTurns = 0;
+                                  });
+
+                                  try {
+                                    await _continueWithBytes(croppedBytes);
+                                  } catch (e) {
+                                    if (!mounted) return;
+                                    setState(() => _saving = false);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Nepodarilo sa uložiť orez. ($e)',
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                },
+                                aspectRatio: null,
+                                baseColor: Colors.black,
+                                maskColor: Colors.black.withOpacity(0.55),
+                                radius: 0,
+                                interactive: true,
+                              )
+                                  : Center(
+                                child: RotatedBox(
+                                  quarterTurns: _quarterTurns,
+                                  child: Image.memory(bytes, fit: BoxFit.contain),
+                                ),
+                              ),
+                            ),
+                            Positioned.fill(
+                              child: IgnorePointer(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(18),
+                                    border: Border.all(color: Colors.white10),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Row(
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _saving ? null : () => setState(() => _quarterTurns = (_quarterTurns + 3) % 4),
-                    icon: const Icon(Icons.rotate_left),
-                    label: const Text('Vľavo'),
-                  ),
-                  const SizedBox(width: 12),
-                  OutlinedButton.icon(
-                    onPressed: _saving ? null : () => setState(() => _quarterTurns = (_quarterTurns + 1) % 4),
-                    icon: const Icon(Icons.rotate_right),
-                    label: const Text('Vpravo'),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _saving ? null : _continue,
-                      icon: _saving
-                          ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                          : const Icon(Icons.check),
-                      label: Text(_saving ? 'Pripravujem…' : 'Potvrdiť'),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                  child: _glassCard(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      children: [
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            _pillButton(
+                              icon: Icons.rotate_left,
+                              text: 'Vľavo',
+                              onTap: (_saving || _isCropping)
+                                  ? null
+                                  : () => setState(
+                                    () => _quarterTurns = (_quarterTurns + 3) % 4,
+                              ),
+                            ),
+                            _pillButton(
+                              icon: Icons.rotate_right,
+                              text: 'Vpravo',
+                              onTap: (_saving || _isCropping)
+                                  ? null
+                                  : () => setState(
+                                    () => _quarterTurns = (_quarterTurns + 1) % 4,
+                              ),
+                            ),
+                            _pillButton(
+                              icon: _isCropping ? Icons.close : Icons.crop,
+                              text: _isCropping ? 'Zrušiť orez' : 'Orezať',
+                              active: _isCropping,
+                              onTap: _saving
+                                  ? null
+                                  : () async {
+                                if (_isCropping) {
+                                  await _exitCropMode();
+                                } else {
+                                  await _enterCropMode();
+                                }
+                              },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: _primaryButton(
+                            text: _saving ? 'Pripravujem…' : 'Pokračovať',
+                            loading: _saving,
+                            onTap: _saving ? null : _confirm,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -334,27 +1066,16 @@ class _AddClothingScreenHostState extends State<AddClothingScreenHost> {
 }
 
 class _AddClothingScreenState extends State<AddClothingScreen> {
-  // ---------------------------------------------------------
-  // ✅ SEASONS RULES (celoročne vs. 4 sezóny)
-  // ---------------------------------------------------------
   List<String> _sanitizeSeasons(List<String> input) {
     final set = input.toSet();
     const four = {'jar', 'leto', 'jeseň', 'zima'};
 
-    if (set.contains('celoročne')) {
-      return ['celoročne'];
-    }
-
-    if (set.containsAll(four)) {
-      return ['celoročne'];
-    }
+    if (set.contains('celoročne')) return ['celoročne'];
+    if (set.containsAll(four)) return ['celoročne'];
 
     return allowedSeasons.where((s) => set.contains(s)).toList();
   }
 
-  // ---------------------------------------------------------
-  // SEARCH NORMALIZE (bez mäkčeňov)
-  // ---------------------------------------------------------
   String _normalizeForSearch(String input) {
     var s = input.toLowerCase().trim();
 
@@ -407,6 +1128,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   String? _selectedMainGroupKey;
   String? _selectedCategoryKey;
   String? _selectedSubCategoryKey;
+  String? _selectedLayerRole;
 
   List<String> _selectedColors = [];
   List<String> _selectedStyles = [];
@@ -521,20 +1243,31 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       _selectedCategoryKey = cat.isEmpty ? null : cat;
       _selectedSubCategoryKey = sub.isEmpty ? null : sub;
+      _selectedLayerRole =
+      (d['layerRole'] ?? '').toString().isEmpty
+          ? null
+          : (d['layerRole'] ?? '').toString();
 
-      _selectedColors = (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedStyles = (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedPatterns = (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedColors =
+          (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedStyles =
+          (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      _selectedPatterns =
+          (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
       if (_selectedPatterns.length > 1) _selectedPatterns = [_selectedPatterns.first];
 
-      final loadedSeasons = (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      final loadedSeasons =
+          (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
       _selectedSeasons = _sanitizeSeasons(loadedSeasons);
 
       _uploadedImageUrl = widget.imageUrl;
-      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty ? null : (d['storagePath'] ?? '').toString();
+      _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
+          ? null
+          : (d['storagePath'] ?? '').toString();
       _aiCompleted = true;
 
-      _lastTypeLabel = _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
+      _lastTypeLabel =
+      _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
     }
 
     _loadBrandSuggestions();
@@ -565,12 +1298,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _toStringList(dynamic v) {
     if (v == null) return [];
     if (v is List) return v.map((e) => e.toString()).toList();
+
+    if (v is String) {
+      final s = v.trim();
+      if (s.isEmpty) return [];
+      return [s];
+    }
+
     return [];
   }
 
-  // ---------------------------------------------------------
-  // BRAND SUGGESTIONS
-  // ---------------------------------------------------------
   Future<void> _loadBrandSuggestions() async {
     final user = _auth.currentUser;
     final base = <String>{..._seedBrands, ...premiumBrands};
@@ -646,9 +1383,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     } catch (_) {}
   }
 
-  // ---------------------------------------------------------
-  // ✅ PROGRESS (spinner + zelené fajky)
-  // ---------------------------------------------------------
   void _resetProgress() {
     for (int i = 0; i < _done.length; i++) {
       _done[i] = false;
@@ -663,7 +1397,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       setState(() {
         if (_activeStepIndex <= _maxFakeDoneIndex) {
           _done[_activeStepIndex] = true;
-          _activeStepIndex = (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
+          _activeStepIndex =
+              (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
         }
       });
     });
@@ -684,9 +1419,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     });
   }
 
-  // ---------------------------------------------------------
-  // UPLOAD IMAGE
-  // ---------------------------------------------------------
   Future<String?> _ensureImageUrl() async {
     if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty) {
       return _uploadedImageUrl;
@@ -719,9 +1451,495 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  // ---------------------------------------------------------
-  // AI
-  // ---------------------------------------------------------
+  String _norm(String s) {
+    var out = s.toLowerCase().trim();
+
+    const repl = {
+      'á': 'a','ä': 'a','č': 'c','ď': 'd','é': 'e','ě': 'e','í': 'i',
+      'ĺ': 'l','ľ': 'l','ň': 'n','ó': 'o','ô': 'o','ŕ': 'r','ř': 'r',
+      'š': 's','ť': 't','ú': 'u','ů': 'u','ý': 'y','ž': 'z'
+    };
+
+    final b = StringBuffer();
+
+    for (final ch in out.split('')) {
+      b.write(repl[ch] ?? ch);
+    }
+
+    out = b.toString();
+    out = out.replaceAll(RegExp(r'\s+'), ' ');
+
+    return out.trim();
+  }
+
+  String? _normalizeColor(String raw) {
+    final v = _norm(raw);
+
+    const map = {
+      'navy': 'tmavomodrá',
+      'dark navy': 'tmavomodrá',
+      'dark blue': 'tmavomodrá',
+      'midnight blue': 'tmavomodrá',
+      'blue': 'modrá',
+      'light blue': 'svetlomodrá',
+      'black': 'čierna',
+      'white': 'biela',
+      'grey': 'sivá',
+      'gray': 'sivá',
+      'beige': 'béžová',
+      'brown': 'hnedá',
+      'tan': 'hnedá',
+      'green': 'zelená',
+      'olive': 'olivová',
+      'khaki': 'khaki',
+      'red': 'červená',
+      'burgundy': 'bordová',
+      'maroon': 'bordová',
+      'yellow': 'žltá',
+      'orange': 'oranžová',
+      'pink': 'ružová',
+      'purple': 'fialová',
+    };
+
+    final direct = map[v];
+    if (direct != null) return direct;
+
+    if (v.contains('navy')) return 'tmavomodrá';
+    if (v.contains('dark') && v.contains('blue')) return 'tmavomodrá';
+    if (v.contains('blue')) return 'modrá';
+    if (v.contains('black')) return 'čierna';
+    if (v.contains('white')) return 'biela';
+    if (v.contains('grey') || v.contains('gray')) return 'sivá';
+
+    if (allowedColors.contains(raw)) return raw;
+    return null;
+  }
+
+  List<String> _normalizeColorsList(List<String> input) {
+    final out = <String>[];
+    for (final x in input) {
+      final mapped = _normalizeColor(x);
+      if (mapped != null && allowedColors.contains(mapped)) {
+        out.add(mapped);
+      }
+    }
+    final seen = <String>{};
+    return out.where((e) => seen.add(e)).toList();
+  }
+
+  List<String> _dedupeKeepAllowed(List<String> input, List<String> allowed) {
+    final allowedNorm = {for (final s in allowed) _norm(s): s};
+    final seen = <String>{};
+    final out = <String>[];
+
+    for (final item in input) {
+      final key = _norm(item);
+      final allowedValue = allowedNorm[key];
+      if (allowedValue == null) continue;
+      if (seen.add(_norm(allowedValue))) {
+        out.add(allowedValue);
+      }
+    }
+
+    return out;
+  }
+
+  List<String> _applyStyleRules({
+    required List<String> stylesFromAi,
+    required String brand,
+    required String subCategoryKey,
+    required List<String> patterns,
+  }) {
+    final b = _norm(brand);
+    final p = patterns.map(_norm).toList();
+
+    final hasTextPattern = p.contains(_norm('textová potlač'));
+    final hasGraphicPattern = p.contains(_norm('grafická potlač'));
+
+    final isNikeFamily =
+        b.contains('nike') ||
+            b.contains('jordan') ||
+            b.contains('adidas') ||
+            b.contains('puma') ||
+            b.contains('under armour') ||
+            b.contains('reebok');
+
+    List<String> out = [...stylesFromAi];
+
+    if (subCategoryKey == 'sport_tricko' ||
+        subCategoryKey == 'sport_mikina' ||
+        subCategoryKey == 'sport_leginy' ||
+        subCategoryKey == 'sport_sortky' ||
+        subCategoryKey == 'sport_suprava' ||
+        subCategoryKey == 'sport_podprsenka' ||
+        subCategoryKey == 'obuv_treningova' ||
+        subCategoryKey == 'obuv_turisticka') {
+      out = ['sport'];
+    } else if (subCategoryKey == 'bluzka' ||
+        subCategoryKey == 'sako' ||
+        subCategoryKey == 'nohavice_elegantne' ||
+        subCategoryKey == 'lodicky' ||
+        subCategoryKey == 'poltopanky') {
+      out.add('elegant');
+      out.add('smart casual');
+    } else if (subCategoryKey == 'kosela_klasicka' ||
+        subCategoryKey == 'kosela_oversize' ||
+        subCategoryKey == 'kosela_flanelova') {
+      out.add('casual');
+      out.add('smart casual');
+    } else if (subCategoryKey == 'mikina_klasicka' ||
+        subCategoryKey == 'mikina_na_zips' ||
+        subCategoryKey == 'mikina_s_kapucnou' ||
+        subCategoryKey == 'mikina_oversize') {
+      out.add('casual');
+      if (subCategoryKey == 'mikina_s_kapucnou' ||
+          subCategoryKey == 'mikina_oversize') {
+        out.add('streetwear');
+      }
+    } else if (subCategoryKey == 'sveter_klasicky' ||
+        subCategoryKey == 'sveter_rolak' ||
+        subCategoryKey == 'sveter_kardigan' ||
+        subCategoryKey == 'sveter_pleteny') {
+      out.add('casual');
+      out.add('smart casual');
+    } else if (subCategoryKey == 'tricko' ||
+        subCategoryKey == 'tricko_dlhy_rukav' ||
+        subCategoryKey == 'tielko' ||
+        subCategoryKey == 'top_basic' ||
+        subCategoryKey == 'crop_top' ||
+        subCategoryKey == 'polo_tricko' ||
+        subCategoryKey == 'body' ||
+        subCategoryKey == 'korzet_top' ||
+        subCategoryKey == 'undershirt') {
+      out.add('casual');
+
+      if (subCategoryKey == 'crop_top' ||
+          subCategoryKey == 'korzet_top') {
+        out.add('streetwear');
+      }
+
+      if ((subCategoryKey == 'tricko' ||
+          subCategoryKey == 'tricko_dlhy_rukav' ||
+          subCategoryKey == 'tielko') &&
+          isNikeFamily &&
+          (hasTextPattern || hasGraphicPattern)) {
+        out.removeWhere((s) => _norm(s) == _norm('sport'));
+        out.removeWhere((s) => _norm(s) == _norm('športový'));
+        out.removeWhere((s) => _norm(s) == _norm('sportový'));
+        out.add('casual');
+        out.add('streetwear');
+      }
+    } else if (subCategoryKey == 'rifle' ||
+        subCategoryKey == 'rifle_skinny' ||
+        subCategoryKey == 'rifle_wide_leg' ||
+        subCategoryKey == 'rifle_mom' ||
+        subCategoryKey == 'nohavice_klasicke' ||
+        subCategoryKey == 'nohavice_chino' ||
+        subCategoryKey == 'nohavice_cargo' ||
+        subCategoryKey == 'sortky' ||
+        subCategoryKey == 'sukna' ||
+        subCategoryKey == 'sukna_mini' ||
+        subCategoryKey == 'sukna_midi' ||
+        subCategoryKey == 'sukna_maxi') {
+      out.add('casual');
+    } else if (subCategoryKey == 'tenisky_fashion') {
+      out.add('casual');
+      out.add('streetwear');
+    } else if (subCategoryKey == 'tenisky_sportove' ||
+        subCategoryKey == 'tenisky_bezecke') {
+      out = ['sport'];
+    } else if (subCategoryKey == 'kabelka' ||
+        subCategoryKey == 'taska_crossbody' ||
+        subCategoryKey == 'kabelka_listova' ||
+        subCategoryKey == 'hodinky' ||
+        subCategoryKey == 'sperky') {
+      out.add('casual');
+    }
+
+    if (out.isEmpty) {
+      out.add('casual');
+    }
+
+    return _dedupeKeepAllowed(out, allowedStyles);
+  }
+
+  List<String> _applyPatternRules({
+    required List<String> patternsFromAi,
+    required String brand,
+    required String prettyType,
+    required String rawType,
+    required String subCategoryKey,
+  }) {
+    final out = <String>[];
+
+    final combined = _norm('$brand $prettyType $rawType');
+
+    final hasTextHint =
+        combined.contains('text') ||
+            combined.contains('napis') ||
+            combined.contains('nápis') ||
+            combined.contains('letter') ||
+            combined.contains('slogan');
+
+    final hasGraphicHint =
+        combined.contains('graphic') ||
+            combined.contains('graf') ||
+            combined.contains('logo') ||
+            combined.contains('print') ||
+            combined.contains('potlac') ||
+            combined.contains('potlač');
+
+    for (final p in patternsFromAi) {
+      final mapped = _normalizePattern(p);
+      if (mapped != null) out.add(mapped);
+    }
+
+    if (hasTextHint) {
+      out.add('textová potlač');
+    } else if (hasGraphicHint) {
+      out.add('grafická potlač');
+    }
+
+    if (out.isEmpty &&
+        (subCategoryKey == 'undershirt' ||
+            subCategoryKey == 'tielko' ||
+            subCategoryKey == 'top_basic' ||
+            subCategoryKey == 'leginy' ||
+            subCategoryKey == 'sport_leginy' ||
+            subCategoryKey == 'nohavice_klasicke' ||
+            subCategoryKey == 'rifle' ||
+            subCategoryKey == 'tricko' ||
+            subCategoryKey == 'tricko_dlhy_rukav')) {
+      out.add('jednofarebné');
+    }
+
+    final deduped = _dedupeKeepAllowed(out, allowedPatterns);
+
+    if (deduped.isEmpty) {
+      return ['jednofarebné'];
+    }
+
+    if (deduped.contains('textová potlač')) return ['textová potlač'];
+    if (deduped.contains('grafická potlač')) return ['grafická potlač'];
+    if (deduped.contains('pruhované')) return ['pruhované'];
+    if (deduped.contains('kockované')) return ['kockované'];
+    if (deduped.contains('kamufláž')) return ['kamufláž'];
+
+    return [deduped.first];
+  }
+
+  String? _normalizeStyle(String raw) {
+    final v = _norm(raw);
+
+    const map = {
+      'basic': 'casual',
+      'minimal': 'casual',
+      'minimalist': 'casual',
+      'everyday': 'casual',
+      'everyday wear': 'casual',
+      'casual': 'casual',
+      'smart casual': 'smart casual',
+      'smart-casual': 'smart casual',
+      'business': 'business',
+      'formal': 'formal',
+      'sport': 'casual',
+      'sporty': 'casual',
+      'athletic': 'casual',
+      'streetwear': 'streetwear',
+      'street': 'streetwear',
+      'elegant': 'elegantný',
+    };
+
+    final allowedMap = {for (final s in allowedStyles) _norm(s): s};
+
+    final directAllowed = allowedMap[v];
+    if (directAllowed != null) return directAllowed;
+
+    final mapped = map[v];
+    if (mapped != null) {
+      final allowed2 = allowedMap[_norm(mapped)];
+      if (allowed2 != null) return allowed2;
+
+      if (v.contains('basic')) {
+        final allowed2 = allowedMap[_norm('casual')];
+        if (allowed2 != null) return allowed2;
+      }
+    }
+
+    return null;
+  }
+
+  List<String> _normalizeStylesList(List<String> input) {
+    final out = <String>[];
+    for (final x in input) {
+      final mapped = _normalizeStyle(x);
+      if (mapped != null) out.add(mapped);
+    }
+    final seen = <String>{};
+    return out.where((e) => seen.add(e)).toList();
+  }
+
+  String? _normalizePattern(String raw) {
+    final v = _norm(raw);
+
+    const map = {
+      'plain': 'jednofarebné',
+      'solid': 'jednofarebné',
+      'no pattern': 'jednofarebné',
+      'none': 'jednofarebné',
+      'striped': 'pruhované',
+      'stripes': 'pruhované',
+      'stripe': 'pruhované',
+      'plaid': 'kockované',
+      'checkered': 'kockované',
+      'checked': 'kockované',
+      'tartan': 'kockované',
+      'camo': 'kamufláž',
+      'camouflage': 'kamufláž',
+      'graphic': 'grafická potlač',
+      'printed': 'grafická potlač',
+      'print': 'grafická potlač',
+      'logo': 'grafická potlač',
+      'graficke': 'grafická potlač',
+      'grafické': 'grafická potlač',
+      'graficky': 'grafická potlač',
+      'grafický': 'grafická potlač',
+      'graficka': 'grafická potlač',
+      'grafická': 'grafická potlač',
+      'text': 'textová potlač',
+      'lettering': 'textová potlač',
+      'slogan': 'textová potlač',
+    };
+
+    final allowedMap = {for (final s in allowedPatterns) _norm(s): s};
+
+    final direct = allowedMap[v];
+    if (direct != null) return direct;
+
+    final mapped = map[v];
+    if (mapped != null) {
+      final allowed = allowedMap[_norm(mapped)];
+      if (allowed != null) return allowed;
+    }
+
+    if (v.contains('camo') || v.contains('camouflage')) {
+      return allowedMap[_norm('kamufláž')];
+    }
+    if (v.contains('stripe')) {
+      return allowedMap[_norm('pruhované')];
+    }
+    if (v.contains('plaid') || v.contains('check') || v.contains('tartan')) {
+      return allowedMap[_norm('kockované')];
+    }
+
+    if (v.contains('text') || v.contains('letter') || v.contains('slogan')) {
+      return allowedMap[_norm('textová potlač')];
+    }
+    if (v.contains('print') || v.contains('graphic') || v.contains('logo') || v.contains('graf')) {
+      return allowedMap[_norm('grafická potlač')];
+    }
+
+    return null;
+  }
+
+  List<String> _normalizePatternsList(List<String> input) {
+    final out = <String>[];
+    for (final x in input) {
+      final mapped = _normalizePattern(x);
+      if (mapped != null) out.add(mapped);
+    }
+    final seen = <String>{};
+    return out.where((e) => seen.add(e)).toList();
+  }
+
+  List<String> _fixStylesAfterAi({
+    required List<String> styles,
+    required List<String> patterns,
+    required String brand,
+    required String canonicalType,
+    required String rawType,
+    required String prettyType,
+  }) {
+    final out = [...styles];
+
+    bool hasSport = out.any((s) => s.toLowerCase().contains('šport'));
+    if (!hasSport) return out;
+
+    final b = brand.trim().toLowerCase();
+    final isLogoBrand =
+        b.contains('jordan') || b.contains('nike') || b.contains('adidas');
+
+    final p = patterns.map((e) => e.toLowerCase()).toList();
+    final hasGraphic =
+        p.any((x) => x.contains('graf')) ||
+            p.any((x) => x.contains('potlač')) ||
+            p.any((x) => x.contains('text'));
+
+    final t = (canonicalType + ' ' + rawType + ' ' + prettyType).toLowerCase();
+
+    final isActiveWearType =
+        t.contains('dres') ||
+            t.contains('funkčné') ||
+            t.contains('running') ||
+            canonicalType == 'jersey';
+
+    if (!isActiveWearType &&
+        canonicalType == 't_shirt' &&
+        (isLogoBrand || hasGraphic)) {
+      out.removeWhere((s) => s.toLowerCase().contains('šport'));
+      if (!out.contains('casual')) out.add('casual');
+      if (!out.contains('streetwear')) out.add('streetwear');
+    }
+
+    final seen = <String>{};
+    return out.where((e) => seen.add(e)).toList();
+  }
+
+  String _colorToPluralAdjective(String color) {
+    if (color.endsWith('á')) return '${color.substring(0, color.length - 1)}é';
+    if (color.endsWith('a')) return '${color.substring(0, color.length - 1)}e';
+    return color;
+  }
+
+  String _computeAutoNameWithColor() {
+    final subKey = _selectedSubCategoryKey;
+    final subLabelRaw = (subCategoryLabels[subKey] ?? '').trim();
+
+    String lowerFirst(String s) => s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
+    String upperFirst(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+    String colorPart = '';
+    if (_selectedColors.isNotEmpty) {
+      colorPart = _colorToPluralAdjective(_selectedColors.first).trim();
+    }
+
+    final subLabel = lowerFirst(subLabelRaw);
+
+    final parts = [
+      if (colorPart.isNotEmpty) colorPart,
+      if (subLabel.isNotEmpty) subLabel,
+    ];
+
+    final name = parts.join(' ').trim();
+    return upperFirst(name);
+  }
+
+  void _refreshAutoName() {
+    final auto = _computeAutoNameWithColor();
+    if (auto.trim().isEmpty) return;
+
+    final current = _nameController.text.trim();
+    final lastAuto = (_lastTypeLabel ?? '').trim();
+
+    final shouldOverwrite =
+        current.isEmpty || (lastAuto.isNotEmpty && current == lastAuto) || _isSystemNameSelected;
+
+    if (shouldOverwrite) {
+      _nameController.text = auto;
+      _lastTypeLabel = auto;
+    }
+  }
+
   Future<void> _fillWithAi() async {
     if (_isAiLoading) return;
 
@@ -747,14 +1965,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     _resetProgress();
 
     try {
-      // 0) upload
       final imageUrl = await _ensureImageUrl();
       if (imageUrl == null || imageUrl.isEmpty) {
         throw Exception('Nepodarilo sa získať URL obrázka.');
       }
       _reachMilestone(0);
 
-      // 1) AI call
       const endpoint =
           'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/analyzeClothingImage';
 
@@ -778,6 +1994,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _reachMilestone(1);
 
       final m = decoded;
+      print('AI FULL RESPONSE: ${jsonEncode(m)}');
 
       final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
       final String rawType = (m['type'] ?? '').toString().trim();
@@ -789,28 +2006,30 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
       final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
 
-      if (_nameController.text.trim().isEmpty && prettyType.isNotEmpty) {
-        _nameController.text = prettyType;
-        _lastTypeLabel = prettyType;
-        _syncSystemNameValidity();
-      }
+      String? nextMain;
+      String? nextCat;
+      String? nextSub;
+      String? nextLayerRole;
 
-      if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
-        _brandController.text = brandFromAi;
-        await _saveBrandSuggestion(brandFromAi);
-      }
-
-      // kategória
       if (canonical.isNotEmpty) {
         final mapped = AiClothingParser.fromCanonicalType(canonical);
         if (mapped != null) {
-          _selectedMainGroupKey = mapped.mainGroupKey;
-          _selectedCategoryKey = mapped.categoryKey;
-          _selectedSubCategoryKey = mapped.subCategoryKey;
+          nextMain = mapped.mainGroupKey;
+          nextCat = mapped.categoryKey;
+          nextSub = mapped.subCategoryKey;
+          nextLayerRole = mapped.layerRole;
+        }
+      }
+      if (canonical.isNotEmpty) {
+        final mapped = AiClothingParser.fromCanonicalType(canonical);
+        if (mapped != null) {
+          nextMain = mapped.mainGroupKey;
+          nextCat = mapped.categoryKey;
+          nextSub = mapped.subCategoryKey;
         }
       }
 
-      if (_selectedMainGroupKey == null || _selectedCategoryKey == null) {
+      if (nextMain == null || nextCat == null || nextSub == null) {
         final mapped = AiClothingParser.mapType(
           AiParserInput(
             rawType: rawType,
@@ -820,45 +2039,192 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             brand: brandFromAi,
           ),
         );
+
         if (mapped != null) {
-          _selectedMainGroupKey = mapped.mainGroupKey;
-          _selectedCategoryKey = mapped.categoryKey;
-          _selectedSubCategoryKey = mapped.subCategoryKey;
+          nextMain = mapped.mainGroupKey;
+          nextCat = mapped.categoryKey;
+          nextSub = mapped.subCategoryKey;
+          nextLayerRole = mapped.layerRole;
+
+          print(
+            'AI TYPE FALLBACK OK => canonical="$canonical", raw="$rawType", pretty="$prettyType" => '
+                'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
+          );
+        } else {
+          print(
+            'AI TYPE MAPPING FAILED => canonical="$canonical", raw="$rawType", pretty="$prettyType"',
+          );
         }
+      } else {
+        print(
+          'AI TYPE CANONICAL OK => canonical="$canonical" => '
+              'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
+        );
       }
 
       _reachMilestone(2);
 
-      // farby/štýly/vzory/sezóny
-      if (colorsFromAi.isNotEmpty) {
-        _selectedColors = colorsFromAi.where((c) => allowedColors.contains(c)).toList();
-      }
-      if (stylesFromAi.isNotEmpty) {
-        _selectedStyles = stylesFromAi.where((s) => allowedStyles.contains(s)).toList();
+      final filteredColors = _normalizeColorsList(colorsFromAi);
+      final normalizedStylesFromAi = _normalizeStylesList(stylesFromAi);
+      final resolvedSubKeyForRules = nextSub ?? '';
+
+      final fixedPatterns = _applyPatternRules(
+        patternsFromAi: patternsFromAi,
+        brand: brandFromAi,
+        prettyType: prettyType,
+        rawType: rawType,
+        subCategoryKey: resolvedSubKeyForRules,
+      );
+
+      final fixedStyles = _applyStyleRules(
+        stylesFromAi: normalizedStylesFromAi,
+        brand: brandFromAi,
+        subCategoryKey: resolvedSubKeyForRules,
+        patterns: fixedPatterns,
+      );
+
+      final filteredSeasonsRaw = seasonsFromAi
+          .map((e) => e.toString().trim())
+          .where((s) => allowedSeasons.contains(s))
+          .toList();
+
+      List<String> filteredSeasons = _sanitizeSeasons(filteredSeasonsRaw);
+
+      final typeForSeason = nextSub ?? '';
+
+      if (typeForSeason == 'tielko') {
+        filteredSeasons = ['jar', 'leto'];
+      } else if (typeForSeason == 'undershirt') {
+        filteredSeasons = ['celoročne'];
+      } else if (typeForSeason == 'tricko' ||
+          typeForSeason == 'tricko_dlhy_rukav' ||
+          typeForSeason == 'top_basic' ||
+          typeForSeason == 'polo_tricko' ||
+          typeForSeason == 'bluzka' ||
+          typeForSeason == 'kosela_klasicka' ||
+          typeForSeason == 'kosela_oversize' ||
+          typeForSeason == 'kosela_flanelova' ||
+          typeForSeason == 'rifle' ||
+          typeForSeason == 'rifle_skinny' ||
+          typeForSeason == 'rifle_wide_leg' ||
+          typeForSeason == 'rifle_mom' ||
+          typeForSeason == 'nohavice_klasicke' ||
+          typeForSeason == 'nohavice_chino' ||
+          typeForSeason == 'nohavice_teplakove' ||
+          typeForSeason == 'nohavice_joggery' ||
+          typeForSeason == 'nohavice_elegantne' ||
+          typeForSeason == 'nohavice_cargo' ||
+          typeForSeason == 'leginy' ||
+          typeForSeason == 'sport_leginy' ||
+          typeForSeason == 'tenisky_fashion' ||
+          typeForSeason == 'tenisky_sportove' ||
+          typeForSeason == 'tenisky_bezecke' ||
+          typeForSeason == 'mikina_klasicka' ||
+          typeForSeason == 'mikina_na_zips' ||
+          typeForSeason == 'mikina_s_kapucnou' ||
+          typeForSeason == 'mikina_oversize' ||
+          typeForSeason == 'sport_mikina') {
+        filteredSeasons = ['celoročne'];
+      } else if (typeForSeason == 'crop_top' ||
+          typeForSeason == 'sortky' ||
+          typeForSeason == 'sortky_sportove' ||
+          typeForSeason == 'sport_sortky' ||
+          typeForSeason == 'sukna' ||
+          typeForSeason == 'sukna_mini' ||
+          typeForSeason == 'sukna_midi' ||
+          typeForSeason == 'sukna_maxi' ||
+          typeForSeason == 'saty' ||
+          typeForSeason == 'saty_kratke' ||
+          typeForSeason == 'saty_midi' ||
+          typeForSeason == 'saty_maxi' ||
+          typeForSeason == 'saty_koselove' ||
+          typeForSeason == 'saty_bodycon' ||
+          typeForSeason == 'sandale' ||
+          typeForSeason == 'sandale_opatok' ||
+          typeForSeason == 'slapky' ||
+          typeForSeason == 'zabky' ||
+          typeForSeason == 'espadrilky') {
+        filteredSeasons = ['jar', 'leto'];
+      } else if (typeForSeason == 'bunda_prechodna' ||
+          typeForSeason == 'bunda_riflova' ||
+          typeForSeason == 'bunda_kozena' ||
+          typeForSeason == 'bunda_bomber' ||
+          typeForSeason == 'trenchcoat' ||
+          typeForSeason == 'sako' ||
+          typeForSeason == 'vesta' ||
+          typeForSeason == 'flisova_bunda' ||
+          typeForSeason == 'softshell_bunda') {
+        filteredSeasons = ['jar', 'jeseň'];
+      } else if (typeForSeason == 'sveter_klasicky' ||
+          typeForSeason == 'sveter_rolak' ||
+          typeForSeason == 'sveter_kardigan' ||
+          typeForSeason == 'sveter_pleteny' ||
+          typeForSeason == 'bunda_zimna' ||
+          typeForSeason == 'kabat' ||
+          typeForSeason == 'cizmy_clenkove' ||
+          typeForSeason == 'cizmy_vysoke' ||
+          typeForSeason == 'cizmy_nad_kolena' ||
+          typeForSeason == 'snehule') {
+        filteredSeasons = ['jeseň', 'zima'];
       }
 
-      if (patternsFromAi.isNotEmpty) {
-        final filteredPatterns = patternsFromAi.where((p) => allowedPatterns.contains(p)).toList();
-        _selectedPatterns = filteredPatterns.isEmpty ? [] : [filteredPatterns.first];
+      filteredSeasons = _sanitizeSeasons(filteredSeasons);
+
+      if (canonical == 'tank_top') {
+        filteredSeasons = ['jar', 'leto'];
+      } else if (canonical == 'undershirt') {
+        filteredSeasons = ['celoročne'];
+      } else if (canonical == 't_shirt') {
+        filteredSeasons = ['celoročne'];
+      } else if (canonical == 'longsleeve' || canonical == 'long_sleeve') {
+        filteredSeasons = ['celoročne'];
       }
 
-      if (seasonsFromAi.isNotEmpty) {
-        final raw = seasonsFromAi.where((s) => allowedSeasons.contains(s)).toList();
-        _selectedSeasons = _sanitizeSeasons(raw);
+      if (!mounted) return;
+      setState(() {
+        if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
+          _brandController.text = brandFromAi;
+        }
+
+        if (nextMain != null) _selectedMainGroupKey = nextMain;
+        if (nextCat != null) _selectedCategoryKey = nextCat;
+        if (nextSub != null) _selectedSubCategoryKey = nextSub;
+        if (nextLayerRole != null) _selectedLayerRole = nextLayerRole;
+
+        if (filteredColors.isNotEmpty) _selectedColors = filteredColors;
+        if (fixedStyles.isNotEmpty) _selectedStyles = fixedStyles;
+
+        if (fixedPatterns.isNotEmpty) {
+          _selectedPatterns = [fixedPatterns.first];
+        } else {
+          _selectedPatterns = [];
+        }
+
+        if (filteredSeasons.isNotEmpty) {
+          _selectedSeasons = filteredSeasons;
+        }
+
+        _isSystemNameSelected = false;
+        _selectedSystemNameLabel = null;
+        _selectedSystemSubCategoryKey = null;
+
+        _refreshAutoName();
+
+        _aiCompleted = true;
+        _aiFailed = false;
+        _isAiLoading = false;
+      });
+
+      if (_brandController.text.trim().isNotEmpty) {
+        await _saveBrandSuggestion(_brandController.text.trim());
       }
 
       _reachMilestone(3);
-
       _reachMilestone(4);
       await Future.delayed(const Duration(milliseconds: 450));
 
       if (!mounted) return;
       _stopProgressTimers();
-      setState(() {
-        _aiCompleted = true;
-        _aiFailed = false;
-        _isAiLoading = false;
-      });
     } on TimeoutException {
       _stopProgressTimers();
       if (!mounted) return;
@@ -880,9 +2246,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  // ---------------------------------------------------------
-  // SAVE
-  // ---------------------------------------------------------
   Future<void> _save() async {
     final user = _auth.currentUser;
     if (user == null) return;
@@ -896,17 +2259,25 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         return;
       }
 
-      _syncSystemNameValidity();
-      if (!_isSystemNameSelected) {
+      if (_selectedMainGroupKey == null ||
+          _selectedCategoryKey == null ||
+          _selectedSubCategoryKey == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Vyber názov zo zoznamu.')),
+          const SnackBar(content: Text('AI nedokončilo kategóriu/typ. Skús znova alebo oprav ručne.')),
         );
         return;
       }
 
-      if (_selectedMainGroupKey == null || _selectedCategoryKey == null || _selectedSubCategoryKey == null) {
+      final typed = _nameController.text.trim();
+      final lastAuto = (_lastTypeLabel ?? '').trim();
+      final shouldAuto =
+          typed.isEmpty || (lastAuto.isNotEmpty && typed == lastAuto) || _isSystemNameSelected;
+
+      final finalName = shouldAuto ? _computeAutoNameWithColor() : typed;
+
+      if (finalName.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Vyber hlavnú skupinu, kategóriu a typ.')),
+          const SnackBar(content: Text('AI nevie vytvoriť názov – chýba farba alebo typ.')),
         );
         return;
       }
@@ -917,7 +2288,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final safeSeasons = _sanitizeSeasons(_selectedSeasons);
 
       final data = <String, dynamic>{
-        'name': _nameController.text.trim(),
+        'name': finalName.trim(),
         'brand': brand,
         'mainGroup': _selectedMainGroupKey,
         'category': _selectedCategoryKey,
@@ -925,27 +2296,31 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'mainGroupKey': _selectedMainGroupKey,
         'categoryKey': _selectedCategoryKey,
         'subCategoryKey': _selectedSubCategoryKey,
+        'subCategory': _selectedSubCategoryKey,
+        'mainGroupKey': _selectedMainGroupKey,
+        'categoryKey': _selectedCategoryKey,
+        'subCategoryKey': _selectedSubCategoryKey,
+        'layerRole': _selectedLayerRole ??
+            (_selectedSubCategoryKey == null
+                ? null
+                : subCategoryLayerRoles[_selectedSubCategoryKey!]),
         'colors': _selectedColors,
         'styles': _selectedStyles,
         'patterns': _selectedPatterns,
         'seasons': safeSeasons.isEmpty ? ['celoročne'] : safeSeasons,
         'imageUrl': imageUrl,
-
-        // --- AI image processing (product photo pipeline) ---
         'originalImageUrl': imageUrl,
         'cutoutImageUrl': null,
         'productImageUrl': null,
-
         'imageVersion': 1,
         if (_uploadedStoragePath != null) 'storagePath': _uploadedStoragePath,
         'updatedAt': FieldValue.serverTimestamp(),
         if (!widget.isEditing) 'createdAt': FieldValue.serverTimestamp(),
       };
 
-      // ✅ processing nastavíme len pri NOVOM kuse
       if (!widget.isEditing) {
         data['processing'] = {
-          'cutout': 'queued', // queued | running | done | error
+          'cutout': 'queued',
           'product': 'queued',
         };
       }
@@ -969,9 +2344,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  // ---------------------------------------------------------
-  // UI HELPERS
-  // ---------------------------------------------------------
   Widget _buildProcessingImagePreview() {
     final Widget imgWidget;
 
@@ -984,95 +2356,173 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: Container(
-        height: 260,
-        width: double.infinity,
-        color: Colors.grey.shade100, // jemné pozadie, aby nebolo "prázdno"
-        padding: const EdgeInsets.all(12),
-        alignment: Alignment.center,
-        child: imgWidget,
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            color: Colors.white.withOpacity(0.06),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(18),
+            child: Container(
+              height: 270,
+              width: double.infinity,
+              color: Colors.white.withOpacity(0.04),
+              alignment: Alignment.center,
+              child: imgWidget,
+            ),
+          ),
+        ),
       ),
     );
   }
 
   Widget _buildProgressChecklist() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 14),
-        const Text(
-          'AI spracovanie',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
-        ),
-        const SizedBox(height: 8),
-        ...List.generate(_progressSteps.length, (i) {
-          final done = _done[i];
-          final isActive = !done && i == _activeStepIndex;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            color: Colors.white.withOpacity(0.06),
+            border: Border.all(color: Colors.white10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'AI spracovanie',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Analyzujeme fotku a pripravujeme formulár.',
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12.5,
+                  height: 1.3,
+                ),
+              ),
+              const SizedBox(height: 14),
+              ...List.generate(_progressSteps.length, (i) {
+                final done = _done[i];
+                final isActive = !done && i == _activeStepIndex;
 
-          Widget leading;
-          if (done) {
-            leading = const Icon(Icons.check_circle, color: Colors.green, size: 20);
-          } else if (isActive) {
-            leading = const SizedBox(
-              width: 20,
-              height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            );
-          } else {
-            leading = const Icon(Icons.radio_button_unchecked, color: Colors.grey, size: 20);
-          }
+                Widget leading;
+                if (done) {
+                  leading = const Icon(
+                    Icons.check_circle_rounded,
+                    color: Color(0xFF58D26B),
+                    size: 21,
+                  );
+                } else if (isActive) {
+                  leading = const SizedBox(
+                    width: 21,
+                    height: 21,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  );
+                } else {
+                  leading = Icon(
+                    Icons.radio_button_unchecked_rounded,
+                    color: Colors.white.withOpacity(0.28),
+                    size: 20,
+                  );
+                }
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 6),
-            child: Row(
-              children: [
-                leading,
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    _progressSteps[i],
-                    style: TextStyle(
-                      fontSize: 14,
-                      color: done ? Colors.black87 : Colors.black54,
-                      fontWeight: done ? FontWeight.w600 : FontWeight.w400,
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(16),
+                    color: isActive
+                        ? Colors.white.withOpacity(0.08)
+                        : Colors.white.withOpacity(0.03),
+                    border: Border.all(
+                      color: isActive
+                          ? Colors.white.withOpacity(0.14)
+                          : Colors.white.withOpacity(0.06),
                     ),
                   ),
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
+                  child: Row(
+                    children: [
+                      leading,
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          _progressSteps[i],
+                          style: TextStyle(
+                            color: done
+                                ? Colors.white
+                                : isActive
+                                ? Colors.white70
+                                : Colors.white54,
+                            fontWeight: done || isActive
+                                ? FontWeight.w700
+                                : FontWeight.w500,
+                            fontSize: 13.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
   Widget _buildAiError() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 12),
-        Text(
-          'AI sa nepodarilo: ${_aiError ?? ''}',
-          style: const TextStyle(color: Colors.red),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            color: Colors.red.withOpacity(0.08),
+            border: Border.all(color: Colors.red.withOpacity(0.18)),
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
+              const SizedBox(width: 10),
+              const Expanded(
+                child: Text(
+                  'AI analýza zlyhala. Skús použiť inú fotku alebo pokračuj manuálne.',
+                  style: TextStyle(
+                    color: Colors.white70,
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            ElevatedButton.icon(
-              onPressed: _fillWithAi,
-              icon: const Icon(Icons.refresh),
-              label: const Text('Skúsiť znova'),
-            ),
-          ],
-        ),
-      ],
+      ),
     );
   }
 
-  // ---------------------------------------------------------
-  // SYSTEM NAME PICKER
-  // ---------------------------------------------------------
   List<String> get _systemNameOptions {
     final set = <String>{};
     for (final v in subCategoryLabels.values) {
@@ -1112,173 +2562,40 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  void _applyRulesFromSystemName(String label) {
-    final chosen = label.trim();
-    final subKey = _findSubCategoryKeyForLabel(chosen);
-
-    setState(() {
-      _nameController.text = chosen;
-      _lastTypeLabel = chosen;
-
-      _isSystemNameSelected = true;
-      _selectedSystemNameLabel = chosen;
-      _selectedSystemSubCategoryKey = subKey;
-
-      if (subKey != null) {
-        final mapped = AiClothingParser.fromCanonicalType(subKey);
-        if (mapped != null) {
-          _selectedMainGroupKey = mapped.mainGroupKey;
-          _selectedCategoryKey = mapped.categoryKey;
-          _selectedSubCategoryKey = mapped.subCategoryKey;
-        }
-      }
-
-      if (_selectedMainGroupKey == null || _selectedCategoryKey == null || _selectedSubCategoryKey == null) {
-        final mapped = AiClothingParser.mapType(
-          AiParserInput(
-            rawType: '',
-            aiName: '',
-            userName: chosen,
-            seasons: _selectedSeasons,
-            brand: _brandController.text.trim(),
+  Widget _buildNameFreeField() {
+    return TextField(
+      controller: _nameController,
+      style: const TextStyle(color: Colors.white),
+      decoration: InputDecoration(
+        labelText: 'Názov',
+        helperText: 'Aplikácia si názov skladá automaticky (farba + typ).',
+        helperStyle: const TextStyle(
+          color: Colors.white38,
+          fontSize: 11.5,
+        ),
+        labelStyle: const TextStyle(color: Colors.white70),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.05),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+          borderSide: BorderSide(
+            color: Colors.white.withOpacity(0.22),
+            width: 1.2,
           ),
-        );
-        if (mapped != null) {
-          _selectedMainGroupKey = mapped.mainGroupKey;
-          _selectedCategoryKey = mapped.categoryKey;
-          _selectedSubCategoryKey = mapped.subCategoryKey;
-        }
-      }
-
-      final n = chosen.toLowerCase();
-      List<String>? forcedSeasons;
-      if (subKey != null) {
-        final k = subKey.toLowerCase();
-        if (k.contains('zim')) forcedSeasons = ['zima'];
-        if (k.contains('prechod')) forcedSeasons = ['jar', 'jeseň'];
-        if (k.contains('let')) forcedSeasons = ['leto'];
-        if (k.contains('jarn')) forcedSeasons = ['jar'];
-        if (k.contains('jesen') || k.contains('jese')) forcedSeasons = ['jeseň'];
-        if (k.contains('celoroc') || k.contains('celoro')) forcedSeasons = ['jar', 'leto', 'jeseň', 'zima'];
-      }
-
-      forcedSeasons ??= () {
-        if (n.contains('zimn')) return ['zima'];
-        if (n.contains('prechod')) return ['jar', 'jeseň'];
-        if (n.contains('letn')) return ['leto'];
-        if (n.contains('jarn')) return ['jar'];
-        if (n.contains('jesen') || n.contains('jese')) return ['jeseň'];
-        if (n.contains('celoroč') || n.contains('celoroc') || n.contains('celoro')) return ['jar', 'leto', 'jeseň', 'zima'];
-        return null;
-      }();
-
-      if (forcedSeasons != null) {
-        final raw = forcedSeasons.where((s) => allowedSeasons.contains(s)).toList();
-        _selectedSeasons = _sanitizeSeasons(raw);
-      }
-    });
-  }
-
-  Future<void> _openSystemNamePicker() async {
-    final options = _systemNameOptions;
-    final controller = TextEditingController(text: _nameController.text.trim());
-
-    final result = await showModalBottomSheet<String>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
       ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            final query = controller.text.trim();
-
-            List<String> filtered = options;
-            if (query.isNotEmpty) {
-              final q = _normalizeForSearch(query);
-              filtered = options.where((o) => _normalizeForSearch(o).contains(q)).toList();
-            }
-
-            return SafeArea(
-              child: Padding(
-                padding: EdgeInsets.only(
-                  left: 16,
-                  right: 16,
-                  top: 8,
-                  bottom: 16 + MediaQuery.of(ctx).viewInsets.bottom,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: controller,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        hintText: 'Začni písať (napr. zi...)',
-                        prefixIcon: Icon(Icons.search),
-                      ),
-                      onChanged: (_) => setSheetState(() {}),
-                    ),
-                    const SizedBox(height: 8),
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: filtered.length,
-                        itemBuilder: (ctx, i) {
-                          final label = filtered[i];
-                          final selected = (_selectedSystemNameLabel == label);
-                          return ListTile(
-                            title: Text(label),
-                            trailing: selected ? const Icon(Icons.check_circle) : null,
-                            onTap: () => Navigator.of(ctx).pop(label),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+      textInputAction: TextInputAction.next,
+      onChanged: (_) {
+        _syncSystemNameValidity();
       },
-    );
-
-    if (result == null) return;
-    _applyRulesFromSystemName(result);
-  }
-
-  Widget _buildSystemNameField() {
-    final text = _nameController.text.trim();
-    final display = text.isEmpty ? 'Vyber názov zo zoznamu' : text;
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: _openSystemNamePicker,
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: 'Názov',
-          border: const OutlineInputBorder(),
-          helperText: text.isEmpty ? 'Vyber názov zo zoznamu' : null,
-          errorText: (text.isNotEmpty && !_isSystemNameSelected) ? 'Vyber názov zo zoznamu' : null,
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                display,
-                style: TextStyle(
-                  color: text.isEmpty ? Theme.of(context).hintColor : null,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(Icons.arrow_drop_down),
-          ],
-        ),
-      ),
     );
   }
 
@@ -1298,16 +2615,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       },
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
         controller.text = _brandController.text;
-        controller.selection = TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+        controller.selection =
+            TextSelection.fromPosition(TextPosition(offset: controller.text.length));
 
         return TextField(
           controller: controller,
           focusNode: focusNode,
+          style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             labelText: 'Značka',
-            border: const OutlineInputBorder(),
+            labelStyle: const TextStyle(color: Colors.white70),
+            filled: true,
+            fillColor: Colors.white.withOpacity(0.05),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+              borderSide: BorderSide(
+                color: Colors.white.withOpacity(0.22),
+                width: 1.2,
+              ),
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
             suffixIcon: _brandsLoaded
-                ? const Icon(Icons.arrow_drop_down)
+                ? const Icon(Icons.arrow_drop_down_rounded, color: Colors.white70)
                 : const Padding(
               padding: EdgeInsets.all(12),
               child: SizedBox(
@@ -1329,9 +2665,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
-  // =========================
-  // ✅ Rolovateľné multi-select okná (Farby / Štýly / Sezóny)
-  // =========================
   Widget _buildMultiSelectField({
     required String label,
     required List<String> options,
@@ -1342,16 +2675,14 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         ? 'Vyber...'
         : () {
       const maxVisible = 3;
-      if (selected.length <= maxVisible) {
-        return selected.join(', ');
-      }
+      if (selected.length <= maxVisible) return selected.join(', ');
       final visible = selected.take(maxVisible).join(', ');
       final rest = selected.length - maxVisible;
       return '$visible +$rest';
     }();
 
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       onTap: () async {
         final result = await _openMultiSelectBottomSheet(
           title: label,
@@ -1359,15 +2690,29 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           initialSelected: selected,
           enforceSeasonRules: (label == 'Sezóny'),
         );
-        if (result != null) {
-          onChanged(result);
-        }
+        if (result != null) onChanged(result);
       },
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          border: const OutlineInputBorder(),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          labelStyle: const TextStyle(color: Colors.white70),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.05),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: Colors.white.withOpacity(0.22),
+              width: 1.2,
+            ),
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
         child: Row(
           children: [
@@ -1376,10 +2721,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 text,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: selected.isEmpty ? Colors.white54 : Colors.white,
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.keyboard_arrow_down_rounded),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Colors.white70,
+            ),
           ],
         ),
       ),
@@ -1395,9 +2746,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final result = await showModalBottomSheet<List<String>>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: const Color(0xFF121212),
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (ctx) {
         final tempSelected = <String>{...initialSelected};
@@ -1455,6 +2807,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               });
             }
 
+            final items = filtered();
+
             return SafeArea(
               child: SizedBox(
                 height: height,
@@ -1468,54 +2822,91 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: Theme.of(ctx).textTheme.titleMedium),
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                       const SizedBox(height: 10),
                       TextField(
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search, color: Colors.white70),
                           hintText: 'Hľadať...',
-                          border: UnderlineInputBorder(),
+                          hintStyle: const TextStyle(color: Colors.white38),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.18)),
+                          ),
                         ),
                         onChanged: (v) => setSheetState(() => query = v),
                       ),
                       const SizedBox(height: 10),
                       Expanded(
-                        child: Builder(builder: (ctx) {
-                          final items = filtered();
-                          return ListView.builder(
-                            itemCount: items.length,
-                            itemBuilder: (ctx, i) {
-                              final o = items[i];
-                              final checked = tempSelected.contains(o);
-                              final primary = Theme.of(ctx).colorScheme.primary;
+                        child: ListView.builder(
+                          itemCount: items.length,
+                          itemBuilder: (ctx, i) {
+                            final o = items[i];
+                            final checked = tempSelected.contains(o);
 
-                              return ListTile(
-                                contentPadding: EdgeInsets.zero,
-                                title: Text(o, style: Theme.of(ctx).textTheme.bodyLarge),
-                                trailing: checked
-                                    ? Icon(Icons.check_circle_rounded, color: primary)
-                                    : const SizedBox(width: 24, height: 24),
-                                onTap: () => toggle(o, !checked),
-                              );
-                            },
-                          );
-                        }),
+                            return ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              title: Text(
+                                o,
+                                style: const TextStyle(color: Colors.white),
+                              ),
+                              trailing: checked
+                                  ? const Icon(
+                                Icons.check_circle_rounded,
+                                color: Color(0xFF58D26B),
+                              )
+                                  : const SizedBox(width: 24, height: 24),
+                              onTap: () => toggle(o, !checked),
+                            );
+                          },
+                        ),
                       ),
                       const SizedBox(height: 8),
                       Row(
                         children: [
                           TextButton(
                             onPressed: () => Navigator.of(ctx).pop(null),
-                            child: const Text('Zrušiť'),
+                            child: const Text(
+                              'Zrušiť',
+                              style: TextStyle(color: Colors.white70),
+                            ),
                           ),
                           const Spacer(),
                           TextButton(
                             onPressed: () => setSheetState(() => tempSelected.clear()),
-                            child: const Text('Vymazať'),
+                            child: const Text(
+                              'Vymazať',
+                              style: TextStyle(color: Colors.white70),
+                            ),
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
                             onPressed: () => Navigator.of(ctx).pop(tempSelected.toList()),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
                             child: const Text('Hotovo'),
                           ),
                         ],
@@ -1536,9 +2927,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return ordered;
   }
 
-  // =========================
-  // ✅ Single-select okno (Vzor)
-  // =========================
   Widget _buildSingleSelectField({
     required String label,
     required List<String> options,
@@ -1548,22 +2936,36 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final text = (selected == null || selected.isEmpty) ? 'Vyber...' : selected;
 
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       onTap: () async {
         final result = await _openSingleSelectBottomSheet(
           title: label,
           options: options,
           selected: selected,
         );
-        if (result != null) {
-          onChanged(result);
-        }
+        if (result != null) onChanged(result);
       },
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          border: const OutlineInputBorder(),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+          labelStyle: const TextStyle(color: Colors.white70),
+          filled: true,
+          fillColor: Colors.white.withOpacity(0.05),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: Colors.white.withOpacity(0.22),
+              width: 1.2,
+            ),
+          ),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
         ),
         child: Row(
           children: [
@@ -1572,10 +2974,18 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 text,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: (selected == null || selected.isEmpty)
+                      ? Colors.white54
+                      : Colors.white,
+                ),
               ),
             ),
             const SizedBox(width: 8),
-            const Icon(Icons.keyboard_arrow_down_rounded),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              color: Colors.white70,
+            ),
           ],
         ),
       ),
@@ -1590,9 +3000,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
+      backgroundColor: const Color(0xFF121212),
       showDragHandle: true,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
       ),
       builder: (ctx) {
         String query = '';
@@ -1608,7 +3019,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         return StatefulBuilder(
           builder: (ctx, setSheetState) {
             final items = filtered();
-            final primary = Theme.of(ctx).colorScheme.primary;
 
             return SafeArea(
               child: SizedBox(
@@ -1623,13 +3033,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(title, style: Theme.of(ctx).textTheme.titleMedium),
+                      const Text(
+                        'Vzor',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
                       const SizedBox(height: 10),
                       TextField(
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
+                        style: const TextStyle(color: Colors.white),
+                        decoration: InputDecoration(
+                          prefixIcon: const Icon(Icons.search, color: Colors.white70),
                           hintText: 'Hľadať...',
-                          border: UnderlineInputBorder(),
+                          hintStyle: const TextStyle(color: Colors.white38),
+                          filled: true,
+                          fillColor: Colors.white.withOpacity(0.05),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                          ),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(16),
+                            borderSide: BorderSide(color: Colors.white.withOpacity(0.18)),
+                          ),
                         ),
                         onChanged: (v) => setSheetState(() => query = v),
                       ),
@@ -1643,9 +3075,15 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
                             return ListTile(
                               contentPadding: EdgeInsets.zero,
-                              title: Text(o, style: Theme.of(ctx).textTheme.bodyLarge),
+                              title: Text(
+                                o,
+                                style: const TextStyle(color: Colors.white),
+                              ),
                               trailing: checked
-                                  ? Icon(Icons.check_circle_rounded, color: primary)
+                                  ? const Icon(
+                                Icons.check_circle_rounded,
+                                color: Color(0xFF58D26B),
+                              )
                                   : const SizedBox(width: 24, height: 24),
                               onTap: () => Navigator.of(ctx).pop(o),
                             );
@@ -1657,16 +3095,29 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                         children: [
                           TextButton(
                             onPressed: () => Navigator.of(ctx).pop(null),
-                            child: const Text('Zrušiť'),
+                            child: const Text(
+                              'Zrušiť',
+                              style: TextStyle(color: Colors.white70),
+                            ),
                           ),
                           const Spacer(),
                           TextButton(
                             onPressed: () => Navigator.of(ctx).pop(''),
-                            child: const Text('Vymazať'),
+                            child: const Text(
+                              'Vymazať',
+                              style: TextStyle(color: Colors.white70),
+                            ),
                           ),
                           const SizedBox(width: 8),
                           ElevatedButton(
                             onPressed: () => Navigator.of(ctx).pop(selected ?? ''),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.white,
+                              foregroundColor: Colors.black,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
+                            ),
                             child: const Text('Hotovo'),
                           ),
                         ],
@@ -1693,31 +3144,71 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         const SizedBox(height: 16),
         if (_localImageFile != null)
           ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Image.file(
-              _localImageFile!,
-              height: 220,
-              width: double.infinity,
-              fit: BoxFit.cover,
+            borderRadius: BorderRadius.circular(22),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  color: Colors.white.withOpacity(0.06),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    height: 260,
+                    width: double.infinity,
+                    color: Colors.white.withOpacity(0.04),
+                    alignment: Alignment.center,
+                    child: Image.file(
+                      _localImageFile!,
+                      height: 260,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
             ),
           )
         else if (_uploadedImageUrl != null)
           ClipRRect(
-            borderRadius: BorderRadius.circular(16),
-            child: Image.network(
-              _uploadedImageUrl!,
-              height: 220,
-              width: double.infinity,
-              fit: BoxFit.cover,
+            borderRadius: BorderRadius.circular(22),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(22),
+                  color: Colors.white.withOpacity(0.06),
+                  border: Border.all(color: Colors.white10),
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(18),
+                  child: Container(
+                    height: 260,
+                    width: double.infinity,
+                    color: Colors.white.withOpacity(0.04),
+                    alignment: Alignment.center,
+                    child: Image.network(
+                      _uploadedImageUrl!,
+                      height: 260,
+                      width: double.infinity,
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         const SizedBox(height: 16),
-        _buildSystemNameField(),
+        _buildNameFreeField(),
         const SizedBox(height: 12),
         _brandAutoComplete(),
         const SizedBox(height: 12),
         CategoryPicker(
-          hideSubCategory: true,
+          hideSubCategory: false,
           initialMainGroup: _selectedMainGroupKey,
           initialCategory: _selectedCategoryKey,
           initialSubCategory: _selectedSubCategoryKey,
@@ -1726,21 +3217,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             final cat = data['category'];
             final sub = data['subCategory'];
 
-            final subLabel = (sub != null && sub.isNotEmpty) ? (subCategoryLabels[sub] ?? sub) : '';
-
             setState(() {
               _selectedMainGroupKey = main;
               _selectedCategoryKey = cat;
               _selectedSubCategoryKey = sub;
+              _selectedLayerRole =
+              sub == null ? null : subCategoryLayerRoles[sub];
 
-              final currentName = _nameController.text.trim();
-              if (currentName.isEmpty || currentName == (_lastTypeLabel ?? '')) {
-                if (subLabel.isNotEmpty) {
-                  _nameController.text = subLabel;
-                  _lastTypeLabel = subLabel;
-                  _syncSystemNameValidity();
-                }
-              }
+              _isSystemNameSelected = false;
+              _selectedSystemNameLabel = null;
+              _selectedSystemSubCategoryKey = null;
+              _refreshAutoName();
             });
           },
         ),
@@ -1749,7 +3236,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           label: 'Farby',
           options: allowedColors,
           selected: _selectedColors,
-          onChanged: (v) => setState(() => _selectedColors = v),
+          onChanged: (v) => setState(() {
+            _selectedColors = v;
+            _refreshAutoName();
+          }),
         ),
         const SizedBox(height: 12),
         _buildMultiSelectField(
@@ -1781,46 +3271,316 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           selected: _selectedSeasons,
           onChanged: (v) => setState(() => _selectedSeasons = _sanitizeSeasons(v)),
         ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton(
-                onPressed: _save,
-                child: const Text('Uložiť'),
+    const SizedBox(height: 16),
+    SizedBox(
+    width: double.infinity,
+    height: 52,
+    child: ElevatedButton(
+    onPressed: _save,
+    style: ElevatedButton.styleFrom(
+    backgroundColor: Colors.white,
+    foregroundColor: Colors.black,
+    elevation: 0,
+    shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(18),
+    ),
+    ),
+    child: const Text(
+    'Uložiť do šatníka',
+    style: TextStyle(
+    fontSize: 16,
+    fontWeight: FontWeight.w700,
+    ),
+    ),
+    ),
+    ),
+    const SizedBox(height: 10),
+    if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
+    OutlinedButton.icon(
+    onPressed: () {
+    final payload = <String, dynamic>{
+    'name': (_nameController.text.trim().isNotEmpty
+    ? _nameController.text.trim()
+        : _computeAutoNameWithColor()),
+    'brand': _brandController.text.trim(),
+    'mainGroupKey': _selectedMainGroupKey,
+    'categoryKey': _selectedCategoryKey,
+    'subCategoryKey': _selectedSubCategoryKey,
+    'color': _selectedColors,
+    'style': _selectedStyles,
+    'pattern': _selectedPatterns,
+    'season': _selectedSeasons,
+    'imageUrl': _uploadedImageUrl,
+    };
+
+    Navigator.push(
+    context,
+    MaterialPageRoute(
+    builder: (_) => StylistChatScreen(
+    initialClothingData: payload,
+    ),
+    ),
+    );
+    },
+    icon: const Icon(Icons.chat_bubble_outline_rounded),
+    label: const Text('Poradiť sa o tomto kúsku'),
+    style: OutlinedButton.styleFrom(
+    foregroundColor: Colors.white,
+    side: BorderSide(color: Colors.white.withOpacity(0.14)),
+    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+    shape: RoundedRectangleBorder(
+    borderRadius: BorderRadius.circular(16),
+    ),
+    ),
+    ),
+      ],
+    );
+  }
+  Widget _buildLuxuryEmptyState() {
+    Widget glassCard({
+      required Widget child,
+      EdgeInsets? padding,
+      double opacity = 0.06,
+    }) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+          child: Container(
+            padding: padding ?? const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(24),
+              color: Colors.white.withOpacity(opacity),
+              border: Border.all(color: Colors.white10),
+            ),
+            child: child,
+          ),
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: Image.asset(
+            AddClothingScreen._luxuryBgAsset,
+            fit: BoxFit.cover,
+          ),
+        ),
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.78),
+                  Colors.black.withOpacity(0.34),
+                  Colors.black.withOpacity(0.86),
+                ],
               ),
             ),
-          ],
+          ),
         ),
-        const SizedBox(height: 8),
-        if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
-          TextButton.icon(
-            onPressed: () {
-              final payload = <String, dynamic>{
-                'name': _nameController.text.trim(),
-                'brand': _brandController.text.trim(),
-                'mainGroupKey': _selectedMainGroupKey,
-                'categoryKey': _selectedCategoryKey,
-                'subCategoryKey': _selectedSubCategoryKey,
-                'color': _selectedColors,
-                'style': _selectedStyles,
-                'pattern': _selectedPatterns,
-                'season': _selectedSeasons,
-                'imageUrl': _uploadedImageUrl,
-              };
-
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => StylistChatScreen(
-                    initialClothingData: payload,
+        SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+            child: Column(
+              children: [
+                glassCard(
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  child: Row(
+                    children: [
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: () => Navigator.pop(context),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.08),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Pridať oblečenie',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Pridaj nový kúsok do svojho šatníka',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              );
-            },
-            icon: const Icon(Icons.chat_bubble_outline),
-            label: const Text('Poradiť sa o tomto kúsku'),
+                const SizedBox(height: 22),
+                glassCard(
+                  padding: const EdgeInsets.all(18),
+                  opacity: 0.07,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        width: 46,
+                        height: 46,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: const Color(0xFFD6B36A).withOpacity(0.12),
+                          border: Border.all(
+                            color: const Color(0xFFD6B36A).withOpacity(0.18),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.auto_awesome_outlined,
+                          color: Colors.white70,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Text(
+                          'Vyber fotku a AI automaticky rozpozná typ oblečenia, farby, vzor aj sezónu.',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 13,
+                            height: 1.38,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  width: 150,
+                  height: 150,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: RadialGradient(
+                      colors: [
+                        const Color(0xFFD6B36A).withOpacity(0.16),
+                        Colors.white.withOpacity(0.04),
+                        Colors.transparent,
+                      ],
+                    ),
+                  ),
+                  child: Center(
+                    child: Container(
+                      width: 92,
+                      height: 92,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: Colors.white.withOpacity(0.08),
+                        border: Border.all(color: Colors.white12),
+                      ),
+                      child: const Icon(
+                        Icons.checkroom_rounded,
+                        color: Colors.white,
+                        size: 44,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const Text(
+                  'Pridaj nový kúsok',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Odfotiť alebo vybrať fotku z galérie a pokračovať do AI spracovania.',
+                  style: TextStyle(
+                    color: Colors.white60,
+                    fontSize: 13.5,
+                    height: 1.4,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const Spacer(),
+                SizedBox(
+                  width: double.infinity,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(999),
+                    onTap: () => AddClothingScreen.openFromPicker(context),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(999),
+                        color: Colors.white.withOpacity(0.94),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.camera_alt_rounded, color: Colors.black87, size: 20),
+                          SizedBox(width: 10),
+                          Text(
+                            'Začať pridávanie',
+                            style: TextStyle(
+                              color: Colors.black,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 15,
+                            ),
+                          ),
+                          SizedBox(width: 10),
+                          Icon(Icons.arrow_forward_ios_rounded, color: Colors.black54, size: 16),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                glassCard(
+                  padding: const EdgeInsets.all(14),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Pre lepší výsledok',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                        ),
+                      ),
+                      SizedBox(height: 10),
+                      _TipRow(icon: Icons.check_rounded, text: 'Kúsok polož alebo zaves rovno'),
+                      _TipRow(icon: Icons.check_rounded, text: 'Foť bez zbytočných predmetov okolo'),
+                      _TipRow(icon: Icons.check_rounded, text: 'Nenechaj oblečenie príliš tmavé'),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
+        ),
       ],
     );
   }
@@ -1835,50 +3595,128 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final showLoader = _isAiLoading;
     final showForm = _aiCompleted || widget.isEditing || _aiFailed;
 
+    if (showPick) {
+      return Scaffold(
+        backgroundColor: const Color(0xFF0C0C0C),
+        body: _buildLuxuryEmptyState(),
+      );
+    }
+
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.isEditing ? 'Upraviť oblečenie' : 'Pridať oblečenie'),
-      ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (showPick)
-                Column(
-                  children: [
-                    const SizedBox(height: 16),
-                    Container(
-                      height: 260,
-                      width: double.infinity,
-                      decoration: BoxDecoration(
-                        color: Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                      alignment: Alignment.center,
-                      child: const Icon(Icons.photo, size: 64, color: Colors.grey),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: () => AddClothingScreen.openFromPicker(context),
-                      icon: const Icon(Icons.add_photo_alternate_outlined),
-                      label: const Text('Vybrať fotku'),
-                    ),
+      backgroundColor: const Color(0xFF0C0C0C),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: Image.asset(
+              AddClothingScreen._luxuryBgAsset,
+              fit: BoxFit.cover,
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.80),
+                    Colors.black.withOpacity(0.32),
+                    Colors.black.withOpacity(0.88),
                   ],
                 ),
-
-              if (showLoader) ...[
-                _buildProcessingImagePreview(),
-                _buildProgressChecklist(),
-              ],
-
-              if (_aiFailed) _buildAiError(),
-              if (showForm) _buildForm(),
-            ],
+              ),
+            ),
           ),
-        ),
+          SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(22),
+                          color: Colors.white.withOpacity(0.06),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            InkWell(
+                              borderRadius: BorderRadius.circular(999),
+                              onTap: () => Navigator.pop(context),
+                              child: Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: Colors.white.withOpacity(0.08),
+                                  border: Border.all(color: Colors.white10),
+                                ),
+                                child: const Icon(
+                                  Icons.arrow_back_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.isEditing ? 'Upraviť oblečenie' : 'Pridať oblečenie',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    showLoader
+                                        ? 'AI spracováva obrázok'
+                                        : 'Skontroluj a ulož detaily kúsku',
+                                    style: const TextStyle(
+                                      color: Colors.white60,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (showLoader) ...[
+                    _buildProcessingImagePreview(),
+                    const SizedBox(height: 14),
+                    _buildProgressChecklist(),
+                  ],
+                  if (_aiFailed) ...[
+                    const SizedBox(height: 14),
+                    _buildAiError(),
+                  ],
+                  if (showForm) ...[
+                    const SizedBox(height: 14),
+                    _buildForm(),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 }
+

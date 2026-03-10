@@ -1,11 +1,13 @@
 // functions/index.js (GEN1 - Node 20)
-// - Storage trigger: removeBackgroundOnUpload (ClipDrop)
+// - Storage trigger: removeBackgroundOnUpload (rembg Cloud Run)
 // - Storage trigger: createProductPhotoOnCleanUpload (Sharp - E-shop look)
-// - Firestore trigger: attachCleanImageOnWardrobeWrite (doplní cleanImageUrl + cutoutImageUrl)
+// - Firestore trigger: attachCleanImageOnWardrobeWrite
+// - Firestore trigger: attachCleanImageOnMapWrite
+// - Firestore trigger: attachProductImageOnMapWrite
 // - HTTPS: analyzeClothingImage (OpenAI Vision)
 // - HTTPS: chatWithStylist (OpenAI text)
-// - Callable (existing): requestTryOn (MVP compositor)
-// - Callable (NEW): requestTryOnJob (A architektúra job systém - fake provider)
+// - Callable: requestTryOn
+// - Callable: requestTryOnJob
 
 const functions = require("firebase-functions");
 const logger = require("firebase-functions/logger");
@@ -53,11 +55,12 @@ function getOpenWeatherKey() {
   );
 }
 
-function getClipdropKey() {
+// sem si neskôr môžeš dať config, ak by si menil URL servera
+function getRemBgServerUrl() {
   return (
-    process.env.CLIPDROP_API_KEY ||
-    getConfigValue(["clipdrop", "api_key"]) ||
-    getConfigValue(["clipdrop", "key"])
+    process.env.REMBG_SERVER_URL ||
+    getConfigValue(["rembg", "server_url"]) ||
+    "https://rembg-server-221686818701.us-central1.run.app"
   );
 }
 
@@ -152,35 +155,64 @@ function classifyWardrobeItem(url, wardrobe) {
   let order = 8;
 
   if (text.includes("čiap") || text.includes("cap") || text.includes("hat")) {
-    slot = "hat"; order = 1;
+    slot = "hat";
+    order = 1;
   } else if (text.includes("šál") || text.includes("scarf")) {
-    slot = "scarf"; order = 2;
-  } else if (text.includes("bunda") || text.includes("kabát") || text.includes("coat") || text.includes("jacket")) {
-    slot = "jacket"; order = 3;
-  } else if (text.includes("mikina") || text.includes("sveter") || text.includes("hoodie") || text.includes("sweater")) {
-    slot = "hoodie"; order = 4;
+    slot = "scarf";
+    order = 2;
   } else if (
-    text.includes("tričko") || text.includes("tricko") ||
-    text.includes("košeľa") || text.includes("kosela") ||
-    text.includes("shirt") || text.includes("t-shirt")
+    text.includes("bunda") ||
+    text.includes("kabát") ||
+    text.includes("coat") ||
+    text.includes("jacket")
   ) {
-    slot = "shirt"; order = 5;
+    slot = "jacket";
+    order = 3;
   } else if (
-    text.includes("rifle") || text.includes("nohavice") ||
-    text.includes("tepláky") || text.includes("teplaky") ||
-    text.includes("jeans") || text.includes("pants") ||
-    text.includes("legíny") || text.includes("leginy") ||
+    text.includes("mikina") ||
+    text.includes("sveter") ||
+    text.includes("hoodie") ||
+    text.includes("sweater")
+  ) {
+    slot = "hoodie";
+    order = 4;
+  } else if (
+    text.includes("tričko") ||
+    text.includes("tricko") ||
+    text.includes("košeľa") ||
+    text.includes("kosela") ||
+    text.includes("shirt") ||
+    text.includes("t-shirt")
+  ) {
+    slot = "shirt";
+    order = 5;
+  } else if (
+    text.includes("rifle") ||
+    text.includes("nohavice") ||
+    text.includes("tepláky") ||
+    text.includes("teplaky") ||
+    text.includes("jeans") ||
+    text.includes("pants") ||
+    text.includes("legíny") ||
+    text.includes("leginy") ||
     text.includes("shorts")
   ) {
-    slot = "pants"; order = 6;
+    slot = "pants";
+    order = 6;
   } else if (
-    text.includes("topánky") || text.includes("topanky") ||
-    text.includes("tenisky") || text.includes("sneakers") ||
-    text.includes("boty") || text.includes("obuv") ||
-    text.includes("shoes") || text.includes("boots") ||
-    text.includes("čižmy") || text.includes("cizmy")
+    text.includes("topánky") ||
+    text.includes("topanky") ||
+    text.includes("tenisky") ||
+    text.includes("sneakers") ||
+    text.includes("boty") ||
+    text.includes("obuv") ||
+    text.includes("shoes") ||
+    text.includes("boots") ||
+    text.includes("čižmy") ||
+    text.includes("cizmy")
   ) {
-    slot = "shoes"; order = 7;
+    slot = "shoes";
+    order = 7;
   }
 
   return { slot, order };
@@ -202,7 +234,9 @@ function normalizeOutfitImages(outfitImages, wardrobe) {
     return { url, slot, order, originalIndex: index };
   });
 
-  items.sort((a, b) => (a.order === b.order ? a.originalIndex - b.originalIndex : a.order - b.order));
+  items.sort((a, b) =>
+    a.order === b.order ? a.originalIndex - b.originalIndex : a.order - b.order
+  );
 
   const usedSlots = new Set();
   const result = [];
@@ -216,11 +250,118 @@ function normalizeOutfitImages(outfitImages, wardrobe) {
   return result;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function isRetryableHttpStatus(status) {
+  return status === 429 || (status >= 500 && status <= 599);
+}
+
 // ---------------------------------------------------------------------------
-// ✅ GEN1 Storage Trigger: removeBackgroundOnUpload – ClipDrop
+// ✅ rembg Cloud Run helpers
+// ---------------------------------------------------------------------------
+async function removeBackgroundCallOnce({ buf, contentType }) {
+  const serverUrl = getRemBgServerUrl();
+
+  const form = new FormData();
+  form.append(
+    "image",
+    new Blob([buf], { type: contentType || "image/jpeg" }),
+    "input.jpg"
+  );
+
+  const res = await fetch(`${serverUrl}/remove-bg`, {
+    method: "POST",
+    body: form,
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    const err = new Error(`rembg failed ${res.status}`);
+    err.status = res.status;
+    err.body = body;
+    throw err;
+  }
+
+  const out = Buffer.from(await res.arrayBuffer());
+
+  logger.info("rembg background removal OK", {
+    outputBytes: out.length,
+  });
+
+  return out;
+}
+
+async function removeBackgroundWithRetry({ buf, contentType }) {
+  const delays = [0, 1200, 3000];
+  let lastErr = null;
+
+  for (let attempt = 0; attempt < delays.length; attempt++) {
+    if (delays[attempt] > 0) await sleep(delays[attempt]);
+
+    try {
+      return await removeBackgroundCallOnce({ buf, contentType });
+    } catch (e) {
+      lastErr = e;
+
+      const status = Number(e?.status || 0);
+      const retryable = status === 0 || isRetryableHttpStatus(status);
+
+      logger.warn("rembg attempt failed", {
+        attempt: attempt + 1,
+        status,
+        retryable,
+        msg: e?.message || "",
+        body: e?.body || null,
+      });
+
+      if (!retryable) throw e;
+    }
+  }
+
+  throw lastErr || new Error("rembg failed (unknown)");
+}
+
+async function markCutoutError(uid, originalStoragePath, message) {
+  try {
+    const wardrobeRef = db.collection("users").doc(uid).collection("wardrobe");
+    const snap = await wardrobeRef.where("storagePath", "==", originalStoragePath).get();
+
+    if (snap.empty) return;
+
+    for (const doc of snap.docs) {
+      const existingProduct = doc.data()?.processing?.product;
+      await doc.ref.set(
+        {
+          processing: {
+            cutout: "error",
+            product: existingProduct || "queued",
+          },
+          cutoutErrorMessage: String(message || "background removal error"),
+          cutoutImageUrl: null,
+          cleanImageUrl: null,
+          cleanStoragePath: null,
+          cleanUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+    }
+  } catch (e) {
+    logger.error("markCutoutError failed:", e);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// ✅ GEN1 Storage Trigger: removeBackgroundOnUpload – rembg Cloud Run
 // ---------------------------------------------------------------------------
 exports.removeBackgroundOnUpload = functions
   .region("us-central1")
+  .runWith({
+    memory: "1GB",
+    timeoutSeconds: 180,
+    maxInstances: 2,
+  })
   .storage.object()
   .onFinalize(async (object) => {
     const filePath = object.name || "";
@@ -236,39 +377,17 @@ exports.removeBackgroundOnUpload = functions
     if (parts.length < 3) return null;
     const uid = parts[1];
 
-    const clipApiKey = getClipdropKey();
-    if (!clipApiKey) {
-      logger.error("Chýba CLIPDROP_API_KEY (process.env alebo functions.config().clipdrop.api_key)");
-      return null;
-    }
-
     try {
       const bucket = storage.bucket(bucketName);
 
       // 1) download originál
       const [buf] = await bucket.file(filePath).download();
 
-      // 2) ClipDrop remove background
-      const form = new FormData();
-      const blob = new Blob([buf], { type: contentType || "image/jpeg" });
-      form.append("image_file", blob, "input.jpg");
-
-      const clipResponse = await fetch("https://clipdrop-api.co/remove-background/v1", {
-        method: "POST",
-        headers: { "x-api-key": clipApiKey },
-        body: form,
-      });
-
-      if (!clipResponse.ok) {
-        const errorTxt = await clipResponse.text();
-        logger.error("Clipdrop error:", clipResponse.status, errorTxt);
-        return null;
-      }
-
-      const cleanBuffer = Buffer.from(await clipResponse.arrayBuffer());
+      // 2) rembg remove background (+ retry)
+      const cleanBuffer = await removeBackgroundWithRetry({ buf, contentType });
 
       // 3) save PNG do wardrobe_clean/{uid}/...
-      const baseName = filePath.split("/").pop().replace(/\.[^/.]+$/, "");
+      const baseName = (filePath.split("/").pop() || "item").replace(/\.[^/.]+$/, "");
       const cleanPath = `wardrobe_clean/${uid}/${baseName}.png`;
 
       const token = crypto.randomUUID();
@@ -285,7 +404,7 @@ exports.removeBackgroundOnUpload = functions
       const cleanImageUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
 
-      // 4) mapping (pre prípad, že user uloží do DB skôr)
+      // 4) mapping
       const mapId = Buffer.from(`${uid}|${filePath}`).toString("base64").replace(/[/+=]/g, "_");
       await db.collection("storage_clean_map").doc(mapId).set(
         {
@@ -298,7 +417,7 @@ exports.removeBackgroundOnUpload = functions
         { merge: true }
       );
 
-      // 5) update Firestore wardrobe doc (ak už existuje)
+      // 5) update Firestore wardrobe doc
       const wardrobeRef = db.collection("users").doc(uid).collection("wardrobe");
       const snap = await wardrobeRef.where("storagePath", "==", filePath).get();
 
@@ -306,44 +425,56 @@ exports.removeBackgroundOnUpload = functions
       if (!snap.empty) {
         for (const doc of snap.docs) {
           const existingProduct = doc.data()?.processing?.product;
+
           await doc.ref.set(
             {
               cleanImageUrl,
               cleanStoragePath: cleanPath,
               cleanUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
               isClean: true,
-
-              // pre UI: cutout image = clean image
               cutoutImageUrl: cleanImageUrl,
-
               processing: {
                 cutout: "done",
-                // ak už mal hodnotu, nechaj; inak nastav queued (lebo produkt pipeline existuje)
                 product: existingProduct || "queued",
               },
             },
             { merge: true }
           );
+
           updated++;
         }
       }
 
-      logger.info("removeBackgroundOnUpload OK", { filePath, cleanPath, updated });
+      logger.info("removeBackgroundOnUpload (rembg) OK", {
+        filePath,
+        cleanPath,
+        updated,
+      });
+
       return null;
     } catch (err) {
-      logger.error("removeBackgroundOnUpload error:", err);
+      logger.error("removeBackgroundOnUpload error:", {
+        filePath,
+        message: err?.message || String(err),
+        status: err?.status || null,
+        body: err?.body || null,
+      });
+
+      await markCutoutError(uid, filePath, err?.body || err?.message || "rembg_error");
       return null;
     }
   });
 
 // ---------------------------------------------------------------------------
 // ✅ GEN1 Storage Trigger: createProductPhotoOnCleanUpload (E-shop look)
-// - vezme wardrobe_clean/{uid}/xxx.png
-// - vyrobí 1024x1024 PNG s bielym pozadím + tieňom do wardrobe_product/{uid}/xxx.png
-// - dopíše productImageUrl + processing.product="done" do Firestore
 // ---------------------------------------------------------------------------
 exports.createProductPhotoOnCleanUpload = functions
   .region("us-central1")
+  .runWith({
+    memory: "1GB",
+    timeoutSeconds: 120,
+    maxInstances: 2,
+  })
   .storage.object()
   .onFinalize(async (object) => {
     const filePath = object.name || "";
@@ -360,19 +491,16 @@ exports.createProductPhotoOnCleanUpload = functions
 
     const bucket = storage.bucket(bucketName);
 
-    // ---- nastavenia “eshop looku” ----
     const CANVAS = 1024;
-    const ITEM_MAX = 780; // zníž ešte viac (napr. 720), ak chceš viac “paddingu”
+    const ITEM_MAX = 780;
     const BG = "#FFFFFF";
     const SHADOW_DY = 26;
     const SHADOW_BLUR = 18;
     const SHADOW_OPACITY = 0.22;
 
     try {
-      // 1) stiahni clean PNG
       const [inputBuf] = await bucket.file(filePath).download();
 
-      // 2) orež transparentné okraje + zmenši (aby bol padding)
       const trimmed = await sharp(inputBuf)
         .ensureAlpha()
         .trim()
@@ -384,7 +512,6 @@ exports.createProductPhotoOnCleanUpload = functions
         .png()
         .toBuffer();
 
-      // 3) SVG render: biele pozadie + drop shadow + item v strede
       const b64 = resizedItem.toString("base64");
       const x = Math.floor((CANVAS - ITEM_MAX) / 2);
       const y = Math.floor((CANVAS - ITEM_MAX) / 2);
@@ -413,7 +540,6 @@ exports.createProductPhotoOnCleanUpload = functions
         .png({ compressionLevel: 9 })
         .toBuffer();
 
-      // 4) ulož do wardrobe_product/{uid}/...
       const baseName = filePath.split("/").pop().replace(/\.[^/.]+$/, "");
       const productPath = `wardrobe_product/${uid}/${baseName}.png`;
 
@@ -431,7 +557,18 @@ exports.createProductPhotoOnCleanUpload = functions
       const productImageUrl =
         `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
 
-      // 5) update Firestore wardrobe doc (podľa cleanStoragePath)
+      const prodMapId = Buffer.from(`${uid}|${filePath}`).toString("base64").replace(/[/+=]/g, "_");
+      await db.collection("storage_product_map").doc(prodMapId).set(
+        {
+          uid,
+          cleanPath: filePath,
+          productPath,
+          productImageUrl,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true }
+      );
+
       const snap = await db
         .collection("users")
         .doc(uid)
@@ -453,12 +590,16 @@ exports.createProductPhotoOnCleanUpload = functions
         }
       }
 
-      logger.info("createProductPhotoOnCleanUpload OK", { filePath, productPath, updatedDocs: snap.size });
+      logger.info("createProductPhotoOnCleanUpload OK", {
+        filePath,
+        productPath,
+        updatedDocs: snap.size,
+      });
+
       return null;
     } catch (e) {
       logger.error("createProductPhotoOnCleanUpload ERROR", { filePath, e });
 
-      // nastav error, aby UI nečakalo donekonečna
       try {
         const snap = await db
           .collection("users")
@@ -485,7 +626,7 @@ exports.createProductPhotoOnCleanUpload = functions
 
 // ---------------------------------------------------------------------------
 // ✅ Firestore Trigger: keď sa uloží wardrobe item, doplň cleanImageUrl + cutoutImageUrl
-// (rieši prípad: user klikne Uložiť skôr, než sa background trigger stihne)
+// + produkt image ak už map existuje
 // ---------------------------------------------------------------------------
 exports.attachCleanImageOnWardrobeWrite = functions
   .region("us-central1")
@@ -498,30 +639,70 @@ exports.attachCleanImageOnWardrobeWrite = functions
     const storagePath = String(after.storagePath || "");
     if (!storagePath.startsWith("wardrobe/")) return null;
 
+    const cleanStoragePath = String(after.cleanStoragePath || "");
     const hasClean = !!(after.cleanImageUrl && String(after.cleanImageUrl).length > 0);
     const hasCutout = !!(after.cutoutImageUrl && String(after.cutoutImageUrl).length > 0);
+    const hasProduct = !!(after.productImageUrl && String(after.productImageUrl).length > 0);
 
-    // ak už je clean aj cutout, nič nerob
-    if (hasClean && hasCutout) return null;
+    async function tryAttachProductFromMap(cleanPath) {
+      try {
+        if (!cleanPath || hasProduct) return;
 
-    // ak clean existuje, ale cutout chýba -> doplň cutout rovno z clean
+        const prodMapId = Buffer.from(`${uid}|${cleanPath}`)
+          .toString("base64")
+          .replace(/[/+=]/g, "_");
+
+        const prodSnap = await db.collection("storage_product_map").doc(prodMapId).get();
+        if (!prodSnap.exists) return;
+
+        const prod = prodSnap.data() || {};
+        const productImageUrl = String(prod.productImageUrl || "");
+        const productPath = String(prod.productPath || "");
+
+        if (!productImageUrl) return;
+
+        await change.after.ref.set(
+          {
+            productImageUrl,
+            productStoragePath: productPath || null,
+            productUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            processing: { product: "done" },
+          },
+          { merge: true }
+        );
+
+        logger.info("attachCleanImageOnWardrobeWrite: attached productImageUrl from storage_product_map", {
+          uid,
+          cleanPath,
+        });
+      } catch (e) {
+        logger.warn("tryAttachProductFromMap failed", { uid, cleanPath, e: String(e) });
+      }
+    }
+
     if (hasClean && !hasCutout) {
       await change.after.ref.set(
         {
           cutoutImageUrl: String(after.cleanImageUrl),
           processing: {
             cutout: "done",
-            product: after?.processing?.product || "queued",
+            product: after?.processing?.product || (hasProduct ? "done" : "queued"),
           },
         },
         { merge: true }
       );
 
+      await tryAttachProductFromMap(cleanStoragePath);
+
       logger.info("attachCleanImageOnWardrobeWrite: filled cutoutImageUrl from existing cleanImageUrl", { uid });
       return null;
     }
 
-    // inak hľadaj mapping
+    if (hasClean && hasCutout) {
+      await tryAttachProductFromMap(cleanStoragePath);
+      return null;
+    }
+
     try {
       const mapId = Buffer.from(`${uid}|${storagePath}`).toString("base64").replace(/[/+=]/g, "_");
       const mapSnap = await db.collection("storage_clean_map").doc(mapId).get();
@@ -529,24 +710,25 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
       const mapData = mapSnap.data() || {};
       const cleanImageUrl = String(mapData.cleanImageUrl || "");
-      const cleanStoragePath = String(mapData.cleanPath || "");
+      const cleanPath = String(mapData.cleanPath || "");
 
-      if (!cleanImageUrl) return null;
+      if (!cleanImageUrl || !cleanPath) return null;
 
       await change.after.ref.set(
         {
           cleanImageUrl,
-          cleanStoragePath,
+          cleanStoragePath: cleanPath,
           cleanUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-
           cutoutImageUrl: cleanImageUrl,
           processing: {
             cutout: "done",
-            product: after?.processing?.product || "queued",
+            product: after?.processing?.product || (hasProduct ? "done" : "queued"),
           },
         },
         { merge: true }
       );
+
+      await tryAttachProductFromMap(cleanPath);
 
       logger.info("attachCleanImageOnWardrobeWrite OK", { uid, storagePath });
       return null;
@@ -555,149 +737,373 @@ exports.attachCleanImageOnWardrobeWrite = functions
       return null;
     }
   });
+  // ---------------------------------------------------------------------------
+  // ✅ Firestore Trigger: keď sa vytvorí storage_clean_map -> doplň wardrobe
+  // ---------------------------------------------------------------------------
+  exports.attachCleanImageOnMapWrite = functions
+    .region("us-central1")
+    .firestore.document("storage_clean_map/{mapId}")
+    .onCreate(async (snap, context) => {
+      const data = snap.data() || {};
 
-// ---------------------------------------------------------------------------
-// ✅ requestTryOn – GEN1 HTTPS (Callable)  (TVOJ EXISTUJÚCI MVP compositor)
-// - vstup: baseImageUrl (voliteľné), garmentImageUrl, slot, sessionId (voliteľné)
-// - výstup: resultUrl (hotový obrázok "figurína + oblečenie")
-// ---------------------------------------------------------------------------
-exports.requestTryOn = functions
-  .region("us-central1")
-  .https.onCall(async (data, context) => {
-    // auth
-    if (!context.auth || !context.auth.uid) {
-      throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
-    }
+      const uid = String(data.uid || "");
+      const originalPath = String(data.originalPath || data.storagePath || "");
+      const cleanImageUrl = String(data.cleanImageUrl || "");
+      const cleanStoragePath = String(data.cleanPath || data.cleanStoragePath || "");
 
-    const uid = context.auth.uid;
-
-    const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
-    const baseImageUrl = String(data?.baseImageUrl || "").trim(); // môže byť prázdne
-    const slot = String(data?.slot || "").trim(); // head/neck/torsoMid...
-    const sessionId = String(data?.sessionId || "").trim() || "default";
-
-    if (!garmentImageUrl) {
-      throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
-    }
-    if (!slot) {
-      throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
-    }
-
-    const bucket = storage.bucket();
-    const bucketName = bucket.name;
-
-    try {
-      // 1) base obrázok:
-      // - ak baseImageUrl nie je, použijeme manekýna uloženého v Storage:
-      //   gs://.../mannequins/male.png  (ty si ho tam dáš raz)
-      let baseBuf;
-      if (baseImageUrl) {
-        baseBuf = await downloadUrlToBuffer(baseImageUrl);
-      } else {
-        // 👉 TU je “fixný” default manekýn pre MVP
-        // Uploadni do Storage súbor: mannequins/male.png
-        const mannequinPath = "mannequins/male.png";
-        const [b] = await bucket.file(mannequinPath).download();
-        baseBuf = b;
+      if (!uid || !originalPath || !cleanImageUrl || !cleanStoragePath) {
+        logger.warn("attachCleanImageOnMapWrite: missing fields", {
+          uid,
+          originalPath,
+          hasClean: !!cleanImageUrl,
+          hasCleanPath: !!cleanStoragePath,
+        });
+        return null;
       }
 
-      // 2) garment (tvoj cutout/product image)
-      const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
+      const q = await db
+        .collection("users")
+        .doc(uid)
+        .collection("wardrobe")
+        .where("storagePath", "==", originalPath)
+        .limit(10)
+        .get();
 
-      // 3) zlož obrázok
-      const outBuf = await composeTryOn({ baseBuf, garmentBuf, slot });
+      if (q.empty) {
+        logger.warn("attachCleanImageOnMapWrite: no wardrobe item found", { uid, originalPath });
+        return null;
+      }
 
-      // 4) ulož do Storage
-      const token = crypto.randomUUID();
-      const outPath = `tryon/${uid}/${sessionId}/${Date.now()}_${slot}.png`;
+      const batch = db.batch();
 
-      await bucket.file(outPath).save(outBuf, {
-        contentType: "image/png",
-        metadata: { metadata: { firebaseStorageDownloadTokens: token } },
-      });
+      q.docs.forEach((doc) => {
+        const after = doc.data() || {};
+        const hasCutout = !!(after.cutoutImageUrl && String(after.cutoutImageUrl).length > 0);
+        const hasClean = !!(after.cleanImageUrl && String(after.cleanImageUrl).length > 0);
 
-      const resultUrl = buildStorageDownloadUrl(bucketName, outPath, token);
+        if (hasClean && hasCutout) return;
 
-      return { resultUrl, outPath };
-    } catch (e) {
-      logger.error("requestTryOn error:", e);
-      throw new functions.https.HttpsError(
-        "internal",
-        "Try-on sa nepodaril: " + (e?.message || String(e))
-      );
-    }
-  });
-
-// ---------------------------------------------------------------------------
-// 1) analyzeClothingImage – GEN1 HTTPS (OpenAI Vision)
-// ---------------------------------------------------------------------------
-exports.analyzeClothingImage = functions
-  .region("us-east1")
-  .https.onRequest(async (req, res) => {
-    if (req.method !== "POST") {
-      return res.status(405).send("Metóda nie je povolená. Použite POST.");
-    }
-
-    const { imageUrl } = req.body || {};
-    if (!imageUrl) {
-      return res.status(400).send("Chýba imageUrl v tele požiadavky.");
-    }
-
-    const apiKey = getOpenAiKey();
-    if (!apiKey) {
-      logger.error("Chýba OPENAI_API_KEY (process.env alebo functions.config().openai.api_key)");
-      return res.status(500).send("Server nemá nastavený OPENAI_API_KEY.");
-    }
-
-    try {
-      const systemPrompt = `
-Si profesionálny módny stylista a expert na rozpoznávanie oblečenia z fotiek pre mobilnú aplikáciu.
-Výstup musí byť STRICTNE vo forme JSON objektu. Nepíš žiadny iný text.
-
-Používaš 2 dôležité polia:
-- "type": pekný názov pre používateľa v slovenčine (napr. "Mikina s kapucňou")
-- "canonical_type": technický kľúč z nasledujúceho zoznamu
-
-... (TVOJ DLHÝ PROMPT OSTÁVA BEZ ZMIEN) ...
-`.trim();
-
-      const openAiBody = {
-        model: "gpt-4o-mini",
-        temperature: 0.1,
-        messages: [
-          { role: "system", content: systemPrompt },
+        batch.set(
+          doc.ref,
           {
-            role: "user",
-            content: [
-              { type: "text", text: "Analyzuj tento jeden kus oblečenia na fotke a vráť JSON podľa inštrukcií." },
-              { type: "image_url", image_url: { url: imageUrl } },
-            ],
+            cleanImageUrl,
+            cleanStoragePath,
+            cleanUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            cutoutImageUrl: cleanImageUrl,
+            processing: {
+              cutout: "done",
+              product: after?.processing?.product || "queued",
+            },
           },
-        ],
-      };
-
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: "Bearer " + apiKey,
-        },
-        body: JSON.stringify(openAiBody),
+          { merge: true }
+        );
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        logger.error("OpenAI analyzeClothingImage error:", response.status, errorText);
-        return res.status(500).send(`OpenAI analyzeClothingImage error ${response.status}: ${errorText}`);
+      await batch.commit();
+
+      logger.info("attachCleanImageOnMapWrite OK", { uid, originalPath, docs: q.size });
+      return null;
+    });
+
+  // ---------------------------------------------------------------------------
+  // ✅ Firestore Trigger: keď sa vytvorí storage_product_map -> doplň wardrobe
+  // ---------------------------------------------------------------------------
+  exports.attachProductImageOnMapWrite = functions
+    .region("us-central1")
+    .firestore.document("storage_product_map/{mapId}")
+    .onCreate(async (snap, context) => {
+      const data = snap.data() || {};
+
+      const uid = String(data.uid || "");
+      const cleanPath = String(data.cleanPath || "");
+      const productImageUrl = String(data.productImageUrl || "");
+      const productPath = String(data.productPath || "");
+
+      if (!uid || !cleanPath || !productImageUrl) {
+        logger.warn("attachProductImageOnMapWrite: missing fields", {
+          uid,
+          cleanPath,
+          hasProduct: !!productImageUrl,
+        });
+        return null;
       }
 
-      const data = await response.json();
-      const text = data?.choices?.[0]?.message?.content;
-      if (!text) throw new Error("OpenAI nevrátil text (analyzeClothingImage).");
+      let q = await db
+        .collection("users")
+        .doc(uid)
+        .collection("wardrobe")
+        .where("cleanStoragePath", "==", cleanPath)
+        .limit(10)
+        .get();
+
+      if (q.empty) {
+        try {
+          const mapQ = await db
+            .collection("storage_clean_map")
+            .where("uid", "==", uid)
+            .where("cleanPath", "==", cleanPath)
+            .limit(1)
+            .get();
+
+          if (!mapQ.empty) {
+            const originalPath = String(mapQ.docs[0].data()?.originalPath || "");
+            if (originalPath) {
+              q = await db
+                .collection("users")
+                .doc(uid)
+                .collection("wardrobe")
+                .where("storagePath", "==", originalPath)
+                .limit(10)
+                .get();
+            }
+          }
+        } catch (e) {
+          logger.warn("attachProductImageOnMapWrite fallback failed", { uid, cleanPath, e: String(e) });
+        }
+      }
+
+      if (q.empty) {
+        logger.warn("attachProductImageOnMapWrite: no wardrobe item found (even after fallback)", { uid, cleanPath });
+        return null;
+      }
+
+      const batch = db.batch();
+
+      q.docs.forEach((doc) => {
+        batch.set(
+          doc.ref,
+          {
+            productImageUrl,
+            productStoragePath: productPath || null,
+            productUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            processing: { product: "done" },
+          },
+          { merge: true }
+        );
+      });
+
+      await batch.commit();
+
+      logger.info("attachProductImageOnMapWrite OK", { uid, cleanPath, docs: q.size });
+      return null;
+    });
+
+  // ---------------------------------------------------------------------------
+  // ✅ requestTryOn – GEN1 HTTPS (Callable)
+  // ---------------------------------------------------------------------------
+  exports.requestTryOn = functions
+    .region("us-central1")
+    .https.onCall(async (data, context) => {
+      if (!context.auth || !context.auth.uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+      }
+
+      const uid = context.auth.uid;
+
+      const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
+      const baseImageUrl = String(data?.baseImageUrl || "").trim();
+      const slot = String(data?.slot || "").trim();
+      const sessionId = String(data?.sessionId || "").trim() || "default";
+
+      if (!garmentImageUrl) {
+        throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
+      }
+      if (!slot) {
+        throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
+      }
+
+      const bucket = storage.bucket();
+      const bucketName = bucket.name;
 
       try {
-        let raw = String(text).trim();
+        let baseBuf;
+        if (baseImageUrl) {
+          baseBuf = await downloadUrlToBuffer(baseImageUrl);
+        } else {
+          const mannequinPath = "mannequins/male.png";
+          const [b] = await bucket.file(mannequinPath).download();
+          baseBuf = b;
+        }
 
+        const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
+        const outBuf = await composeTryOn({ baseBuf, garmentBuf, slot });
+
+        const token = crypto.randomUUID();
+        const outPath = `tryon/${uid}/${sessionId}/${Date.now()}_${slot}.png`;
+
+        await bucket.file(outPath).save(outBuf, {
+          contentType: "image/png",
+          metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+        });
+
+        const resultUrl = buildStorageDownloadUrl(bucketName, outPath, token);
+        return { resultUrl, outPath };
+      } catch (e) {
+        logger.error("requestTryOn error:", e);
+        throw new functions.https.HttpsError(
+          "internal",
+          "Try-on sa nepodaril: " + (e?.message || String(e))
+        );
+      }
+    });
+
+  // ---------------------------------------------------------------------------
+  // 1) analyzeClothingImage – GEN1 HTTPS (OpenAI Vision)
+  // ---------------------------------------------------------------------------
+  exports.analyzeClothingImage = functions
+    .region("us-east1")
+    .https.onRequest(async (req, res) => {
+      if (req.method !== "POST") {
+        return res.status(405).send("Metóda nie je povolená. Použite POST.");
+      }
+
+      const { imageUrl } = req.body || {};
+      if (!imageUrl) {
+        return res.status(400).send("Chýba imageUrl v tele požiadavky.");
+      }
+
+      const apiKey = getOpenAiKey();
+      if (!apiKey) {
+        logger.error("Chýba OPENAI_API_KEY (env alebo functions.config().openai.key)");
+        return res.status(500).send("Server nemá nastavený OPENAI_API_KEY.");
+      }
+
+      const ALLOWED_SEASONS = ["jar", "leto", "jeseň", "zima", "celoročne"];
+      const ALLOWED_PATTERNS = [
+        "jednofarebné",
+        "pruhované",
+        "kockované",
+        "bodkované",
+        "kvetované",
+        "maskáčové",
+        "animal print",
+        "grafické",
+        "iný vzor",
+      ];
+      const ALLOWED_STYLES = [
+        "elegantný",
+        "casual",
+        "streetwear",
+        "športový",
+        "business",
+        "outdoor",
+        "basic",
+        "party",
+      ];
+      const ALLOWED_COLORS = [
+        "čierna",
+        "biela",
+        "sivá",
+        "tmavomodrá",
+        "modrá",
+        "svetlomodrá",
+        "zelená",
+        "olivová",
+        "khaki",
+        "hnedá",
+        "béžová",
+        "červená",
+        "bordová",
+        "žltá",
+        "oranžová",
+        "ružová",
+        "fialová",
+      ];
+
+      const COLOR_MAP = {
+        navy: "tmavomodrá",
+        "dark blue": "tmavomodrá",
+        midnight: "tmavomodrá",
+        blue: "modrá",
+        "light blue": "svetlomodrá",
+        black: "čierna",
+        white: "biela",
+        grey: "sivá",
+        gray: "sivá",
+        beige: "béžová",
+        brown: "hnedá",
+        tan: "hnedá",
+        olive: "olivová",
+        khaki: "khaki",
+        green: "zelená",
+        red: "červená",
+        burgundy: "bordová",
+        maroon: "bordová",
+        yellow: "žltá",
+        orange: "oranžová",
+        pink: "ružová",
+        purple: "fialová",
+      };
+
+      const STYLE_MAP = {
+        elegant: "elegantný",
+        formal: "elegantný",
+        smart: "business",
+        business: "business",
+        casual: "casual",
+        street: "streetwear",
+        streetwear: "streetwear",
+        sport: "športový",
+        sports: "športový",
+        athletic: "športový",
+        outdoor: "outdoor",
+        basic: "basic",
+        party: "party",
+      };
+
+      const PATTERN_MAP = {
+        solid: "jednofarebné",
+        plain: "jednofarebné",
+        striped: "pruhované",
+        stripes: "pruhované",
+        checked: "kockované",
+        plaid: "kockované",
+        dots: "bodkované",
+        polka: "bodkované",
+        floral: "kvetované",
+        camo: "maskáčové",
+        camouflage: "maskáčové",
+        animal: "animal print",
+        graphic: "grafické",
+      };
+
+      const SEASON_MAP = {
+        spring: "jar",
+        summer: "leto",
+        autumn: "jeseň",
+        fall: "jeseň",
+        winter: "zima",
+        all: "celoročne",
+        "all season": "celoročne",
+        year: "celoročne",
+      };
+
+      function toStringArray(x) {
+        if (!x) return [];
+        if (Array.isArray(x)) return x.map((v) => String(v).trim()).filter(Boolean);
+        return [String(x).trim()].filter(Boolean);
+      }
+
+      function normalizeToAllowed(value, allowed, map) {
+        const raw = String(value || "").toLowerCase().trim();
+        if (!raw) return null;
+
+        const exact = allowed.find((a) => a.toLowerCase() === raw);
+        if (exact) return exact;
+
+        if (map[raw] && allowed.includes(map[raw])) return map[raw];
+
+        for (const k of Object.keys(map)) {
+          if (raw.includes(k)) {
+            const m = map[k];
+            if (allowed.includes(m)) return m;
+          }
+        }
+        return null;
+      }
+
+      function stripCodeFences(text) {
+        let raw = String(text || "").trim();
         if (raw.startsWith("```")) {
           const firstNl = raw.indexOf("\n");
           if (firstNl !== -1) raw = raw.substring(firstNl + 1);
@@ -705,373 +1111,449 @@ Používaš 2 dôležité polia:
         if (raw.endsWith("```")) {
           raw = raw.substring(0, raw.lastIndexOf("```")).trim();
         }
+        return raw.trim();
+      }
 
-        const jsonResponse = JSON.parse(raw);
+      try {
+        const systemPrompt = `
+  Si profesionálny módny stylista a expert na rozpoznávanie oblečenia z fotiek pre mobilnú aplikáciu.
+  Vráť STRICTNE jeden JSON objekt. Nepíš žiadny iný text. Žiadny markdown. Žiadne \`\`\`.
 
-        // ✅ BACKEND override (ponechané)
-        if (jsonResponse?.canonical_type === "bunda_prechodna") {
-          const brand = String(jsonResponse.brand || "").toUpperCase();
-          const colors = Array.isArray(jsonResponse.colors) ? jsonResponse.colors.map(String) : [];
-          const patterns = Array.isArray(jsonResponse.patterns) ? jsonResponse.patterns.map(String) : [];
-          const seasonArr = Array.isArray(jsonResponse.season) ? jsonResponse.season.map(String) : [];
+  MUSÍŠ vrátiť VŽDY všetky tieto kľúče (aj keď sú prázdne):
+  {
+    "type": "krátky názov v slovenčine (napr. \\"Nohavice\\")",
+    "type_pretty": "detailnejší názov v slovenčine (napr. \\"Chino nohavice\\")",
+    "canonical_type": "technický kľúč v angličtine (napr. pants, jeans, t_shirt, hoodie...)",
+    "brand": "značka alebo prázdny string",
+    "colors": ["zoznam farieb v slovenčine"],
+    "styles": ["zoznam štýlov v slovenčine"],
+    "patterns": ["max 1 vzor v slovenčine"],
+    "seasons": ["zoznam sezón v slovenčine"],
+    "debug_reason": "stručný dôvod rozhodnutí (1 veta)"
+  }
 
-          const hasHoodHint =
-            /kapuc/i.test(String(jsonResponse.debug_reason || "")) ||
-            /hood/i.test(String(jsonResponse.debug_reason || ""));
-          const isOutdoorBrand = ["HI-TEC", "COLUMBIA", "THE NORTH FACE", "NORTH FACE", "SALOMON"].some((b) =>
-            brand.includes(b)
-          );
-          const isDark = colors.includes("čierna") || colors.includes("tmavomodrá") || colors.includes("hnedá");
-          const isSolid = patterns.includes("jednofarebné");
+  Použi LEN tieto povolené hodnoty:
+  FARBY (colors): ${JSON.stringify(ALLOWED_COLORS)}
+  ŠTÝLY (styles): ${JSON.stringify(ALLOWED_STYLES)}
+  VZORY (patterns): ${JSON.stringify(ALLOWED_PATTERNS)}
+  SEZÓNY (seasons): ${JSON.stringify(ALLOWED_SEASONS)}
 
-          let score = 0;
-          if (hasHoodHint) score++;
-          if (isOutdoorBrand) score++;
-          if (isDark && isSolid) score++;
-          const onlySpringAutumn =
-            seasonArr.length > 0 && seasonArr.every((s) => s === "jar" || s === "jeseň");
-          if (onlySpringAutumn) score++;
+  Pravidlá:
+  - Ak si nie si istý farbou/štýlom/vzorom/sezónou, radšej vráť prázdne pole alebo "jednofarebné" pri vzore.
+  - patterns: vráť buď [] alebo [jedna_hodnota]
+  - seasons: ak je vhodné celoročne, vráť ["celoročne"].
+  - type_pretty má byť prirodzený názov pre človeka, ale bez zdvojení typu.
+        `.trim();
 
-          if (score >= 3) {
-            jsonResponse.canonical_type = "bunda_zimna";
-            jsonResponse.type = "Zimná bunda";
-            jsonResponse.season = ["zima"];
-            jsonResponse.debug_reason =
-              (String(jsonResponse.debug_reason || "") + " | BACKEND override: score>=3 => bunda_zimna").trim();
+        const openAiBody = {
+          model: "gpt-4o-mini",
+          temperature: 0.1,
+          messages: [
+            { role: "system", content: systemPrompt },
+            {
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Analyzuj tento jeden kus oblečenia na fotke a vráť JSON podľa inštrukcií.",
+                },
+                { type: "image_url", image_url: { url: imageUrl } },
+              ],
+            },
+          ],
+        };
+
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(openAiBody),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          logger.error("OpenAI analyzeClothingImage error:", response.status, errorText);
+          return res.status(500).send(`OpenAI analyzeClothingImage error ${response.status}: ${errorText}`);
+        }
+
+        const data = await response.json();
+        const text = data?.choices?.[0]?.message?.content;
+        if (!text) throw new Error("OpenAI nevrátil text (analyzeClothingImage).");
+
+        const raw = stripCodeFences(text);
+        logger.info("AI RAW TEXT:", raw);
+
+        let parsed = null;
+        try {
+          parsed = JSON.parse(raw);
+        } catch (e) {
+          logger.error("JSON.parse failed:", e);
+        }
+
+        const p = parsed && typeof parsed === "object" ? parsed : {};
+
+        const out = {
+          type: String(p.type || ""),
+          type_pretty: String(p.type_pretty || ""),
+          canonical_type: String(p.canonical_type || ""),
+          brand: String(p.brand || ""),
+          colors: toStringArray(p.colors),
+          styles: toStringArray(p.styles),
+          patterns: toStringArray(p.patterns),
+          seasons: toStringArray(p.seasons),
+          debug_reason: String(p.debug_reason || ""),
+        };
+
+        const colors = [];
+        for (const c of out.colors) {
+          const mapped = normalizeToAllowed(c, ALLOWED_COLORS, COLOR_MAP);
+          if (mapped && !colors.includes(mapped)) colors.push(mapped);
+        }
+
+        const styles = [];
+        for (const s of out.styles) {
+          const mapped = normalizeToAllowed(s, ALLOWED_STYLES, STYLE_MAP);
+          if (mapped && !styles.includes(mapped)) styles.push(mapped);
+        }
+
+        let patterns = [];
+        for (const pat of out.patterns) {
+          const mapped = normalizeToAllowed(pat, ALLOWED_PATTERNS, PATTERN_MAP);
+          if (mapped) {
+            patterns = [mapped];
+            break;
           }
         }
 
-        return res.status(200).send(jsonResponse);
-      } catch (e) {
-        logger.error("analyzeClothingImage – neplatný JSON, raw:", text);
-        return res.status(200).send({ rawText: text });
+        let seasons = [];
+        for (const sea of out.seasons) {
+          const mapped = normalizeToAllowed(sea, ALLOWED_SEASONS, SEASON_MAP);
+          if (mapped && !seasons.includes(mapped)) seasons.push(mapped);
+        }
+
+        const hasAllFour = ["jar", "leto", "jeseň", "zima"].every((x) => seasons.includes(x));
+        if (seasons.includes("celoročne") || hasAllFour) seasons = ["celoročne"];
+
+        const normalized = {
+          type: out.type || out.type_pretty || "",
+          type_pretty: out.type_pretty || out.type || "",
+          canonical_type: out.canonical_type,
+          brand: out.brand,
+          colors,
+          styles,
+          patterns,
+          seasons,
+          debug_reason: out.debug_reason,
+        };
+
+        if (!normalized.patterns || normalized.patterns.length === 0) {
+          normalized.patterns = ["jednofarebné"];
+        }
+
+        logger.info("AI NORMALIZED OUT:", normalized);
+        return res.status(200).send(normalized);
+      } catch (error) {
+        logger.error("Chyba pri analyzeClothingImage:", error);
+        return res.status(500).send(
+          "Chyba servera pri analýze obrázka: " + (error.message || String(error))
+        );
       }
-    } catch (error) {
-      logger.error("Chyba pri analyzeClothingImage:", error);
-      return res
-        .status(500)
-        .send("Chyba servera pri analýze obrázka: " + (error.message || String(error)));
-    }
-  });
+    });
 
-// ---------------------------------------------------------------------------
-// 2) chatWithStylist – GEN1 HTTPS
-// ---------------------------------------------------------------------------
-async function callOpenAiChat(systemPrompt, userPrompt) {
-  const apiKey = getOpenAiKey();
-  if (!apiKey) {
-    logger.error("Chýba OPENAI_API_KEY v prostredí!");
-    throw new Error("Server nemá nastavený OPENAI_API_KEY.");
-  }
-
-  const body = {
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-    temperature: 0.7,
-  };
-
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    logger.error("OpenAI API error:", response.status, errorText);
-    throw new Error(`OpenAI API vrátilo chybu ${response.status}: ${errorText}`);
-  }
-
-  const data = await response.json();
-  const text = data?.choices?.[0]?.message?.content;
-  if (!text) throw new Error("OpenAI nevrátilo text.");
-
-  return text;
-}
-
-exports.chatWithStylist = functions
-  .region("us-east1")
-  .https.onRequest(async (req, res) => {
-    if (req.method !== "POST") return res.status(405).send("Metóda nie je povolená. Použite POST.");
-
-    const { wardrobe, userPreferences, location, weather, focusItem } = req.body || {};
-    const finalWeather = await fetchWeatherFromOpenWeather(location, weather);
-
-    const userQuery = req.body.userQuery || req.body.userMessage;
-    if (!userQuery) {
-      return res.status(400).send("Chýba používateľská požiadavka (userQuery alebo userMessage).");
+  // ---------------------------------------------------------------------------
+  // 2) chatWithStylist – GEN1 HTTPS
+  // ---------------------------------------------------------------------------
+  async function callOpenAiChat(systemPrompt, userPrompt) {
+    const apiKey = getOpenAiKey();
+    if (!apiKey) {
+      logger.error("Chýba OPENAI_API_KEY v prostredí!");
+      throw new Error("Server nemá nastavený OPENAI_API_KEY.");
     }
 
-    try {
-      const systemPrompt =
-`Si profesionálny módny stylista v mobilnej aplikácii.
+    const body = {
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      temperature: 0.7,
+    };
 
-Tvoje správanie:
-- Buď profesionálny, ale veľmi priateľský a ľudský.
-- Reaguj na emócie používateľa.
-- Nepredpokladaj nič, čo používateľ nepovedal.
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
 
-Počasie:
-- Informácie o počasí máš v objekte weather v kontexte.
-- Ak weather existuje a nie je prázdny objekt, ber to tak, že počasie poznáš a nepytaš sa naň.
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error("OpenAI API error:", response.status, errorText);
+      throw new Error(`OpenAI API vrátilo chybu ${response.status}: ${errorText}`);
+    }
 
-Logika outfitov:
-- Nepoužívaj duplikované kúsky (rovnaká imageUrl nesmie byť dvakrát).
-- V jednom outfite vyber maximálne jedny topánky.
-- Používaj výhradne kúsky z wardrobe, nevymýšľaj nové.
-- outfit_images musí obsahovať URL práve tých kúskov, o ktorých píšeš v texte.
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("OpenAI nevrátilo text.");
 
-Formát:
-- Odpovedaj LEN v JSON:
-{
-  "text": "odpoveď v slovenčine",
-  "outfit_images": ["url1", "url2"]
-}`.trim();
+    return text;
+  }
 
-      const context =
-`Používateľov šatník:
-${JSON.stringify(wardrobe ?? [], null, 2)}
+  exports.chatWithStylist = functions
+    .region("us-east1")
+    .https.onRequest(async (req, res) => {
+      if (req.method !== "POST") {
+        return res.status(405).send("Metóda nie je povolená. Použite POST.");
+      }
 
-Preferencie:
-${JSON.stringify(userPreferences ?? {}, null, 2)}
+      const { wardrobe, userPreferences, location, weather, focusItem } = req.body || {};
+      const finalWeather = await fetchWeatherFromOpenWeather(location, weather);
 
-Lokalita a počasie:
-${JSON.stringify({ location, weather: finalWeather }, null, 2)}
-
-Focus item:
-${JSON.stringify(focusItem ?? {}, null, 2)}
-`;
-
-      const userPrompt =
-`KONTEXT:
-${context}
-
-SPRÁVA POUŽÍVATEĽA:
-${userQuery}
-
-Vráť odpoveď výhradne v JSON formáte:
-{
-  "text": "odpoveď v slovenčine",
-  "outfit_images": ["url1", "url2"]
-}`.trim();
-
-      const text = await callOpenAiChat(systemPrompt, userPrompt);
+      const userQuery = req.body.userQuery || req.body.userMessage;
+      if (!userQuery) {
+        return res.status(400).send("Chýba používateľská požiadavka (userQuery alebo userMessage).");
+      }
 
       try {
-        const jsonResponse = JSON.parse(text);
-        const replyText = jsonResponse.text || "Stylista nemá momentálne žiadnu konkrétnu odpoveď.";
-        const rawOutfitImages = Array.isArray(jsonResponse.outfit_images) ? jsonResponse.outfit_images : [];
-        const outfitImages = normalizeOutfitImages(rawOutfitImages, wardrobe);
+        const systemPrompt =
+  `Si profesionálny módny stylista v mobilnej aplikácii.
 
-        return res.status(200).send({ replyText, imageUrls: outfitImages });
-      } catch (e) {
-        logger.error("OpenAI nevrátil platný JSON:", text);
-        return res.status(200).send({ replyText: text, imageUrls: [] });
+  Tvoje správanie:
+  - Buď profesionálny, ale veľmi priateľský a ľudský.
+  - Reaguj na emócie používateľa.
+  - Nepredpokladaj nič, čo používateľ nepovedal.
+
+  Počasie:
+  - Informácie o počasí máš v objekte weather v kontexte.
+  - Ak weather existuje a nie je prázdny objekt, ber to tak, že počasie poznáš a nepytaš sa naň.
+
+  Logika outfitov:
+  - Nepoužívaj duplikované kúsky (rovnaká imageUrl nesmie byť dvakrát).
+  - V jednom outfite vyber maximálne jedny topánky.
+  - Používaj výhradne kúsky z wardrobe, nevymýšľaj nové.
+  - outfit_images musí obsahovať URL práve tých kúskov, o ktorých píšeš v texte.
+
+  Formát:
+  - Odpovedaj LEN v JSON:
+  {
+    "text": "odpoveď v slovenčine",
+    "outfit_images": ["url1", "url2"]
+  }`.trim();
+
+        const context =
+  `Používateľov šatník:
+  ${JSON.stringify(wardrobe ?? [], null, 2)}
+
+  Preferencie:
+  ${JSON.stringify(userPreferences ?? {}, null, 2)}
+
+  Lokalita a počasie:
+  ${JSON.stringify({ location, weather: finalWeather }, null, 2)}
+
+  Focus item:
+  ${JSON.stringify(focusItem ?? {}, null, 2)}
+  `;
+
+        const userPrompt =
+  `KONTEXT:
+  ${context}
+
+  SPRÁVA POUŽÍVATEĽA:
+  ${userQuery}
+
+  Vráť odpoveď výhradne v JSON formáte:
+  {
+    "text": "odpoveď v slovenčine",
+    "outfit_images": ["url1", "url2"]
+  }`.trim();
+
+        const text = await callOpenAiChat(systemPrompt, userPrompt);
+
+        try {
+          const jsonResponse = JSON.parse(text);
+          const replyText = jsonResponse.text || "Stylista nemá momentálne žiadnu konkrétnu odpoveď.";
+          const rawOutfitImages = Array.isArray(jsonResponse.outfit_images)
+            ? jsonResponse.outfit_images
+            : [];
+          const outfitImages = normalizeOutfitImages(rawOutfitImages, wardrobe);
+
+          return res.status(200).send({ replyText, imageUrls: outfitImages });
+        } catch (e) {
+          logger.error("OpenAI nevrátil platný JSON:", text);
+          return res.status(200).send({ replyText: text, imageUrls: [] });
+        }
+      } catch (error) {
+        logger.error("Chyba pri volaní OpenAI API:", error);
+        return res.status(500).send(
+          "Chyba servera pri AI stylistovi: " + (error.message || String(error))
+        );
       }
-    } catch (error) {
-      logger.error("Chyba pri volaní OpenAI API:", error);
-      return res.status(500).send("Chyba servera pri AI stylistovi: " + (error.message || String(error)));
-    }
-  });
+    });
 
-// ---------------------------------------------------------------------------
-// ✅ TRY-ON helpers (GEN1, Node20)
-// - stiahne PNG/JPG z URL (Firebase download URL s tokenom)
-// - zloží "base image" + "garment" cez sharp a uloží do Storage
-// ---------------------------------------------------------------------------
-async function downloadUrlToBuffer(url) {
-  const r = await fetch(url);
-  if (!r.ok) {
-    const t = await r.text().catch(() => "");
-    throw new Error(`downloadUrlToBuffer failed ${r.status}: ${t}`);
+  // ---------------------------------------------------------------------------
+  // ✅ TRY-ON helpers (GEN1, Node20)
+  // ---------------------------------------------------------------------------
+  async function downloadUrlToBuffer(url) {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const t = await r.text().catch(() => "");
+      throw new Error(`downloadUrlToBuffer failed ${r.status}: ${t}`);
+    }
+    const ab = await r.arrayBuffer();
+    return Buffer.from(ab);
   }
-  const ab = await r.arrayBuffer();
-  return Buffer.from(ab);
-}
 
-function getTryOnBox(slot) {
-  // Boxy sú v percentách z rozmeru obrázka (0..1)
-  // (je to len "v0 compositor", neskôr tu nebude treba nič meniť)
-  switch (slot) {
-    case "head":
-      return { x: 0.39, y: 0.06, w: 0.22, h: 0.22 };
-    case "neck":
-      return { x: 0.34, y: 0.16, w: 0.32, h: 0.22 };
-    case "torsoBase":
-      return { x: 0.26, y: 0.22, w: 0.48, h: 0.44 };
-    case "torsoMid":
-      return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
-    case "torsoOuter":
-      return { x: 0.18, y: 0.18, w: 0.64, h: 0.58 };
-    case "legsBase":
-      return { x: 0.30, y: 0.56, w: 0.40, h: 0.36 };
-    case "legsMid":
-      return { x: 0.22, y: 0.52, w: 0.56, h: 0.48 };
-    case "legsOuter":
-      return { x: 0.20, y: 0.50, w: 0.60, h: 0.46 };
-    case "shoes":
-      return { x: 0.24, y: 0.82, w: 0.52, h: 0.18 };
-    default:
-      return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+  function getTryOnBox(slot) {
+    switch (slot) {
+      case "head":
+        return { x: 0.39, y: 0.06, w: 0.22, h: 0.22 };
+      case "neck":
+        return { x: 0.34, y: 0.16, w: 0.32, h: 0.22 };
+      case "torsoBase":
+        return { x: 0.26, y: 0.22, w: 0.48, h: 0.44 };
+      case "torsoMid":
+        return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+      case "torsoOuter":
+        return { x: 0.18, y: 0.18, w: 0.64, h: 0.58 };
+      case "legsBase":
+        return { x: 0.30, y: 0.56, w: 0.40, h: 0.36 };
+      case "legsMid":
+        return { x: 0.22, y: 0.52, w: 0.56, h: 0.48 };
+      case "legsOuter":
+        return { x: 0.20, y: 0.50, w: 0.60, h: 0.46 };
+      case "shoes":
+        return { x: 0.24, y: 0.82, w: 0.52, h: 0.18 };
+      default:
+        return { x: 0.22, y: 0.20, w: 0.56, h: 0.50 };
+    }
   }
-}
 
-async function composeTryOn({ baseBuf, garmentBuf, slot }) {
-  // Base -> zistíme rozmery
-  const baseMeta = await sharp(baseBuf).metadata();
-  const W = baseMeta.width || 1024;
-  const H = baseMeta.height || 1024;
+  async function composeTryOn({ baseBuf, garmentBuf, slot }) {
+    const baseMeta = await sharp(baseBuf).metadata();
+    const W = baseMeta.width || 1024;
+    const H = baseMeta.height || 1024;
 
-  const box = getTryOnBox(slot);
-  const left = Math.round(box.x * W);
-  const top = Math.round(box.y * H);
-  const bw = Math.round(box.w * W);
-  const bh = Math.round(box.h * H);
+    const box = getTryOnBox(slot);
+    const left = Math.round(box.x * W);
+    const top = Math.round(box.y * H);
+    const bw = Math.round(box.w * W);
+    const bh = Math.round(box.h * H);
 
-  // garment: orež transparentný okraj, zmenši do boxu
-  const gTrim = await sharp(garmentBuf)
-    .ensureAlpha()
-    .trim()
-    .png()
-    .toBuffer();
+    const gTrim = await sharp(garmentBuf)
+      .ensureAlpha()
+      .trim()
+      .png()
+      .toBuffer();
 
-  const gResized = await sharp(gTrim)
-    .resize(bw, bh, { fit: "inside" })
-    .png()
-    .toBuffer();
+    const gResized = await sharp(gTrim)
+      .resize(bw, bh, { fit: "inside" })
+      .png()
+      .toBuffer();
 
-  // trochu “prirodzenejšie” = jemný tieň
-  const shadow = await sharp(gResized)
-    .clone()
-    .blur(6)
-    .modulate({ brightness: 0.25 })
-    .png()
-    .toBuffer();
+    const shadow = await sharp(gResized)
+      .clone()
+      .blur(6)
+      .modulate({ brightness: 0.25 })
+      .png()
+      .toBuffer();
 
-  const out = await sharp(baseBuf)
-    .ensureAlpha()
-    .composite([
-      { input: shadow, left: left + 6, top: top + 10, blend: "over", opacity: 0.30 },
-      { input: gResized, left, top, blend: "over" },
-    ])
-    .png()
-    .toBuffer();
+    const out = await sharp(baseBuf)
+      .ensureAlpha()
+      .composite([
+        { input: shadow, left: left + 6, top: top + 10, blend: "over", opacity: 0.30 },
+        { input: gResized, left, top, blend: "over" },
+      ])
+      .png()
+      .toBuffer();
 
-  return out;
-}
+    return out;
+  }
 
-function buildStorageDownloadUrl(bucketName, path, token) {
-  const encoded = encodeURIComponent(path);
-  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
-}
+  function buildStorageDownloadUrl(bucketName, path, token) {
+    const encoded = encodeURIComponent(path);
+    return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${encoded}?alt=media&token=${token}`;
+  }
 
-// ===========================================================================
-// ✅ NEW: A architektúra job systém – callable: requestTryOnJob
-// Firestore: users/{uid}/tryon_jobs/{jobId}
-// Storage:  tryon_results/{uid}/{jobId}.png
-// Fake provider: uloží garmentImageUrl ako result (len na otestovanie pipeline)
-// ===========================================================================
-exports.requestTryOnJob = functions
-  .region("us-central1")
-  .https.onCall(async (data, context) => {
-    if (!context.auth || !context.auth.uid) {
-      throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
-    }
+  // ===========================================================================
+  // ✅ requestTryOnJob
+  // ===========================================================================
+  exports.requestTryOnJob = functions
+    .region("us-central1")
+    .https.onCall(async (data, context) => {
+      if (!context.auth || !context.auth.uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+      }
 
-    const uid = context.auth.uid;
+      const uid = context.auth.uid;
 
-    const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
-    const slot = String(data?.slot || "").trim();
-    const sessionId = String(data?.sessionId || "").trim();
-    const mannequinGender = String(data?.mannequinGender || "male").trim(); // "male" | "female"
+      const garmentImageUrl = String(data?.garmentImageUrl || "").trim();
+      const slot = String(data?.slot || "").trim();
+      const sessionId = String(data?.sessionId || "").trim();
+      const mannequinGender = String(data?.mannequinGender || "male").trim();
 
-    if (!garmentImageUrl) {
-      throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
-    }
-    if (!slot) {
-      throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
-    }
-    if (!sessionId) {
-      throw new functions.https.HttpsError("invalid-argument", "Chýba sessionId.");
-    }
+      if (!garmentImageUrl) {
+        throw new functions.https.HttpsError("invalid-argument", "Chýba garmentImageUrl.");
+      }
+      if (!slot) {
+        throw new functions.https.HttpsError("invalid-argument", "Chýba slot.");
+      }
+      if (!sessionId) {
+        throw new functions.https.HttpsError("invalid-argument", "Chýba sessionId.");
+      }
 
-    const bucket = storage.bucket();
-    const bucketName = bucket.name;
+      const bucket = storage.bucket();
+      const bucketName = bucket.name;
 
-    // 1) create job doc
-    const jobRef = db.collection("users").doc(uid).collection("tryon_jobs").doc();
-    const jobId = jobRef.id;
-    const now = admin.firestore.FieldValue.serverTimestamp();
+      const jobRef = db.collection("users").doc(uid).collection("tryon_jobs").doc();
+      const jobId = jobRef.id;
+      const now = admin.firestore.FieldValue.serverTimestamp();
 
-    await jobRef.set(
-      {
-        status: "queued", // queued | processing | done | error
-        createdAt: now,
-        updatedAt: now,
-        params: {
-          garmentImageUrl,
-          slot,
-          sessionId,
-          mannequinGender,
-        },
-      },
-      { merge: true }
-    );
-
-    try {
-      // 2) mark processing
-      await jobRef.set({ status: "processing", updatedAt: now }, { merge: true });
-
-      // 3) FAKE PROVIDER: len stiahneme garment a uložíme ako result
-      const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
-
-      const resultPath = `tryon_results/${uid}/${jobId}.png`;
-      const token = crypto.randomUUID();
-
-      await bucket.file(resultPath).save(garmentBuf, {
-        contentType: "image/png",
-        metadata: {
-          metadata: {
-            firebaseStorageDownloadTokens: token,
-          },
-        },
-      });
-
-      const resultUrl = buildStorageDownloadUrl(bucketName, resultPath, token);
-
-      // 4) mark done
       await jobRef.set(
         {
-          status: "done",
+          status: "queued",
+          createdAt: now,
           updatedAt: now,
-          resultPath,
-          resultUrl,
+          params: { garmentImageUrl, slot, sessionId, mannequinGender },
         },
         { merge: true }
       );
 
-      return { jobId };
-    } catch (e) {
-      logger.error("requestTryOnJob error:", e);
+      try {
+        await jobRef.set({ status: "processing", updatedAt: now }, { merge: true });
 
-      await jobRef.set(
-        {
-          status: "error",
-          updatedAt: now,
-          errorMessage: e?.message || String(e),
-        },
-        { merge: true }
-      );
+        const garmentBuf = await downloadUrlToBuffer(garmentImageUrl);
 
-      throw new functions.https.HttpsError(
-        "internal",
-        "Try-on job sa nepodaril: " + (e?.message || String(e))
-      );
-    }
-  });
+        const resultPath = `tryon_results/${uid}/${jobId}.png`;
+        const token = crypto.randomUUID();
+
+        await bucket.file(resultPath).save(garmentBuf, {
+          contentType: "image/png",
+          metadata: { metadata: { firebaseStorageDownloadTokens: token } },
+        });
+
+        const resultUrl = buildStorageDownloadUrl(bucketName, resultPath, token);
+
+        await jobRef.set(
+          { status: "done", updatedAt: now, resultPath, resultUrl },
+          { merge: true }
+        );
+
+        return { jobId };
+      } catch (e) {
+        logger.error("requestTryOnJob error:", e);
+
+        await jobRef.set(
+          { status: "error", updatedAt: now, errorMessage: e?.message || String(e) },
+          { merge: true }
+        );
+
+        throw new functions.https.HttpsError(
+          "internal",
+          "Try-on job sa nepodaril: " + (e?.message || String(e))
+        );
+      }
+    });

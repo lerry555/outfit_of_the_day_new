@@ -1,9 +1,7 @@
-// lib/constants/app_constants.dart
-
 import 'package:flutter/material.dart';
 
 /// ---------------------------------------------------------------------------
-/// ZÁKLADNÉ KONŠTANTY, ktoré už používa appka (AddClothingScreen, šatník...)
+/// ZÁKLADNÉ KONŠTANTY
 /// ---------------------------------------------------------------------------
 
 const List<String> categories = [
@@ -35,14 +33,14 @@ const List<String> colors = [
 ];
 
 const List<String> styles = [
-  // nové (AI)
   'casual',
   'streetwear',
   'sport',
   'elegant',
   'smart casual',
 
-  // staršie/legacy (kvôli existujúcim uloženým dátam)
+  // legacy kompatibilita
+  'športový',
   'sportový',
   'elegantný',
   'business',
@@ -67,54 +65,100 @@ const List<String> seasons = [
   'celoročne',
 ];
 
-// Alias, aby sedeli názvy v AddClothingScreen:
 const List<String> allowedColors = colors;
 const List<String> allowedStyles = styles;
 const List<String> allowedPatterns = patterns;
 const List<String> allowedSeasons = seasons;
 
-/// Toto používa tvoj starý jednoduchý AddClothingScreen pre hlavnú kategóriu.
+/// ---------------------------------------------------------------------------
+/// LAYER ROLE – interné sloty pre outfit skladanie
+/// ---------------------------------------------------------------------------
+
+const List<String> layerRoles = [
+  'base_layer',
+  'main_top',
+  'outer_layer',
+  'base_bottom',
+  'main_bottom',
+  'one_piece',
+  'footwear',
+  'accessory',
+];
+
+/// ---------------------------------------------------------------------------
+/// STARÝ JEDNODUCHÝ SCREEN – kompatibilita
+/// ---------------------------------------------------------------------------
+
 const Map<String, List<String>> subcategoriesByCategory = {
   'Vrch': [
     'Tričko s krátkym rukávom',
     'Tričko s dlhým rukávom',
     'Tielko',
+    'Spodné tielko',
+    'Top',
+    'Crop top',
+    'Body',
+    'Blúzka',
     'Košeľa',
     'Mikina',
     'Sveter',
     'Rolák',
-    'Top',
-    'Blúzka',
     'Kardigan',
+    'Sako / blejzer',
+    'Vesta',
+    'Bunda',
+    'Kabát',
   ],
   'Spodok': [
     'Rifle',
+    'Skinny rifle',
+    'Rifle wide leg',
+    'Mom jeans',
     'Nohavice',
+    'Elegantné nohavice',
     'Chino nohavice',
-    'Tepláky',
+    'Teplákové nohavice',
     'Joggery',
-    'Šortky',
-    'Sukňa',
     'Legíny',
+    'Športové legíny',
+    'Šortky',
+    'Športové šortky',
+    'Sukňa',
+    'Mini sukňa',
+    'Midi sukňa',
+    'Maxi sukňa',
+    'Šaty',
+    'Overal',
   ],
   'Obuv': [
-    'Tenisky',
+    'Fashion tenisky',
+    'Športové tenisky',
+    'Bežecké tenisky',
     'Členkové čižmy',
     'Vysoké čižmy',
-    'Kozačky',
+    'Čižmy nad kolená',
     'Sandále',
+    'Sandále na opätku',
     'Šľapky',
     'Žabky',
     'Poltopánky',
+    'Mokasíny',
+    'Lodičky',
+    'Balerínky',
   ],
   'Doplnky': [
     'Čiapka',
     'Šiltovka',
+    'Bucket hat',
     'Šál',
+    'Šatka',
     'Rukavice',
-    'Okuliare',
+    'Slnečné okuliare',
     'Kabelka',
+    'Crossbody taška',
     'Ruksak',
+    'Listová kabelka',
+    'Ľadvinka',
     'Opasok',
     'Hodinky',
     'Šperky',
@@ -122,17 +166,15 @@ const Map<String, List<String>> subcategoriesByCategory = {
 };
 
 /// ---------------------------------------------------------------------------
-/// NOVÝ PROFESIONÁLNY STROM (mainGroup -> category -> subCategory)
+/// PROFESIONÁLNY STROM
 /// ---------------------------------------------------------------------------
 
-/// Hlavné skupiny
 const Map<String, String> mainCategoryGroups = {
   'oblecenie': 'Oblečenie',
   'obuv': 'Obuv',
   'doplnky': 'Doplnky',
 };
 
-/// Kategórie v rámci hlavnej skupiny
 const Map<String, List<String>> categoryTree = {
   'oblecenie': [
     'tricka_topy',
@@ -160,14 +202,13 @@ const Map<String, List<String>> categoryTree = {
   ],
 };
 
-/// Labely kategórií
 const Map<String, String> categoryLabels = {
   'tricka_topy': 'Tričká & topy',
   'kosele': 'Košele',
   'mikiny': 'Mikiny',
   'svetre': 'Svetre',
   'bundy_kabaty': 'Bundy & kabáty',
-  'nohavice_rifle': 'Nohavice & rifle',
+  'nohavice_rifle': 'Nohavice',
   'sortky_sukne': 'Šortky & sukne',
   'saty_overaly': 'Šaty & overaly',
   'sport_oblecenie': 'Šport – oblečenie',
@@ -184,16 +225,18 @@ const Map<String, String> categoryLabels = {
   'dopl_ostatne': 'Doplnky – ostatné',
 };
 
-/// Podkategórie v rámci kategórie
 const Map<String, List<String>> subCategoryTree = {
   'tricka_topy': [
     'tricko',
     'tricko_dlhy_rukav',
     'tielko',
+    'undershirt',
+    'top_basic',
     'crop_top',
     'polo_tricko',
     'body',
     'korzet_top',
+    'bluzka',
   ],
   'kosele': [
     'kosela_klasicka',
@@ -230,20 +273,24 @@ const Map<String, List<String>> subCategoryTree = {
     'rifle_skinny',
     'rifle_wide_leg',
     'rifle_mom',
+    'nohavice_klasicke',
     'nohavice_chino',
     'nohavice_teplakove',
     'nohavice_joggery',
     'nohavice_elegantne',
     'nohavice_cargo',
+    'leginy',
   ],
   'sortky_sukne': [
     'sortky',
     'sortky_sportove',
+    'sukna',
     'sukna_mini',
     'sukna_midi',
     'sukna_maxi',
   ],
   'saty_overaly': [
+    'saty',
     'saty_kratke',
     'saty_midi',
     'saty_maxi',
@@ -318,16 +365,18 @@ const Map<String, List<String>> subCategoryTree = {
   ],
 };
 
-/// Labely podkategórií (používaš v autocomplete názvu)
 const Map<String, String> subCategoryLabels = {
   // Tričká & topy
   'tricko': 'Tričko s krátkym rukávom',
   'tricko_dlhy_rukav': 'Tričko s dlhým rukávom',
   'tielko': 'Tielko',
+  'undershirt': 'Spodné tielko',
+  'top_basic': 'Top',
   'crop_top': 'Crop top',
   'polo_tricko': 'Polo tričko',
   'body': 'Body',
   'korzet_top': 'Korzet (top)',
+  'bluzka': 'Blúzka',
 
   // Košele
   'kosela_klasicka': 'Klasická košeľa',
@@ -364,20 +413,24 @@ const Map<String, String> subCategoryLabels = {
   'rifle_skinny': 'Skinny rifle',
   'rifle_wide_leg': 'Rifle wide leg',
   'rifle_mom': 'Mom jeans',
+  'nohavice_klasicke': 'Nohavice',
   'nohavice_chino': 'Chino nohavice',
   'nohavice_teplakove': 'Teplákové nohavice',
   'nohavice_joggery': 'Joggery',
   'nohavice_elegantne': 'Elegantné nohavice',
   'nohavice_cargo': 'Cargo nohavice',
+  'leginy': 'Legíny',
 
   // Šortky & sukne
   'sortky': 'Šortky',
   'sortky_sportove': 'Športové šortky',
+  'sukna': 'Sukňa',
   'sukna_mini': 'Mini sukňa',
   'sukna_midi': 'Midi sukňa',
   'sukna_maxi': 'Maxi sukňa',
 
   // Šaty & overaly
+  'saty': 'Šaty',
   'saty_kratke': 'Krátke šaty',
   'saty_midi': 'Midi šaty',
   'saty_maxi': 'Maxi šaty',
@@ -448,7 +501,129 @@ const Map<String, String> subCategoryLabels = {
   'sport_taska': 'Športová taška',
   'potitka': 'Potítka',
 };
-// Premium značky (používané v PremiumScreen)
+
+/// ---------------------------------------------------------------------------
+/// Layer role podľa subCategoryKey
+/// ---------------------------------------------------------------------------
+
+const Map<String, String> subCategoryLayerRoles = {
+  // top base layer
+  'undershirt': 'base_layer',
+
+  // main top
+  'tricko': 'main_top',
+  'tricko_dlhy_rukav': 'main_top',
+  'tielko': 'main_top',
+  'top_basic': 'main_top',
+  'crop_top': 'main_top',
+  'polo_tricko': 'main_top',
+  'body': 'main_top',
+  'korzet_top': 'main_top',
+  'bluzka': 'main_top',
+  'kosela_klasicka': 'main_top',
+  'kosela_oversize': 'main_top',
+  'kosela_flanelova': 'main_top',
+  'sveter_klasicky': 'main_top',
+  'sveter_rolak': 'main_top',
+  'sveter_kardigan': 'main_top',
+  'sveter_pleteny': 'main_top',
+  'sport_tricko': 'main_top',
+  'sport_podprsenka': 'main_top',
+
+  // outer layer
+  'mikina_klasicka': 'outer_layer',
+  'mikina_na_zips': 'outer_layer',
+  'mikina_s_kapucnou': 'outer_layer',
+  'mikina_oversize': 'outer_layer',
+  'bunda_riflova': 'outer_layer',
+  'bunda_kozena': 'outer_layer',
+  'bunda_bomber': 'outer_layer',
+  'bunda_prechodna': 'outer_layer',
+  'bunda_zimna': 'outer_layer',
+  'kabat': 'outer_layer',
+  'trenchcoat': 'outer_layer',
+  'sako': 'outer_layer',
+  'vesta': 'outer_layer',
+  'prsiplast': 'outer_layer',
+  'flisova_bunda': 'outer_layer',
+  'sport_mikina': 'outer_layer',
+  'softshell_bunda': 'outer_layer',
+
+  // base bottom
+  'leginy': 'base_bottom',
+  'sport_leginy': 'base_bottom',
+
+  // main bottom
+  'rifle': 'main_bottom',
+  'rifle_skinny': 'main_bottom',
+  'rifle_wide_leg': 'main_bottom',
+  'rifle_mom': 'main_bottom',
+  'nohavice_klasicke': 'main_bottom',
+  'nohavice_chino': 'main_bottom',
+  'nohavice_teplakove': 'main_bottom',
+  'nohavice_joggery': 'main_bottom',
+  'nohavice_elegantne': 'main_bottom',
+  'nohavice_cargo': 'main_bottom',
+  'sortky': 'main_bottom',
+  'sortky_sportove': 'main_bottom',
+  'sukna': 'main_bottom',
+  'sukna_mini': 'main_bottom',
+  'sukna_midi': 'main_bottom',
+  'sukna_maxi': 'main_bottom',
+
+  // one piece
+  'saty': 'one_piece',
+  'saty_kratke': 'one_piece',
+  'saty_midi': 'one_piece',
+  'saty_maxi': 'one_piece',
+  'saty_koselove': 'one_piece',
+  'saty_bodycon': 'one_piece',
+  'overal': 'one_piece',
+  'sport_suprava': 'one_piece',
+
+  // footwear
+  'tenisky_fashion': 'footwear',
+  'tenisky_sportove': 'footwear',
+  'tenisky_bezecke': 'footwear',
+  'lodicky': 'footwear',
+  'sandale_opatok': 'footwear',
+  'balerinky': 'footwear',
+  'mokasiny': 'footwear',
+  'poltopanky': 'footwear',
+  'obuv_platforma': 'footwear',
+  'cizmy_clenkove': 'footwear',
+  'cizmy_vysoke': 'footwear',
+  'cizmy_nad_kolena': 'footwear',
+  'gumaky': 'footwear',
+  'snehule': 'footwear',
+  'sandale': 'footwear',
+  'slapky': 'footwear',
+  'zabky': 'footwear',
+  'espadrilky': 'footwear',
+  'obuv_treningova': 'footwear',
+  'obuv_turisticka': 'footwear',
+
+  // accessory
+  'ciapka': 'accessory',
+  'siltovka': 'accessory',
+  'bucket_hat': 'accessory',
+  'sal': 'accessory',
+  'satka': 'accessory',
+  'rukavice': 'accessory',
+  'kabelka': 'accessory',
+  'taska_crossbody': 'accessory',
+  'ruksak': 'accessory',
+  'kabelka_listova': 'accessory',
+  'ladvinka': 'accessory',
+  'slnecne_okuliare': 'accessory',
+  'opasok': 'accessory',
+  'penazenka': 'accessory',
+  'hodinky': 'accessory',
+  'sperky': 'accessory',
+  'sport_taska': 'accessory',
+  'potitka': 'accessory',
+};
+
 const List<String> premiumBrands = [
   'Nike',
   'Adidas',
