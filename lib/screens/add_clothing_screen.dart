@@ -71,7 +71,42 @@ Uint8List _prepareJpgForEditing(Map<String, dynamic> args) {
     img.encodeJpg(out, quality: 95),
   );
 }
+/// ✅ UPLOAD helper mimo UI thread:
+/// - zmenší finálnu fotku pred uploadom do Storage
+/// - zachová pomer strán
+/// - zmenšuje LEN keď je fotka väčšia než limit
+/// - vysoká kvalita, aby cutout a AI ostali pekné
+Uint8List _prepareJpgForUpload(Map<String, dynamic> args) {
+  final Uint8List bytes = args['bytes'] as Uint8List;
+  final int maxSide = args['maxSide'] as int;
+  final int quality = args['quality'] as int;
 
+  final decoded = img.decodeImage(bytes);
+  if (decoded == null) return bytes;
+
+  final int w = decoded.width;
+  final int h = decoded.height;
+  final int longest = w > h ? w : h;
+
+  img.Image out = decoded;
+
+  if (longest > maxSide) {
+    final double scale = maxSide / longest;
+    final int nw = (w * scale).round();
+    final int nh = (h * scale).round();
+
+    out = img.copyResize(
+      decoded,
+      width: nw,
+      height: nh,
+      interpolation: img.Interpolation.average,
+    );
+  }
+
+  return Uint8List.fromList(
+    img.encodeJpg(out, quality: quality),
+  );
+}
 class AddClothingScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
   final String? imageUrl;
@@ -1110,6 +1145,21 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return buffer.toString();
   }
 
+  String? _findCategoryForSubKeyLocal(String subKey) {
+    for (final entry in subCategoryTree.entries) {
+      if (entry.value.contains(subKey)) return entry.key;
+    }
+    return null;
+  }
+
+
+  String? _findMainGroupForCategoryLocal(String? categoryKey) {
+    if (categoryKey == null) return null;
+    for (final entry in categoryTree.entries) {
+      if (entry.value.contains(categoryKey)) return entry.key;
+    }
+    return null;
+  }
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
@@ -1433,7 +1483,25 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final ref = _storage.ref().child(storagePath);
 
     try {
-      final task = await ref.putFile(_localImageFile!).timeout(const Duration(seconds: 25));
+      final rawBytes = await _localImageFile!.readAsBytes();
+
+      final uploadBytes = await compute<Map<String, dynamic>, Uint8List>(
+        _prepareJpgForUpload,
+        {
+          'bytes': rawBytes,
+          'maxSide': 1600,
+          'quality': 88,
+        },
+      );
+
+      final metadata = SettableMetadata(
+        contentType: 'image/jpeg',
+      );
+
+      final task = await ref
+          .putData(uploadBytes, metadata)
+          .timeout(const Duration(seconds: 25));
+
       final url = await task.ref.getDownloadURL().timeout(const Duration(seconds: 15));
 
       setState(() {
@@ -1895,12 +1963,90 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return out.where((e) => seen.add(e)).toList();
   }
 
-  String _colorToPluralAdjective(String color) {
-    if (color.endsWith('á')) return '${color.substring(0, color.length - 1)}é';
-    if (color.endsWith('a')) return '${color.substring(0, color.length - 1)}e';
-    return color;
+  bool _isPluralSubcategory(String subKey, String subLabelRaw) {
+    final k = subKey.toLowerCase();
+    final l = subLabelRaw.toLowerCase();
+
+    return k.startsWith('nohavice_') ||
+        k.startsWith('rifle') ||
+        k.startsWith('sortky') ||
+        k.startsWith('leginy') ||
+        k.startsWith('tenisky_') ||
+        k.startsWith('sandale') ||
+        k.startsWith('cizmy_') ||
+        k == 'gumaky' ||
+        k == 'snehule' ||
+        k == 'zabky' ||
+        k == 'espadrilky' ||
+        l.contains('nohavice') ||
+        l.contains('rifle') ||
+        l.contains('šortky') ||
+        l.contains('legíny') ||
+        l.contains('tenisky') ||
+        l.contains('sandále') ||
+        l.contains('čižmy') ||
+        l.contains('gumáky') ||
+        l.contains('snehule') ||
+        l.contains('žabky') ||
+        l.contains('espadrilky');
   }
 
+  bool _isFeminineSubcategory(String subKey, String subLabelRaw) {
+    final k = subKey.toLowerCase();
+    final l = subLabelRaw.toLowerCase();
+
+    return k.startsWith('mikina_') ||
+        k.startsWith('bluzka') ||
+        k.startsWith('kosela_') ||
+        k.startsWith('bunda_') ||
+        k == 'kabat' ||
+        k == 'vesta' ||
+        k == 'prsiplast' ||
+        k == 'flisova_bunda' ||
+        k.startsWith('sukna') ||
+        k.startsWith('saty') ||
+        k == 'ciapka' ||
+        k == 'siltovka' ||
+        k == 'kabelka' ||
+        k == 'crossbody' ||
+        k == 'totebag' ||
+        k == 'listova_kabelka' ||
+        l.contains('mikina') ||
+        l.contains('blúzka') ||
+        l.contains('košeľa') ||
+        l.contains('bunda') ||
+        l.contains('kabát') ||
+        l.contains('vesta') ||
+        l.contains('pršiplášť') ||
+        l.contains('sukňa') ||
+        l.contains('šaty') ||
+        l.contains('čiapka') ||
+        l.contains('šiltovka') ||
+        l.contains('kabelka');
+  }
+
+  String _colorToAdjectiveForSubcategory(
+      String color,
+      String subKey,
+      String subLabelRaw,
+      ) {
+    final c = color.trim();
+    if (c.isEmpty) return c;
+
+    if (_isPluralSubcategory(subKey, subLabelRaw)) {
+      if (c.endsWith('á')) return '${c.substring(0, c.length - 1)}é';
+      if (c.endsWith('a')) return '${c.substring(0, c.length - 1)}e';
+      return c;
+    }
+
+    if (_isFeminineSubcategory(subKey, subLabelRaw)) {
+      if (c.endsWith('é')) return '${c.substring(0, c.length - 1)}á';
+      if (c.endsWith('e')) return '${c.substring(0, c.length - 1)}a';
+      return c;
+    }
+
+    return c;
+  }
   String _computeAutoNameWithColor() {
     final subKey = _selectedSubCategoryKey;
     final subLabelRaw = (subCategoryLabels[subKey] ?? '').trim();
@@ -1910,7 +2056,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     String colorPart = '';
     if (_selectedColors.isNotEmpty) {
-      colorPart = _colorToPluralAdjective(_selectedColors.first).trim();
+      colorPart = _colorToAdjectiveForSubcategory(
+        _selectedColors.first,
+        subKey ?? '',
+        subLabelRaw ?? '',
+      ).trim();
     }
 
     final subLabel = lowerFirst(subLabelRaw);
@@ -1998,20 +2148,51 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
       final String rawType = (m['type'] ?? '').toString().trim();
-      final String canonical = (m['canonical_type'] ?? '').toString().trim();
+      String canonical = (m['canonical_type'] ?? '').toString().trim();
       final String brandFromAi = (m['brand'] ?? '').toString().trim();
+      final String typeEvidence = '$rawType $prettyType'.toLowerCase();
+      final String canonicalLower = canonical.toLowerCase();
 
+      if (canonicalLower == 'jacket') {
+        final bool saysMikina =
+            typeEvidence.contains('mikina') ||
+                typeEvidence.contains('hoodie') ||
+                typeEvidence.contains('sweatshirt');
+
+        final bool saysHood =
+            typeEvidence.contains('kapuc') ||
+                typeEvidence.contains('hood');
+
+        if (saysMikina && saysHood) {
+          print(
+            'AI TYPE GUARD => overriding canonical "jacket" to "hoodie" '
+                'because raw="$rawType", pretty="$prettyType"',
+          );
+          canonical = 'hoodie';
+        } else if (saysMikina) {
+          print(
+            'AI TYPE GUARD => overriding canonical "jacket" to "sweatshirt" '
+                'because raw="$rawType", pretty="$prettyType"',
+          );
+          canonical = 'sweatshirt';
+        }
+      }
       final colorsFromAi = _toStringList(m['colors'] ?? m['color']);
       final stylesFromAi = _toStringList(m['style'] ?? m['styles']);
       final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
       final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
+      final normStyles = stylesFromAi.map((e) => _norm(e)).toList();
+      final normPretty = _norm(prettyType);
+      final normRawType = _norm(rawType);
+      final normCanonical = _norm(canonical);
+      final normSeasons = seasonsFromAi.map((e) => _norm(e)).toList();
 
       String? nextMain;
       String? nextCat;
       String? nextSub;
       String? nextLayerRole;
 
-      if (canonical.isNotEmpty) {
+      if (canonical.isNotEmpty && canonical != 'sneakers' && canonical != 'sneaker') {
         final mapped = AiClothingParser.fromCanonicalType(canonical);
         if (mapped != null) {
           nextMain = mapped.mainGroupKey;
@@ -2020,7 +2201,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           nextLayerRole = mapped.layerRole;
         }
       }
-      if (canonical.isNotEmpty) {
+      if (canonical.isNotEmpty && canonical != 'sneakers' && canonical != 'sneaker') {
         final mapped = AiClothingParser.fromCanonicalType(canonical);
         if (mapped != null) {
           nextMain = mapped.mainGroupKey;
@@ -2061,9 +2242,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
         );
       }
+      final bool jacketLooksWinter =
+          nextSub == 'bunda_prechodna' &&
+              (normCanonical == 'jacket' || normRawType.contains('bunda')) &&
+              (
+                  normStyles.contains('outdoor') ||
+                      normStyles.contains('sportovy') ||
+                      normStyles.contains('sportový') ||
+                      normPretty.contains('outdoor') ||
+                      normPretty.contains('zimna') ||
+                      normPretty.contains('zimná') ||
+                      normRawType.contains('zimna') ||
+                      normRawType.contains('zimná') ||
+                      normSeasons.contains('zima')
+              );
 
+      if (jacketLooksWinter) {
+        nextSub = 'bunda_zimna';
+        nextCat = _findCategoryForSubKeyLocal('bunda_zimna');
+        nextMain = _findMainGroupForCategoryLocal(nextCat);
+        nextLayerRole = subCategoryLayerRoles['bunda_zimna'] ?? 'outer_layer';
+
+        print(
+          'AI JACKET WINTER GUARD => overriding subcategory to "bunda_zimna" '
+              'because canonical="$canonical", raw="$rawType", pretty="$prettyType", '
+              'styles="$stylesFromAi", seasons="$seasonsFromAi"',
+        );
+      }
       _reachMilestone(2);
-
+      print('CHECKPOINT 1 => after _reachMilestone(2)');
       final filteredColors = _normalizeColorsList(colorsFromAi);
       final normalizedStylesFromAi = _normalizeStylesList(stylesFromAi);
       final resolvedSubKeyForRules = nextSub ?? '';
@@ -2082,93 +2289,76 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         subCategoryKey: resolvedSubKeyForRules,
         patterns: fixedPatterns,
       );
-
+      print('CHECKPOINT 2 => styles/patterns done');
+      print('CHECKPOINT 2A => nextSub=$nextSub');
+      print('CHECKPOINT 2B => fixedPatterns=$fixedPatterns');
+      print('CHECKPOINT 2C => fixedStyles=$fixedStyles');
       final filteredSeasonsRaw = seasonsFromAi
           .map((e) => e.toString().trim())
           .where((s) => allowedSeasons.contains(s))
           .toList();
+      print('CHECKPOINT S1 => filteredSeasonsRaw=$filteredSeasonsRaw');
 
       List<String> filteredSeasons = _sanitizeSeasons(filteredSeasonsRaw);
+      print('CHECKPOINT S2 => filteredSeasons after first sanitize=$filteredSeasons');
 
       final typeForSeason = nextSub ?? '';
+      print('CHECKPOINT S3 => typeForSeason=$typeForSeason');
 
-      if (typeForSeason == 'tielko') {
-        filteredSeasons = ['jar', 'leto'];
-      } else if (typeForSeason == 'undershirt') {
-        filteredSeasons = ['celoročne'];
-      } else if (typeForSeason == 'tricko' ||
-          typeForSeason == 'tricko_dlhy_rukav' ||
-          typeForSeason == 'top_basic' ||
-          typeForSeason == 'polo_tricko' ||
-          typeForSeason == 'bluzka' ||
-          typeForSeason == 'kosela_klasicka' ||
-          typeForSeason == 'kosela_oversize' ||
-          typeForSeason == 'kosela_flanelova' ||
-          typeForSeason == 'rifle' ||
-          typeForSeason == 'rifle_skinny' ||
-          typeForSeason == 'rifle_wide_leg' ||
-          typeForSeason == 'rifle_mom' ||
-          typeForSeason == 'nohavice_klasicke' ||
-          typeForSeason == 'nohavice_chino' ||
-          typeForSeason == 'nohavice_teplakove' ||
-          typeForSeason == 'nohavice_joggery' ||
-          typeForSeason == 'nohavice_elegantne' ||
-          typeForSeason == 'nohavice_cargo' ||
-          typeForSeason == 'leginy' ||
-          typeForSeason == 'sport_leginy' ||
-          typeForSeason == 'tenisky_fashion' ||
-          typeForSeason == 'tenisky_sportove' ||
-          typeForSeason == 'tenisky_bezecke' ||
-          typeForSeason == 'mikina_klasicka' ||
-          typeForSeason == 'mikina_na_zips' ||
-          typeForSeason == 'mikina_s_kapucnou' ||
-          typeForSeason == 'mikina_oversize' ||
-          typeForSeason == 'sport_mikina') {
-        filteredSeasons = ['celoročne'];
-      } else if (typeForSeason == 'crop_top' ||
-          typeForSeason == 'sortky' ||
-          typeForSeason == 'sortky_sportove' ||
-          typeForSeason == 'sport_sortky' ||
-          typeForSeason == 'sukna' ||
-          typeForSeason == 'sukna_mini' ||
-          typeForSeason == 'sukna_midi' ||
-          typeForSeason == 'sukna_maxi' ||
-          typeForSeason == 'saty' ||
-          typeForSeason == 'saty_kratke' ||
-          typeForSeason == 'saty_midi' ||
-          typeForSeason == 'saty_maxi' ||
-          typeForSeason == 'saty_koselove' ||
-          typeForSeason == 'saty_bodycon' ||
-          typeForSeason == 'sandale' ||
-          typeForSeason == 'sandale_opatok' ||
-          typeForSeason == 'slapky' ||
-          typeForSeason == 'zabky' ||
-          typeForSeason == 'espadrilky') {
-        filteredSeasons = ['jar', 'leto'];
-      } else if (typeForSeason == 'bunda_prechodna' ||
-          typeForSeason == 'bunda_riflova' ||
-          typeForSeason == 'bunda_kozena' ||
-          typeForSeason == 'bunda_bomber' ||
-          typeForSeason == 'trenchcoat' ||
-          typeForSeason == 'sako' ||
-          typeForSeason == 'vesta' ||
-          typeForSeason == 'flisova_bunda' ||
-          typeForSeason == 'softshell_bunda') {
-        filteredSeasons = ['jar', 'jeseň'];
-      } else if (typeForSeason == 'sveter_klasicky' ||
-          typeForSeason == 'sveter_rolak' ||
-          typeForSeason == 'sveter_kardigan' ||
-          typeForSeason == 'sveter_pleteny' ||
-          typeForSeason == 'bunda_zimna' ||
-          typeForSeason == 'kabat' ||
-          typeForSeason == 'cizmy_clenkove' ||
-          typeForSeason == 'cizmy_vysoke' ||
-          typeForSeason == 'cizmy_nad_kolena' ||
-          typeForSeason == 'snehule') {
+      if (typeForSeason == 'bunda_zimna') {
+        print('CHECKPOINT DIRECT WINTER => forcing winter seasons');
         filteredSeasons = ['jeseň', 'zima'];
+        print('CHECKPOINT DX => after direct winter assign, filteredSeasons=$filteredSeasons');
+      } else {
+        print('CHECKPOINT B1 => entering season branch chain');
+
+        if (typeForSeason == 'tielko') {
+          filteredSeasons = ['jar', 'leto'];
+        } else if (typeForSeason == 'undershirt') {
+          filteredSeasons = ['celoročne'];
+        } else if (typeForSeason == 'tenisky_fashion' ||
+            typeForSeason == 'tenisky_sportove' ||
+            typeForSeason == 'tenisky_bezecke' ||
+            typeForSeason == 'obuv_treningova') {
+          filteredSeasons = ['jar', 'leto', 'jeseň'];
+        } else if (typeForSeason == 'bunda_prechodna' ||
+            typeForSeason == 'bunda_riflova' ||
+            typeForSeason == 'bunda_kozena' ||
+            typeForSeason == 'bunda_bomber' ||
+            typeForSeason == 'trenchcoat' ||
+            typeForSeason == 'sako' ||
+            typeForSeason == 'vesta' ||
+            typeForSeason == 'flisova_bunda' ||
+            typeForSeason == 'softshell_bunda') {
+        } else if (typeForSeason == 'sveter_klasicky' ||
+            typeForSeason == 'sveter_rolak' ||
+            typeForSeason == 'sveter_kardigan' ||
+            typeForSeason == 'sveter_pleteny') {
+
+          print('CHECKPOINT SWEATER BRANCH');
+
+          if (filteredSeasons.isEmpty || filteredSeasons.contains('celoročne')) {
+            filteredSeasons = ['jeseň', 'zima'];
+          }
+          if (filteredSeasons.isEmpty || filteredSeasons.contains('celoročne')) {
+            filteredSeasons = ['jar', 'jeseň'];
+          }
+        } else if (typeForSeason == 'crop_top' ||
+            typeForSeason == 'sortky' ||
+            typeForSeason == 'sortky_sportove' ||
+            typeForSeason == 'sport_sortky' ||
+            typeForSeason == 'sandale' ||
+            typeForSeason == 'sandale_opatok' ||
+            typeForSeason == 'slapky' ||
+            typeForSeason == 'zabky' ||
+            typeForSeason == 'espadrilky') {
+          filteredSeasons = ['jar', 'leto'];
+        }
       }
 
+      print('CHECKPOINT X => tesne pred final sanitize seasons, filteredSeasons=$filteredSeasons');
       filteredSeasons = _sanitizeSeasons(filteredSeasons);
+      print('CHECKPOINT 3 => seasons done: $filteredSeasons');
 
       if (canonical == 'tank_top') {
         filteredSeasons = ['jar', 'leto'];
@@ -2180,7 +2370,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         filteredSeasons = ['celoročne'];
       }
 
+      print('CHECKPOINT 4 => about to enter setState');
       if (!mounted) return;
+
       setState(() {
         if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
           _brandController.text = brandFromAi;
@@ -2213,7 +2405,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         _aiCompleted = true;
         _aiFailed = false;
         _isAiLoading = false;
+        print('CHECKPOINT 5 => inside setState, loading should end now');
       });
+
+      print('CHECKPOINT 6 => setState finished');
 
       if (_brandController.text.trim().isNotEmpty) {
         await _saveBrandSuggestion(_brandController.text.trim());
@@ -2225,7 +2420,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       if (!mounted) return;
       _stopProgressTimers();
-    } on TimeoutException {
+    }on TimeoutException {
       _stopProgressTimers();
       if (!mounted) return;
       setState(() {
@@ -2370,7 +2565,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           child: ClipRRect(
             borderRadius: BorderRadius.circular(18),
             child: Container(
-              height: 270,
+              height: 190,
               width: double.infinity,
               color: Colors.white.withOpacity(0.04),
               alignment: Alignment.center,
@@ -2388,7 +2583,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
             color: Colors.white.withOpacity(0.06),
@@ -2414,7 +2609,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   height: 1.3,
                 ),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
               ...List.generate(_progressSteps.length, (i) {
                 final done = _done[i];
                 final isActive = !done && i == _activeStepIndex;
@@ -2505,7 +2700,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 color: Colors.redAccent,
                 size: 22,
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 6),
               const Expanded(
                 child: Text(
                   'AI analýza zlyhala. Skús použiť inú fotku alebo pokračuj manuálne.',

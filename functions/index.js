@@ -359,7 +359,7 @@ exports.removeBackgroundOnUpload = functions
   .region("us-central1")
   .runWith({
     memory: "1GB",
-    timeoutSeconds: 180,
+    timeoutSeconds: 540,
     maxInstances: 2,
   })
   .storage.object()
@@ -471,7 +471,7 @@ exports.removeBackgroundOnUpload = functions
 exports.createProductPhotoOnCleanUpload = functions
   .region("us-central1")
   .runWith({
-    memory: "1GB",
+    memory: "2GB",
     timeoutSeconds: 120,
     maxInstances: 2,
   })

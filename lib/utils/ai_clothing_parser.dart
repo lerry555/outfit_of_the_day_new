@@ -839,13 +839,32 @@ class AiClothingParser {
     if (_hasAny(t, ['running shoes', 'bezecke tenisky', 'bežecké tenisky'])) {
       return fromCanonicalType('tenisky_bezecke');
     }
-    if (_hasAny(t, ['gym shoes', 'training shoes', 'sport sneakers', 'sportove tenisky', 'športové tenisky'])) {
+    if (_hasAny(t, [
+      'gym shoes',
+      'training shoes',
+      'sport sneakers',
+      'sportove tenisky',
+      'športové tenisky',
+      'running',
+      'training',
+      'gym',
+      'workout',
+      'athletic'
+    ])) {
       return fromCanonicalType('tenisky_sportove');
+    }
+    if (_hasAny(t, [
+      'fashion sneakers',
+      'casual sneakers',
+      'casual',
+      'streetwear',
+      'lifestyle'
+    ])) {
+      return fromCanonicalType('tenisky_fashion');
     }
     if (_hasAny(t, ['sneakers', 'sneaker', 'tenisky'])) {
       return fromCanonicalType('tenisky_fashion');
     }
-
     if (_hasAny(t, ['over the knee boots', 'thigh high boots', 'cizmy nad kolena', 'čižmy nad kolená'])) {
       return fromCanonicalType('cizmy_nad_kolena');
     }
