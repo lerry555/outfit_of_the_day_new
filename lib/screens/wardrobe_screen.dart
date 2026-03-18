@@ -487,10 +487,19 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         backgroundColor: const Color(0xFF0E0E0E),
         body: Stack(
           children: [
-            Positioned.fill(
-              child: Image.asset(
-                'assets/backgrounds/luxury_dark.png',
-                fit: BoxFit.cover,
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF07070A),
+                      Color(0xFF111116),
+                      Color(0xFF050507),
+                    ],
+                  ),
+                ),
               ),
             ),
             Positioned.fill(
@@ -1490,10 +1499,19 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       backgroundColor: const Color(0xFF0E0E0E),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
-              'assets/backgrounds/luxury_dark.png',
-              fit: BoxFit.cover,
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF07070A),
+                    Color(0xFF111116),
+                    Color(0xFF050507),
+                  ],
+                ),
+              ),
             ),
           ),
           Positioned.fill(

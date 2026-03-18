@@ -121,8 +121,6 @@ class AddClothingScreen extends StatefulWidget {
     this.isEditing = false,
   });
 
-  static const String _luxuryBgAsset = 'assets/backgrounds/luxury_dark.png';
-
   /// ✅ Bottom sheet picker (kamera prvá) -> potom otvorí Preflight (otáčanie + crop)
   static Future<void> openFromPicker(BuildContext context) async {
     final picker = ImagePicker();
@@ -241,10 +239,19 @@ class AddClothingScreen extends StatefulWidget {
           decoration: const BoxDecoration(color: Color(0xFF0C0C0C)),
           child: Stack(
             children: [
-              Positioned.fill(
-                child: Image.asset(
-                  AddClothingScreen._luxuryBgAsset,
-                  fit: BoxFit.cover,
+              const Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Color(0xFF07070A),
+                        Color(0xFF111116),
+                        Color(0xFF050507),
+                      ],
+                    ),
+                  ),
                 ),
               ),
               Positioned.fill(
@@ -528,9 +535,6 @@ class _PhotoPreflightScreen extends StatefulWidget {
 }
 
 class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
-  // ✅ luxury theme
-  static const _bgAsset = 'assets/backgrounds/luxury_dark.png';
-
   bool _saving = false;
 
   Uint8List? _imageBytes;
@@ -792,8 +796,20 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
       backgroundColor: const Color(0xFF0E0E0E),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(_bgAsset, fit: BoxFit.cover),
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF07070A),
+                    Color(0xFF111116),
+                    Color(0xFF050507),
+                  ],
+                ),
+              ),
+            ),
           ),
           Positioned.fill(
             child: DecoratedBox(
@@ -3556,10 +3572,19 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     return Stack(
       children: [
-        Positioned.fill(
-          child: Image.asset(
-            AddClothingScreen._luxuryBgAsset,
-            fit: BoxFit.cover,
+        const Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFF07070A),
+                  Color(0xFF111116),
+                  Color(0xFF050507),
+                ],
+              ),
+            ),
           ),
         ),
         Positioned.fill(
@@ -3801,10 +3826,19 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       backgroundColor: const Color(0xFF0C0C0C),
       body: Stack(
         children: [
-          Positioned.fill(
-            child: Image.asset(
-              AddClothingScreen._luxuryBgAsset,
-              fit: BoxFit.cover,
+          const Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF07070A),
+                    Color(0xFF111116),
+                    Color(0xFF050507),
+                  ],
+                ),
+              ),
             ),
           ),
           Positioned.fill(

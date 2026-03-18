@@ -1557,3 +1557,282 @@ exports.attachCleanImageOnWardrobeWrite = functions
         );
       }
     });
+
+// ---------------------------------------------------------------------------
+// ✅ analyzeWardrobeSmart – GEN1 Callable (compact wardrobe structure analysis)
+// ---------------------------------------------------------------------------
+// Flutter example:
+// final callable = FirebaseFunctions.instance.httpsCallable('analyzeWardrobeSmart');
+// final result = await callable.call();
+// final json = Map<String, dynamic>.from(result.data as Map);
+// print(json['strengths']);
+exports.analyzeWardrobeSmart = functions
+  .region("us-east1")
+  .runWith({ timeoutSeconds: 60, memory: "512MB" })
+  .https.onCall(async (data, context) => {
+    const uid = context?.auth?.uid;
+    if (!uid) {
+      throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+    }
+
+    const requestId =
+      context?.rawRequest?.headers?.["x-cloud-trace-context"] ||
+      context?.rawRequest?.headers?.["x-request-id"] ||
+      null;
+
+    const fallback = {
+      strengths: [
+        "Máš dobrý základ šatníka, ktorý sa dá ďalej zlepšovať.",
+        "Z tvojich kúskov sa dá poskladať viac kombinácií, keď upravíme pár pomerov.",
+        "S malými doplneniami vieš výrazne zvýšiť počet outfitov.",
+      ],
+      weaknesses: [
+        "Niektoré kategórie môžu byť nevyvážené (napr. veľa vrchov vs. málo spodkov).",
+        "Môže chýbať pár univerzálnych neutrálnych kúskov na jednoduché kombinovanie.",
+        "Sezónnosť a vrstvenie sa dá posilniť pár praktickými voľbami.",
+      ],
+      buyNext: [
+        "Zváž doplnenie 1–2 univerzálnych neutrálnych kúskov, ktoré pasujú k väčšine šatníka.",
+        "Ak ti chýbajú spodné diely, doplň aspoň jeden ľahko kombinovateľný variant.",
+        "Pridaj jednu vrstvu na vrstvenie (napr. kardigán alebo ľahkú bundu) pre viac možností.",
+      ],
+      outfitPotential: [
+        "Skús stavať outfity okolo neutrálnych základov a jeden výrazný prvok nech je iba doplnok.",
+        "Zvyš počet kombinácií tým, že budeš striedať topy so spodkami v podobnej farebnej palete.",
+        "Vytvor si 2–3 jednoduché kapsulové „sety“ (top + spodok + vrstva) pre rýchle obliekanie.",
+      ],
+    };
+
+    function normalizeKey(v) {
+      const s = String(v || "").trim();
+      if (!s) return null;
+      return s.toLowerCase();
+    }
+
+    function toStringArray(x) {
+      if (!x) return [];
+      if (Array.isArray(x)) return x.map((v) => String(v).trim()).filter(Boolean);
+      return [String(x).trim()].filter(Boolean);
+    }
+
+    function inc(map, key) {
+      if (!key) return;
+      map[key] = (map[key] || 0) + 1;
+    }
+
+    function extractFirstJsonObject(text) {
+      const raw = String(text || "").trim();
+      if (!raw) return null;
+
+      // strip code fences if present
+      let t = raw;
+      if (t.startsWith("```")) {
+        const firstNl = t.indexOf("\n");
+        if (firstNl !== -1) t = t.substring(firstNl + 1);
+      }
+      if (t.endsWith("```")) {
+        t = t.substring(0, t.lastIndexOf("```")).trim();
+      }
+
+      // Try direct parse first.
+      try {
+        const parsed = JSON.parse(t);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch (_) {}
+
+      // Fallback: find first {...} block.
+      const start = t.indexOf("{");
+      if (start === -1) return null;
+      let depth = 0;
+      for (let i = start; i < t.length; i++) {
+        const ch = t[i];
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+        if (depth === 0) {
+          const candidate = t.slice(start, i + 1);
+          try {
+            const parsed = JSON.parse(candidate);
+            return parsed && typeof parsed === "object" ? parsed : null;
+          } catch (_) {
+            return null;
+          }
+        }
+      }
+      return null;
+    }
+
+    function asResultShape(obj) {
+      const o = obj && typeof obj === "object" ? obj : {};
+
+      const pickArray = (k) =>
+        Array.isArray(o[k]) ? o[k].map((x) => String(x).trim()).filter(Boolean) : [];
+
+      const out = {
+        strengths: pickArray("strengths").slice(0, 5),
+        weaknesses: pickArray("weaknesses").slice(0, 5),
+        buyNext: pickArray("buyNext").slice(0, 5),
+        outfitPotential: pickArray("outfitPotential").slice(0, 5),
+      };
+
+      const ensureLen = (arr) => (arr.length >= 3 ? arr : null);
+      if (
+        ensureLen(out.strengths) &&
+        ensureLen(out.weaknesses) &&
+        ensureLen(out.buyNext) &&
+        ensureLen(out.outfitPotential)
+      ) {
+        return out;
+      }
+
+      return null;
+    }
+
+    logger.info("analyzeWardrobeSmart: start", {
+      uid,
+      requestId,
+    });
+
+    try {
+      const apiKey = getOpenAiKey();
+      if (!apiKey) {
+        logger.error("analyzeWardrobeSmart: missing OPENAI_API_KEY", { uid, requestId });
+        return fallback;
+      }
+
+      const snap = await db.collection("users").doc(uid).collection("wardrobe").get();
+      const totalItems = snap.size;
+
+      const countByMainGroup = Object.create(null);
+      const countByColor = Object.create(null);
+      const countByStyle = Object.create(null);
+      const countBySeason = Object.create(null);
+
+      for (const doc of snap.docs) {
+        const it = doc.data() || {};
+
+        // Extract ONLY lightweight fields (do not log them).
+        const mainGroup = normalizeKey(it.mainGroup);
+        const categoryKey = normalizeKey(it.categoryKey); // currently unused in summary, intentionally not sent
+        const colors = toStringArray(it.colors).map(normalizeKey).filter(Boolean);
+        const styles = toStringArray(it.styles).map(normalizeKey).filter(Boolean);
+        const seasons = toStringArray(it.seasons).map(normalizeKey).filter(Boolean);
+        const brand = String(it.brand || "").trim(); // intentionally unused in summary
+        const name = String(it.name || "").trim(); // intentionally unused in summary
+
+        // Keep linter happy about intentionally-unused lightweight fields.
+        void categoryKey;
+        void brand;
+        void name;
+
+        inc(countByMainGroup, mainGroup || "unknown");
+        for (const c of colors) inc(countByColor, c);
+        for (const s of styles) inc(countByStyle, s);
+        for (const se of seasons) inc(countBySeason, se);
+      }
+
+      const summary = {
+        totalItems,
+        countByMainGroup,
+        countByColor,
+        countByStyle,
+        countBySeason,
+      };
+
+      logger.info("analyzeWardrobeSmart: summary built", {
+        uid,
+        requestId,
+        totalItems,
+        mainGroups: Object.keys(countByMainGroup).length,
+        colors: Object.keys(countByColor).length,
+        styles: Object.keys(countByStyle).length,
+        seasons: Object.keys(countBySeason).length,
+      });
+
+      const systemPrompt =
+        `You are a friendly professional personal wardrobe stylist inside a mobile fashion app.\n\n` +
+        `Your goal is NOT to talk about global fashion trends.\n` +
+        `Your goal is to analyze the user's wardrobe structure and give practical advice.\n\n` +
+        `Focus on:\n` +
+        `- balance between clothing categories\n` +
+        `- neutral vs statement pieces\n` +
+        `- outfit combinability\n` +
+        `- layering potential\n` +
+        `- missing universal items\n` +
+        `- increasing number of possible outfits\n\n` +
+        `Write short, practical, friendly bullet points in Slovak language.\n\n` +
+        `Return STRICT JSON with structure:\n\n` +
+        `{\n` +
+        `  "strengths": [],\n` +
+        `  "weaknesses": [],\n` +
+        `  "buyNext": [],\n` +
+        `  "outfitPotential": []\n` +
+        `}\n\n` +
+        `Each array should contain 3–5 short sentences.`;
+
+      const userPrompt =
+        `Wardrobe summary (counts only): ${JSON.stringify(summary)}\n` +
+        `Return ONLY the strict JSON object. No markdown.`;
+
+      const body = {
+        model: "gpt-4o-mini",
+        temperature: 0.4,
+        max_tokens: 500,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+      };
+
+      const startedAt = Date.now();
+      const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+
+      const elapsedMs = Date.now() - startedAt;
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "");
+        logger.error("analyzeWardrobeSmart: OpenAI error", {
+          uid,
+          requestId,
+          status: response.status,
+          elapsedMs,
+          errorText: String(errorText || "").slice(0, 800),
+        });
+        return fallback;
+      }
+
+      const json = await response.json();
+      const text = json?.choices?.[0]?.message?.content || "";
+
+      logger.info("analyzeWardrobeSmart: OpenAI response received", {
+        uid,
+        requestId,
+        elapsedMs,
+        contentLength: String(text).length,
+      });
+
+      const parsed = extractFirstJsonObject(text);
+      const shaped = asResultShape(parsed);
+      if (!shaped) {
+        logger.warn("analyzeWardrobeSmart: invalid AI JSON shape, returning fallback", {
+          uid,
+          requestId,
+        });
+        return fallback;
+      }
+
+      return shaped;
+    } catch (e) {
+      logger.error("analyzeWardrobeSmart: unhandled error, returning fallback", {
+        uid,
+        requestId,
+        message: e?.message || String(e),
+      });
+      return fallback;
+    }
+  });
