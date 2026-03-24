@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -329,21 +327,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final outfitTiles = selected
         .map((p) {
           final label = labelFor(p.item, fallback: fallbackLabelForType(p.type));
+          final resolvedImageUrl = _resolveHeroPreviewImageUrl(p.item);
+          final safeImageUrl = resolvedImageUrl?.trim();
 
-          // Priority: productImageUrl > cutoutImageUrl > cleanImageUrl > imageUrl
-          final imageUrl =
-              (p.item['productImageUrl'] ?? '').toString().trim().isNotEmpty
-                  ? p.item['productImageUrl'].toString().trim()
-                  : (p.item['cutoutImageUrl'] ?? '').toString().trim().isNotEmpty
-                      ? p.item['cutoutImageUrl'].toString().trim()
-                      : (p.item['cleanImageUrl'] ?? '').toString().trim().isNotEmpty
-                          ? p.item['cleanImageUrl'].toString().trim()
-                          : (p.item['imageUrl'] ?? '').toString().trim();
+          print(
+            'HERO TILE: label=${labelFor(p.item, fallback: fallbackLabelForType(p.type))} image=$resolvedImageUrl',
+          );
 
           return _HeroOutfitItem(
             icon: iconForType(p.type),
             label: label,
-            imageUrl: imageUrl.trim().isNotEmpty ? imageUrl : null,
+            imageUrl: (safeImageUrl?.isNotEmpty ?? false) ? safeImageUrl : null,
           );
         })
         .toList();
@@ -365,8 +359,37 @@ class _HomeScreenState extends State<HomeScreen> {
     return rec;
   }
 
+  String? _resolveHeroPreviewImageUrl(Map<String, dynamic> item) {
+    String? value(dynamic v) {
+      final s = v?.toString().trim();
+      return (s == null || s.isEmpty) ? null : s;
+    }
+
+    final cutout = value(item['cutoutImageUrl']);
+    if (cutout != null) return cutout;
+
+    final clean = value(item['cleanImageUrl']);
+    if (clean != null) return clean;
+
+    final product = value(item['productImageUrl']);
+    if (product != null) return product;
+
+    final image = value(item['imageUrl']);
+    if (image != null) return image;
+
+    return null;
+  }
+
   @override
   Widget build(BuildContext context) {
+    print('HOME SCREEN BUILD CALLED');
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
+    final scaffoldBg = theme.scaffoldBackgroundColor;
+    print('HomeScreen theme.brightness: ${theme.brightness}');
+    print('HomeScreen scaffoldBackgroundColor: ${theme.scaffoldBackgroundColor}');
+    print('HomeScreen colorScheme.surface: ${colorScheme.surface}');
+    print('HomeScreen colorScheme.surfaceContainerLow: ${colorScheme.surfaceContainerLow}');
     final user = _auth.currentUser;
     final greetingName = _getGreetingName(user);
 
@@ -392,9 +415,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return WillPopScope(
       onWillPop: () async => true,
       child: Scaffold(
-        backgroundColor: const Color(0xFF0E0E0E),
+        backgroundColor: scaffoldBg,
         appBar: AppBar(
-          backgroundColor: Colors.transparent,
+          backgroundColor: scaffoldBg,
           elevation: 0,
           title: const Text(
             'Outfit Of The Day',
@@ -410,275 +433,256 @@ class _HomeScreenState extends State<HomeScreen> {
         drawer: _buildDrawer(context),
 
         // ✅ FAB odstránený - pridávanie je v rýchlych akciách
-        body: Stack(
-          children: [
-            // 1) pozadie (safe premium dark gradient)
-            const Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFF07070A),
-                      Color(0xFF111116),
-                      Color(0xFF050507),
-                    ],
+        body: DecoratedBox(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                scaffoldBg,
+                colorScheme.surfaceContainerLowest,
+              ],
+            ),
+          ),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$greetingName 👋',
+                  style: TextStyle(
+                    color: colorScheme.onSurface,
+                    fontSize: 26,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
-              ),
-            ),
-
-            // 2) jemné stmavenie (aby bolo UI čitateľné)
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.52),
-                      Colors.black.withOpacity(0.18),
-                      Colors.black.withOpacity(0.58),
-                    ],
+                const SizedBox(height: 4),
+                Text(
+                  _isTomorrow
+                      ? 'Poďme vybrať tvoj zajtrajší outfit.'
+                      : 'Poďme vybrať tvoj dnešný outfit.',
+                  style: TextStyle(
+                    color: colorScheme.onSurfaceVariant,
+                    fontSize: 14,
                   ),
                 ),
-              ),
-            ),
+                const SizedBox(height: 18),
 
-            // 3) obsah
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '$greetingName 👋',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 26,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _isTomorrow
-                        ? 'Poďme vybrať tvoj zajtrajší outfit.'
-                        : 'Poďme vybrať tvoj dnešný outfit.',
-                    style: const TextStyle(color: Colors.white70, fontSize: 14),
-                  ),
-                  const SizedBox(height: 18),
-
-                  // ✅ HERO: Dnes/Zajtra ako TAB (bez flipu)
-                  if (_isTomorrow)
-                    _HeroDayCard(
-                      dayIndex: _dayIndex,
-                      onChangeDay: _setDayIndex,
-                      vm: tomorrowVM,
-                      date: activeDate,
-                      isTomorrow: true,
-                      outfitItems: const <_HeroOutfitItem>[],
-                      onTapSwapOne: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                        );
-                      },
-                      onTapNewOutfit: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                        );
-                      },
-                      onTapEdit: () => _openHeroDayPicker(context),
-                    )
-                  else if (user == null)
-                    _HeroDayCard(
-                      dayIndex: _dayIndex,
-                      onChangeDay: _setDayIndex,
-                      vm: _HeroBannerVM(
-                        title: 'Dnešný outfit',
-                        subtitle: _weatherForDate(todayDate).summarySubtitle,
-                        description: 'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka.',
-                        chips: _weatherForDate(todayDate).toHeroChips(),
-                      ),
-                      date: activeDate,
-                      isTomorrow: false,
-                      outfitItems: const <_HeroOutfitItem>[],
-                      onTapSwapOne: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                        );
-                      },
-                      onTapNewOutfit: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                        );
-                      },
-                      onTapEdit: () => _openHeroDayPicker(context),
-                    )
-                  else
-                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream: _wardrobeStream(user.uid),
-                      builder: (context, snap) {
-                        final docs = snap.data?.docs ?? const [];
-                        final wardrobe = docs.map((d) => d.data()).toList();
-                        final hero = _buildTodayHero(date: todayDate, wardrobe: wardrobe);
-
-                        return _HeroDayCard(
-                          dayIndex: _dayIndex,
-                          onChangeDay: _setDayIndex,
-                          vm: hero.vm,
-                          date: activeDate,
-                          isTomorrow: false,
-                          outfitItems: hero.outfitItems,
-                          onTapSwapOne: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                            );
-                          },
-                          onTapNewOutfit: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                            );
-                          },
-                          onTapEdit: () => _openHeroDayPicker(context),
-                        );
-                      },
-                    ),
-
-                  const SizedBox(height: 14),
-
-                  // ✅ RÝCHLE AKCIE (Pridať je tu)
-                  _QuickActionsGrid(
-                    items: [
-                      _QuickAction(
-                        icon: Icons.add_circle_outline,
-                        label: 'Pridať',
-                        onTap: () => AddClothingScreen.openFromPicker(context),
-                      ),
-                      _QuickAction(
-                        icon: Icons.smart_toy_outlined,
-                        label: 'Stylist',
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const StylistChatScreen()),
-                          );
-                        },
-                      ),
-                      _QuickAction(
-                        icon: Icons.shopping_bag_outlined,
-                        label: 'Shop',
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(builder: (_) => const RecommendedScreen(initialTab: 0)),
-                          );
-                        },
-                      ),
-                      _QuickAction(
-                        icon: Icons.travel_explore,
-                        label: 'Trip',
-                        onTap: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Trip planner – doplníme ako ďalší krok.')),
-                          );
-                        },
-                      ),
-                    ],
-                  ),
-
-                  const SizedBox(height: 22),
-
-                  // ✅ Analýza šatníka (glass card)
-                  InkWell(
-                    borderRadius: BorderRadius.circular(18),
-                    onTap: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const WardrobeAnalysisScreen(),
-                        ),
+                if (_isTomorrow)
+                  _HeroDayCard(
+                    dayIndex: _dayIndex,
+                    onChangeDay: _setDayIndex,
+                    vm: tomorrowVM,
+                    date: activeDate,
+                    isTomorrow: true,
+                    outfitItems: const <_HeroOutfitItem>[],
+                    onTapSwapOne: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
                       );
                     },
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(18),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                        child: Container(
-                          padding: const EdgeInsets.all(14),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            border: Border.all(color: Colors.white10),
-                            color: Colors.white.withOpacity(0.05),
+                    onTapNewOutfit: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
+                      );
+                    },
+                    onTapEdit: () => _openHeroDayPicker(context),
+                  )
+                else if (user == null)
+                  _HeroDayCard(
+                    dayIndex: _dayIndex,
+                    onChangeDay: _setDayIndex,
+                    vm: _HeroBannerVM(
+                      title: 'Dnešný outfit',
+                      subtitle: _weatherForDate(todayDate).summarySubtitle,
+                      description:
+                      'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka.',
+                      chips: _weatherForDate(todayDate).toHeroChips(),
+                    ),
+                    date: activeDate,
+                    isTomorrow: false,
+                    outfitItems: const <_HeroOutfitItem>[],
+                    onTapSwapOne: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                      );
+                    },
+                    onTapNewOutfit: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
+                      );
+                    },
+                    onTapEdit: () => _openHeroDayPicker(context),
+                  )
+                else
+                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                    stream: _wardrobeStream(user.uid),
+                    builder: (context, snap) {
+                      final docs = snap.data?.docs ?? const [];
+                      final wardrobe = docs.map((d) => d.data()).toList();
+                      final hero = _buildTodayHero(date: todayDate, wardrobe: wardrobe);
+
+                      return _HeroDayCard(
+                        dayIndex: _dayIndex,
+                        onChangeDay: _setDayIndex,
+                        vm: hero.vm,
+                        date: activeDate,
+                        isTomorrow: false,
+                        outfitItems: hero.outfitItems,
+                        onTapSwapOne: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                          );
+                        },
+                        onTapNewOutfit: () {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
+                          );
+                        },
+                        onTapEdit: () => _openHeroDayPicker(context),
+                      );
+                    },
+                  ),
+
+                const SizedBox(height: 14),
+
+                _QuickActionsGrid(
+                  items: [
+                    _QuickAction(
+                      icon: Icons.add_circle_outline,
+                      label: 'Pridať',
+                      onTap: () => AddClothingScreen.openFromPicker(context),
+                    ),
+                    _QuickAction(
+                      icon: Icons.smart_toy_outlined,
+                      label: 'Stylist',
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const StylistChatScreen()),
+                        );
+                      },
+                    ),
+                    _QuickAction(
+                      icon: Icons.shopping_bag_outlined,
+                      label: 'Shop',
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const RecommendedScreen(initialTab: 0),
                           ),
-                          child: Row(
+                        );
+                      },
+                    ),
+                    _QuickAction(
+                      icon: Icons.travel_explore,
+                      label: 'Trip',
+                      onTap: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('Trip planner – doplníme ako ďalší krok.'),
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 22),
+
+                InkWell(
+                  borderRadius: BorderRadius.circular(18),
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const WardrobeAnalysisScreen(),
+                      ),
+                    );
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(18),
+                      border: Border.all(color: colorScheme.outlineVariant),
+                      color: colorScheme.surfaceContainerHigh,
+                      boxShadow: [
+                        BoxShadow(
+                          color: colorScheme.shadow.withOpacity(0.06),
+                          blurRadius: 16,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      children: [
+                        Container(
+                          height: 46,
+                          width: 46,
+                          decoration: BoxDecoration(
+                            color: colorScheme.primary.withOpacity(0.10),
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Icon(
+                            Icons.auto_awesome,
+                            color: colorScheme.primary,
+                            size: 22,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Container(
-                                height: 46,
-                                width: 46,
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withOpacity(0.08),
-                                  borderRadius: BorderRadius.circular(14),
-                                ),
-                                child: const Icon(
-                                  Icons.auto_awesome,
-                                  color: Colors.white,
-                                  size: 22,
+                              Text(
+                                'Analýza šatníka',
+                                style: TextStyle(
+                                  color: colorScheme.onSurface,
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Analýza šatníka',
-                                      style: TextStyle(
-                                        color: Colors.white,
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                    SizedBox(height: 4),
-                                    Text(
-                                      'Zisti, čo ti chýba a zlepši svoje outfity.',
-                                      style: TextStyle(
-                                        color: Colors.white70,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ],
+                              const SizedBox(height: 4),
+                              Text(
+                                'Zisti, čo ti chýba a zlepši svoje outfity.',
+                                style: TextStyle(
+                                  color: colorScheme.onSurfaceVariant,
+                                  fontSize: 12,
                                 ),
-                              ),
-                              const Icon(
-                                Icons.chevron_right,
-                                color: Colors.white54,
                               ),
                             ],
                           ),
                         ),
-                      ),
+                        Icon(
+                          Icons.chevron_right,
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ],
                     ),
                   ),
+                ),
 
-                  const SizedBox(height: 18),
+                const SizedBox(height: 18),
 
-                  _RecommendedCarouselV2(
-                    onOpenRecommended: _openRecommended,
-                  ),
-                ],
-              ),
+                _RecommendedCarouselV2(
+                  onOpenRecommended: _openRecommended,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
   }
 
   void _openHeroDayPicker(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: theme.scaffoldBackgroundColor,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -694,17 +698,17 @@ class _HomeScreenState extends State<HomeScreen> {
                     width: 44,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: Colors.white24,
+                      color: colorScheme.outlineVariant,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
                   const SizedBox(height: 14),
-                  const Align(
+                  Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
                       'Pre ktorý deň chceš outfit?',
                       style: TextStyle(
-                        color: Colors.white,
+                        color: colorScheme.onSurface,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
@@ -759,25 +763,27 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Drawer _buildDrawer(BuildContext context) {
+    final theme = Theme.of(context);
+    final colorScheme = Theme.of(context).colorScheme;
     return Drawer(
-      backgroundColor: const Color(0xFF121212),
+      backgroundColor: theme.scaffoldBackgroundColor,
       child: SafeArea(
         child: ListView(
           padding: EdgeInsets.zero,
           children: [
-            const DrawerHeader(
+            DrawerHeader(
               child: Text(
                 'Menu',
                 style: TextStyle(
-                  color: Colors.white,
+                  color: colorScheme.onSurface,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
             ListTile(
-              leading: const Icon(Icons.people_outline, color: Colors.white70),
-              title: const Text('Priatelia', style: TextStyle(color: Colors.white)),
+              leading: Icon(Icons.people_outline, color: colorScheme.onSurfaceVariant),
+              title: Text('Priatelia', style: TextStyle(color: colorScheme.onSurface)),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -787,8 +793,11 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.diversity_2, color: Colors.white70),
-              title: const Text('Správy a zladenie outfitov', style: TextStyle(color: Colors.white)),
+              leading: Icon(Icons.diversity_2, color: colorScheme.onSurfaceVariant),
+              title: Text(
+                'Správy a zladenie outfitov',
+                style: TextStyle(color: colorScheme.onSurface),
+              ),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -797,10 +806,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-            const Divider(color: Colors.white24),
+            Divider(color: colorScheme.outlineVariant),
             ListTile(
-              leading: const Icon(Icons.settings, color: Colors.white70),
-              title: const Text('Nastavenia', style: TextStyle(color: Colors.white)),
+              leading: Icon(Icons.settings, color: colorScheme.onSurfaceVariant),
+              title: Text('Nastavenia', style: TextStyle(color: colorScheme.onSurface)),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -859,21 +868,39 @@ class _HeroDayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     final hasOutfitTiles = outfitItems.isNotEmpty;
+    final canvasTop = Color.lerp(
+      colorScheme.surface,
+      const Color(0xFFF8F6F2),
+      0.38,
+    )!;
+    final canvasBottom = Color.lerp(
+      colorScheme.surfaceContainerLowest,
+      const Color(0xFFF6F4EF),
+      0.46,
+    )!;
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white10),
-            color: Colors.white.withOpacity(0.06),
+    return Container(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.2)),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [canvasTop, canvasBottom],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: colorScheme.shadow.withOpacity(0.04),
+            blurRadius: 22,
+            offset: const Offset(0, 10),
           ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-            child: Column(
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+        child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
@@ -887,8 +914,8 @@ class _HeroDayCard extends StatelessWidget {
                             vm.title,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white,
+                            style: TextStyle(
+                              color: colorScheme.onSurface,
                               fontSize: 22,
                               fontWeight: FontWeight.bold,
                             ),
@@ -896,7 +923,10 @@ class _HeroDayCard extends StatelessWidget {
                           const SizedBox(height: 6),
                           Text(
                             vm.subtitle,
-                            style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            style: TextStyle(
+                              color: colorScheme.onSurfaceVariant,
+                              fontSize: 13,
+                            ),
                           ),
                         ],
                       ),
@@ -916,19 +946,19 @@ class _HeroDayCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.08),
+                      color: colorScheme.primary.withOpacity(0.08),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.white12),
+                      border: Border.all(color: colorScheme.outlineVariant),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        const Icon(Icons.visibility, size: 14, color: Colors.white70),
+                        Icon(Icons.visibility, size: 14, color: colorScheme.onSurfaceVariant),
                         const SizedBox(width: 6),
                         Text(
                           'NÁHĽAD ZAJTRA • ${_fmt(date)}',
-                          style: const TextStyle(
-                            color: Colors.white70,
+                          style: TextStyle(
+                            color: colorScheme.onSurfaceVariant,
                             fontSize: 11.5,
                             fontWeight: FontWeight.w800,
                             letterSpacing: 0.2,
@@ -966,7 +996,10 @@ class _HeroDayCard extends StatelessWidget {
                         vm.description,
                         maxLines: 3,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white70, fontSize: 12.6),
+                        style: TextStyle(
+                          color: colorScheme.onSurfaceVariant,
+                          fontSize: 12.6,
+                        ),
                       ),
                       if (hasOutfitTiles) ...[
                         const SizedBox(height: 12),
@@ -1002,8 +1035,6 @@ class _HeroDayCard extends StatelessWidget {
                   ],
                 ),
               ],
-            ),
-          ),
         ),
       ),
     );
@@ -1021,14 +1052,15 @@ class _HeroSegmentedDay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 148,
       height: 34,
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Row(
         children: [
@@ -1066,6 +1098,7 @@ class _SegItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
@@ -1075,12 +1108,12 @@ class _SegItem extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          color: active ? Colors.white.withOpacity(0.92) : Colors.transparent,
+          color: active ? colorScheme.surface : Colors.transparent,
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: active ? Colors.black : Colors.white70,
+            color: active ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
             fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
@@ -1108,15 +1141,16 @@ class _SheetChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: Colors.white10),
+          border: Border.all(color: colorScheme.outlineVariant),
         ),
         child: Row(
           children: [
@@ -1124,10 +1158,10 @@ class _SheetChoiceTile extends StatelessWidget {
               height: 44,
               width: 44,
               decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.08),
+                color: colorScheme.primary.withOpacity(0.10),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: Colors.white, size: 22),
+              child: Icon(icon, color: colorScheme.primary, size: 22),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1135,13 +1169,16 @@ class _SheetChoiceTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
-                  Text(subtitle, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(
+                    subtitle,
+                    style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                  ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: Colors.white54),
+            Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant),
           ],
         ),
       ),
@@ -1297,29 +1334,85 @@ class _HeroOutfitTiles2Rows extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final display = items.take(10).toList();
+    final colorScheme = Theme.of(context).colorScheme;
+    final display = items.take(6).toList();
 
     return LayoutBuilder(
       builder: (context, c) {
-        const columns = 5;
-        const spacing = 8.0;
-
-        final tileSize = (c.maxWidth - (spacing * (columns - 1))) / columns;
-        final gridHeight = tileSize * 2 + spacing;
+        final count = display.length.clamp(1, 6);
+        final itemWidth = (c.maxWidth / (count + 0.55)).clamp(78.0, 108.0);
+        final itemHeight = itemWidth * 1.28;
+        final spacing = (itemWidth * 0.18).clamp(10.0, 18.0);
+        final groupWidth = (count * itemWidth) + ((count - 1) * spacing);
+        final bgWidth = (groupWidth + 34).clamp(180.0, c.maxWidth);
+        final shelfWidth = (groupWidth + 12).clamp(160.0, c.maxWidth * 0.95);
+        final totalHeight = itemHeight + 36;
 
         return SizedBox(
-          height: gridHeight,
-          child: GridView.builder(
-            physics: const NeverScrollableScrollPhysics(),
-            padding: EdgeInsets.zero,
-            itemCount: display.length,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: columns,
-              crossAxisSpacing: spacing,
-              mainAxisSpacing: spacing,
-              childAspectRatio: 1.0,
-            ),
-            itemBuilder: (context, i) => _OutfitTileGlass(item: display[i]),
+          height: totalHeight,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.topCenter,
+            children: [
+              Positioned(
+                top: 6,
+                child: Container(
+                  width: bgWidth,
+                  height: itemHeight + 2,
+                  decoration: BoxDecoration(
+                    color: colorScheme.surface.withOpacity(0.24),
+                    borderRadius: BorderRadius.circular(30),
+                    border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.2)),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 2,
+                child: Container(
+                  width: shelfWidth,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(999),
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        colorScheme.shadow.withOpacity(0.0),
+                        colorScheme.shadow.withOpacity(0.07),
+                      ],
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: colorScheme.shadow.withOpacity(0.08),
+                        blurRadius: 20,
+                        spreadRadius: -4,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              Positioned.fill(
+                top: 0,
+                bottom: 12,
+                child: Align(
+                  alignment: Alignment.topCenter,
+                  child: Wrap(
+                    alignment: WrapAlignment.center,
+                    spacing: spacing,
+                    runSpacing: 6,
+                    children: [
+                      for (final item in display)
+                        SizedBox(
+                          width: itemWidth,
+                          height: itemHeight,
+                          child: OutfitPreviewTile(item: item),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
           ),
         );
       },
@@ -1327,40 +1420,84 @@ class _HeroOutfitTiles2Rows extends StatelessWidget {
   }
 }
 
-class _OutfitTileGlass extends StatelessWidget {
+class OutfitPreviewTile extends StatefulWidget {
   final _HeroOutfitItem item;
-  const _OutfitTileGlass({required this.item});
+  const OutfitPreviewTile({super.key, required this.item});
+
+  @override
+  State<OutfitPreviewTile> createState() => _OutfitPreviewTileState();
+}
+
+class _OutfitPreviewTileState extends State<OutfitPreviewTile> {
+  bool _pressed = false;
 
   @override
   Widget build(BuildContext context) {
-    final url = (item.imageUrl ?? '').trim();
-    final hasUrl = url.isNotEmpty;
+    final item = widget.item;
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(14),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white10),
-          ),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (_) => setState(() => _pressed = true),
+      onTapUp: (_) => setState(() => _pressed = false),
+      onTapCancel: () => setState(() => _pressed = false),
+      child: AnimatedScale(
+        scale: _pressed ? 1.02 : 1.0,
+        duration: const Duration(milliseconds: 140),
+        curve: Curves.easeOutCubic,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           child: Center(
-            child: hasUrl
-                ? Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Image.network(
-                      url,
-                      fit: BoxFit.contain,
-                      errorBuilder: (context, error, stackTrace) {
-                        return Icon(item.icon, color: Colors.white70, size: 22);
-                      },
-                    ),
-                  )
-                : Icon(item.icon, color: Colors.white70, size: 22),
+            child: _HeroOutfitImageView(
+              imageUrl: item.imageUrl,
+              fallbackIcon: item.icon,
+            ),
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _HeroOutfitImageView extends StatelessWidget {
+  final String? imageUrl;
+  final IconData fallbackIcon;
+
+  const _HeroOutfitImageView({
+    required this.imageUrl,
+    required this.fallbackIcon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedImageUrl = imageUrl?.trim();
+    final hasImage = normalizedImageUrl != null && normalizedImageUrl.isNotEmpty;
+
+    if (!hasImage) {
+      return _OutfitPreviewPlaceholder(icon: fallbackIcon);
+    }
+
+    return Image.network(
+      normalizedImageUrl,
+      fit: BoxFit.contain,
+      filterQuality: FilterQuality.medium,
+      errorBuilder: (context, error, stackTrace) =>
+          _OutfitPreviewPlaceholder(icon: fallbackIcon),
+    );
+  }
+}
+
+class _OutfitPreviewPlaceholder extends StatelessWidget {
+  final IconData icon;
+  const _OutfitPreviewPlaceholder({required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Icon(
+        icon,
+        color: colorScheme.onSurfaceVariant.withOpacity(0.9),
+        size: 22,
       ),
     );
   }
@@ -1379,36 +1516,31 @@ class _HeroGlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(999),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.07),
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: colorScheme.surfaceContainerHigh,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: colorScheme.outlineVariant),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Text(
+              text,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: Colors.white70),
-                const SizedBox(width: 8),
-                Text(
-                  text,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
       ),
     );
@@ -1426,13 +1558,15 @@ class _HeroPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.92),
+          color: colorScheme.primary,
           borderRadius: BorderRadius.circular(999),
         ),
         child: Row(
@@ -1440,13 +1574,17 @@ class _HeroPrimaryButton extends StatelessWidget {
           children: [
             Text(
               text,
-              style: const TextStyle(
-                color: Colors.black,
+              style: TextStyle(
+                color: colorScheme.onPrimary,
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(width: 10),
-            const Icon(Icons.arrow_forward_ios, color: Colors.black54, size: 16),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: colorScheme.onPrimary.withOpacity(0.8),
+              size: 16,
+            ),
           ],
         ),
       ),
@@ -1462,19 +1600,23 @@ class _HeroChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.black.withOpacity(0.18),
+        color: colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white10),
+        border: Border.all(color: colorScheme.outlineVariant),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: Colors.white70),
+          Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          Text(
+            label,
+            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+          ),
         ],
       ),
     );
@@ -1515,42 +1657,44 @@ class _QuickActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: action.onTap,
       borderRadius: BorderRadius.circular(18),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(18),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white10),
-              color: Colors.white.withOpacity(0.05),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: colorScheme.outlineVariant),
+          color: colorScheme.surfaceContainerHigh,
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.shadow.withOpacity(0.05),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
             ),
-            child: Column(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: Icon(action.icon, color: Colors.white, size: 22),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  action.label,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
+          ],
+        ),
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colorScheme.primary.withOpacity(0.10),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(action.icon, color: colorScheme.primary, size: 22),
             ),
-          ),
+            const SizedBox(height: 8),
+            Text(
+              action.label,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1566,6 +1710,7 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -1573,12 +1718,20 @@ class _SectionTitle extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(title,
-                  style: const TextStyle(
-                      color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+              Text(
+                title,
+                style: TextStyle(
+                  color: colorScheme.onSurface,
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               if (subtitle != null) ...[
                 const SizedBox(height: 2),
-                Text(subtitle!, style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                Text(
+                  subtitle!,
+                  style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                ),
               ],
             ],
           ),
@@ -1586,7 +1739,7 @@ class _SectionTitle extends StatelessWidget {
         if (onSeeAll != null)
           TextButton(
             onPressed: onSeeAll,
-            child: const Text('Zobraziť', style: TextStyle(color: Colors.white70)),
+            child: Text('Zobraziť', style: TextStyle(color: colorScheme.primary)),
           ),
       ],
     );
@@ -1674,6 +1827,7 @@ class _RecommendedCardV2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1681,9 +1835,16 @@ class _RecommendedCardV2 extends StatelessWidget {
         width: 160,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF1A1A1A),
+          color: colorScheme.surfaceContainerHigh,
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white10),
+          border: Border.all(color: colorScheme.outlineVariant),
+          boxShadow: [
+            BoxShadow(
+              color: colorScheme.shadow.withOpacity(0.06),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1695,14 +1856,17 @@ class _RecommendedCardV2 extends StatelessWidget {
                   width: double.infinity,
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(14),
-                    gradient: const LinearGradient(
-                      colors: [Color(0xFF2D2D2D), Color(0xFF141414)],
+                    gradient: LinearGradient(
+                      colors: [
+                        colorScheme.surfaceContainerHighest,
+                        colorScheme.surfaceContainer,
+                      ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                   ),
                   child: Center(
-                    child: Icon(item.icon, color: Colors.white24, size: 42),
+                    child: Icon(item.icon, color: colorScheme.primary.withOpacity(0.30), size: 42),
                   ),
                 ),
                 Positioned(
@@ -1711,14 +1875,17 @@ class _RecommendedCardV2 extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.10),
+                      color: colorScheme.surface.withOpacity(0.90),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.white10),
+                      border: Border.all(color: colorScheme.outlineVariant),
                     ),
                     child: Text(
                       item.matchLabel,
-                      style: const TextStyle(
-                          color: Colors.white70, fontSize: 11, fontWeight: FontWeight.w600),
+                      style: TextStyle(
+                        color: colorScheme.onSurfaceVariant,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ),
@@ -1727,8 +1894,8 @@ class _RecommendedCardV2 extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               item.brand,
-              style: const TextStyle(
-                color: Colors.white60,
+              style: TextStyle(
+                color: colorScheme.onSurfaceVariant,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.5,
@@ -1739,21 +1906,29 @@ class _RecommendedCardV2 extends StatelessWidget {
               item.name,
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700),
+              style: TextStyle(
+                color: colorScheme.onSurface,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
             ),
             const SizedBox(height: 10),
             Row(
               children: [
                 Text(item.price,
-                    style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold)),
+                    style: TextStyle(
+                      color: colorScheme.onSurface,
+                      fontSize: 13,
+                      fontWeight: FontWeight.bold,
+                    )),
                 const Spacer(),
                 Container(
                   padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.08),
+                    color: colorScheme.surfaceContainerHighest,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: const Icon(Icons.bookmark_border, color: Colors.white70, size: 18),
+                  child: Icon(Icons.bookmark_border, color: colorScheme.onSurfaceVariant, size: 18),
                 ),
               ],
             ),

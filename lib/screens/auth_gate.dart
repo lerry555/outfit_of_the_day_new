@@ -16,9 +16,9 @@ class AuthGate extends StatelessWidget {
         final user = snap.data;
 
         if (snap.connectionState == ConnectionState.waiting) {
-          return const Scaffold(
-            backgroundColor: Colors.black,
-            body: Center(child: CircularProgressIndicator()),
+          return Scaffold(
+            backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+            body: const Center(child: CircularProgressIndicator()),
           );
         }
 
