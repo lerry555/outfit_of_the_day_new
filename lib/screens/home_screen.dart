@@ -1,4 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
@@ -12,6 +12,24 @@ import 'stylist_chat_screen.dart';
 import 'user_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
 import 'wardrobe_screen.dart';
+
+class _HomeLuxuryPalette {
+  static const Color bgTop = Color(0xFF111111);
+  static const Color bgMid = Color(0xFF0C0C0D);
+  static const Color bgBottom = Color(0xFF080809);
+
+  static const Color surface = Color(0xFF151517);
+  static const Color surfaceSoft = Color(0xFF1B1B1F);
+  static const Color surfaceElevated = Color(0xFF242329);
+
+  static const Color textPrimary = Color(0xFFF1F0EC);
+  static const Color textSecondary = Color(0xFFAAA59B);
+
+  static const Color accent = Color(0xFFC8A36A);
+  static const Color accentSoft = Color(0xFF9D7C4C);
+  static const Color accentGlow = Color(0x66C8A36A);
+  static const Color border = Color(0x26FFFFFF);
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -53,7 +71,7 @@ class _HomeScreenState extends State<HomeScreen> {
           title: 'Dnešný outfit',
           subtitle: w.summarySubtitle,
           description:
-              'Dnes zatiaľ nemám dosť vhodných kúskov na kompletný outfit. Skús pridať viac oblečenia do šatníka.',
+          'Dnes zatiaľ nemám dosť vhodných kúskov na kompletný outfit. Skús pridať viac oblečenia do šatníka.',
           chips: w.toHeroChips(),
         ),
         outfitItems: const <_HeroOutfitItem>[],
@@ -326,32 +344,179 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final outfitTiles = selected
         .map((p) {
-          final label = labelFor(p.item, fallback: fallbackLabelForType(p.type));
-          final resolvedImageUrl = _resolveHeroPreviewImageUrl(p.item);
-          final safeImageUrl = resolvedImageUrl?.trim();
+      final label = labelFor(p.item, fallback: fallbackLabelForType(p.type));
+      final resolvedImageUrl = _resolveHeroPreviewImageUrl(p.item);
+      final safeImageUrl = resolvedImageUrl?.trim();
 
-          print(
-            'HERO TILE: label=${labelFor(p.item, fallback: fallbackLabelForType(p.type))} image=$resolvedImageUrl',
-          );
+      print(
+        'HERO TILE: label=${labelFor(p.item, fallback: fallbackLabelForType(p.type))} image=$resolvedImageUrl',
+      );
 
-          return _HeroOutfitItem(
-            icon: iconForType(p.type),
-            label: label,
-            imageUrl: (safeImageUrl?.isNotEmpty ?? false) ? safeImageUrl : null,
-          );
-        })
+      return _HeroOutfitItem(
+        type: p.type,
+        icon: iconForType(p.type),
+        label: label,
+        imageUrl: (safeImageUrl?.isNotEmpty ?? false) ? safeImageUrl : null,
+      );
+    })
         .toList();
 
-    final why = <String>[];
-    if (isCold) why.add('Je chladno, preto odporúčam vrstvy.');
-    if (isWarm) why.add('Je teplejšie, takže som vynechal/a ťažké vrstvy.');
-    if (weather.isRainy) why.add('Vybral/a som aj vrchnú vrstvu kvôli dažďu.');
-    if (!weather.isRainy && needsOuterwear) why.add('Vrchná vrstva sa zíde najmä ráno a večer.');
-    if (why.isEmpty) why.add('Jednoduchá kombinácia na pohodlný bežný deň.');
+    // Štylistická (lokálna) explikácia pre hero kartu.
+    // Zámer: dlhší, prirodzenejší text bez AI a bez zásahov do logiky výberu outfitu.
+    List<String> colorsOf(Map<String, dynamic> it) {
+      final dyn = it['colors'];
+      if (dyn is List) {
+        return dyn.map((e) => e.toString()).toList();
+      }
+      if (dyn is String) {
+        final s = dyn.trim();
+        if (s.isEmpty) return const [];
+        // Ošetrenie napr. "['black','white']" alebo jednoduchej reťazca palety.
+        return s
+            .replaceAll('[', '')
+            .replaceAll(']', '')
+            .split(',')
+            .map((e) => e.trim())
+            .where((e) => e.isNotEmpty)
+            .toList();
+      }
+      return const [];
+    }
+
+    Set<String> colorFamilies(List<String> colors) {
+      final fam = <String>{};
+      for (final c0 in colors) {
+        final c = c0.toLowerCase();
+        if (c.contains('čier') || c.contains('cier') || c.contains('black')) fam.add('black');
+        if (c.contains('biel') || c.contains('white')) fam.add('white');
+        if (c.contains('siv') || c.contains('gray') || c.contains('grey')) fam.add('gray');
+        if (c.contains('béž') || c.contains('bez') || c.contains('beige')) fam.add('beige');
+        if (c.contains('navy') || c.contains('tmavomod')) fam.add('navy');
+        if (c.contains('červen') || c.contains('red')) fam.add('red');
+        if (c.contains('zelen') || c.contains('green')) fam.add('green');
+        if (c.contains('modr') || c.contains('blue')) fam.add('blue');
+        if (c.contains('oranž') || c.contains('orange')) fam.add('orange');
+        if (c.contains('žlt') || c.contains('yellow')) fam.add('yellow');
+        if (c.contains('fial') || c.contains('purple')) fam.add('purple');
+      }
+      return fam;
+    }
+
+    String describeTemperatureFeel() {
+      // Veta má „časový oblúk“ (ráno vs. neskôr), aj keď počasie je deterministické.
+      final morning = isCold
+          ? 'ráno bude citeľne chladnejšie'
+          : isMild
+          ? 'ráno bude príjemne svieže'
+          : 'ráno bude skôr komfortné';
+
+      final later = isCold
+          ? 'a cez deň sa to aspoň trochu uvoľní a oteplí'
+          : isWarm
+          ? 'a neskôr sa z toho stane ľahký, teplejší deň'
+          : 'a popoludní sa to zvyčajne zjemní a bude príjemnejšie';
+
+      final windy = weather.isWindy
+          ? ' Vietor spraví pocit chladu ostrejší, takže je dobré mať outfit, ktorý dáva zmysel aj pri prechádzkach. '
+          : ' ';
+
+      final rainy = weather.isRainy
+          ? ' Keď sa chytí dážď, počítaj s prehánkami a tým, že povrch sa môže ochladiť – preto sa hodí byť pripravený/á. '
+          : ' ';
+
+      return '$morning, $later.$windy$rainy'.replaceAll(RegExp(r'\s+'), ' ').trim();
+    }
+
+    String describeLayeringNeed({required bool hasOuterwear}) {
+      if (hasOuterwear) {
+        if (weather.isRainy) {
+          return 'Vrchnú vrstvu som zaradil/a hlavne kvôli dažďu a vetru: ochráni ti trup a outfit vyzerá „hotovo“ aj pri krátkych prehánkach. Keď sa popoludní zlepší situácia, vonkajšiu vrstvu si vieš jednoducho odložiť (alebo aspoň zložiť) bez toho, aby sa zmenil celý look.';
+        }
+        return 'Vrchná vrstva je tu hlavne kvôli tomu, že ráno a večer bývajú chladnejšie než stred dňa. Cez deň ju môžeš nechať pootvorenú alebo si ju odložiť, keď sa oteplí – a zároveň stále vyzeráš upravene, lebo to tvorí pekný rám pre zvyšok outfitu.';
+      }
+
+      if (isWarm) {
+        return 'Keď je teplejšie, držím to ľahké: bez zbytočného vrstvenia, aby si sa pri pohybe nezaparil/a a zostal/a v komforte. Vizuálne to funguje tak, že hlavný diel a spodok tvoria čistú siluetu bez „ťažoby“.';
+      }
+
+      return 'Pri tomto počasí som sa nesnažil/a vrstviť nasilu – radšej držím jednoduchší základ, aby bol outfit praktický a nepôsobil prehnane. Ak sa náhodou ochladí, vieš si to doladiť doplnkami, ale celkový počet vrstiev nechávam rozumný.';
+    }
+
+    String describeColorHarmony() {
+      final selectedForColors = <Map<String, dynamic>>[
+        topPick.item!,
+        bottomPick.item!,
+        shoesPick.item!,
+        if (outerPick != null) outerPick!,
+      ];
+
+      final allColors = <String>[];
+      for (final it in selectedForColors) {
+        allColors.addAll(colorsOf(it));
+      }
+
+      final fam = colorFamilies(allColors);
+      final isNeutralSet = fam.any((f) => const {'black', 'white', 'gray', 'beige', 'navy'}.contains(f));
+
+      String pickNeutralPhrase() {
+        final names = <String>[];
+        if (fam.contains('black')) names.add('čierna');
+        if (fam.contains('white')) names.add('biela');
+        if (fam.contains('gray')) names.add('sivá');
+        if (fam.contains('beige')) names.add('béžová');
+        if (fam.contains('navy')) names.add('tmavomodrá');
+        if (names.isEmpty) return 'neutrálne tóny';
+        return names.join(', ');
+      }
+
+      if (isNeutralSet) {
+        return 'Farebne to drží spolu neutrálna paleta (${pickNeutralPhrase()}) – takže top a spodok nepôsobia „každý po svojom“ a obuv to pekne uzemní. Aj keď pridáme jeden výraznejší kus, stále to vyzerá zladené a pokojné.';
+      }
+
+      // Fallback, keď farby nie sú v dátach (alebo sú nejednoznačné).
+      return 'Držím to farebne súvislé: aj bez výrazných farebných experimentov outfit pôsobí harmonicky, lebo kúsky spolu ladia tónom a strihom.';
+    }
+
+    String describeStyleVibe() {
+      String blobStr(Map<String, dynamic> it) => [
+        (it['name'] ?? '').toString(),
+        (it['category'] ?? '').toString(),
+        (it['subCategory'] ?? '').toString(),
+        (it['mainGroup'] ?? '').toString(),
+      ].join(' ').toLowerCase();
+
+      final topB = blobStr(topPick.item!);
+      final bottomB = blobStr(bottomPick.item!);
+      final shoesB = blobStr(shoesPick.item!);
+      final outerB = outerPick != null ? blobStr(outerPick!) : '';
+
+      if (outerPick != null && (outerB.contains('sako') || outerB.contains('blazer'))) {
+        return 'Vibe je taký „mestský, ale stále pohodlný“: vrchná vrstva dotiahne look do upravenejšej roviny a zvyšok zostáva nositeľný celý deň. Spodok a top držia základnú linku, takže to nepôsobí preplnene.';
+      }
+
+      if (topB.contains('hoodie') || topB.contains('mikina') || topB.contains('sweater') || topB.contains('sveter')) {
+        return 'Ideálne na bežný deň: pohodlný, trochu street-casual mix, kde vrchný diel dáva tvar a nohavice to držia v rovnováhe. Obuv to uzatvára tak, aby outfit vyzeral hotovo, aj keď len rýchlo vybiehaš z domu.';
+      }
+
+      if (bottomB.contains('jeans') || bottomB.contains('rifl') || bottomB.contains('dzin') || bottomB.contains('džín')) {
+        return 'Je to čistý každodenný outfit – jednoduché kúsky, ktoré spolu fungujú bez toho, aby si musel/a vymýšľať zložité kombinácie. Farby a proporcie sú poskladané tak, aby si vyzeral/a upravene a zároveň sa cítil/a uvoľnene.';
+      }
+
+      return 'Celkový dojem je vyvážený: kombinácia pôsobí prirodzene a prakticky, bez zbytočného „prehadzovania“ štýlu počas dňa.';
+    }
+
+    final hasOuter = outerPick != null;
+    final reasonParagraph = <String>[
+      describeTemperatureFeel(),
+      describeLayeringNeed(hasOuterwear: hasOuter),
+      'Top a spodok spolu vizuálne ladia tak, aby držali jednu líniu (tón aj silueta), a obuv na to nadviaže, takže outfit nepôsobí rozbitý. ${hasOuter ? 'Vrchná vrstva to pekne rámuje a pridáva „dospelý“ dojem bez toho, aby outfit bol objemný.' : 'Keď vrchná vrstva chýba, look ostáva ľahší a menej komplikovaný – presne na komfortný pohyb.'}',
+      describeColorHarmony(),
+      describeStyleVibe(),
+    ].join(' ');
 
     final rec = _HeroOutfitRecommendation(
       items: outfitTiles,
-      reason: why.join(' '),
+      reason: reasonParagraph,
     );
 
     // bezpečnostná kontrola
@@ -382,14 +547,8 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    print('HOME SCREEN BUILD CALLED');
     final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    final scaffoldBg = theme.scaffoldBackgroundColor;
-    print('HomeScreen theme.brightness: ${theme.brightness}');
-    print('HomeScreen scaffoldBackgroundColor: ${theme.scaffoldBackgroundColor}');
-    print('HomeScreen colorScheme.surface: ${colorScheme.surface}');
-    print('HomeScreen colorScheme.surfaceContainerLow: ${colorScheme.surfaceContainerLow}');
+    const wardrobeBg = _HomeLuxuryPalette.bgBottom;
     final user = _auth.currentUser;
     final greetingName = _getGreetingName(user);
 
@@ -415,9 +574,9 @@ class _HomeScreenState extends State<HomeScreen> {
     return WillPopScope(
       onWillPop: () async => true,
       child: Scaffold(
-        backgroundColor: scaffoldBg,
+        backgroundColor: wardrobeBg,
         appBar: AppBar(
-          backgroundColor: scaffoldBg,
+          backgroundColor: Colors.transparent,
           elevation: 0,
           title: const Text(
             'Outfit Of The Day',
@@ -433,26 +592,65 @@ class _HomeScreenState extends State<HomeScreen> {
         drawer: _buildDrawer(context),
 
         // ✅ FAB odstránený - pridávanie je v rýchlych akciách
-        body: DecoratedBox(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                scaffoldBg,
-                colorScheme.surfaceContainerLowest,
-              ],
+        body: Stack(
+          children: [
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      _HomeLuxuryPalette.bgTop,
+                      _HomeLuxuryPalette.bgMid,
+                      _HomeLuxuryPalette.bgBottom,
+                    ],
+                  ),
+                ),
+              ),
             ),
-          ),
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(-0.1, -0.9),
+                      radius: 1.05,
+                      colors: [
+                        _HomeLuxuryPalette.accentGlow.withOpacity(0.22),
+                        _HomeLuxuryPalette.accentGlow.withOpacity(0.10),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.28, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      const Color(0xFF0B0B0D).withOpacity(0.32),
+                      Colors.transparent,
+                      const Color(0xFF09090A).withOpacity(0.24),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
                 Text(
                   '$greetingName 👋',
                   style: TextStyle(
-                    color: colorScheme.onSurface,
+                    color: _HomeLuxuryPalette.textPrimary,
                     fontSize: 26,
                     fontWeight: FontWeight.bold,
                   ),
@@ -463,7 +661,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       ? 'Poďme vybrať tvoj zajtrajší outfit.'
                       : 'Poďme vybrať tvoj dnešný outfit.',
                   style: TextStyle(
-                    color: colorScheme.onSurfaceVariant,
+                    color: _HomeLuxuryPalette.textSecondary,
                     fontSize: 14,
                   ),
                 ),
@@ -606,11 +804,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: colorScheme.outlineVariant),
-                      color: colorScheme.surfaceContainerHigh,
+                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                      color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.86),
                       boxShadow: [
                         BoxShadow(
-                          color: colorScheme.shadow.withOpacity(0.06),
+                          color: Colors.black.withOpacity(0.22),
                           blurRadius: 16,
                           offset: const Offset(0, 8),
                         ),
@@ -622,12 +820,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           height: 46,
                           width: 46,
                           decoration: BoxDecoration(
-                            color: colorScheme.primary.withOpacity(0.10),
+                            color: _HomeLuxuryPalette.accent.withOpacity(0.12),
                             borderRadius: BorderRadius.circular(14),
                           ),
                           child: Icon(
                             Icons.auto_awesome,
-                            color: colorScheme.primary,
+                            color: _HomeLuxuryPalette.accent,
                             size: 22,
                           ),
                         ),
@@ -639,7 +837,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               Text(
                                 'Analýza šatníka',
                                 style: TextStyle(
-                                  color: colorScheme.onSurface,
+                                  color: _HomeLuxuryPalette.textPrimary,
                                   fontSize: 14,
                                   fontWeight: FontWeight.bold,
                                 ),
@@ -648,7 +846,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               Text(
                                 'Zisti, čo ti chýba a zlepši svoje outfity.',
                                 style: TextStyle(
-                                  color: colorScheme.onSurfaceVariant,
+                                  color: _HomeLuxuryPalette.textSecondary,
                                   fontSize: 12,
                                 ),
                               ),
@@ -657,21 +855,21 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                         Icon(
                           Icons.chevron_right,
-                          color: colorScheme.onSurfaceVariant,
+                          color: _HomeLuxuryPalette.textSecondary,
                         ),
                       ],
                     ),
                   ),
                 ),
-
                 const SizedBox(height: 18),
 
                 _RecommendedCarouselV2(
                   onOpenRecommended: _openRecommended,
                 ),
-              ],
+                ],
+              ),
             ),
-          ),
+          ],
         ),
       ),
     );
@@ -679,7 +877,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _openHeroDayPicker(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = Theme.of(context).colorScheme;
     showModalBottomSheet(
       context: context,
       backgroundColor: theme.scaffoldBackgroundColor,
@@ -698,7 +895,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     width: 44,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: colorScheme.outlineVariant,
+                      color: _HomeLuxuryPalette.border,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -708,7 +905,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Text(
                       'Pre ktorý deň chceš outfit?',
                       style: TextStyle(
-                        color: colorScheme.onSurface,
+                        color: _HomeLuxuryPalette.textPrimary,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
@@ -764,7 +961,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Drawer _buildDrawer(BuildContext context) {
     final theme = Theme.of(context);
-    final colorScheme = Theme.of(context).colorScheme;
     return Drawer(
       backgroundColor: theme.scaffoldBackgroundColor,
       child: SafeArea(
@@ -775,15 +971,15 @@ class _HomeScreenState extends State<HomeScreen> {
               child: Text(
                 'Menu',
                 style: TextStyle(
-                  color: colorScheme.onSurface,
+                  color: _HomeLuxuryPalette.textPrimary,
                   fontSize: 22,
                   fontWeight: FontWeight.bold,
                 ),
               ),
             ),
             ListTile(
-              leading: Icon(Icons.people_outline, color: colorScheme.onSurfaceVariant),
-              title: Text('Priatelia', style: TextStyle(color: colorScheme.onSurface)),
+              leading: Icon(Icons.people_outline, color: _HomeLuxuryPalette.textSecondary),
+              title: Text('Priatelia', style: TextStyle(color: _HomeLuxuryPalette.textPrimary)),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -793,10 +989,10 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              leading: Icon(Icons.diversity_2, color: colorScheme.onSurfaceVariant),
+              leading: Icon(Icons.diversity_2, color: _HomeLuxuryPalette.textSecondary),
               title: Text(
                 'Správy a zladenie outfitov',
-                style: TextStyle(color: colorScheme.onSurface),
+                style: TextStyle(color: _HomeLuxuryPalette.textPrimary),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -806,10 +1002,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-            Divider(color: colorScheme.outlineVariant),
+            Divider(color: _HomeLuxuryPalette.border),
             ListTile(
-              leading: Icon(Icons.settings, color: colorScheme.onSurfaceVariant),
-              title: Text('Nastavenia', style: TextStyle(color: colorScheme.onSurface)),
+              leading: Icon(Icons.settings, color: _HomeLuxuryPalette.textSecondary),
+              title: Text('Nastavenia', style: TextStyle(color: _HomeLuxuryPalette.textPrimary)),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -868,174 +1064,151 @@ class _HeroDayCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     final hasOutfitTiles = outfitItems.isNotEmpty;
-    final canvasTop = Color.lerp(
-      colorScheme.surface,
-      const Color(0xFFF8F6F2),
-      0.38,
-    )!;
-    final canvasBottom = Color.lerp(
-      colorScheme.surfaceContainerLowest,
-      const Color(0xFFF6F4EF),
-      0.46,
-    )!;
 
-    return Container(
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.2)),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [canvasTop, canvasBottom],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: colorScheme.shadow.withOpacity(0.04),
-            blurRadius: 22,
-            offset: const Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-        child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            vm.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: colorScheme.onSurface,
-                              fontSize: 22,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 6),
-                          Text(
-                            vm.subtitle,
-                            style: TextStyle(
-                              color: colorScheme.onSurfaceVariant,
-                              fontSize: 13,
-                            ),
-                          ),
-                        ],
+                    Text(
+                      vm.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _HomeLuxuryPalette.textPrimary,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.only(top: 2),
-                      child: _HeroSegmentedDay(
-                        index: dayIndex,
-                        onChange: onChangeDay,
+                    const SizedBox(height: 6),
+                    Text(
+                      vm.subtitle,
+                      style: TextStyle(
+                        color: _HomeLuxuryPalette.textSecondary,
+                        fontSize: 13,
                       ),
                     ),
                   ],
                 ),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: _HeroSegmentedDay(
+                  index: dayIndex,
+                  onChange: onChangeDay,
+                ),
+              ),
+            ],
+          ),
 
-                if (isTomorrow) ...[
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: colorScheme.primary.withOpacity(0.08),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: colorScheme.outlineVariant),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.visibility, size: 14, color: colorScheme.onSurfaceVariant),
-                        const SizedBox(width: 6),
-                        Text(
-                          'NÁHĽAD ZAJTRA • ${_fmt(date)}',
-                          style: TextStyle(
-                            color: colorScheme.onSurfaceVariant,
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w800,
-                            letterSpacing: 0.2,
-                          ),
-                        ),
-                      ],
+          if (isTomorrow) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _HomeLuxuryPalette.accent.withOpacity(0.09),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Colors.white.withOpacity(0.08)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.visibility, size: 14, color: _HomeLuxuryPalette.textSecondary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'NÁHĽAD ZAJTRA • ${_fmt(date)}',
+                    style: TextStyle(
+                      color: _HomeLuxuryPalette.textSecondary,
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.2,
                     ),
                   ),
-                ] else ...[
-                  const SizedBox(height: 10),
                 ],
+              ),
+            ),
+          ] else ...[
+            const SizedBox(height: 10),
+          ],
 
-                Wrap(spacing: 8, children: vm.chips),
-                const SizedBox(height: 10),
+          Wrap(spacing: 8, children: vm.chips),
+          const SizedBox(height: 10),
 
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 220),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, anim) {
-                    final slide = Tween<Offset>(
-                      begin: const Offset(0.02, 0),
-                      end: Offset.zero,
-                    ).animate(anim);
-                    return FadeTransition(
-                      opacity: anim,
-                      child: SlideTransition(position: slide, child: child),
-                    );
-                  },
-                  child: Column(
-                    key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        vm.description,
-                        maxLines: 3,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: colorScheme.onSurfaceVariant,
-                          fontSize: 12.6,
-                        ),
-                      ),
-                      if (hasOutfitTiles) ...[
-                        const SizedBox(height: 12),
-                        _HeroOutfitTiles2Rows(items: outfitItems),
-                      ],
-                    ],
-                  ),
-                ),
-
-                const SizedBox(height: 12),
-
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 10,
-                  children: [
-                    _HeroGlassButton(
-                      icon: Icons.swap_horiz,
-                      text: 'Vymeniť kúsok',
-                      onTap: onTapSwapOne,
-                    ),
-                    _HeroGlassButton(
-                      icon: Icons.auto_awesome,
-                      text: 'Nový outfit',
-                      onTap: onTapNewOutfit,
-                    ),
-                    SizedBox(
-                      width: double.infinity,
-                      child: _HeroPrimaryButton(
-                        text: 'Upraviť outfit',
-                        onTap: onTapEdit,
+          AnimatedSwitcher(
+            duration: const Duration(milliseconds: 220),
+            switchInCurve: Curves.easeOutCubic,
+            switchOutCurve: Curves.easeInCubic,
+            transitionBuilder: (child, anim) {
+              final slide = Tween<Offset>(
+                begin: const Offset(0.02, 0),
+                end: Offset.zero,
+              ).animate(anim);
+              return FadeTransition(
+                opacity: anim,
+                child: SlideTransition(position: slide, child: child),
+              );
+            },
+            child: ConstrainedBox(
+              key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
+              constraints: const BoxConstraints(minHeight: 230),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (hasOutfitTiles)
+                    _HeroOutfitTiles2Rows(
+                      items: outfitItems,
+                      description: vm.description,
+                    )
+                  else
+                    Text(
+                      vm.description,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: _HomeLuxuryPalette.textSecondary,
+                        fontSize: 12.6,
                       ),
                     ),
-                  ],
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              _HeroGlassButton(
+                icon: Icons.swap_horiz,
+                text: 'Vymeniť kúsok',
+                onTap: onTapSwapOne,
+              ),
+              _HeroGlassButton(
+                icon: Icons.auto_awesome,
+                text: 'Nový outfit',
+                onTap: onTapNewOutfit,
+              ),
+
+              SizedBox(
+                width: double.infinity,
+                child: _HeroPrimaryButton(
+                  text: 'Upraviť outfit',
+                  onTap: onTapEdit,
                 ),
-              ],
-        ),
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -1052,15 +1225,14 @@ class _HeroSegmentedDay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       width: 148,
       height: 34,
       padding: const EdgeInsets.all(3),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: _HomeLuxuryPalette.surface.withOpacity(0.9),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: colorScheme.outlineVariant),
+        border: Border.all(color: Colors.white.withOpacity(0.06)),
       ),
       child: Row(
         children: [
@@ -1098,7 +1270,6 @@ class _SegItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
@@ -1108,12 +1279,12 @@ class _SegItem extends StatelessWidget {
         alignment: Alignment.center,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          color: active ? colorScheme.surface : Colors.transparent,
+          color: active ? _HomeLuxuryPalette.surfaceElevated : Colors.transparent,
         ),
         child: Text(
           label,
           style: TextStyle(
-            color: active ? colorScheme.onSurface : colorScheme.onSurfaceVariant,
+            color: active ? _HomeLuxuryPalette.textPrimary : _HomeLuxuryPalette.textSecondary,
             fontSize: 12,
             fontWeight: FontWeight.w800,
           ),
@@ -1141,16 +1312,15 @@ class _SheetChoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh,
+          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.9),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: colorScheme.outlineVariant),
+          border: Border.all(color: _HomeLuxuryPalette.border),
         ),
         child: Row(
           children: [
@@ -1158,10 +1328,10 @@ class _SheetChoiceTile extends StatelessWidget {
               height: 44,
               width: 44,
               decoration: BoxDecoration(
-                color: colorScheme.primary.withOpacity(0.10),
+                color: _HomeLuxuryPalette.accent.withOpacity(0.11),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: colorScheme.primary, size: 22),
+              child: Icon(icon, color: _HomeLuxuryPalette.accent, size: 22),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1169,16 +1339,16 @@ class _SheetChoiceTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: TextStyle(color: colorScheme.onSurface, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: _HomeLuxuryPalette.textPrimary, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                    style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: colorScheme.onSurfaceVariant),
+            Icon(Icons.chevron_right, color: _HomeLuxuryPalette.textSecondary),
           ],
         ),
       ),
@@ -1187,12 +1357,14 @@ class _SheetChoiceTile extends StatelessWidget {
 }
 
 class _HeroOutfitItem {
+  final _HeroWearType type;
   final IconData icon;
   final String label;
   final String? imageAssetPath;
   final String? imageUrl;
 
   const _HeroOutfitItem({
+    required this.type,
     required this.icon,
     required this.label,
     this.imageAssetPath,
@@ -1268,10 +1440,10 @@ class _LocalWeather {
     final seasonLabel = (month >= 3 && month <= 5)
         ? 'Jar'
         : (month >= 6 && month <= 8)
-            ? 'Leto'
-            : (month >= 9 && month <= 11)
-                ? 'Jeseň'
-                : 'Zima';
+        ? 'Leto'
+        : (month >= 9 && month <= 11)
+        ? 'Jeseň'
+        : 'Zima';
 
     int baseTemp;
     if (seasonLabel == 'Zima') {
@@ -1330,129 +1502,74 @@ class _LocalWeather {
 
 class _HeroOutfitTiles2Rows extends StatelessWidget {
   final List<_HeroOutfitItem> items;
-  const _HeroOutfitTiles2Rows({required this.items});
+  final String description;
+
+  const _HeroOutfitTiles2Rows({
+    required this.items,
+    required this.description,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final display = items.take(6).toList();
+    final orderedItems = <_HeroOutfitItem>[];
+    void addByType(_HeroWearType type) {
+      for (final item in items) {
+        if (item.type == type) {
+          orderedItems.add(item);
+          break;
+        }
+      }
+    }
 
-    return LayoutBuilder(
-      builder: (context, c) {
-        final count = display.length.clamp(1, 6);
-        final itemWidth = (c.maxWidth / (count + 0.55)).clamp(78.0, 108.0);
-        final itemHeight = itemWidth * 1.28;
-        final spacing = (itemWidth * 0.18).clamp(10.0, 18.0);
-        final groupWidth = (count * itemWidth) + ((count - 1) * spacing);
-        final bgWidth = (groupWidth + 34).clamp(180.0, c.maxWidth);
-        final shelfWidth = (groupWidth + 12).clamp(160.0, c.maxWidth * 0.95);
-        final totalHeight = itemHeight + 36;
+    addByType(_HeroWearType.outerwear);
+    addByType(_HeroWearType.top);
+    addByType(_HeroWearType.bottom);
+    addByType(_HeroWearType.shoes);
 
-        return SizedBox(
-          height: totalHeight,
-          child: Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.topCenter,
-            children: [
-              Positioned(
-                top: 6,
-                child: Container(
-                  width: bgWidth,
-                  height: itemHeight + 2,
-                  decoration: BoxDecoration(
-                    color: colorScheme.surface.withOpacity(0.24),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(color: colorScheme.outlineVariant.withOpacity(0.2)),
-                  ),
-                ),
-              ),
-              Positioned(
-                bottom: 2,
-                child: Container(
-                  width: shelfWidth,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        colorScheme.shadow.withOpacity(0.0),
-                        colorScheme.shadow.withOpacity(0.07),
-                      ],
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: colorScheme.shadow.withOpacity(0.08),
-                        blurRadius: 20,
-                        spreadRadius: -4,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                top: 0,
-                bottom: 12,
-                child: Align(
-                  alignment: Alignment.topCenter,
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: spacing,
-                    runSpacing: 6,
-                    children: [
-                      for (final item in display)
-                        SizedBox(
-                          width: itemWidth,
-                          height: itemHeight,
-                          child: OutfitPreviewTile(item: item),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          description,
+          maxLines: 6,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: _HomeLuxuryPalette.textSecondary,
+            fontSize: 12.6,
+            height: 1.3,
           ),
-        );
-      },
+        ),
+        const SizedBox(height: 10),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: orderedItems
+              .map((item) => _HeroOutfitMiniTile(item: item))
+              .toList(growable: false),
+        ),
+      ],
     );
   }
 }
 
-class OutfitPreviewTile extends StatefulWidget {
+class _HeroOutfitMiniTile extends StatelessWidget {
   final _HeroOutfitItem item;
-  const OutfitPreviewTile({super.key, required this.item});
-
-  @override
-  State<OutfitPreviewTile> createState() => _OutfitPreviewTileState();
-}
-
-class _OutfitPreviewTileState extends State<OutfitPreviewTile> {
-  bool _pressed = false;
+  const _HeroOutfitMiniTile({required this.item});
 
   @override
   Widget build(BuildContext context) {
-    final item = widget.item;
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      child: AnimatedScale(
-        scale: _pressed ? 1.02 : 1.0,
-        duration: const Duration(milliseconds: 140),
-        curve: Curves.easeOutCubic,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-          child: Center(
-            child: _HeroOutfitImageView(
-              imageUrl: item.imageUrl,
-              fallbackIcon: item.icon,
-            ),
-          ),
-        ),
+    return Container(
+      width: 56,
+      height: 56,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _HomeLuxuryPalette.border),
+        color: _HomeLuxuryPalette.surface.withOpacity(0.58),
+      ),
+      child: _HeroOutfitImageView(
+        imageUrl: item.imageUrl,
+        fallbackIcon: item.icon,
       ),
     );
   }
@@ -1476,12 +1593,17 @@ class _HeroOutfitImageView extends StatelessWidget {
       return _OutfitPreviewPlaceholder(icon: fallbackIcon);
     }
 
-    return Image.network(
-      normalizedImageUrl,
-      fit: BoxFit.contain,
-      filterQuality: FilterQuality.medium,
-      errorBuilder: (context, error, stackTrace) =>
-          _OutfitPreviewPlaceholder(icon: fallbackIcon),
+    final isShoes = fallbackIcon == Icons.directions_run;
+
+    return Transform.scale(
+      scale: isShoes ? 1.90 : 1.55,
+      child: Image.network(
+        normalizedImageUrl,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        errorBuilder: (context, error, stackTrace) =>
+            _OutfitPreviewPlaceholder(icon: fallbackIcon),
+      ),
     );
   }
 }
@@ -1492,11 +1614,10 @@ class _OutfitPreviewPlaceholder extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Center(
       child: Icon(
         icon,
-        color: colorScheme.onSurfaceVariant.withOpacity(0.9),
+        color: _HomeLuxuryPalette.textSecondary.withOpacity(0.92),
         size: 22,
       ),
     );
@@ -1516,26 +1637,25 @@ class _HeroGlassButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh,
+          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.72),
           borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: colorScheme.outlineVariant),
+          border: Border.all(color: _HomeLuxuryPalette.border),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 16, color: colorScheme.onSurfaceVariant),
+            Icon(icon, size: 16, color: _HomeLuxuryPalette.textSecondary),
             const SizedBox(width: 8),
             Text(
               text,
               style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
+                color: _HomeLuxuryPalette.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
@@ -1558,16 +1678,29 @@ class _HeroPrimaryButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-
     return InkWell(
       borderRadius: BorderRadius.circular(999),
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
         decoration: BoxDecoration(
-          color: colorScheme.primary,
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              _HomeLuxuryPalette.accent.withOpacity(0.90),
+              _HomeLuxuryPalette.accentSoft.withOpacity(0.94),
+            ],
+          ),
           borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: _HomeLuxuryPalette.accent.withOpacity(0.45)),
+          boxShadow: [
+            BoxShadow(
+              color: _HomeLuxuryPalette.accent.withOpacity(0.26),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -1575,14 +1708,14 @@ class _HeroPrimaryButton extends StatelessWidget {
             Text(
               text,
               style: TextStyle(
-                color: colorScheme.onPrimary,
+                color: const Color(0xFF191512),
                 fontWeight: FontWeight.bold,
               ),
             ),
             const SizedBox(width: 10),
             Icon(
               Icons.arrow_forward_ios,
-              color: colorScheme.onPrimary.withOpacity(0.8),
+              color: const Color(0xFF191512).withOpacity(0.8),
               size: 16,
             ),
           ],
@@ -1600,22 +1733,21 @@ class _HeroChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
+        color: _HomeLuxuryPalette.surface.withOpacity(0.85),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: colorScheme.outlineVariant),
+        border: Border.all(color: _HomeLuxuryPalette.border),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+          Icon(icon, size: 14, color: _HomeLuxuryPalette.textSecondary),
           const SizedBox(width: 6),
           Text(
             label,
-            style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+            style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
           ),
         ],
       ),
@@ -1657,7 +1789,6 @@ class _QuickActionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: action.onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1665,11 +1796,11 @@ class _QuickActionTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 14),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colorScheme.outlineVariant),
-          color: colorScheme.surfaceContainerHigh,
+          border: Border.all(color: Colors.white.withOpacity(0.06)),
+          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.78),
           boxShadow: [
             BoxShadow(
-              color: colorScheme.shadow.withOpacity(0.05),
+              color: Colors.black.withOpacity(0.20),
               blurRadius: 14,
               offset: const Offset(0, 6),
             ),
@@ -1680,16 +1811,16 @@ class _QuickActionTile extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: colorScheme.primary.withOpacity(0.10),
+                color: _HomeLuxuryPalette.accent.withOpacity(0.11),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(action.icon, color: colorScheme.primary, size: 22),
+              child: Icon(action.icon, color: _HomeLuxuryPalette.accent, size: 22),
             ),
             const SizedBox(height: 8),
             Text(
               action.label,
               style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
+                color: _HomeLuxuryPalette.textSecondary,
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -1710,7 +1841,6 @@ class _SectionTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.end,
       children: [
@@ -1721,7 +1851,7 @@ class _SectionTitle extends StatelessWidget {
               Text(
                 title,
                 style: TextStyle(
-                  color: colorScheme.onSurface,
+                  color: _HomeLuxuryPalette.textPrimary,
                   fontSize: 16,
                   fontWeight: FontWeight.bold,
                 ),
@@ -1730,7 +1860,7 @@ class _SectionTitle extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   subtitle!,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant, fontSize: 12),
+                  style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
                 ),
               ],
             ],
@@ -1739,7 +1869,7 @@ class _SectionTitle extends StatelessWidget {
         if (onSeeAll != null)
           TextButton(
             onPressed: onSeeAll,
-            child: Text('Zobraziť', style: TextStyle(color: colorScheme.primary)),
+            child: Text('Zobraziť', style: TextStyle(color: _HomeLuxuryPalette.accent)),
           ),
       ],
     );
@@ -1827,7 +1957,6 @@ class _RecommendedCardV2 extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(18),
@@ -1835,12 +1964,12 @@ class _RecommendedCardV2 extends StatelessWidget {
         width: 160,
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: colorScheme.surfaceContainerHigh,
+          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.86),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: colorScheme.outlineVariant),
+          border: Border.all(color: Colors.white.withOpacity(0.06)),
           boxShadow: [
             BoxShadow(
-              color: colorScheme.shadow.withOpacity(0.06),
+              color: Colors.black.withOpacity(0.22),
               blurRadius: 16,
               offset: const Offset(0, 8),
             ),
@@ -1858,15 +1987,19 @@ class _RecommendedCardV2 extends StatelessWidget {
                     borderRadius: BorderRadius.circular(14),
                     gradient: LinearGradient(
                       colors: [
-                        colorScheme.surfaceContainerHighest,
-                        colorScheme.surfaceContainer,
+                        _HomeLuxuryPalette.surfaceElevated,
+                        _HomeLuxuryPalette.surface,
                       ],
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                     ),
                   ),
                   child: Center(
-                    child: Icon(item.icon, color: colorScheme.primary.withOpacity(0.30), size: 42),
+                    child: Icon(
+                      item.icon,
+                      color: _HomeLuxuryPalette.accent.withOpacity(0.34),
+                      size: 42,
+                    ),
                   ),
                 ),
                 Positioned(
@@ -1875,14 +2008,14 @@ class _RecommendedCardV2 extends StatelessWidget {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                     decoration: BoxDecoration(
-                      color: colorScheme.surface.withOpacity(0.90),
+                      color: _HomeLuxuryPalette.surface.withOpacity(0.92),
                       borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: colorScheme.outlineVariant),
+                      border: Border.all(color: Colors.white.withOpacity(0.07)),
                     ),
                     child: Text(
                       item.matchLabel,
                       style: TextStyle(
-                        color: colorScheme.onSurfaceVariant,
+                        color: _HomeLuxuryPalette.textSecondary,
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                       ),
@@ -1895,7 +2028,7 @@ class _RecommendedCardV2 extends StatelessWidget {
             Text(
               item.brand,
               style: TextStyle(
-                color: colorScheme.onSurfaceVariant,
+                color: _HomeLuxuryPalette.textSecondary,
                 fontSize: 11,
                 fontWeight: FontWeight.w600,
                 letterSpacing: 0.5,
@@ -1904,10 +2037,10 @@ class _RecommendedCardV2 extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               item.name,
-              maxLines: 2,
+              maxLines: 4,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: colorScheme.onSurface,
+                color: _HomeLuxuryPalette.textPrimary,
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
@@ -1917,7 +2050,7 @@ class _RecommendedCardV2 extends StatelessWidget {
               children: [
                 Text(item.price,
                     style: TextStyle(
-                      color: colorScheme.onSurface,
+                      color: _HomeLuxuryPalette.textPrimary,
                       fontSize: 13,
                       fontWeight: FontWeight.bold,
                     )),
@@ -1925,10 +2058,14 @@ class _RecommendedCardV2 extends StatelessWidget {
                 Container(
                   padding: const EdgeInsets.all(7),
                   decoration: BoxDecoration(
-                    color: colorScheme.surfaceContainerHighest,
+                    color: _HomeLuxuryPalette.surfaceElevated,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(Icons.bookmark_border, color: colorScheme.onSurfaceVariant, size: 18),
+                  child: Icon(
+                    Icons.bookmark_border,
+                    color: _HomeLuxuryPalette.textSecondary,
+                    size: 18,
+                  ),
                 ),
               ],
             ),
@@ -1938,3 +2075,4 @@ class _RecommendedCardV2 extends StatelessWidget {
     );
   }
 }
+

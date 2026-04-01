@@ -7,7 +7,24 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
+import 'package:outfitofTheDay/screens/wardrobe_analysis_screen.dart';
+class _WardrobeLuxuryPalette {
+  static const Color bgTop = Color(0xFF111111);
+  static const Color bgMid = Color(0xFF0C0C0D);
+  static const Color bgBottom = Color(0xFF080809);
 
+  static const Color surface = Color(0xFF151517);
+  static const Color surfaceSoft = Color(0xFF1B1B1F);
+  static const Color surfaceElevated = Color(0xFF242329);
+
+  static const Color textPrimary = Color(0xFFF1F0EC);
+  static const Color textSecondary = Color(0xFFAAA59B);
+
+  static const Color accent = Color(0xFFC8A36A);
+  static const Color accentSoft = Color(0xFF9D7C4C);
+  static const Color accentGlow = Color(0x66C8A36A);
+  static const Color border = Color(0x26FFFFFF);
+}
 class WardrobeScreen extends StatefulWidget {
   const WardrobeScreen({Key? key}) : super(key: key);
 
@@ -484,7 +501,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     return DefaultTabController(
       length: mainGroupKeys.length,
       child: Scaffold(
-        backgroundColor: const Color(0xFF0E0E0E),
+        backgroundColor: _WardrobeLuxuryPalette.bgBottom,
         body: Stack(
           children: [
             const Positioned.fill(
@@ -494,10 +511,28 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      Color(0xFF07070A),
-                      Color(0xFF111116),
-                      Color(0xFF050507),
+                      _WardrobeLuxuryPalette.bgTop,
+                      _WardrobeLuxuryPalette.bgMid,
+                      _WardrobeLuxuryPalette.bgBottom,
                     ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: const Alignment(-0.1, -0.9),
+                      radius: 1.08,
+                      colors: [
+                        _WardrobeLuxuryPalette.accentGlow.withOpacity(0.22),
+                        _WardrobeLuxuryPalette.accentGlow.withOpacity(0.10),
+                        Colors.transparent,
+                      ],
+                      stops: const [0.0, 0.28, 1.0],
+                    ),
                   ),
                 ),
               ),
@@ -509,9 +544,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Colors.black.withOpacity(0.62),
-                      Colors.black.withOpacity(0.20),
-                      Colors.black.withOpacity(0.72),
+                      const Color(0xFF0B0B0D).withOpacity(0.32),
+                      Colors.transparent,
+                      const Color(0xFF09090A).withOpacity(0.24),
                     ],
                   ),
                 ),
@@ -529,7 +564,22 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     ),
                   ),
 
-                  // ✅ tabs in glass pill
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                    child: _WardrobePrimaryButton(
+                      text: 'Analýza šatníka',
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const WardrobeAnalysisScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+
+// ✅ tabs in glass pill
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
                     child: _GlassTabs(
@@ -609,112 +659,108 @@ class _WardrobeTabBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        // ✅ search + sort in one glass row
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-          child: _GlassSearchAndSort(
-            controller: searchController,
-            hint: 'Hľadať v šatníku…',
-            sortValue: sortOption,
-            sortOptions: sortOptions,
-            onSearchChanged: onSearchChanged,
-            onSortChanged: onSortChanged,
-          ),
-        ),
+    return StreamBuilder<QuerySnapshot>(
+      stream: firestore
+          .collection('users')
+          .doc(authUid)
+          .collection('wardrobe')
+          .where('mainGroup', isEqualTo: mainGroupKey)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        }
 
-        Expanded(
-          child: StreamBuilder<QuerySnapshot>(
-            stream: firestore
-                .collection('users')
-                .doc(authUid)
-                .collection('wardrobe')
-                .where('mainGroup', isEqualTo: mainGroupKey)
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return const Center(
-                  child: SizedBox(
-                    width: 22,
-                    height: 22,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                );
-              }
-              if (snapshot.hasError) {
-                return const Center(
-                  child: Text(
-                    'Nastala chyba pri načítaní šatníka.',
-                    style: TextStyle(color: Colors.white70),
-                  ),
-                );
-              }
+        if (snapshot.hasError) {
+          return const Center(
+            child: Text(
+              'Nastala chyba pri načítaní šatníka.',
+              style: TextStyle(color: Colors.white70),
+            ),
+          );
+        }
 
-              final docs = snapshot.data?.docs ?? [];
+        final docs = snapshot.data?.docs ?? [];
 
-              final normalized = <Map<String, dynamic>>[];
-              for (final d in docs) {
-                final m = d.data() as Map<String, dynamic>;
-                final data = normalizeKeysForDisplay(m);
-                data['__id'] = d.id;
+        final normalized = <Map<String, dynamic>>[];
+        for (final d in docs) {
+          final m = d.data() as Map<String, dynamic>;
+          final data = normalizeKeysForDisplay(m);
+          data['__id'] = d.id;
 
-                if (searchQuery.trim().isNotEmpty && !matchesSearch(data, searchQuery.trim())) {
-                  continue;
-                }
-                normalized.add(data);
-              }
+          if (searchQuery.trim().isNotEmpty &&
+              !matchesSearch(data, searchQuery.trim())) {
+            continue;
+          }
 
-              normalized.sort((a, b) => compareDocs(a, b));
+          normalized.add(data);
+        }
 
-              // group by categoryKey
-              final Map<String, List<Map<String, dynamic>>> byCategory = {};
-              for (final item in normalized) {
-                final ck = (item['categoryKey'] as String?) ?? '';
-                if (ck.isEmpty) continue;
-                byCategory.putIfAbsent(ck, () => []);
-                byCategory[ck]!.add(item);
-              }
+        normalized.sort((a, b) => compareDocs(a, b));
 
-              final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
+        final Map<String, List<Map<String, dynamic>>> byCategory = {};
+        for (final item in normalized) {
+          final ck = (item['categoryKey'] as String?) ?? '';
+          if (ck.isEmpty) continue;
+          byCategory.putIfAbsent(ck, () => []);
+          byCategory[ck]!.add(item);
+        }
 
-              final totalCount = byCategory.values.fold<int>(0, (p, e) => p + e.length);
-              if (totalCount == 0) {
-                return const Center(
+        final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
+        final totalCount =
+        byCategory.values.fold<int>(0, (p, e) => p + e.length);
+
+        return ListView(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+          children: [
+            _WardrobeCompactControls(
+              searchQuery: searchQuery,
+              sortValue: sortOption,
+              sortOptions: sortOptions,
+              searchController: searchController,
+              onSearchChanged: onSearchChanged,
+              onSortChanged: onSortChanged,
+            ),
+            const SizedBox(height: 12),
+
+            if (totalCount == 0)
+              const Padding(
+                padding: EdgeInsets.only(top: 40),
+                child: Center(
                   child: Text(
                     'Zatiaľ tu nemáš žiadne kúsky.',
                     style: TextStyle(color: Colors.white70),
                   ),
-                );
-              }
-
-              return ListView(
-                padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-                children: [
-                  for (final ck in categoryKeysInOrder)
-                    if ((byCategory[ck] ?? []).isNotEmpty)
-                      _CategorySectionGlass(
-                        title: categoryLabels[ck] ?? ck,
-                        items: byCategory[ck]!,
-                        onOpenAll: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => WardrobeCategoryScreen(
-                                mainGroupKey: mainGroupKey,
-                                categoryKey: ck,
-                              ),
-                            ),
-                          );
-                        },
-                        onDeleteItem: onDeleteItem,
-                      ),
-                ],
-              );
-            },
-          ),
-        ),
-      ],
+                ),
+              )
+            else
+              for (final ck in categoryKeysInOrder)
+                if ((byCategory[ck] ?? []).isNotEmpty)
+                  _CategorySectionGlass(
+                    title: categoryLabels[ck] ?? ck,
+                    items: byCategory[ck]!,
+                    onOpenAll: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => WardrobeCategoryScreen(
+                            mainGroupKey: mainGroupKey,
+                            categoryKey: ck,
+                          ),
+                        ),
+                      );
+                    },
+                    onDeleteItem: onDeleteItem,
+                  ),
+          ],
+        );
+      },
     );
   }
 }
@@ -737,8 +783,8 @@ class _GlassAppBar extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
-            border: Border.all(color: Colors.white10),
+            color: Colors.transparent,
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
@@ -774,27 +820,36 @@ class _GlassTabs extends StatelessWidget {
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
+            color: Colors.black.withOpacity(0.25),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white10),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
           child: TabBar(
             isScrollable: true,
-            indicator: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: Colors.white.withOpacity(0.90),
+            indicator: const UnderlineTabIndicator(
+              borderSide: BorderSide(
+                color: Colors.transparent,
+                width: 0,
+              ),
             ),
-            labelColor: Colors.black,
+            labelColor: _WardrobeLuxuryPalette.accent,
             unselectedLabelColor: Colors.white70,
-            labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
-            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+            labelStyle: const TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+            ),
+            unselectedLabelStyle: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 12,
+            ),
+            dividerColor: Colors.transparent,
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
             tabs: tabs.map((t) => Tab(text: t)).toList(),
           ),
         ),
       ),
     );
-  }
-}
+  }}
 
 class _GlassSearchAndSort extends StatelessWidget {
   final TextEditingController controller;
@@ -823,9 +878,9 @@ class _GlassSearchAndSort extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
+            color: Colors.transparent,
             borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.white10),
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
           child: Column(
             children: [
@@ -838,7 +893,7 @@ class _GlassSearchAndSort extends StatelessWidget {
                   hintText: hint,
                   hintStyle: const TextStyle(color: Colors.white54),
                   filled: true,
-                  fillColor: Colors.white.withOpacity(0.06),
+                  fillColor: Colors.black.withOpacity(0.28),
                   contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
@@ -885,8 +940,8 @@ class _GlassDropdown extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.06),
-        border: Border.all(color: Colors.white10),
+        color: Colors.transparent,
+        border: Border.all(color: Colors.white.withOpacity(0.10)),
         borderRadius: BorderRadius.circular(999),
       ),
       child: DropdownButtonHideUnderline(
@@ -977,12 +1032,27 @@ class _CategorySectionGlass extends StatelessWidget {
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
           child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(22),
               border: Border.all(color: Colors.white10),
-              color: Colors.white.withOpacity(0.06),
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Colors.white.withOpacity(0.07),
+                  Colors.white.withOpacity(0.03),
+                ],
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.40),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
             ),
+
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -991,14 +1061,21 @@ class _CategorySectionGlass extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title,
-                        style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800),
+                        style: const TextStyle(
+                          color: _WardrobeLuxuryPalette.accent,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w800,
+                        ),
                       ),
                     ),
                     TextButton(
                       onPressed: onOpenAll,
                       child: Text(
                         'Zobraziť všetko (${items.length})',
-                        style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700),
+                        style: TextStyle(
+                          color: _WardrobeLuxuryPalette.accent.withOpacity(0.88),
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
                   ],
@@ -1012,7 +1089,7 @@ class _CategorySectionGlass extends StatelessWidget {
                     const gap = 12.0;
                     final available = c.maxWidth;
                     final tileWidth = (available - gap * 2) / 3; // 3 tiles => 2 medzery
-                    final tileHeight = tileWidth / 0.78; // približne rovnaký pomer ako v gride
+                    final tileHeight = tileWidth / 0.92; // približne rovnaký pomer ako v gride
 
                     return SizedBox(
                       height: tileHeight,
@@ -1185,7 +1262,14 @@ class _WardrobeTileGlass extends StatelessWidget {
           filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
           child: Container(
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.06),
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.white.withOpacity(0.12),
+                  Colors.white.withOpacity(0.04),
+                ],
+              ),
               borderRadius: BorderRadius.circular(18),
               border: Border.all(color: Colors.white10),
             ),
@@ -1198,12 +1282,47 @@ class _WardrobeTileGlass extends StatelessWidget {
                     child: Stack(
                       children: [
                         Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.35),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 10),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.35),
+                                  blurRadius: 25,
+                                  offset: const Offset(0, 12),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
                           child: imageUrl.trim().isNotEmpty
-                              ? Image.network(imageUrl, fit: BoxFit.cover)
+                              ? Image.network(
+                            imageUrl,
+                            fit: BoxFit.cover,
+                            width: double.infinity,
+                            height: double.infinity,
+                          )
                               : Container(
                             color: Colors.white.withOpacity(0.06),
                             child: const Center(
-                              child: Icon(Icons.image_not_supported, size: 42, color: Colors.white38),
+                              child: Icon(
+                                Icons.image_not_supported,
+                                size: 42,
+                                color: Colors.white38,
+                              ),
                             ),
                           ),
                         ),
@@ -1240,26 +1359,34 @@ class _WardrobeTileGlass extends StatelessWidget {
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(10, 10, 10, 4),
+                  padding: const EdgeInsets.fromLTRB(9, 8, 9, 3),
                   child: Text(
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                      fontSize: 12.5,
+                    ),
                   ),
                 ),
                 if (subtitle.trim().isNotEmpty)
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+                    padding: const EdgeInsets.fromLTRB(9, 0, 9, 8),
                     child: Text(
                       subtitle,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: Colors.white60, fontSize: 12, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   )
                 else
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
               ],
             ),
           ),
@@ -1496,7 +1623,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
+      backgroundColor: _WardrobeLuxuryPalette.bgBottom,
       body: Stack(
         children: [
           const Positioned.fill(
@@ -1506,10 +1633,28 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    Color(0xFF07070A),
-                    Color(0xFF111116),
-                    Color(0xFF050507),
+                    _WardrobeLuxuryPalette.bgTop,
+                    _WardrobeLuxuryPalette.bgMid,
+                    _WardrobeLuxuryPalette.bgBottom,
                   ],
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(-0.1, -0.9),
+                    radius: 1.08,
+                    colors: [
+                      _WardrobeLuxuryPalette.accentGlow.withOpacity(0.22),
+                      _WardrobeLuxuryPalette.accentGlow.withOpacity(0.10),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.28, 1.0],
+                  ),
                 ),
               ),
             ),
@@ -1521,9 +1666,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withOpacity(0.62),
-                    Colors.black.withOpacity(0.20),
-                    Colors.black.withOpacity(0.72),
+                    Color(0x520B0B0D),
+                    Colors.transparent,
+                    Color(0x3D09090A),
                   ],
                 ),
               ),
@@ -1737,8 +1882,8 @@ class _GlassChipsRow extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.06),
-            border: Border.all(color: Colors.white10),
+            color: Colors.transparent,
+            border: Border.all(color: Colors.white.withOpacity(0.10)),
             borderRadius: BorderRadius.circular(999),
           ),
           child: SingleChildScrollView(
@@ -1784,6 +1929,269 @@ class _GlassChoiceChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+class _WardrobePrimaryButton extends StatelessWidget {
+  final String text;
+  final VoidCallback onTap;
+
+  const _WardrobePrimaryButton({
+    required this.text,
+    required this.onTap,
+  });
+
+  static const Color _goldTop = Color(0xFFC8A36A);
+  static const Color _goldBottom = Color(0xFF9D7C4C);
+  static const Color _darkText = Color(0xFF191512);
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(999),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              _goldTop,
+              _goldBottom,
+            ],
+          ),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: _goldTop.withOpacity(0.45)),
+          boxShadow: [
+            BoxShadow(
+              color: _goldTop.withOpacity(0.26),
+              blurRadius: 16,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              text,
+              style: const TextStyle(
+                color: _darkText,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Icon(
+              Icons.arrow_forward_ios,
+              color: _darkText.withOpacity(0.8),
+              size: 16,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+class _WardrobeCompactControls extends StatelessWidget {
+  final String searchQuery;
+  final String sortValue;
+  final List<String> sortOptions;
+  final TextEditingController searchController;
+  final ValueChanged<String> onSearchChanged;
+  final ValueChanged<String> onSortChanged;
+
+  const _WardrobeCompactControls({
+    required this.searchQuery,
+    required this.sortValue,
+    required this.sortOptions,
+    required this.searchController,
+    required this.onSearchChanged,
+    required this.onSortChanged,
+  });
+
+  void _openSearchSheet(BuildContext context) {
+    searchController.text = searchQuery;
+    searchController.selection = TextSelection.fromPosition(
+      TextPosition(offset: searchController.text.length),
+    );
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            16,
+            14,
+            16,
+            MediaQuery.of(sheetContext).viewInsets.bottom + 18,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 44,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.white24,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: searchController,
+                autofocus: true,
+                style: const TextStyle(color: Colors.white),
+                cursorColor: _WardrobeLuxuryPalette.accent,
+                decoration: InputDecoration(
+                  hintText: 'Hľadať v šatníku...',
+                  hintStyle: const TextStyle(color: Colors.white54),
+                  prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.06),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(16),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: onSearchChanged,
+              ),
+              const SizedBox(height: 12),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _openSortSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 44,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                for (final option in sortOptions) ...[
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    tileColor: option == sortValue
+                        ? _WardrobeLuxuryPalette.accent.withOpacity(0.12)
+                        : Colors.transparent,
+                    title: Text(
+                      option,
+                      style: TextStyle(
+                        color: option == sortValue
+                            ? _WardrobeLuxuryPalette.accent
+                            : Colors.white,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    onTap: () {
+                      onSortChanged(option);
+                      Navigator.pop(sheetContext);
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final label =
+    searchQuery.trim().isEmpty ? 'Hľadať v šatníku...' : searchQuery.trim();
+
+    return Row(
+      children: [
+        Expanded(
+          child: InkWell(
+            borderRadius: BorderRadius.circular(999),
+            onTap: () => _openSearchSheet(context),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.24),
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: Colors.white.withOpacity(0.10)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.search, color: Colors.white70, size: 18),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: searchQuery.trim().isEmpty
+                            ? Colors.white54
+                            : Colors.white,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        InkWell(
+          borderRadius: BorderRadius.circular(999),
+          onTap: () => _openSortSheet(context),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.24),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: Colors.white.withOpacity(0.10)),
+            ),
+            child: Row(
+              children: [
+                Text(
+                  sortValue,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.expand_more, color: Colors.white70, size: 18),
+              ],
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
