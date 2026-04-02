@@ -556,18 +556,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final todayDate = now;
     final tomorrowDate = now.add(const Duration(days: 1));
 
-    // ✅ ZAJTRA (demo)
-    final tomorrowVM = _HeroBannerVM(
-      title: "Zajtrajší outfit",
-      subtitle: "Jar • 12°C • mierny vietor • jasno",
-      description:
-      "Zajtra to vyzerá príjemne – ráno ešte chladnejšie, potom sa oteplí. Vrstvi ľahko a ráno si nechaj niečo navyše.",
-      chips: const [
-        _HeroChip(icon: Icons.thermostat, label: "12°C"),
-        _HeroChip(icon: Icons.air, label: "vietor"),
-        _HeroChip(icon: Icons.wb_sunny, label: "jasno"),
-      ],
-    );
+
 
     final activeDate = _isTomorrow ? tomorrowDate : todayDate;
 
@@ -575,20 +564,6 @@ class _HomeScreenState extends State<HomeScreen> {
       onWillPop: () async => true,
       child: Scaffold(
         backgroundColor: wardrobeBg,
-        appBar: AppBar(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          title: const Text(
-            'Outfit Of The Day',
-            style: TextStyle(fontWeight: FontWeight.bold),
-          ),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.logout),
-              onPressed: () async => _auth.signOut(),
-            ),
-          ],
-        ),
         drawer: _buildDrawer(context),
 
         // ✅ FAB odstránený - pridávanie je v rýchlych akciách
@@ -642,52 +617,122 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ),
-            SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                Text(
-                  '$greetingName 👋',
-                  style: TextStyle(
-                    color: _HomeLuxuryPalette.textPrimary,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  _isTomorrow
-                      ? 'Poďme vybrať tvoj zajtrajší outfit.'
-                      : 'Poďme vybrať tvoj dnešný outfit.',
-                  style: TextStyle(
-                    color: _HomeLuxuryPalette.textSecondary,
-                    fontSize: 14,
-                  ),
-                ),
-                const SizedBox(height: 18),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Builder(
+                          builder: (context) => IconButton(
+                            onPressed: () => Scaffold.of(context).openDrawer(),
+                            icon: Icon(
+                              Icons.menu,
+                              color: _HomeLuxuryPalette.textSecondary,
+                            ),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          'Outfit Of The Day',
+                          style: TextStyle(
+                            color: _HomeLuxuryPalette.textSecondary.withOpacity(0.7),
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    Text(
+                      '$greetingName 👋',
+                      style: TextStyle(
+                        color: _HomeLuxuryPalette.textPrimary,
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _isTomorrow
+                          ? 'Poďme vybrať tvoj zajtrajší outfit.'
+                          : 'Poďme vybrať tvoj dnešný outfit.',
+                      style: TextStyle(
+                        color: _HomeLuxuryPalette.textSecondary,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                  if (_isTomorrow && user == null)
+                    _HeroDayCard(
+                      dayIndex: _dayIndex,
+                      onChangeDay: _setDayIndex,
+                      vm: _HeroBannerVM(
+                        title: 'Zajtrajší outfit',
+                        subtitle: _weatherForDate(tomorrowDate).summarySubtitle,
+                        description:
+                        'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka aj na zajtra.',
+                        chips: _weatherForDate(tomorrowDate).toHeroChips(),
+                      ),
+                      date: activeDate,
+                      isTomorrow: true,
+                      outfitItems: const <_HeroOutfitItem>[],
+                      onTapSwapOne: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                        );
+                      },
+                      onTapNewOutfit: () {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
+                        );
+                      },
+                      onTapEdit: () => _openHeroEditSheet(context),
+                    )
+                  else if (_isTomorrow && user != null)
+                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                      stream: _wardrobeStream(user.uid),
+                      builder: (context, snap) {
+                        final docs = snap.data?.docs ?? const [];
+                        final wardrobe = docs.map((d) => d.data()).toList();
+                        final hero = _buildTodayHero(date: tomorrowDate, wardrobe: wardrobe);
 
-                if (_isTomorrow)
-                  _HeroDayCard(
-                    dayIndex: _dayIndex,
-                    onChangeDay: _setDayIndex,
-                    vm: tomorrowVM,
-                    date: activeDate,
-                    isTomorrow: true,
-                    outfitItems: const <_HeroOutfitItem>[],
-                    onTapSwapOne: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                      );
-                    },
-                    onTapNewOutfit: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                      );
-                    },
-                    onTapEdit: () => _openHeroDayPicker(context),
-                  )
-                else if (user == null)
+                        final tomorrowHero = _HeroTodayState(
+                          vm: _HeroBannerVM(
+                            title: 'Zajtrajší outfit',
+                            subtitle: hero.vm.subtitle,
+                            description: hero.vm.description,
+                            chips: hero.vm.chips,
+                          ),
+                          outfitItems: hero.outfitItems,
+                        );
+
+                        return _HeroDayCard(
+                          dayIndex: _dayIndex,
+                          onChangeDay: _setDayIndex,
+                          vm: tomorrowHero.vm,
+                          date: activeDate,
+                          isTomorrow: true,
+                          outfitItems: tomorrowHero.outfitItems,
+                          onTapSwapOne: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                            );
+                          },
+                          onTapNewOutfit: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
+                            );
+                          },
+                          onTapEdit: () => _openHeroEditSheet(context),
+                        );
+                      },
+                    )
+                  else if (user == null)
                   _HeroDayCard(
                     dayIndex: _dayIndex,
                     onChangeDay: _setDayIndex,
@@ -711,7 +756,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
                       );
                     },
-                    onTapEdit: () => _openHeroDayPicker(context),
+                    onTapEdit: () => _openHeroEditSheet(context),
                   )
                 else
                   StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -738,7 +783,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
                           );
                         },
-                        onTapEdit: () => _openHeroDayPicker(context),
+                        onTapEdit: () => _openHeroEditSheet(context),
                       );
                     },
                   ),
@@ -869,17 +914,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  void _openHeroDayPicker(BuildContext context) {
-    final theme = Theme.of(context);
+  void _openHeroEditSheet(BuildContext context) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: theme.scaffoldBackgroundColor,
+      backgroundColor: const Color(0xFF121212),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
@@ -903,7 +948,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Pre ktorý deň chceš outfit?',
+                      'Upraviť outfit',
                       style: TextStyle(
                         color: _HomeLuxuryPalette.textPrimary,
                         fontSize: 16,
@@ -913,31 +958,28 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 12),
                   _SheetChoiceTile(
-                    icon: Icons.today,
-                    title: 'Dnes',
-                    subtitle: 'Vybrať outfit na dnešok',
+                    icon: Icons.swap_horiz,
+                    title: 'Vymeniť kúsok',
+                    subtitle: 'Vymeň jednu časť aktuálneho outfitu',
                     onTap: () {
                       Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SelectOutfitScreen()),
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Vymeniť kúsok – napojíme ďalší krok.'),
+                        ),
                       );
                     },
                   ),
                   const SizedBox(height: 10),
                   _SheetChoiceTile(
-                    icon: Icons.wb_sunny_outlined,
-                    title: 'Zajtra',
-                    subtitle: 'Vybrať outfit na zajtra',
+                    icon: Icons.layers_outlined,
+                    title: 'Pridať vrstvu',
+                    subtitle: 'Pridať ďalšiu zmysluplnú vrstvu do outfitu',
                     onTap: () {
                       Navigator.pop(context);
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const SelectOutfitScreen()),
-                      );
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
-                          content: Text('Zajtra: zatiaľ rovnaký výber (napojíme dátum neskôr).'),
+                          content: Text('Pridať vrstvu – napojíme ďalší krok.'),
                         ),
                       );
                     },
@@ -960,26 +1002,102 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Drawer _buildDrawer(BuildContext context) {
-    final theme = Theme.of(context);
     return Drawer(
-      backgroundColor: theme.scaffoldBackgroundColor,
-      child: SafeArea(
-        child: ListView(
-          padding: EdgeInsets.zero,
-          children: [
+      backgroundColor: _HomeLuxuryPalette.bgMid,
+      child: Stack(
+        children: [
+      const Positioned.fill(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+        gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          _HomeLuxuryPalette.bgTop,
+          _HomeLuxuryPalette.bgMid,
+          _HomeLuxuryPalette.bgBottom,
+        ],
+      ),
+    ),
+    ),
+    ),
+    Positioned.fill(
+    child: IgnorePointer(
+    child: DecoratedBox(
+    decoration: BoxDecoration(
+    gradient: RadialGradient(
+    center: const Alignment(-0.4, -0.9),
+    radius: 1.1,
+    colors: [
+    _HomeLuxuryPalette.accent.withOpacity(0.25),
+    _HomeLuxuryPalette.accent.withOpacity(0.10),
+    Colors.transparent,
+    ],
+    stops: const [0.0, 0.35, 1.0],
+    ),
+    ),
+    ),
+    ),
+    ),
+    Positioned.fill(
+    child: DecoratedBox(
+    decoration: BoxDecoration(
+    gradient: LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+    Colors.transparent,
+    Color(0xFF09090A).withOpacity(0.25),
+    ],
+    ),
+    ),
+    ),
+    ),
+    SafeArea(
+    child: ListView(
+    padding: EdgeInsets.zero,
+    children: [
             DrawerHeader(
-              child: Text(
-                'Menu',
-                style: TextStyle(
-                  color: _HomeLuxuryPalette.textPrimary,
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
+              margin: EdgeInsets.zero,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    _HomeLuxuryPalette.bgTop,
+                    _HomeLuxuryPalette.bgMid,
+                  ],
+                ),
+                border: Border(
+                  bottom: BorderSide(color: _HomeLuxuryPalette.border),
+                ),
+              ),
+              child: Align(
+                alignment: Alignment.bottomLeft,
+                child: Text(
+                  'Menu',
+                  style: TextStyle(
+                    color: _HomeLuxuryPalette.accent,
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                    shadows: [
+                      Shadow(
+                        color: _HomeLuxuryPalette.accent.withOpacity(0.45),
+                        blurRadius: 12,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
             ListTile(
-              leading: Icon(Icons.people_outline, color: _HomeLuxuryPalette.textSecondary),
-              title: Text('Priatelia', style: TextStyle(color: _HomeLuxuryPalette.textPrimary)),
+              iconColor: _HomeLuxuryPalette.accent,
+              textColor: _HomeLuxuryPalette.accent,
+              leading: Icon(Icons.people_outline, color: _HomeLuxuryPalette.accent),
+              title: Text(
+                'Priatelia',
+                style: TextStyle(color: _HomeLuxuryPalette.accent),
+              ),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -989,10 +1107,12 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              leading: Icon(Icons.diversity_2, color: _HomeLuxuryPalette.textSecondary),
+              iconColor: _HomeLuxuryPalette.accent,
+              textColor: _HomeLuxuryPalette.accent,
+              leading: Icon(Icons.diversity_2, color: _HomeLuxuryPalette.accent),
               title: Text(
                 'Správy a zladenie outfitov',
-                style: TextStyle(color: _HomeLuxuryPalette.textPrimary),
+                style: TextStyle(color: _HomeLuxuryPalette.accent),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -1004,8 +1124,13 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             Divider(color: _HomeLuxuryPalette.border),
             ListTile(
-              leading: Icon(Icons.settings, color: _HomeLuxuryPalette.textSecondary),
-              title: Text('Nastavenia', style: TextStyle(color: _HomeLuxuryPalette.textPrimary)),
+              iconColor: _HomeLuxuryPalette.accent,
+              textColor: _HomeLuxuryPalette.accent,
+              leading: Icon(Icons.settings, color: _HomeLuxuryPalette.accent),
+              title: Text(
+                'Nastavenia',
+                style: TextStyle(color: _HomeLuxuryPalette.accent),
+              ),
               onTap: () {
                 Navigator.of(context).pop();
                 Navigator.push(
@@ -1014,8 +1139,23 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-          ],
-        ),
+            ListTile(
+              iconColor: _HomeLuxuryPalette.accent,
+              textColor: _HomeLuxuryPalette.accent,
+              leading: Icon(Icons.logout, color: _HomeLuxuryPalette.accent),
+              title: Text(
+                'Odhlásiť sa',
+                style: TextStyle(color: _HomeLuxuryPalette.accent),
+              ),
+              onTap: () async {
+                Navigator.of(context).pop();
+                await _auth.signOut();
+              },
+            ),
+    ],
+    ),
+    ),
+    ],
       ),
     );
   }
@@ -1109,35 +1249,7 @@ class _HeroDayCard extends StatelessWidget {
             ],
           ),
 
-          if (isTomorrow) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _HomeLuxuryPalette.accent.withOpacity(0.09),
-                borderRadius: BorderRadius.circular(999),
-                border: Border.all(color: Colors.white.withOpacity(0.08)),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.visibility, size: 14, color: _HomeLuxuryPalette.textSecondary),
-                  const SizedBox(width: 6),
-                  Text(
-                    'NÁHĽAD ZAJTRA • ${_fmt(date)}',
-                    style: TextStyle(
-                      color: _HomeLuxuryPalette.textSecondary,
-                      fontSize: 11.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 0.2,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ] else ...[
-            const SizedBox(height: 10),
-          ],
+          const SizedBox(height: 10),
 
           Wrap(spacing: 8, children: vm.chips),
           const SizedBox(height: 10),
@@ -1184,26 +1296,21 @@ class _HeroDayCard extends StatelessWidget {
 
           const SizedBox(height: 12),
 
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
+          Column(
             children: [
-              _HeroGlassButton(
-                icon: Icons.swap_horiz,
-                text: 'Vymeniť kúsok',
-                onTap: onTapSwapOne,
-              ),
-              _HeroGlassButton(
-                icon: Icons.auto_awesome,
-                text: 'Nový outfit',
-                onTap: onTapNewOutfit,
-              ),
-
               SizedBox(
                 width: double.infinity,
                 child: _HeroPrimaryButton(
                   text: 'Upraviť outfit',
                   onTap: onTapEdit,
+                ),
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: _HeroPrimaryButton(
+                  text: 'Nový outfit',
+                  onTap: onTapNewOutfit,
                 ),
               ),
             ],
