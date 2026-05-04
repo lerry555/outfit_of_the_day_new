@@ -2,6 +2,8 @@ import'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+
+
 import 'add_clothing_screen.dart';
 import 'calendar_screen.dart';
 import 'friends_screen.dart';
@@ -12,7 +14,7 @@ import 'stylist_chat_screen.dart';
 import 'user_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
 import 'wardrobe_screen.dart';
-
+import '../utils/outfit_reason_builder.dart';
 class _HomeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
   static const Color bgMid = Color(0xFF0C0C0D);
@@ -95,6 +97,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     // Minimálna, lokálna logika (bez AI / bez refaktorov).
     // Cieľ: vybrať Top + Bottom + Shoes + voliteľný Outerwear podľa počasia.
+
+
 
     final clean = wardrobe.where((raw) {
       final isClean = raw['isClean'];
@@ -361,158 +365,36 @@ class _HomeScreenState extends State<HomeScreen> {
     })
         .toList();
 
-    // Štylistická (lokálna) explikácia pre hero kartu.
-    // Zámer: dlhší, prirodzenejší text bez AI a bez zásahov do logiky výberu outfitu.
-    List<String> colorsOf(Map<String, dynamic> it) {
-      final dyn = it['colors'];
-      if (dyn is List) {
-        return dyn.map((e) => e.toString()).toList();
-      }
-      if (dyn is String) {
-        final s = dyn.trim();
-        if (s.isEmpty) return const [];
-        // Ošetrenie napr. "['black','white']" alebo jednoduchej reťazca palety.
-        return s
-            .replaceAll('[', '')
-            .replaceAll(']', '')
-            .split(',')
-            .map((e) => e.trim())
-            .where((e) => e.isNotEmpty)
-            .toList();
-      }
-      return const [];
-    }
-
-    Set<String> colorFamilies(List<String> colors) {
-      final fam = <String>{};
-      for (final c0 in colors) {
-        final c = c0.toLowerCase();
-        if (c.contains('čier') || c.contains('cier') || c.contains('black')) fam.add('black');
-        if (c.contains('biel') || c.contains('white')) fam.add('white');
-        if (c.contains('siv') || c.contains('gray') || c.contains('grey')) fam.add('gray');
-        if (c.contains('béž') || c.contains('bez') || c.contains('beige')) fam.add('beige');
-        if (c.contains('navy') || c.contains('tmavomod')) fam.add('navy');
-        if (c.contains('červen') || c.contains('red')) fam.add('red');
-        if (c.contains('zelen') || c.contains('green')) fam.add('green');
-        if (c.contains('modr') || c.contains('blue')) fam.add('blue');
-        if (c.contains('oranž') || c.contains('orange')) fam.add('orange');
-        if (c.contains('žlt') || c.contains('yellow')) fam.add('yellow');
-        if (c.contains('fial') || c.contains('purple')) fam.add('purple');
-      }
-      return fam;
-    }
-
-    String describeTemperatureFeel() {
-      // Veta má „časový oblúk“ (ráno vs. neskôr), aj keď počasie je deterministické.
-      final morning = isCold
-          ? 'ráno bude citeľne chladnejšie'
-          : isMild
-          ? 'ráno bude príjemne svieže'
-          : 'ráno bude skôr komfortné';
-
-      final later = isCold
-          ? 'a cez deň sa to aspoň trochu uvoľní a oteplí'
-          : isWarm
-          ? 'a neskôr sa z toho stane ľahký, teplejší deň'
-          : 'a popoludní sa to zvyčajne zjemní a bude príjemnejšie';
-
-      final windy = weather.isWindy
-          ? ' Vietor spraví pocit chladu ostrejší, takže je dobré mať outfit, ktorý dáva zmysel aj pri prechádzkach. '
-          : ' ';
-
-      final rainy = weather.isRainy
-          ? ' Keď sa chytí dážď, počítaj s prehánkami a tým, že povrch sa môže ochladiť – preto sa hodí byť pripravený/á. '
-          : ' ';
-
-      return '$morning, $later.$windy$rainy'.replaceAll(RegExp(r'\s+'), ' ').trim();
-    }
-
-    String describeLayeringNeed({required bool hasOuterwear}) {
-      if (hasOuterwear) {
-        if (weather.isRainy) {
-          return 'Vrchnú vrstvu som zaradil/a hlavne kvôli dažďu a vetru: ochráni ti trup a outfit vyzerá „hotovo“ aj pri krátkych prehánkach. Keď sa popoludní zlepší situácia, vonkajšiu vrstvu si vieš jednoducho odložiť (alebo aspoň zložiť) bez toho, aby sa zmenil celý look.';
-        }
-        return 'Vrchná vrstva je tu hlavne kvôli tomu, že ráno a večer bývajú chladnejšie než stred dňa. Cez deň ju môžeš nechať pootvorenú alebo si ju odložiť, keď sa oteplí – a zároveň stále vyzeráš upravene, lebo to tvorí pekný rám pre zvyšok outfitu.';
-      }
-
-      if (isWarm) {
-        return 'Keď je teplejšie, držím to ľahké: bez zbytočného vrstvenia, aby si sa pri pohybe nezaparil/a a zostal/a v komforte. Vizuálne to funguje tak, že hlavný diel a spodok tvoria čistú siluetu bez „ťažoby“.';
-      }
-
-      return 'Pri tomto počasí som sa nesnažil/a vrstviť nasilu – radšej držím jednoduchší základ, aby bol outfit praktický a nepôsobil prehnane. Ak sa náhodou ochladí, vieš si to doladiť doplnkami, ale celkový počet vrstiev nechávam rozumný.';
-    }
-
-    String describeColorHarmony() {
-      final selectedForColors = <Map<String, dynamic>>[
-        topPick.item!,
-        bottomPick.item!,
-        shoesPick.item!,
-        if (outerPick != null) outerPick!,
-      ];
-
-      final allColors = <String>[];
-      for (final it in selectedForColors) {
-        allColors.addAll(colorsOf(it));
-      }
-
-      final fam = colorFamilies(allColors);
-      final isNeutralSet = fam.any((f) => const {'black', 'white', 'gray', 'beige', 'navy'}.contains(f));
-
-      String pickNeutralPhrase() {
-        final names = <String>[];
-        if (fam.contains('black')) names.add('čierna');
-        if (fam.contains('white')) names.add('biela');
-        if (fam.contains('gray')) names.add('sivá');
-        if (fam.contains('beige')) names.add('béžová');
-        if (fam.contains('navy')) names.add('tmavomodrá');
-        if (names.isEmpty) return 'neutrálne tóny';
-        return names.join(', ');
-      }
-
-      if (isNeutralSet) {
-        return 'Farebne to drží spolu neutrálna paleta (${pickNeutralPhrase()}) – takže top a spodok nepôsobia „každý po svojom“ a obuv to pekne uzemní. Aj keď pridáme jeden výraznejší kus, stále to vyzerá zladené a pokojné.';
-      }
-
-      // Fallback, keď farby nie sú v dátach (alebo sú nejednoznačné).
-      return 'Držím to farebne súvislé: aj bez výrazných farebných experimentov outfit pôsobí harmonicky, lebo kúsky spolu ladia tónom a strihom.';
-    }
-
-    String describeStyleVibe() {
-      String blobStr(Map<String, dynamic> it) => [
-        (it['name'] ?? '').toString(),
-        (it['category'] ?? '').toString(),
-        (it['subCategory'] ?? '').toString(),
-        (it['mainGroup'] ?? '').toString(),
-      ].join(' ').toLowerCase();
-
-      final topB = blobStr(topPick.item!);
-      final bottomB = blobStr(bottomPick.item!);
-      final shoesB = blobStr(shoesPick.item!);
-      final outerB = outerPick != null ? blobStr(outerPick!) : '';
-
-      if (outerPick != null && (outerB.contains('sako') || outerB.contains('blazer'))) {
-        return 'Vibe je taký „mestský, ale stále pohodlný“: vrchná vrstva dotiahne look do upravenejšej roviny a zvyšok zostáva nositeľný celý deň. Spodok a top držia základnú linku, takže to nepôsobí preplnene.';
-      }
-
-      if (topB.contains('hoodie') || topB.contains('mikina') || topB.contains('sweater') || topB.contains('sveter')) {
-        return 'Ideálne na bežný deň: pohodlný, trochu street-casual mix, kde vrchný diel dáva tvar a nohavice to držia v rovnováhe. Obuv to uzatvára tak, aby outfit vyzeral hotovo, aj keď len rýchlo vybiehaš z domu.';
-      }
-
-      if (bottomB.contains('jeans') || bottomB.contains('rifl') || bottomB.contains('dzin') || bottomB.contains('džín')) {
-        return 'Je to čistý každodenný outfit – jednoduché kúsky, ktoré spolu fungujú bez toho, aby si musel/a vymýšľať zložité kombinácie. Farby a proporcie sú poskladané tak, aby si vyzeral/a upravene a zároveň sa cítil/a uvoľnene.';
-      }
-
-      return 'Celkový dojem je vyvážený: kombinácia pôsobí prirodzene a prakticky, bez zbytočného „prehadzovania“ štýlu počas dňa.';
-    }
-
     final hasOuter = outerPick != null;
-    final reasonParagraph = <String>[
-      describeTemperatureFeel(),
-      describeLayeringNeed(hasOuterwear: hasOuter),
-      'Top a spodok spolu vizuálne ladia tak, aby držali jednu líniu (tón aj silueta), a obuv na to nadviaže, takže outfit nepôsobí rozbitý. ${hasOuter ? 'Vrchná vrstva to pekne rámuje a pridáva „dospelý“ dojem bez toho, aby outfit bol objemný.' : 'Keď vrchná vrstva chýba, look ostáva ľahší a menej komplikovaný – presne na komfortný pohyb.'}',
-      describeColorHarmony(),
-      describeStyleVibe(),
-    ].join(' ');
+
+    final selectedReasonItems = <Map<String, dynamic>>[
+      {
+        ...topPick.item!,
+        'typeKey': 'top',
+      },
+      {
+        ...bottomPick.item!,
+        'typeKey': 'bottom',
+      },
+      {
+        ...shoesPick.item!,
+        'typeKey': 'shoes',
+      },
+      if (outerPick != null)
+        {
+          ...outerPick!,
+          'typeKey': 'outerwear',
+        },
+    ];
+
+    final reasonParagraph = OutfitReasonBuilder.build(
+      tempC: weather.tempC,
+      isRainy: weather.isRainy,
+      isWindy: weather.isWindy,
+      selectedItems: selectedReasonItems,
+      hasOuterwear: hasOuter,
+      seasonLabel: weather.seasonLabel,
+    );
 
     final rec = _HeroOutfitRecommendation(
       items: outfitTiles,
@@ -536,8 +418,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final clean = value(item['cleanImageUrl']);
     if (clean != null) return clean;
 
-    final product = value(item['productImageUrl']);
-    if (product != null) return product;
 
     final image = value(item['imageUrl']);
     if (image != null) return image;
@@ -1674,9 +1554,14 @@ class _HeroOutfitMiniTile extends StatelessWidget {
         border: Border.all(color: _HomeLuxuryPalette.border),
         color: _HomeLuxuryPalette.surface.withOpacity(0.58),
       ),
-      child: _HeroOutfitImageView(
-        imageUrl: item.imageUrl,
-        fallbackIcon: item.icon,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10), // menší radius vo vnútri
+        child: SizedBox.expand(
+          child: _HeroOutfitImageView(
+            imageUrl: item.imageUrl,
+            fallbackIcon: item.icon,
+          ),
+        ),
       ),
     );
   }
@@ -1702,14 +1587,21 @@ class _HeroOutfitImageView extends StatelessWidget {
 
     final isShoes = fallbackIcon == Icons.directions_run;
 
-    return Transform.scale(
-      scale: isShoes ? 1.90 : 1.55,
-      child: Image.network(
-        normalizedImageUrl,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.high,
-        errorBuilder: (context, error, stackTrace) =>
-            _OutfitPreviewPlaceholder(icon: fallbackIcon),
+    return Center(
+      child: Transform.scale(
+        scale: isShoes ? 1.75 : 1.45,
+        child: Image.network(
+          normalizedImageUrl,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+          gaplessPlayback: true,
+          loadingBuilder: (context, child, loadingProgress) {
+            if (loadingProgress == null) return child;
+            return _OutfitPreviewPlaceholder(icon: fallbackIcon);
+          },
+          errorBuilder: (context, error, stackTrace) =>
+              _OutfitPreviewPlaceholder(icon: fallbackIcon),
+        ),
       ),
     );
   }

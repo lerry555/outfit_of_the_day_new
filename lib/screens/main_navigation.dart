@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
-import 'calendar_screen.dart';
+import 'calendar_outfit_screen.dart';
 import 'trip_planner_screen.dart';
 import 'recommended_screen.dart';
 import '../Services/share_intent_service.dart';
@@ -31,7 +31,7 @@ class _MainNavigationState extends State<MainNavigation> {
     _screens = [
       const HomeScreen(),
       const WardrobeScreen(),
-      const CalendarScreen(),
+      const CalendarOutfitScreen(),
       const TripPlannerScreen(),
       const RecommendedScreen(initialTab: 1),
     ];
@@ -63,7 +63,10 @@ class _MainNavigationState extends State<MainNavigation> {
         }
       },
       child: Scaffold(
-        body: _screens[_currentIndex],
+        body: IndexedStack(
+          index: _currentIndex,
+          children: _screens,
+        ),
         bottomNavigationBar: Container(
           decoration: BoxDecoration(
             gradient: const LinearGradient(

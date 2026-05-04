@@ -1,12 +1,15 @@
 // lib/main.dart
-import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
 
 import 'screens/auth_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
+  await initializeDateFormatting('sk_SK', null);
   runApp(const MyApp());
 }
 
@@ -107,9 +110,16 @@ class MyApp extends StatelessWidget {
       title: 'Outfit Of The Day',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
-
-      // ✅ Namiesto MainNavigation dáme AuthGate
-      // ten sám rozhodne: neprihlásený -> LoginScreen, prihlásený -> MainNavigation
+      locale: const Locale('sk', 'SK'),
+      supportedLocales: const [
+        Locale('sk', 'SK'),
+        Locale('en', 'US'),
+      ],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
       home: const AuthGate(),
     );
   }
