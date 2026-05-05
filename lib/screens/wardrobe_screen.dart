@@ -7,7 +7,6 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
-import 'package:outfitofTheDay/screens/wardrobe_analysis_screen.dart';
 class _WardrobeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
   static const Color bgMid = Color(0xFF0C0C0D);
@@ -134,61 +133,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Legend bottom sheet
-  // ---------------------------------------------------------------------------
-  void _showProcessingLegend(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: const Color(0xFF121212),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                _SheetHandle(),
-                SizedBox(height: 12),
-                Text(
-                  'Úprava fotiek',
-                  style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
-                ),
-                SizedBox(height: 10),
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 1.6,
-                        valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
-                      ),
-                    ),
-                    SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Modrý kruh znamená, že fotka sa ešte spracováva na pozadí '
-                            '(vymazanie pozadia alebo vytvorenie produktovej fotky). '
-                            'Keď úprava skončí, kruh zmizne a zostane finálna verzia fotky.',
-                        style: TextStyle(color: Colors.white70, height: 1.35),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
   // -----------------------------
   // Helpers – normalizácia listov
   // -----------------------------
@@ -296,6 +240,42 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
 
   int _compareString(String a, String b) {
     return a.toLowerCase().compareTo(b.toLowerCase());
+  }
+
+  bool _hasActiveProcessing(Map<String, dynamic> data) {
+    String statusFromProcessing(String key) {
+      final p = data['processing'];
+      if (p is Map) {
+        final m = p.cast<String, dynamic>();
+        final v = (m[key] ?? '').toString().trim();
+        if (v.isNotEmpty) return v;
+      }
+      final dotted = data['processing.$key'];
+      if (dotted != null) {
+        final v = dotted.toString().trim();
+        if (v.isNotEmpty) return v;
+      }
+      return '';
+    }
+
+    bool isUrlFilled(String? s) => s != null && s.trim().isNotEmpty;
+
+    final String? productImage = data['productImageUrl'] as String?;
+    final String? cleanImage = data['cleanImageUrl'] as String?;
+    final String? cutoutImage = data['cutoutImageUrl'] as String?;
+
+    final cutoutStatus = statusFromProcessing('cutout');
+    final productStatus = statusFromProcessing('product');
+
+    final hasCutoutOrClean = isUrlFilled(cleanImage) || isUrlFilled(cutoutImage);
+    final hasProduct = isUrlFilled(productImage);
+
+    final cutoutInProgress =
+        !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+    final productInProgress =
+        hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
+
+    return cutoutInProgress || productInProgress;
   }
 
   // -----------------------------
@@ -560,22 +540,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                     child: _GlassAppBar(
                       title: 'Môj šatník',
-                      onInfo: () => _showProcessingLegend(context),
-                    ),
-                  ),
-
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                    child: _WardrobePrimaryButton(
-                      text: 'Analýza šatníka',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const WardrobeAnalysisScreen(),
-                          ),
-                        );
-                      },
+                      subtitle: 'Tvoje oblečenie pripravené na outfity.',
                     ),
                   ),
 
@@ -603,6 +568,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           normalizeKeysForDisplay: _normalizeKeysForDisplay,
                           matchesSearch: _matchesSearch,
                           compareDocs: _compareDocs,
+                          hasActiveProcessing: _hasActiveProcessing,
                           onDeleteItem: (item) => _confirmAndDelete(context, item),
                         );
                       }).toList(),
@@ -638,6 +604,7 @@ class _WardrobeTabBody extends StatelessWidget {
   final Map<String, dynamic> Function(Map<String, dynamic> raw) normalizeKeysForDisplay;
   final bool Function(Map<String, dynamic> data, String query) matchesSearch;
   final int Function(Map<String, dynamic> a, Map<String, dynamic> b) compareDocs;
+  final bool Function(Map<String, dynamic> item) hasActiveProcessing;
 
   final void Function(Map<String, dynamic> item) onDeleteItem;
 
@@ -654,6 +621,7 @@ class _WardrobeTabBody extends StatelessWidget {
     required this.normalizeKeysForDisplay,
     required this.matchesSearch,
     required this.compareDocs,
+    required this.hasActiveProcessing,
     required this.onDeleteItem,
   });
 
@@ -703,6 +671,7 @@ class _WardrobeTabBody extends StatelessWidget {
         }
 
         normalized.sort((a, b) => compareDocs(a, b));
+        final hasAnyProcessing = normalized.any(hasActiveProcessing);
 
         final Map<String, List<Map<String, dynamic>>> byCategory = {};
         for (final item in normalized) {
@@ -728,6 +697,10 @@ class _WardrobeTabBody extends StatelessWidget {
               onSortChanged: onSortChanged,
             ),
             const SizedBox(height: 12),
+            if (hasAnyProcessing) ...[
+              const _ProcessingInfoBanner(),
+              const SizedBox(height: 12),
+            ],
 
             if (totalCount == 0)
               const Padding(
@@ -770,9 +743,9 @@ class _WardrobeTabBody extends StatelessWidget {
 /// ============================================================================
 class _GlassAppBar extends StatelessWidget {
   final String title;
-  final VoidCallback onInfo;
+  final String subtitle;
 
-  const _GlassAppBar({required this.title, required this.onInfo});
+  const _GlassAppBar({required this.title, required this.subtitle});
 
   @override
   Widget build(BuildContext context) {
@@ -781,24 +754,58 @@ class _GlassAppBar extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
             color: Colors.transparent,
             border: Border.all(color: Colors.white.withOpacity(0.10)),
             borderRadius: BorderRadius.circular(18),
           ),
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: _WardrobeLuxuryPalette.accent.withOpacity(0.16),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: _WardrobeLuxuryPalette.accent.withOpacity(0.42),
+                  ),
+                ),
+                alignment: Alignment.center,
+                child: const Icon(
+                  Icons.checkroom_rounded,
+                  size: 20,
+                  color: _WardrobeLuxuryPalette.accent,
                 ),
               ),
-              IconButton(
-                onPressed: onInfo,
-                tooltip: 'Čo znamená ten kruh?',
-                icon: const Icon(Icons.info_outline, color: Colors.white70),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 12.5,
+                        height: 1.3,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -963,23 +970,6 @@ class _GlassDropdown extends StatelessWidget {
   }
 }
 
-class _SheetHandle extends StatelessWidget {
-  const _SheetHandle();
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        width: 44,
-        height: 4,
-        decoration: BoxDecoration(
-          color: Colors.white24,
-          borderRadius: BorderRadius.circular(999),
-        ),
-      ),
-    );
-  }
-}
 /// ============================================================================
 /// CATEGORY SECTION (glass) + preview HORIZONTAL (3 vedľa seba)
 /// ============================================================================
@@ -1932,63 +1922,50 @@ class _GlassChoiceChip extends StatelessWidget {
     );
   }
 }
-class _WardrobePrimaryButton extends StatelessWidget {
-  final String text;
-  final VoidCallback onTap;
-
-  const _WardrobePrimaryButton({
-    required this.text,
-    required this.onTap,
-  });
-
-  static const Color _goldTop = Color(0xFFC8A36A);
-  static const Color _goldBottom = Color(0xFF9D7C4C);
-  static const Color _darkText = Color(0xFF191512);
+class _ProcessingInfoBanner extends StatelessWidget {
+  const _ProcessingInfoBanner();
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              _goldTop,
-              _goldBottom,
-            ],
-          ),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: _goldTop.withOpacity(0.45)),
-          boxShadow: [
-            BoxShadow(
-              color: _goldTop.withOpacity(0.26),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+    return Container(
+      constraints: const BoxConstraints(minHeight: 40, maxHeight: 48),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1B1E),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.09)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 20,
+            height: 20,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(999),
+              color: const Color(0x224A6CF7),
+              border: Border.all(color: _WardrobeLuxuryPalette.accent.withOpacity(0.45)),
             ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              text,
-              style: const TextStyle(
-                color: _darkText,
-                fontWeight: FontWeight.bold,
+            child: const Icon(
+              Icons.hourglass_top_rounded,
+              size: 12,
+              color: Color(0xFF8DA7FF),
+            ),
+          ),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Niektoré fotky sa ešte upravujú. Modrý kruh zmizne po dokončení.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 11.8,
+                fontWeight: FontWeight.w600,
+                height: 1.25,
               ),
             ),
-            const SizedBox(width: 10),
-            Icon(
-              Icons.arrow_forward_ios,
-              color: _darkText.withOpacity(0.8),
-              size: 16,
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }

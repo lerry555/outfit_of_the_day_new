@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
 import 'calendar_outfit_screen.dart';
-import 'trip_planner_screen.dart';
-import 'recommended_screen.dart';
+import 'profile_screen.dart';
 import '../Services/share_intent_service.dart';
 
 class MainNavigation extends StatefulWidget {
@@ -32,8 +31,7 @@ class _MainNavigationState extends State<MainNavigation> {
       const HomeScreen(),
       const WardrobeScreen(),
       const CalendarOutfitScreen(),
-      const TripPlannerScreen(),
-      const RecommendedScreen(initialTab: 1),
+      const ProfileScreen(),
     ];
 
     WidgetsBinding.instance.addPostFrameCallback((_) {

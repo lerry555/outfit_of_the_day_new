@@ -8,6 +8,7 @@ import 'add_clothing_screen.dart';
 import 'calendar_screen.dart';
 import 'friends_screen.dart';
 import 'messages_screen.dart';
+import 'premium_screen.dart';
 import 'recommended_screen.dart';
 import 'select_outfit_screen.dart';
 import 'stylist_chat_screen.dart';
@@ -715,77 +716,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 const SizedBox(height: 22),
 
-                InkWell(
-                  borderRadius: BorderRadius.circular(18),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const WardrobeAnalysisScreen(),
-                      ),
-                    );
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: Colors.white.withOpacity(0.06)),
-                      color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.86),
-                      boxShadow: [
-                        BoxShadow(
-                          color: Colors.black.withOpacity(0.22),
-                          blurRadius: 16,
-                          offset: const Offset(0, 8),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          height: 46,
-                          width: 46,
-                          decoration: BoxDecoration(
-                            color: _HomeLuxuryPalette.accent.withOpacity(0.12),
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                          child: Icon(
-                            Icons.auto_awesome,
-                            color: _HomeLuxuryPalette.accent,
-                            size: 22,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Analýza šatníka',
-                                style: TextStyle(
-                                  color: _HomeLuxuryPalette.textPrimary,
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                'Zisti, čo ti chýba a zlepši svoje outfity.',
-                                style: TextStyle(
-                                  color: _HomeLuxuryPalette.textSecondary,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Icon(
-                          Icons.chevron_right,
-                          color: _HomeLuxuryPalette.textSecondary,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
                 const SizedBox(height: 18),
 
                 _RecommendedCarouselV2(
@@ -882,6 +812,18 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Drawer _buildDrawer(BuildContext context) {
+    final user = _auth.currentUser;
+    final displayName = (user?.displayName?.trim().isNotEmpty ?? false)
+        ? user!.displayName!.trim()
+        : 'Používateľ';
+    final email = (user?.email?.trim().isNotEmpty ?? false)
+        ? user!.email!.trim()
+        : 'bez emailu';
+    final initial = displayName.isNotEmpty
+        ? displayName.characters.first.toUpperCase()
+        : 'P';
+    final photoUrl = user?.photoURL;
+
     return Drawer(
       backgroundColor: _HomeLuxuryPalette.bgMid,
       child: Stack(
@@ -934,12 +876,14 @@ class _HomeScreenState extends State<HomeScreen> {
     ),
     ),
     SafeArea(
-    child: ListView(
-    padding: EdgeInsets.zero,
+    child: Column(
     children: [
-            DrawerHeader(
-              margin: EdgeInsets.zero,
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(color: _HomeLuxuryPalette.border),
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
@@ -948,28 +892,93 @@ class _HomeScreenState extends State<HomeScreen> {
                     _HomeLuxuryPalette.bgMid,
                   ],
                 ),
-                border: Border(
-                  bottom: BorderSide(color: _HomeLuxuryPalette.border),
-                ),
               ),
-              child: Align(
-                alignment: Alignment.bottomLeft,
-                child: Text(
-                  'Menu',
-                  style: TextStyle(
-                    color: _HomeLuxuryPalette.accent,
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    shadows: [
-                      Shadow(
+              child: Row(
+                children: [
+                  Container(
+                    width: 52,
+                    height: 52,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(
                         color: _HomeLuxuryPalette.accent.withOpacity(0.45),
-                        blurRadius: 12,
                       ),
-                    ],
+                      gradient: const LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Color(0xFFC8A36A),
+                          Color(0xFF9D7C4C),
+                        ],
+                      ),
+                    ),
+                    child: ClipOval(
+                      child: (photoUrl != null && photoUrl.trim().isNotEmpty)
+                          ? Image.network(
+                              photoUrl.trim(),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) {
+                                return Center(
+                                  child: Text(
+                                    initial,
+                                    style: const TextStyle(
+                                      color: Color(0xFF191512),
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 22,
+                                    ),
+                                  ),
+                                );
+                              },
+                            )
+                          : Center(
+                              child: Text(
+                                initial,
+                                style: const TextStyle(
+                                  color: Color(0xFF191512),
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 22,
+                                ),
+                              ),
+                            ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          displayName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: _HomeLuxuryPalette.textPrimary,
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          email,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _HomeLuxuryPalette.textSecondary.withOpacity(0.9),
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                children: [
+            _drawerSectionLabel('SOCIÁLNE'),
             ListTile(
               iconColor: _HomeLuxuryPalette.accent,
               textColor: _HomeLuxuryPalette.accent,
@@ -1002,7 +1011,109 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-            Divider(color: _HomeLuxuryPalette.border),
+            const SizedBox(height: 10),
+            _drawerSectionLabel('AI'),
+            ListTile(
+              iconColor: _HomeLuxuryPalette.accent,
+              textColor: _HomeLuxuryPalette.accent,
+              leading: Icon(Icons.auto_awesome, color: _HomeLuxuryPalette.accent),
+              title: Text(
+                'Analýza šatníka',
+                style: TextStyle(color: _HomeLuxuryPalette.accent),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const WardrobeAnalysisScreen()),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+              child: InkWell(
+                borderRadius: BorderRadius.circular(14),
+                onTap: () {
+                  Navigator.of(context).pop();
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const PremiumScreen()),
+                  );
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        _HomeLuxuryPalette.surfaceSoft.withOpacity(0.92),
+                        _HomeLuxuryPalette.bgTop.withOpacity(0.95),
+                      ],
+                    ),
+                    border: Border.all(
+                      color: _HomeLuxuryPalette.accent.withOpacity(0.42),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: _HomeLuxuryPalette.accent.withOpacity(0.12),
+                        blurRadius: 14,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: _HomeLuxuryPalette.accent.withOpacity(0.16),
+                          border: Border.all(
+                            color: _HomeLuxuryPalette.accent.withOpacity(0.40),
+                          ),
+                        ),
+                        child: const Icon(
+                          Icons.workspace_premium,
+                          size: 18,
+                          color: _HomeLuxuryPalette.accent,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Premium',
+                              style: TextStyle(
+                                color: _HomeLuxuryPalette.textPrimary,
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'Odomkni pokročilé AI funkcie',
+                              style: TextStyle(
+                                color: _HomeLuxuryPalette.textSecondary,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            _drawerSectionLabel('ÚČET'),
             ListTile(
               iconColor: _HomeLuxuryPalette.accent,
               textColor: _HomeLuxuryPalette.accent,
@@ -1019,6 +1130,10 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
+                ],
+              ),
+            ),
+            Divider(color: _HomeLuxuryPalette.border),
             ListTile(
               iconColor: _HomeLuxuryPalette.accent,
               textColor: _HomeLuxuryPalette.accent,
@@ -1033,9 +1148,24 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
     ],
-    ),
+    )
     ),
     ],
+      ),
+    );
+  }
+
+  Widget _drawerSectionLabel(String label) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: _HomeLuxuryPalette.textSecondary.withOpacity(0.72),
+          fontSize: 11.5,
+          fontWeight: FontWeight.w700,
+          letterSpacing: 0.8,
+        ),
       ),
     );
   }
