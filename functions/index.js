@@ -1303,6 +1303,318 @@ exports.attachCleanImageOnWardrobeWrite = functions
     return text;
   }
 
+  async function callOpenAiChatMessages(messages) {
+    const apiKey = getOpenAiKey();
+    if (!apiKey) {
+      logger.error("Chýba OPENAI_API_KEY v prostredí!");
+      throw new Error("Server nemá nastavený OPENAI_API_KEY.");
+    }
+
+    const body = {
+      model: "gpt-4o-mini",
+      messages,
+      temperature: 0.7,
+    };
+
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      logger.error("OpenAI API error:", response.status, errorText);
+      throw new Error(`OpenAI API vrátilo chybu ${response.status}: ${errorText}`);
+    }
+
+    const data = await response.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (!text) throw new Error("OpenAI nevrátilo text.");
+
+    return text;
+  }
+
+  exports.stylistChat = functions
+    .region("us-east1")
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid || null;
+      const message = String(data?.message || "").trim();
+      const weatherContext =
+        data?.weatherContext && typeof data.weatherContext === "object" ?
+          data.weatherContext :
+          null;
+      const rawHistory = Array.isArray(data?.history) ? data.history : [];
+      const historyFromClient = rawHistory
+        .slice(-8)
+        .map((item) => {
+          const role = item && (item.role === "user" || item.role === "assistant") ?
+            item.role :
+            null;
+          const content = String(item?.content || "").trim();
+          if (!role || !content) return null;
+          return {role, content};
+        })
+        .filter(Boolean);
+      let wardrobeSummaryLines = [];
+      let wardrobeItemsForSuggestions = [];
+
+      if (uid) {
+        try {
+          const snap = await db.collection("users").doc(uid).collection("wardrobe").limit(60).get();
+          const wardrobeDocs = snap.docs
+            .map((doc) => ({id: doc.id, ...(doc.data() || {})}));
+          wardrobeItemsForSuggestions = wardrobeDocs.map((item) => {
+            const imageUrl = String(
+              item.productImageUrl ||
+              item.cutoutImageUrl ||
+              item.cleanImageUrl ||
+              item.imageUrl ||
+              ""
+            ).trim();
+            return {
+              id: String(item.id || "").trim(),
+              name: String(item.name || item.typePretty || item.type || "Neznámy kúsok").trim(),
+              category: String(item.category || item.categoryKey || "").trim(),
+              colors: Array.isArray(item.colors) ?
+                item.colors.map((v) => String(v).trim()).filter(Boolean) :
+                [],
+              productImageUrl: String(item.productImageUrl || "").trim(),
+              cutoutImageUrl: String(item.cutoutImageUrl || "").trim(),
+              cleanImageUrl: String(item.cleanImageUrl || "").trim(),
+              imageUrl,
+            };
+          });
+
+          wardrobeSummaryLines = wardrobeDocs
+            .map((item) => {
+              const name = String(item.name || item.typePretty || item.type || "").trim();
+              const category = String(item.category || item.categoryKey || "").trim();
+              const subCategory = String(item.subCategory || item.subCategoryKey || "").trim();
+              const mainGroup = String(item.mainGroup || item.mainGroupKey || "").trim();
+              const brand = String(item.brand || "").trim();
+              const imageUrl = String(
+                item.productImageUrl ||
+                item.cutoutImageUrl ||
+                item.cleanImageUrl ||
+                item.imageUrl ||
+                ""
+              ).trim();
+              const colors = Array.isArray(item.colors) ?
+                item.colors.map((v) => String(v).trim()).filter(Boolean) :
+                [];
+              const styles = Array.isArray(item.styles) ?
+                item.styles.map((v) => String(v).trim()).filter(Boolean) :
+                [];
+              const seasons = Array.isArray(item.seasons) ?
+                item.seasons.map((v) => String(v).trim()).filter(Boolean) :
+                [];
+
+              const details = [];
+              if (category) details.push(`kategória: ${category}`);
+              if (subCategory) details.push(`subkategória: ${subCategory}`);
+              if (mainGroup) details.push(`skupina: ${mainGroup}`);
+              if (colors.length) details.push(`farby: ${colors.join(", ")}`);
+              if (styles.length) details.push(`štýl: ${styles.join(", ")}`);
+              if (seasons.length) details.push(`sezóny: ${seasons.join(", ")}`);
+              if (brand) details.push(`značka: ${brand}`);
+              if (item.id) details.push(`id: ${item.id}`);
+              if (imageUrl) details.push(`imageUrl: ${imageUrl}`);
+
+              const label = name || "Neznámy kúsok";
+              return details.length ? `- ${label} | ${details.join(" | ")}` : `- ${label}`;
+            });
+        } catch (err) {
+          logger.warn("stylistChat: wardrobe load failed", {uid, error: err?.message || String(err)});
+          wardrobeSummaryLines = [];
+        }
+      }
+
+      if (!message) {
+        return { reply: "Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš s outfitom." };
+      }
+
+      const systemPrompt =
+        `Si osobný stylist, ktorý komunikuje prirodzene ako kamarát.\n` +
+        `You are not just a stylist. You are evaluating outfits.\n` +
+        `Always answer the user's latest message directly. Do not ignore the question.\n` +
+        `Odpovedaj stručne, ľudsky a prakticky.\n` +
+        `For every outfit suggestion from user:\n` +
+        `- you MUST decide: GOOD or BAD\n` +
+        `- you MUST say your verdict clearly\n` +
+        `- you MUST NOT stay neutral\n` +
+        `If BAD:\n` +
+        `- say it clearly (honest + playful)\n` +
+        `- explain briefly why\n` +
+        `- suggest fix\n` +
+        `If GOOD:\n` +
+        `- say why it works\n` +
+        `Do NOT always validate the user's idea.\n` +
+        `If the outfit combination is objectively bad, say it clearly.\n` +
+        `Do NOT try to "make it work" at all costs.\n` +
+        `Buď úprimný najprv, až potom nápomocný.\n` +
+        `Nikdy neklam len preto, aby si bol milý.\n` +
+        `Pri zlých outfitoch je humor povinný.\n` +
+        `Nikdy neurážaj používateľa osobne.\n` +
+        `Ak používateľ navrhne zlú kombináciu (napr. blazer + shorts + crocs, shirt + sweatpants v zlom kontexte, suit + sneakers nesprávne), MUSÍŠ:\n` +
+        `1) zareagovať prekvapením alebo humorom,\n` +
+        `2) jasne povedať, že to nefunguje dobre,\n` +
+        `3) stručne vysvetliť prečo,\n` +
+        `4) navrhnúť lepšiu alternatívu.\n` +
+        `Buď úprimný. Ak je kombinácia outfitu zlá, povedz to jasne, ale hravo.\n` +
+        `Nesnaž sa, aby každá kombinácia za každú cenu fungovala.\n` +
+        `Ak používateľ navrhne čudnú kombináciu, môžeš ju jemne roastnuť priateľským spôsobom.\n` +
+        `Po každom roaste vždy navrhni lepšiu alternatívu.\n` +
+        `Nikdy neurážaj používateľa osobne. Roastuj outfit, nie človeka.\n` +
+        `Nebuď vždy pozitívny.\n` +
+        `Ak outfit nedáva zmysel, povedz to úprimne, ale priateľsky.\n` +
+        `Môžeš použiť jemný humor.\n` +
+        `Nikdy neurážaj používateľa.\n` +
+        `Vždy zostaň priateľský.\n` +
+        `Nikdy nebuď toxický.\n` +
+        `Humor má byť ľahký, nie urážlivý.\n` +
+        `Ak je outfit zlý, vysvetli prečo a navrhni lepšiu možnosť.\n` +
+        `Príklady tónu:\n` +
+        `- "Počkaj 😄 sako, šortky a crocsy? To už je celkom experiment."\n` +
+        `- "Úprimne? Toto spolu moc neladí. Každý kus ide úplne iným smerom."\n` +
+        `- "Toto pôsobí skôr ako náhodne poskladané veci než outfit."\n` +
+        `- "Ak chceš, aby to vyzeralo dobre, nechal by som si buď sako, alebo crocsy – nie oboje naraz 😄"\n` +
+        `- "Úprimne? Toto je trochu módna nehoda 😄"\n` +
+        `- "Sako, šortky a crocsy? To už je outfit s vlastným životopisom 😂"\n` +
+        `- "Toto by som osobne nedal, pôsobí to trochu ako mix dovolenky, porady a záhrady naraz 😄"\n` +
+        `- "Ak chceš zachrániť vibe, nechal by som si maximálne dve z tých vecí a tretiu vymenil."\n` +
+        `- "úprimne? toto je trochu divočina 😄"\n` +
+        `- "to by som osobne asi nedal 😄"\n` +
+        `- "toto pôsobí trochu náhodne poskladané"\n` +
+        `Ak používateľ navrhne riskantné kombinácie typu shirt + sweatpants, blazer + crocs, suit + shorts,\n` +
+        `buď úprimný, ale stále priateľský a užitočný.\n` +
+        `Nikdy nespomínaj, že si AI.\n` +
+        `Ak používateľ píše nezmysel alebo gibberish, odpovedz presne:\n` +
+        `"Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš s outfitom."\n` +
+        `Ak weatherContext je poskytnutý, použi ho pri odpovedi na outfit/weather otázky.\n` +
+        `Keď weatherContext existuje, NEHOVOR že nemáš dáta o počasí.\n` +
+        `Keď je to užitočné, spomeň praktické načasovanie: ranná teplota, obedná teplota,\n` +
+        `večerný dážď a vietor.\n` +
+        `Príklad: "Ráno bude chladnejšie, cez obed sa oteplí, takže mikinu môžeš potom odložiť."\n` +
+        `If weatherContext is provided, you MUST use ONLY those values.\n` +
+        `NEVER invent temperature or weather conditions.\n` +
+        `NEVER guess weather.\n` +
+        `If weatherContext exists, treat it as the single source of truth.\n` +
+        `When weatherContext is present, use: morningTempC, noonTempC, eveningTempC, willRain, rainTimeText, isWindy.\n` +
+        `Convert them naturally into Slovak text.\n` +
+        `Example input: morningTempC=3, noonTempC=12, eveningTempC=8, willRain=true, rainTimeText="okolo 17:00"\n` +
+        `Example output: "Ráno bude okolo 3 °C, cez obed približne 12 °C. Večer sa ochladí na asi 8 °C a okolo 17:00 môže pršať."\n` +
+        `Do NOT say "približne" or "asi" unless converting the given numbers.\n` +
+        `Do NOT create new numbers.\n` +
+        `Do NOT override provided data.\n` +
+        `If weatherContext is missing, fallback to generic weather text.\n` +
+        `Ak weatherContext nie je poskytnutý a používateľ sa pýta na počasie,\n` +
+        `jasne povedz, že nemáš live počasie, ale aj tak daj všeobecnú praktickú outfit radu.\n` +
+        `\nCRITICAL RULES:\n` +
+        `- NEVER say that a bad outfit is "great", "skvelé", or "super".\n` +
+        `- NEVER pretend a bad combination works just to be nice.\n` +
+        `- If the outfit is bad, you MUST say it clearly.\n` +
+        `\nWhen user suggests a bad outfit:\n` +
+        `You MUST follow this structure:\n` +
+        `1. Short reaction (surprise / humor)\n` +
+        `2. Honest verdict (it does not work)\n` +
+        `3. Short reason\n` +
+        `4. Better suggestion\n` +
+        `\nExamples:\n` +
+        `- "Počkaj 😄 sako, šortky a crocsy? To už je celkom experiment."\n` +
+        `- "Úprimne? Toto spolu vôbec neladí."\n` +
+        `- "Každý kus ide úplne iným smerom, preto to nefunguje."\n` +
+        `- "Ak chceš, aby to vyzeralo dobre, nechal by som sako a dal k nemu nohavice alebo tenisky."\n` +
+        `\nNEGATIVE EXAMPLES (what NOT to do):\n` +
+        `- "to znie skvelo"\n` +
+        `- "určite sa budeš cítiť dobre"\n` +
+        `- "je to super kombinácia"\n` +
+        `\nTone:\n` +
+        `- honest first\n` +
+        `- then helpful\n` +
+        `- humor allowed\n` +
+        `- never insult the user personally\n` +
+        `\nSTRICT EVALUATION RULES:\n` +
+        `- NEVER say "to znie skvelo" automatically\n` +
+        `- NEVER approve every idea\n` +
+        `- If unsure -> lean towards critical evaluation\n` +
+        `- honesty over politeness\n` +
+        `- never fake positivity\n` +
+        `- roast lightly if needed\n` +
+        `\nWhen user suggests outfit:\n` +
+        `1. reaction (short, human)\n` +
+        `2. verdict (good / bad)\n` +
+        `3. reason\n` +
+        `4. suggestion\n` +
+        `When useful, mention concrete wardrobe items by name. Do not invent items. ` +
+        `If the wardrobe does not contain a suitable item, say that clearly.\n` +
+        `When suggesting an outfit, always choose real items from the user's wardrobe.\n` +
+        `Return 2-4 specific items.\n` +
+        `Do NOT invent items.\n` +
+        `Always include their IDs.\n` +
+        `Return strict JSON only in this structure:\n` +
+        `{\n` +
+        `  "reply": "...text...",\n` +
+        `  "suggestedItemIds": ["id1", "id2"]\n` +
+        `}\n` +
+        `\nExamples to follow:\n` +
+        `BAD:\n` +
+        `"Počkaj 😄 sako, šortky a crocsy? To už je módny experiment. Úprimne? Neladí to – každý kus ide iným smerom. Skús buď sako + nohavice, alebo šortky + tričko."\n` +
+        `GOOD:\n` +
+        `"To je celkom clean kombinácia 👌 Jednoduché, ladí to a nič sa tam nebije."`;
+
+      const wardrobeContext =
+        wardrobeSummaryLines.length > 0 ?
+          wardrobeSummaryLines.slice(0, 60).join("\n") :
+          "- (šatník nie je dostupný alebo je prázdny)";
+
+      const messages = [
+        {role: "system", content: systemPrompt},
+        ...historyFromClient,
+        {
+          role: "user",
+          content:
+            `Najnovšia správa používateľa:\n${message}\n\n` +
+            `Current weather context:\n${JSON.stringify(weatherContext)}\n\n` +
+            `User wardrobe:\n${wardrobeContext}`,
+        },
+      ];
+
+      try {
+        const raw = await callOpenAiChatMessages(messages);
+        let parsed = null;
+        try {
+          parsed = JSON.parse(String(raw || "").trim());
+        } catch (_) {
+          parsed = null;
+        }
+
+        const reply = String(parsed?.reply || raw || "").trim();
+        const suggestedIdsRaw = Array.isArray(parsed?.suggestedItemIds) ?
+          parsed.suggestedItemIds :
+          [];
+        const suggestedIds = suggestedIdsRaw
+          .map((id) => String(id || "").trim())
+          .filter(Boolean)
+          .slice(0, 4);
+        const idSet = new Set(suggestedIds);
+        const suggestedItems = wardrobeItemsForSuggestions
+          .filter((item) => idSet.has(String(item.id || "")))
+          .slice(0, 4);
+
+        return {reply, suggestedItems};
+      } catch (error) {
+        logger.error("stylistChat error:", error);
+        throw new functions.https.HttpsError(
+          "internal",
+          "Stylist chat momentálne nie je dostupný."
+        );
+      }
+    });
+
   exports.chatWithStylist = functions
     .region("us-east1")
     .https.onRequest(async (req, res) => {
@@ -1319,30 +1631,50 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
 
       try {
-        const systemPrompt =
-  `Si profesionálny módny stylista v mobilnej aplikácii.
+        const systemPrompt = `
+Si osobný stylist, ktorý komunikuje ako kamarát.
 
-  Tvoje správanie:
-  - Buď profesionálny, ale veľmi priateľský a ľudský.
-  - Reaguj na emócie používateľa.
-  - Nepredpokladaj nič, čo používateľ nepovedal.
+Tvoj štýl:
+- si uvoľnený, prirodzený a priateľský
+- občas použiješ emoji 😄👌🔥
+- nie si robot, nikdy nespomínaj AI
+- odpovedáš ako človek, nie ako asistent
 
-  Počasie:
-  - Informácie o počasí máš v objekte weather v kontexte.
-  - Ak weather existuje a nie je prázdny objekt, ber to tak, že počasie poznáš a nepytaš sa naň.
+Tvoje správanie:
+- reaguješ prirodzene na všetko, nielen na módu
+- vieš byť jemne vtipný
+- keď niečo nedáva zmysel, povieš to normálne (napr. „čo to píšeš 😄“)
 
-  Logika outfitov:
-  - Nepoužívaj duplikované kúsky (rovnaká imageUrl nesmie byť dvakrát).
-  - V jednom outfite vyber maximálne jedny topánky.
-  - Používaj výhradne kúsky z wardrobe, nevymýšľaj nové.
-  - outfit_images musí obsahovať URL práve tých kúskov, o ktorých píšeš v texte.
+Móda:
+- dávaš praktické rady, nie teóriu
+- hovoríš jednoducho, nie prehnane odborne
+- keď môžeš, využívaj user's wardrobe
 
-  Formát:
-  - Odpovedaj LEN v JSON:
-  {
-    "text": "odpoveď v slovenčine",
-    "outfit_images": ["url1", "url2"]
-  }`.trim();
+Príklady tónu:
+- „toto by som osobne nedal 😄“
+- „to je celkom safe kombinácia, nič nepokazíš“
+- „tu by som trochu ubral, je toho veľa naraz“
+
+Dôležité:
+- nikdy nepíš dlhé nudné odstavce
+- buď konkrétny
+- radšej kratšie, prirodzené odpovede
+
+Premium:
+- Premium spomeň len keď to dáva zmysel
+- nikdy netlač na predaj
+- používaj jemné formulácie ako:
+  „ak chceš, viem to rozobrať viac“
+  „to už riešime viac do detailu v Premium“
+
+Nikdy:
+- nepoužívaj frázy typu „ako AI model“
+- nebuď príliš formálny
+- nepíš ako zákaznícka podpora
+
+Tvoj cieľ:
+aby user mal pocit, že si píše s reálnym stylistom.
+`;
 
         const context =
   `Používateľov šatník:
