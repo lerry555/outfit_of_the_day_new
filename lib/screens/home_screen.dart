@@ -44,6 +44,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  int generatedOutfitsToday = 0;
 
   // ✅ prepínač Dnes/Zajtra (UI)
   int _dayIndex = 0; // 0 = dnes, 1 = zajtra
@@ -51,8 +52,210 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _setDayIndex(int index) => setState(() => _dayIndex = index);
 
+  Future<bool> _isCurrentUserPremium() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+
+    try {
+      final snap = await _firestore.collection('users').doc(user.uid).get();
+      final data = snap.data();
+      final status = (data?['subscriptionStatus'] ?? '').toString().toLowerCase();
+      final isPremium = data?['isPremium'] == true;
+      return isPremium || status == 'premium';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _handleNewOutfitPressed() async {
+    final isPremiumMode = await _isCurrentUserPremium();
+    if (isPremiumMode) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Premium režim: nový outfit vygenerujeme neskôr.'),
+        ),
+      );
+      return;
+    }
+
+    if (generatedOutfitsToday < 3) {
+      final nextCount = generatedOutfitsToday + 1;
+      setState(() {
+        generatedOutfitsToday = nextCount;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Nový outfit vygenerujeme neskôr. Test limitu: $nextCount/3',
+          ),
+        ),
+      );
+      return;
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Limit outfitov dosiahnutý',
+                  style: TextStyle(
+                    color: _HomeLuxuryPalette.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Dnes si už vytvoril 3 outfity. S Premium môžeš generovať neobmedzene a získať presnejšie odporúčania.',
+                  style: TextStyle(
+                    color: _HomeLuxuryPalette.textSecondary,
+                    fontSize: 13.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _HomeLuxuryPalette.accent,
+                      foregroundColor: const Color(0xFF191512),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PremiumScreen()),
+                      );
+                    },
+                    child: const Text(
+                      'Vyskúšať Premium',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _handleEditOutfitPressed(BuildContext context) async {
+    final isPremiumMode = await _isCurrentUserPremium();
+    if (isPremiumMode) {
+      _openHeroEditSheet(context);
+      return;
+    }
+
+    if (!mounted) return;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF121212),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.white24,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                const Text(
+                  'Táto funkcia je Premium',
+                  style: TextStyle(
+                    color: _HomeLuxuryPalette.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'S Premium môžeš upravovať outfit, meniť kúsky a vytvoriť si dokonalý look.',
+                  style: TextStyle(
+                    color: _HomeLuxuryPalette.textSecondary,
+                    fontSize: 13.5,
+                    height: 1.35,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _HomeLuxuryPalette.accent,
+                      foregroundColor: const Color(0xFF191512),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                    onPressed: () {
+                      Navigator.of(sheetContext).pop();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PremiumScreen()),
+                      );
+                    },
+                    child: const Text(
+                      'Vyskúšať Premium',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Stream<QuerySnapshot<Map<String, dynamic>>> _wardrobeStream(String uid) {
     return _firestore.collection('users').doc(uid).collection('wardrobe').snapshots();
+  }
+
+  Stream<DocumentSnapshot<Map<String, dynamic>>> _userDocStream(String uid) {
+    return _firestore.collection('users').doc(uid).snapshots();
   }
 
   _LocalWeather _weatherForDate(DateTime date) {
@@ -64,9 +267,14 @@ class _HomeScreenState extends State<HomeScreen> {
   _HeroTodayState _buildTodayHero({
     required DateTime date,
     required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
   }) {
     final w = _weatherForDate(date);
-    final rec = _recommendOutfitForWeather(wardrobe: wardrobe, weather: w);
+    final rec = _recommendOutfitForWeather(
+      wardrobe: wardrobe,
+      weather: w,
+      isPremiumUser: isPremiumUser,
+    );
 
     if (rec == null) {
       return _HeroTodayState(
@@ -95,6 +303,7 @@ class _HomeScreenState extends State<HomeScreen> {
   _HeroOutfitRecommendation? _recommendOutfitForWeather({
     required List<Map<String, dynamic>> wardrobe,
     required _LocalWeather weather,
+    required bool isPremiumUser,
   }) {
     // Minimálna, lokálna logika (bez AI / bez refaktorov).
     // Cieľ: vybrať Top + Bottom + Shoes + voliteľný Outerwear podľa počasia.
@@ -392,6 +601,7 @@ class _HomeScreenState extends State<HomeScreen> {
       tempC: weather.tempC,
       isRainy: weather.isRainy,
       isWindy: weather.isWindy,
+      isPremium: isPremiumUser,
       selectedItems: selectedReasonItems,
       hasOuterwear: hasOuter,
       seasonLabel: weather.seasonLabel,
@@ -568,48 +778,56 @@ class _HomeScreenState extends State<HomeScreen> {
                         );
                       },
                       onTapNewOutfit: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                        );
+                        _handleNewOutfitPressed();
                       },
-                      onTapEdit: () => _openHeroEditSheet(context),
+                      onTapEdit: () => _handleEditOutfitPressed(context),
                     )
                   else if (_isTomorrow && user != null)
-                    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                      stream: _wardrobeStream(user.uid),
-                      builder: (context, snap) {
-                        final docs = snap.data?.docs ?? const [];
-                        final wardrobe = docs.map((d) => d.data()).toList();
-                        final hero = _buildTodayHero(date: tomorrowDate, wardrobe: wardrobe);
+                    StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      stream: _userDocStream(user.uid),
+                      builder: (context, userSnap) {
+                        final data = userSnap.data?.data();
+                        final isPremiumUser = data?['isPremium'] == true ||
+                            data?['subscriptionStatus'] == 'premium';
+                        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                          stream: _wardrobeStream(user.uid),
+                          builder: (context, snap) {
+                            final docs = snap.data?.docs ?? const [];
+                            final wardrobe = docs.map((d) => d.data()).toList();
+                            final hero = _buildTodayHero(
+                              date: tomorrowDate,
+                              wardrobe: wardrobe,
+                              isPremiumUser: isPremiumUser,
+                            );
 
-                        final tomorrowHero = _HeroTodayState(
-                          vm: _HeroBannerVM(
-                            title: 'Zajtrajší outfit',
-                            subtitle: hero.vm.subtitle,
-                            description: hero.vm.description,
-                            chips: hero.vm.chips,
-                          ),
-                          outfitItems: hero.outfitItems,
-                        );
+                            final tomorrowHero = _HeroTodayState(
+                              vm: _HeroBannerVM(
+                                title: 'Zajtrajší outfit',
+                                subtitle: hero.vm.subtitle,
+                                description: hero.vm.description,
+                                chips: hero.vm.chips,
+                              ),
+                              outfitItems: hero.outfitItems,
+                            );
 
-                        return _HeroDayCard(
-                          dayIndex: _dayIndex,
-                          onChangeDay: _setDayIndex,
-                          vm: tomorrowHero.vm,
-                          date: activeDate,
-                          isTomorrow: true,
-                          outfitItems: tomorrowHero.outfitItems,
-                          onTapSwapOne: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                            return _HeroDayCard(
+                              dayIndex: _dayIndex,
+                              onChangeDay: _setDayIndex,
+                              vm: tomorrowHero.vm,
+                              date: activeDate,
+                              isTomorrow: true,
+                              outfitItems: tomorrowHero.outfitItems,
+                              onTapSwapOne: () {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                                );
+                              },
+                              onTapNewOutfit: () {
+                                _handleNewOutfitPressed();
+                              },
+                              onTapEdit: () => _handleEditOutfitPressed(context),
                             );
                           },
-                          onTapNewOutfit: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                            );
-                          },
-                          onTapEdit: () => _openHeroEditSheet(context),
                         );
                       },
                     )
@@ -633,38 +851,46 @@ class _HomeScreenState extends State<HomeScreen> {
                       );
                     },
                     onTapNewOutfit: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                      );
+                      _handleNewOutfitPressed();
                     },
-                    onTapEdit: () => _openHeroEditSheet(context),
+                    onTapEdit: () => _handleEditOutfitPressed(context),
                   )
                 else
-                  StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                    stream: _wardrobeStream(user.uid),
-                    builder: (context, snap) {
-                      final docs = snap.data?.docs ?? const [];
-                      final wardrobe = docs.map((d) => d.data()).toList();
-                      final hero = _buildTodayHero(date: todayDate, wardrobe: wardrobe);
+                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                    stream: _userDocStream(user.uid),
+                    builder: (context, userSnap) {
+                      final data = userSnap.data?.data();
+                      final isPremiumUser = data?['isPremium'] == true ||
+                          data?['subscriptionStatus'] == 'premium';
+                      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                        stream: _wardrobeStream(user.uid),
+                        builder: (context, snap) {
+                          final docs = snap.data?.docs ?? const [];
+                          final wardrobe = docs.map((d) => d.data()).toList();
+                          final hero = _buildTodayHero(
+                            date: todayDate,
+                            wardrobe: wardrobe,
+                            isPremiumUser: isPremiumUser,
+                          );
 
-                      return _HeroDayCard(
-                        dayIndex: _dayIndex,
-                        onChangeDay: _setDayIndex,
-                        vm: hero.vm,
-                        date: activeDate,
-                        isTomorrow: false,
-                        outfitItems: hero.outfitItems,
-                        onTapSwapOne: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                          return _HeroDayCard(
+                            dayIndex: _dayIndex,
+                            onChangeDay: _setDayIndex,
+                            vm: hero.vm,
+                            date: activeDate,
+                            isTomorrow: false,
+                            outfitItems: hero.outfitItems,
+                            onTapSwapOne: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
+                              );
+                            },
+                            onTapNewOutfit: () {
+                              _handleNewOutfitPressed();
+                            },
+                            onTapEdit: () => _handleEditOutfitPressed(context),
                           );
                         },
-                        onTapNewOutfit: () {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Nový outfit – napojíme neskôr.')),
-                          );
-                        },
-                        onTapEdit: () => _openHeroEditSheet(context),
                       );
                     },
                   ),

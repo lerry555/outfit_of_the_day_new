@@ -3,10 +3,32 @@ class OutfitReasonBuilder {
     required int tempC,
     required bool isRainy,
     required bool isWindy,
+    required bool isPremium,
     required List<Map<String, dynamic>> selectedItems,
     required bool hasOuterwear,
     String? seasonLabel,
   }) {
+    if (!isPremium) {
+      final bool isCold = tempC < 10;
+      final bool isMild = tempC >= 10 && tempC < 20;
+
+      if (isCold || isRainy || isWindy) {
+        final outerwearHint = hasOuterwear
+            ? 'Vrstva navyše pomáha držať komfort počas dňa.'
+            : 'Ak chceš viac komfortu, zváž ľahkú vrstvu navyše.';
+        return 'Dnes je chladnejšie alebo nestále počasie, preto outfit drží pohodlie a praktickosť. '
+            '$outerwearHint Ak chceš detailnejšie vysvetlenie kombinácie, odomkni Premium.';
+      }
+
+      if (isMild) {
+        return 'Dnes je mierne počasie, takže outfit pôsobí jednoducho a nositeľne. '
+            'Premium ti ukáže presnejšie, prečo tieto kúsky spolu fungujú.';
+      }
+
+      return 'Dnes je teplejšie počasie, preto outfit ostáva ľahký a pohodlný na celý deň. '
+          'Premium ti zobrazí detailnejšie stylistické zdôvodnenie.';
+    }
+
     final normalizedItems = selectedItems.map(_normalizeItem).toList();
 
     final topItem = _findByType(normalizedItems, const ['top']);
