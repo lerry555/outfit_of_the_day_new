@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
 import 'calendar_outfit_screen.dart';
-import 'profile_screen.dart';
+import 'stylist_chat_screen.dart';
 import '../Services/share_intent_service.dart';
 
 class MainNavigation extends StatefulWidget {
@@ -30,8 +30,8 @@ class _MainNavigationState extends State<MainNavigation> {
     _screens = [
       const HomeScreen(),
       const WardrobeScreen(),
+      const StylistChatScreen(),
       const CalendarOutfitScreen(),
-      const ProfileScreen(),
     ];
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -118,14 +118,14 @@ class _MainNavigationState extends State<MainNavigation> {
                   label: 'Šatník',
                 ),
                 BottomNavigationBarItem(
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  activeIcon: Icon(Icons.auto_awesome),
+                  label: 'Stylist',
+                ),
+                BottomNavigationBarItem(
                   icon: Icon(Icons.calendar_today_outlined),
                   activeIcon: Icon(Icons.calendar_today),
                   label: 'Kalendár',
-                ),
-                BottomNavigationBarItem(
-                  icon: Icon(Icons.person_outline),
-                  activeIcon: Icon(Icons.person),
-                  label: 'Profil',
                 ),
               ],
             ),

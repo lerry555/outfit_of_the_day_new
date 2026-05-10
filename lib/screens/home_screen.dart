@@ -1,38 +1,27 @@
-import'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:ui' show ImageFilter;
+
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
-
+import '../widgets/home/home_ai_explanation_card.dart';
+import '../widgets/home/home_daily_briefing_row.dart';
+import '../widgets/home/home_greeting_header.dart';
+import '../widgets/home/home_inspiration_carousel.dart';
+import '../widgets/home/home_luxury_palette.dart';
+import '../widgets/home/home_quick_action_orb.dart';
+import '../widgets/home/home_recommended_section.dart';
 
 import 'add_clothing_screen.dart';
-import 'calendar_screen.dart';
 import 'friends_screen.dart';
 import 'messages_screen.dart';
 import 'premium_screen.dart';
+import 'profile_screen.dart';
 import 'recommended_screen.dart';
-import 'select_outfit_screen.dart';
-import 'stylist_chat_screen.dart';
+import 'trip_planner_screen.dart';
 import 'user_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
-import 'wardrobe_screen.dart';
 import '../utils/outfit_reason_builder.dart';
-class _HomeLuxuryPalette {
-  static const Color bgTop = Color(0xFF111111);
-  static const Color bgMid = Color(0xFF0C0C0D);
-  static const Color bgBottom = Color(0xFF080809);
-
-  static const Color surface = Color(0xFF151517);
-  static const Color surfaceSoft = Color(0xFF1B1B1F);
-  static const Color surfaceElevated = Color(0xFF242329);
-
-  static const Color textPrimary = Color(0xFFF1F0EC);
-  static const Color textSecondary = Color(0xFFAAA59B);
-
-  static const Color accent = Color(0xFFC8A36A);
-  static const Color accentSoft = Color(0xFF9D7C4C);
-  static const Color accentGlow = Color(0x66C8A36A);
-  static const Color border = Color(0x26FFFFFF);
-}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -122,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text(
                   'Limit outfitov dosiahnutý',
                   style: TextStyle(
-                    color: _HomeLuxuryPalette.textPrimary,
+                    color: HomeLuxuryPalette.textPrimary,
                     fontSize: 18,
                     fontWeight: FontWeight.w800,
                   ),
@@ -131,7 +120,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const Text(
                   'Dnes si už vytvoril 3 outfity. S Premium môžeš generovať neobmedzene a získať presnejšie odporúčania.',
                   style: TextStyle(
-                    color: _HomeLuxuryPalette.textSecondary,
+                    color: HomeLuxuryPalette.textSecondary,
                     fontSize: 13.5,
                     height: 1.35,
                   ),
@@ -141,7 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: _HomeLuxuryPalette.accent,
+                      backgroundColor: HomeLuxuryPalette.accent,
                       foregroundColor: const Color(0xFF191512),
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -168,85 +157,15 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _handleEditOutfitPressed(BuildContext context) async {
+  Future<void> _handleSwapPieceTap(BuildContext context) async {
     final isPremiumMode = await _isCurrentUserPremium();
+    if (!mounted) return;
     if (isPremiumMode) {
       _openHeroEditSheet(context);
       return;
     }
-
-    if (!mounted) return;
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF121212),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Táto funkcia je Premium',
-                  style: TextStyle(
-                    color: _HomeLuxuryPalette.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'S Premium môžeš upravovať outfit, meniť kúsky a vytvoriť si dokonalý look.',
-                  style: TextStyle(
-                    color: _HomeLuxuryPalette.textSecondary,
-                    fontSize: 13.5,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: _HomeLuxuryPalette.accent,
-                      foregroundColor: const Color(0xFF191512),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const PremiumScreen()),
-                      );
-                    },
-                    child: const Text(
-                      'Vyskúšať Premium',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
     );
   }
 
@@ -279,11 +198,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (rec == null) {
       return _HeroTodayState(
         vm: _HeroBannerVM(
-          title: 'Dnešný outfit',
-          subtitle: w.summarySubtitle,
           description:
           'Dnes zatiaľ nemám dosť vhodných kúskov na kompletný outfit. Skús pridať viac oblečenia do šatníka.',
-          chips: w.toHeroChips(),
         ),
         outfitItems: const <_HeroOutfitItem>[],
       );
@@ -291,10 +207,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
     return _HeroTodayState(
       vm: _HeroBannerVM(
-        title: 'Dnešný outfit',
-        subtitle: w.summarySubtitle,
         description: rec.reason,
-        chips: w.toHeroChips(),
       ),
       outfitItems: rec.items,
     );
@@ -561,15 +474,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final label = labelFor(p.item, fallback: fallbackLabelForType(p.type));
       final resolvedImageUrl = _resolveHeroPreviewImageUrl(p.item);
       final safeImageUrl = resolvedImageUrl?.trim();
-
-      print(
-        'HERO TILE: label=${labelFor(p.item, fallback: fallbackLabelForType(p.type))} image=$resolvedImageUrl',
-      );
+      final brandRaw = (p.item['brand'] ?? '').toString().trim();
 
       return _HeroOutfitItem(
         type: p.type,
         icon: iconForType(p.type),
         label: label,
+        brandLine: brandRaw.isNotEmpty ? brandRaw : null,
         imageUrl: (safeImageUrl?.isNotEmpty ?? false) ? safeImageUrl : null,
       );
     })
@@ -592,7 +503,7 @@ class _HomeScreenState extends State<HomeScreen> {
       },
       if (outerPick != null)
         {
-          ...outerPick!,
+          ...outerPick,
           'typeKey': 'outerwear',
         },
     ];
@@ -636,10 +547,102 @@ class _HomeScreenState extends State<HomeScreen> {
     return null;
   }
 
+  /// Visual experiment: outfit (~65%) + daily briefing (~35%) on one row; action bar below.
+  Widget _heroRowExperiment({
+    required BuildContext context,
+    required _HeroBannerVM vm,
+    required DateTime activeDate,
+    required bool cardIsTomorrow,
+    required List<_HeroOutfitItem> outfitItems,
+    required _LocalWeather w,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _UnifiedHeroSurface(
+          dayIndex: _dayIndex,
+          onChangeDay: _setDayIndex,
+          vm: vm,
+          weather: w,
+          isTomorrow: cardIsTomorrow,
+          outfitItems: outfitItems,
+        ),
+        const SizedBox(height: 22),
+        _HeroOutfitActionBar(
+          onNewOutfit: _handleNewOutfitPressed,
+          onSwapPiece: () async {
+            await _handleSwapPieceTap(context);
+          },
+          onLike: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Ďakujeme — obľúbené uložíme čoskoro.')),
+            );
+          },
+        ),
+      ],
+    );
+  }
+
+  Widget _homeSectionsAfterHero({
+    required BuildContext context,
+    required _HeroBannerVM vm,
+    required List<_HeroOutfitItem> outfitItems,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 28),
+        HomeAiExplanationCard(
+          body: vm.description,
+          isPlaceholder: outfitItems.isEmpty,
+        ),
+        const SizedBox(height: 32),
+        HomeRecommendedSection(onOpenRecommended: _openRecommended),
+        const SizedBox(height: 32),
+        HomeInspirationCarousel(
+          onRecreateVibe: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Recreate vibe — čoskoro v šatníku.')),
+            );
+          },
+        ),
+        const SizedBox(height: 120),
+      ],
+    );
+  }
+
+  List<HomeQuickActionEntry> _quickActionEntries(BuildContext context) {
+    return [
+      (
+        emoji: '👕',
+        label: 'Add clothing',
+        onTap: () => AddClothingScreen.openFromPicker(context),
+      ),
+      (
+        emoji: '✈️',
+        label: 'Trip planner',
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const TripPlannerScreen()),
+          );
+        },
+      ),
+      (
+        emoji: '✨',
+        label: 'Recreate vibe',
+        onTap: () {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Recreate vibe — čoskoro v šatníku.')),
+          );
+        },
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    const wardrobeBg = _HomeLuxuryPalette.bgBottom;
+    const wardrobeBg = HomeLuxuryPalette.bgBottom;
     final user = _auth.currentUser;
     final greetingName = _getGreetingName(user);
 
@@ -647,18 +650,174 @@ class _HomeScreenState extends State<HomeScreen> {
     final todayDate = now;
     final tomorrowDate = now.add(const Duration(days: 1));
 
-
-
     final activeDate = _isTomorrow ? tomorrowDate : todayDate;
+
+    Widget greetingHeader() {
+      return Builder(
+        builder: (innerContext) {
+          return HomeGreetingHeader(
+            greetingLine: '$greetingName 👋',
+            onOpenMenu: () => Scaffold.of(innerContext).openDrawer(),
+          );
+        },
+      );
+    }
+
+    Widget scrollContent() {
+      if (_isTomorrow && user == null) {
+        final w = _weatherForDate(tomorrowDate);
+        final vm = _HeroBannerVM(
+          description:
+              'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka aj na zajtra.',
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            greetingHeader(),
+            const SizedBox(height: 26),
+            _heroRowExperiment(
+              context: context,
+              vm: vm,
+              activeDate: activeDate,
+              cardIsTomorrow: true,
+              outfitItems: const <_HeroOutfitItem>[],
+              w: w,
+            ),
+            _homeSectionsAfterHero(
+              context: context,
+              vm: vm,
+              outfitItems: const <_HeroOutfitItem>[],
+            ),
+          ],
+        );
+      }
+
+      if (_isTomorrow && user != null) {
+        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: _userDocStream(user.uid),
+          builder: (context, userSnap) {
+            final data = userSnap.data?.data();
+            final isPremiumUser = data?['isPremium'] == true ||
+                data?['subscriptionStatus'] == 'premium';
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: _wardrobeStream(user.uid),
+              builder: (context, snap) {
+                final docs = snap.data?.docs ?? const [];
+                final wardrobe = docs.map((d) => d.data()).toList();
+                final hero = _buildTodayHero(
+                  date: tomorrowDate,
+                  wardrobe: wardrobe,
+                  isPremiumUser: isPremiumUser,
+                );
+
+                final vm = _HeroBannerVM(
+                  description: hero.vm.description,
+                );
+                final w = _weatherForDate(tomorrowDate);
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    greetingHeader(),
+                    const SizedBox(height: 26),
+                    _heroRowExperiment(
+                      context: context,
+                      vm: vm,
+                      activeDate: activeDate,
+                      cardIsTomorrow: true,
+                      outfitItems: hero.outfitItems,
+                      w: w,
+                    ),
+                    _homeSectionsAfterHero(
+                      context: context,
+                      vm: vm,
+                      outfitItems: hero.outfitItems,
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        );
+      }
+
+      if (user == null) {
+        final w = _weatherForDate(todayDate);
+        final vm = _HeroBannerVM(
+          description:
+              'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka.',
+        );
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            greetingHeader(),
+            const SizedBox(height: 26),
+            _heroRowExperiment(
+              context: context,
+              vm: vm,
+              activeDate: activeDate,
+              cardIsTomorrow: false,
+              outfitItems: const <_HeroOutfitItem>[],
+              w: w,
+            ),
+            _homeSectionsAfterHero(
+              context: context,
+              vm: vm,
+              outfitItems: const <_HeroOutfitItem>[],
+            ),
+          ],
+        );
+      }
+
+      return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+        stream: _userDocStream(user.uid),
+        builder: (context, userSnap) {
+          final data = userSnap.data?.data();
+          final isPremiumUser = data?['isPremium'] == true ||
+              data?['subscriptionStatus'] == 'premium';
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: _wardrobeStream(user.uid),
+            builder: (context, snap) {
+              final docs = snap.data?.docs ?? const [];
+              final wardrobe = docs.map((d) => d.data()).toList();
+              final hero = _buildTodayHero(
+                date: todayDate,
+                wardrobe: wardrobe,
+                isPremiumUser: isPremiumUser,
+              );
+              final w = _weatherForDate(todayDate);
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  greetingHeader(),
+                  const SizedBox(height: 26),
+                  _heroRowExperiment(
+                    context: context,
+                    vm: hero.vm,
+                    activeDate: activeDate,
+                    cardIsTomorrow: false,
+                    outfitItems: hero.outfitItems,
+                    w: w,
+                  ),
+                  _homeSectionsAfterHero(
+                    context: context,
+                    vm: hero.vm,
+                    outfitItems: hero.outfitItems,
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    }
 
     return WillPopScope(
       onWillPop: () async => true,
       child: Scaffold(
         backgroundColor: wardrobeBg,
         drawer: _buildDrawer(context),
-
-        // ✅ FAB odstránený - pridávanie je v rýchlych akciách
         body: Stack(
+          clipBehavior: Clip.none,
           children: [
             const Positioned.fill(
               child: DecoratedBox(
@@ -667,9 +826,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      _HomeLuxuryPalette.bgTop,
-                      _HomeLuxuryPalette.bgMid,
-                      _HomeLuxuryPalette.bgBottom,
+                      HomeLuxuryPalette.bgTop,
+                      HomeLuxuryPalette.bgMid,
+                      HomeLuxuryPalette.bgBottom,
                     ],
                   ),
                 ),
@@ -683,8 +842,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       center: const Alignment(-0.1, -0.9),
                       radius: 1.05,
                       colors: [
-                        _HomeLuxuryPalette.accentGlow.withOpacity(0.22),
-                        _HomeLuxuryPalette.accentGlow.withOpacity(0.10),
+                        HomeLuxuryPalette.accentGlow.withOpacity(0.22),
+                        HomeLuxuryPalette.accentGlow.withOpacity(0.10),
                         Colors.transparent,
                       ],
                       stops: const [0.0, 0.28, 1.0],
@@ -709,247 +868,25 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Builder(
-                          builder: (context) => IconButton(
-                            onPressed: () => Scaffold.of(context).openDrawer(),
-                            icon: Icon(
-                              Icons.menu,
-                              color: _HomeLuxuryPalette.textSecondary,
-                            ),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Text(
-                          'Outfit Of The Day',
-                          style: TextStyle(
-                            color: _HomeLuxuryPalette.textSecondary.withOpacity(0.7),
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(
+                      HomeLuxuryPalette.horizontalPadding,
+                      18,
+                      HomeLuxuryPalette.horizontalPadding,
+                      36 + MediaQuery.of(context).padding.bottom + 72,
                     ),
-                    const SizedBox(height: 18),
-                    Text(
-                      '$greetingName 👋',
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textPrimary,
-                        fontSize: 26,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _isTomorrow
-                          ? 'Poďme vybrať tvoj zajtrajší outfit.'
-                          : 'Poďme vybrať tvoj dnešný outfit.',
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textSecondary,
-                        fontSize: 14,
-                      ),
-                    ),
-                    const SizedBox(height: 18),
-                  if (_isTomorrow && user == null)
-                    _HeroDayCard(
-                      dayIndex: _dayIndex,
-                      onChangeDay: _setDayIndex,
-                      vm: _HeroBannerVM(
-                        title: 'Zajtrajší outfit',
-                        subtitle: _weatherForDate(tomorrowDate).summarySubtitle,
-                        description:
-                        'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka aj na zajtra.',
-                        chips: _weatherForDate(tomorrowDate).toHeroChips(),
-                      ),
-                      date: activeDate,
-                      isTomorrow: true,
-                      outfitItems: const <_HeroOutfitItem>[],
-                      onTapSwapOne: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                        );
-                      },
-                      onTapNewOutfit: () {
-                        _handleNewOutfitPressed();
-                      },
-                      onTapEdit: () => _handleEditOutfitPressed(context),
-                    )
-                  else if (_isTomorrow && user != null)
-                    StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                      stream: _userDocStream(user.uid),
-                      builder: (context, userSnap) {
-                        final data = userSnap.data?.data();
-                        final isPremiumUser = data?['isPremium'] == true ||
-                            data?['subscriptionStatus'] == 'premium';
-                        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                          stream: _wardrobeStream(user.uid),
-                          builder: (context, snap) {
-                            final docs = snap.data?.docs ?? const [];
-                            final wardrobe = docs.map((d) => d.data()).toList();
-                            final hero = _buildTodayHero(
-                              date: tomorrowDate,
-                              wardrobe: wardrobe,
-                              isPremiumUser: isPremiumUser,
-                            );
-
-                            final tomorrowHero = _HeroTodayState(
-                              vm: _HeroBannerVM(
-                                title: 'Zajtrajší outfit',
-                                subtitle: hero.vm.subtitle,
-                                description: hero.vm.description,
-                                chips: hero.vm.chips,
-                              ),
-                              outfitItems: hero.outfitItems,
-                            );
-
-                            return _HeroDayCard(
-                              dayIndex: _dayIndex,
-                              onChangeDay: _setDayIndex,
-                              vm: tomorrowHero.vm,
-                              date: activeDate,
-                              isTomorrow: true,
-                              outfitItems: tomorrowHero.outfitItems,
-                              onTapSwapOne: () {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                                );
-                              },
-                              onTapNewOutfit: () {
-                                _handleNewOutfitPressed();
-                              },
-                              onTapEdit: () => _handleEditOutfitPressed(context),
-                            );
-                          },
-                        );
-                      },
-                    )
-                  else if (user == null)
-                  _HeroDayCard(
-                    dayIndex: _dayIndex,
-                    onChangeDay: _setDayIndex,
-                    vm: _HeroBannerVM(
-                      title: 'Dnešný outfit',
-                      subtitle: _weatherForDate(todayDate).summarySubtitle,
-                      description:
-                      'Prihlás sa, aby som vedel odporučiť outfit podľa tvojho šatníka.',
-                      chips: _weatherForDate(todayDate).toHeroChips(),
-                    ),
-                    date: activeDate,
-                    isTomorrow: false,
-                    outfitItems: const <_HeroOutfitItem>[],
-                    onTapSwapOne: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                      );
-                    },
-                    onTapNewOutfit: () {
-                      _handleNewOutfitPressed();
-                    },
-                    onTapEdit: () => _handleEditOutfitPressed(context),
-                  )
-                else
-                  StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                    stream: _userDocStream(user.uid),
-                    builder: (context, userSnap) {
-                      final data = userSnap.data?.data();
-                      final isPremiumUser = data?['isPremium'] == true ||
-                          data?['subscriptionStatus'] == 'premium';
-                      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                        stream: _wardrobeStream(user.uid),
-                        builder: (context, snap) {
-                          final docs = snap.data?.docs ?? const [];
-                          final wardrobe = docs.map((d) => d.data()).toList();
-                          final hero = _buildTodayHero(
-                            date: todayDate,
-                            wardrobe: wardrobe,
-                            isPremiumUser: isPremiumUser,
-                          );
-
-                          return _HeroDayCard(
-                            dayIndex: _dayIndex,
-                            onChangeDay: _setDayIndex,
-                            vm: hero.vm,
-                            date: activeDate,
-                            isTomorrow: false,
-                            outfitItems: hero.outfitItems,
-                            onTapSwapOne: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(content: Text('Vymeniť kúsok – napojíme neskôr.')),
-                              );
-                            },
-                            onTapNewOutfit: () {
-                              _handleNewOutfitPressed();
-                            },
-                            onTapEdit: () => _handleEditOutfitPressed(context),
-                          );
-                        },
-                      );
-                    },
+                    child: scrollContent(),
                   ),
-
-                const SizedBox(height: 14),
-
-                _QuickActionsGrid(
-                  items: [
-                    _QuickAction(
-                      icon: Icons.add_circle_outline,
-                      label: 'Pridať',
-                      onTap: () => AddClothingScreen.openFromPicker(context),
-                    ),
-                    _QuickAction(
-                      icon: Icons.smart_toy_outlined,
-                      label: 'Stylist',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (_) => const StylistChatScreen()),
-                        );
-                      },
-                    ),
-                    _QuickAction(
-                      icon: Icons.shopping_bag_outlined,
-                      label: 'Shop',
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const RecommendedScreen(initialTab: 0),
-                          ),
-                        );
-                      },
-                    ),
-                    _QuickAction(
-                      icon: Icons.travel_explore,
-                      label: 'Trip',
-                      onTap: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text('Trip planner – doplníme ako ďalší krok.'),
-                          ),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-
-                const SizedBox(height: 22),
-
-                const SizedBox(height: 18),
-
-                _RecommendedCarouselV2(
-                  onOpenRecommended: _openRecommended,
-                ),
+                  HomeQuickActionOrb(
+                    actions: _quickActionEntries(context),
+                    bottomOffset: 104,
+                    rightOffset: 12,
+                  ),
                 ],
               ),
-            ),
             ),
           ],
         ),
@@ -976,7 +913,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     width: 44,
                     height: 4,
                     decoration: BoxDecoration(
-                      color: _HomeLuxuryPalette.border,
+                      color: HomeLuxuryPalette.border,
                       borderRadius: BorderRadius.circular(999),
                     ),
                   ),
@@ -986,7 +923,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Text(
                       'Upraviť outfit',
                       style: TextStyle(
-                        color: _HomeLuxuryPalette.textPrimary,
+                        color: HomeLuxuryPalette.textPrimary,
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
                       ),
@@ -1051,7 +988,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final photoUrl = user?.photoURL;
 
     return Drawer(
-      backgroundColor: _HomeLuxuryPalette.bgMid,
+      backgroundColor: HomeLuxuryPalette.bgMid,
       child: Stack(
         children: [
       const Positioned.fill(
@@ -1061,9 +998,9 @@ class _HomeScreenState extends State<HomeScreen> {
         begin: Alignment.topLeft,
         end: Alignment.bottomRight,
         colors: [
-          _HomeLuxuryPalette.bgTop,
-          _HomeLuxuryPalette.bgMid,
-          _HomeLuxuryPalette.bgBottom,
+          HomeLuxuryPalette.bgTop,
+          HomeLuxuryPalette.bgMid,
+          HomeLuxuryPalette.bgBottom,
         ],
       ),
     ),
@@ -1077,8 +1014,8 @@ class _HomeScreenState extends State<HomeScreen> {
     center: const Alignment(-0.4, -0.9),
     radius: 1.1,
     colors: [
-    _HomeLuxuryPalette.accent.withOpacity(0.25),
-    _HomeLuxuryPalette.accent.withOpacity(0.10),
+    HomeLuxuryPalette.accent.withOpacity(0.25),
+    HomeLuxuryPalette.accent.withOpacity(0.10),
     Colors.transparent,
     ],
     stops: const [0.0, 0.35, 1.0],
@@ -1109,13 +1046,13 @@ class _HomeScreenState extends State<HomeScreen> {
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: _HomeLuxuryPalette.border),
+                border: Border.all(color: HomeLuxuryPalette.border),
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
-                    _HomeLuxuryPalette.bgTop,
-                    _HomeLuxuryPalette.bgMid,
+                    HomeLuxuryPalette.bgTop,
+                    HomeLuxuryPalette.bgMid,
                   ],
                 ),
               ),
@@ -1127,7 +1064,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(
-                        color: _HomeLuxuryPalette.accent.withOpacity(0.45),
+                        color: HomeLuxuryPalette.accent.withOpacity(0.45),
                       ),
                       gradient: const LinearGradient(
                         begin: Alignment.topCenter,
@@ -1178,7 +1115,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
-                            color: _HomeLuxuryPalette.textPrimary,
+                            color: HomeLuxuryPalette.textPrimary,
                             fontSize: 16,
                             fontWeight: FontWeight.w700,
                           ),
@@ -1189,7 +1126,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: _HomeLuxuryPalette.textSecondary.withOpacity(0.9),
+                            color: HomeLuxuryPalette.textSecondary.withOpacity(0.9),
                             fontSize: 12.5,
                             fontWeight: FontWeight.w500,
                           ),
@@ -1206,12 +1143,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 children: [
             _drawerSectionLabel('SOCIÁLNE'),
             ListTile(
-              iconColor: _HomeLuxuryPalette.accent,
-              textColor: _HomeLuxuryPalette.accent,
-              leading: Icon(Icons.people_outline, color: _HomeLuxuryPalette.accent),
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.people_outline, color: HomeLuxuryPalette.accent),
               title: Text(
                 'Priatelia',
-                style: TextStyle(color: _HomeLuxuryPalette.accent),
+                style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -1222,12 +1159,12 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             ListTile(
-              iconColor: _HomeLuxuryPalette.accent,
-              textColor: _HomeLuxuryPalette.accent,
-              leading: Icon(Icons.diversity_2, color: _HomeLuxuryPalette.accent),
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.diversity_2, color: HomeLuxuryPalette.accent),
               title: Text(
                 'Správy a zladenie outfitov',
-                style: TextStyle(color: _HomeLuxuryPalette.accent),
+                style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -1240,12 +1177,12 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 10),
             _drawerSectionLabel('AI'),
             ListTile(
-              iconColor: _HomeLuxuryPalette.accent,
-              textColor: _HomeLuxuryPalette.accent,
-              leading: Icon(Icons.auto_awesome, color: _HomeLuxuryPalette.accent),
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.auto_awesome, color: HomeLuxuryPalette.accent),
               title: Text(
                 'Analýza šatníka',
-                style: TextStyle(color: _HomeLuxuryPalette.accent),
+                style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -1275,16 +1212,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       begin: Alignment.topLeft,
                       end: Alignment.bottomRight,
                       colors: [
-                        _HomeLuxuryPalette.surfaceSoft.withOpacity(0.92),
-                        _HomeLuxuryPalette.bgTop.withOpacity(0.95),
+                        HomeLuxuryPalette.surfaceSoft.withOpacity(0.92),
+                        HomeLuxuryPalette.bgTop.withOpacity(0.95),
                       ],
                     ),
                     border: Border.all(
-                      color: _HomeLuxuryPalette.accent.withOpacity(0.42),
+                      color: HomeLuxuryPalette.accent.withOpacity(0.42),
                     ),
                     boxShadow: [
                       BoxShadow(
-                        color: _HomeLuxuryPalette.accent.withOpacity(0.12),
+                        color: HomeLuxuryPalette.accent.withOpacity(0.12),
                         blurRadius: 14,
                         offset: const Offset(0, 6),
                       ),
@@ -1297,15 +1234,15 @@ class _HomeScreenState extends State<HomeScreen> {
                         height: 34,
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(10),
-                          color: _HomeLuxuryPalette.accent.withOpacity(0.16),
+                          color: HomeLuxuryPalette.accent.withOpacity(0.16),
                           border: Border.all(
-                            color: _HomeLuxuryPalette.accent.withOpacity(0.40),
+                            color: HomeLuxuryPalette.accent.withOpacity(0.40),
                           ),
                         ),
                         child: const Icon(
                           Icons.workspace_premium,
                           size: 18,
-                          color: _HomeLuxuryPalette.accent,
+                          color: HomeLuxuryPalette.accent,
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -1316,7 +1253,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               'Premium',
                               style: TextStyle(
-                                color: _HomeLuxuryPalette.textPrimary,
+                                color: HomeLuxuryPalette.textPrimary,
                                 fontWeight: FontWeight.w800,
                                 fontSize: 13.5,
                               ),
@@ -1325,7 +1262,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             Text(
                               'Odomkni pokročilé AI funkcie',
                               style: TextStyle(
-                                color: _HomeLuxuryPalette.textSecondary,
+                                color: HomeLuxuryPalette.textSecondary,
                                 fontSize: 11.5,
                                 fontWeight: FontWeight.w600,
                               ),
@@ -1341,12 +1278,28 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 8),
             _drawerSectionLabel('ÚČET'),
             ListTile(
-              iconColor: _HomeLuxuryPalette.accent,
-              textColor: _HomeLuxuryPalette.accent,
-              leading: Icon(Icons.settings, color: _HomeLuxuryPalette.accent),
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.person_outline, color: HomeLuxuryPalette.accent),
+              title: Text(
+                'Profil',
+                style: TextStyle(color: HomeLuxuryPalette.accent),
+              ),
+              onTap: () {
+                Navigator.of(context).pop();
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                );
+              },
+            ),
+            ListTile(
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.settings, color: HomeLuxuryPalette.accent),
               title: Text(
                 'Nastavenia',
-                style: TextStyle(color: _HomeLuxuryPalette.accent),
+                style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
               onTap: () {
                 Navigator.of(context).pop();
@@ -1359,14 +1312,14 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
               ),
             ),
-            Divider(color: _HomeLuxuryPalette.border),
+            Divider(color: HomeLuxuryPalette.border),
             ListTile(
-              iconColor: _HomeLuxuryPalette.accent,
-              textColor: _HomeLuxuryPalette.accent,
-              leading: Icon(Icons.logout, color: _HomeLuxuryPalette.accent),
+              iconColor: HomeLuxuryPalette.accent,
+              textColor: HomeLuxuryPalette.accent,
+              leading: Icon(Icons.logout, color: HomeLuxuryPalette.accent),
               title: Text(
                 'Odhlásiť sa',
-                style: TextStyle(color: _HomeLuxuryPalette.accent),
+                style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
               onTap: () async {
                 Navigator.of(context).pop();
@@ -1387,7 +1340,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Text(
         label,
         style: TextStyle(
-          color: _HomeLuxuryPalette.textSecondary.withOpacity(0.72),
+          color: HomeLuxuryPalette.textSecondary.withOpacity(0.72),
           fontSize: 11.5,
           fontWeight: FontWeight.w700,
           letterSpacing: 0.8,
@@ -1404,154 +1357,343 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// =======================
-/// HERO DAY CARD
-/// =======================
-class _HeroDayCard extends StatelessWidget {
-  final int dayIndex; // 0 dnes, 1 zajtra
-  final ValueChanged<int> onChangeDay;
-
-  final _HeroBannerVM vm;
-  final DateTime date;
-  final bool isTomorrow;
-
-  final List<_HeroOutfitItem> outfitItems;
-
-  final VoidCallback onTapSwapOne;
-  final VoidCallback onTapNewOutfit;
-  final VoidCallback onTapEdit;
-
-  const _HeroDayCard({
-    required this.dayIndex,
-    required this.onChangeDay,
-    required this.vm,
-    required this.date,
-    required this.isTomorrow,
-    required this.outfitItems,
-    required this.onTapSwapOne,
-    required this.onTapNewOutfit,
-    required this.onTapEdit,
+/// Inline weather — editorial typography only (no chips/capsules).
+class _HeroInlineWeather extends StatelessWidget {
+  const _HeroInlineWeather({
+    required this.weather,
+    required this.compact,
   });
 
-  String _fmt(DateTime d) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${two(d.day)}.${two(d.month)}';
-  }
+  final _LocalWeather weather;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final hasOutfitTiles = outfitItems.isNotEmpty;
+    final gap = compact ? 20.0 : 26.0;
+    final style = TextStyle(
+      color: HomeLuxuryPalette.textSecondary.withOpacity(0.82),
+      fontSize: compact ? 12.5 : 13,
+      fontWeight: FontWeight.w500,
+      letterSpacing: 0.2,
+      height: 1.25,
+    );
+    final emojiStyle = TextStyle(
+      fontSize: compact ? 13 : 14,
+      height: 1.2,
+    );
 
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    final String condEmoji;
+    final String condLabel;
+    if (weather.isRainy) {
+      condEmoji = '🌧';
+      condLabel = 'Dážď';
+    } else if (weather.isWindy) {
+      condEmoji = '💨';
+      condLabel = 'Vietor';
+    } else {
+      condEmoji = '☀';
+      condLabel = 'Jasno';
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text('🌡', style: emojiStyle),
+        Text(' ${weather.tempC}°C', style: style),
+        SizedBox(width: gap),
+        Text(condEmoji, style: emojiStyle),
+        Text(' $condLabel', style: style),
+      ],
+    );
+  }
+}
+
+/// Gaps before outfit grid — keep in sync with [HomeDailyBriefingRow] embedded bands.
+const double _kHeroGapAfterToggle = 8.0;
+const double _kHeroGapBeforeGrid = 14.0;
+
+/// Shared outfit / briefing body: bounded height — kept moderate so tiles stay elegant, not oversized.
+double _heroSharedBodyHeight(BuildContext context) {
+  final h = MediaQuery.sizeOf(context).height;
+  return (h * 0.198).clamp(226.0, 286.0);
+}
+
+/// =======================
+/// UNIFIED HERO (outfit + briefing)
+/// =======================
+class _UnifiedHeroSurface extends StatelessWidget {
+  const _UnifiedHeroSurface({
+    required this.dayIndex,
+    required this.onChangeDay,
+    required this.vm,
+    required this.weather,
+    required this.isTomorrow,
+    required this.outfitItems,
+  });
+
+  final int dayIndex;
+  final ValueChanged<int> onChangeDay;
+  final _HeroBannerVM vm;
+  final _LocalWeather weather;
+  final bool isTomorrow;
+  final List<_HeroOutfitItem> outfitItems;
+
+  @override
+  Widget build(BuildContext context) {
+    const compact = true;
+    final hasOutfitTiles = outfitItems.isNotEmpty;
+    const minGridEmpty = 100.0;
+    final radius = BorderRadius.circular(20);
+    final sharedBodyH = _heroSharedBodyHeight(context);
+
+    final outfitSwitcher = AnimatedSwitcher(
+      duration: const Duration(milliseconds: 240),
+      switchInCurve: Curves.easeOutCubic,
+      switchOutCurve: Curves.easeInCubic,
+      transitionBuilder: (child, anim) {
+        final slide = Tween<Offset>(
+          begin: const Offset(0.02, 0),
+          end: Offset.zero,
+        ).animate(anim);
+        return FadeTransition(
+          opacity: anim,
+          child: SlideTransition(position: slide, child: child),
+        );
+      },
+      child: KeyedSubtree(
+        key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
+        child: !hasOutfitTiles
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: Text(
+                    vm.description,
+                    maxLines: 6,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color:
+                          HomeLuxuryPalette.textSecondary.withOpacity(0.92),
+                      fontSize: 11.5,
+                      height: 1.35,
+                    ),
+                  ),
+                ),
+              )
+            : _HeroOutfitTilesGrid(
+                items: outfitItems,
+                compact: compact,
+              ),
+      ),
+    );
+
+    // Bounded [SizedBox] gives the outfit grid a definite height; 4× fills via [Expanded] rows.
+    // Non–4-item grids scroll inside the same height without breaking flex elsewhere.
+    final leftColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _HeroSegmentedDay(
+          index: dayIndex,
+          onChange: onChangeDay,
+          compact: compact,
+        ),
+        const SizedBox(height: _kHeroGapAfterToggle),
+        _HeroInlineWeather(
+          weather: weather,
+          compact: compact,
+        ),
+        const SizedBox(height: _kHeroGapBeforeGrid),
+        SizedBox(
+          height: sharedBodyH,
+          width: double.infinity,
+          child: hasOutfitTiles
+              ? outfitSwitcher
+              : ConstrainedBox(
+                  constraints: const BoxConstraints(minHeight: minGridEmpty),
+                  child: outfitSwitcher,
+                ),
+        ),
+      ],
+    );
+
+    final rightColumn = HomeDailyBriefingRow(
+      unifiedEmbedded: true,
+      unifiedSharedBodyHeight: sharedBodyH,
+      baseTempC: weather.tempC,
+      isRainy: weather.isRainy,
+      isWindy: weather.isWindy,
+      sideColumn: true,
+      compact: true,
+    );
+
+    return ClipRRect(
+      borderRadius: radius,
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 16, 14, 14),
+          decoration: BoxDecoration(
+            borderRadius: radius,
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                HomeLuxuryPalette.surfaceSoft.withOpacity(0.34),
+                HomeLuxuryPalette.surface.withOpacity(0.22),
+                HomeLuxuryPalette.bgMid.withOpacity(0.28),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.18),
+                blurRadius: 22,
+                offset: const Offset(0, 12),
+              ),
+            ],
+          ),
+          child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      vm.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textPrimary,
-                        fontSize: 22,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      vm.subtitle,
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textSecondary,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
+                flex: 11,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 10),
+                  child: leftColumn,
                 ),
               ),
-              Padding(
-                padding: const EdgeInsets.only(top: 2),
-                child: _HeroSegmentedDay(
-                  index: dayIndex,
-                  onChange: onChangeDay,
-                ),
+              Expanded(
+                flex: 9,
+                child: rightColumn,
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
 
-          const SizedBox(height: 10),
+/// Glass segmented controls — replaces stacked gold CTAs.
+class _HeroOutfitActionBar extends StatelessWidget {
+  const _HeroOutfitActionBar({
+    required this.onNewOutfit,
+    required this.onSwapPiece,
+    required this.onLike,
+  });
 
-          Wrap(spacing: 8, children: vm.chips),
-          const SizedBox(height: 10),
+  final VoidCallback onNewOutfit;
+  final VoidCallback onSwapPiece;
+  final VoidCallback onLike;
 
-          AnimatedSwitcher(
-            duration: const Duration(milliseconds: 220),
-            switchInCurve: Curves.easeOutCubic,
-            switchOutCurve: Curves.easeInCubic,
-            transitionBuilder: (child, anim) {
-              final slide = Tween<Offset>(
-                begin: const Offset(0.02, 0),
-                end: Offset.zero,
-              ).animate(anim);
-              return FadeTransition(
-                opacity: anim,
-                child: SlideTransition(position: slide, child: child),
-              );
-            },
-            child: ConstrainedBox(
-              key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
-              constraints: const BoxConstraints(minHeight: 230),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (hasOutfitTiles)
-                    _HeroOutfitTiles2Rows(
-                      items: outfitItems,
-                      description: vm.description,
-                    )
-                  else
-                    Text(
-                      vm.description,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textSecondary,
-                        fontSize: 12.6,
-                      ),
-                    ),
-                ],
-              ),
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: Colors.white.withOpacity(0.09)),
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                HomeLuxuryPalette.surfaceSoft.withOpacity(0.62),
+                HomeLuxuryPalette.surface.withOpacity(0.42),
+              ],
             ),
           ),
-
-          const SizedBox(height: 12),
-
-          Column(
+          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+          child: Row(
             children: [
-              SizedBox(
-                width: double.infinity,
-                child: _HeroPrimaryButton(
-                  text: 'Upraviť outfit',
-                  onTap: onTapEdit,
+              Expanded(
+                child: _BarHit(
+                  emoji: '❌',
+                  label: 'Nový outfit',
+                  onTap: onNewOutfit,
                 ),
               ),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: double.infinity,
-                child: _HeroPrimaryButton(
-                  text: 'Nový outfit',
-                  onTap: onTapNewOutfit,
+              _barDivider(),
+              Expanded(
+                child: _BarHit(
+                  emoji: '🔄',
+                  label: 'Vymeniť kúsok',
+                  onTap: onSwapPiece,
+                ),
+              ),
+              _barDivider(),
+              Expanded(
+                child: _BarHit(
+                  emoji: '✅',
+                  label: 'Páči sa mi',
+                  onTap: onLike,
                 ),
               ),
             ],
           ),
-        ],
+        ),
+      ),
+    );
+  }
+
+  Widget _barDivider() {
+    return Container(
+      width: 1,
+      height: 26,
+      margin: const EdgeInsets.symmetric(horizontal: 1),
+      color: HomeLuxuryPalette.textSecondary.withOpacity(0.12),
+    );
+  }
+}
+
+class _BarHit extends StatelessWidget {
+  const _BarHit({
+    required this.emoji,
+    required this.label,
+    required this.onTap,
+  });
+
+  final String emoji;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        splashColor: Colors.white.withOpacity(0.06),
+        highlightColor: Colors.white.withOpacity(0.04),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(emoji, style: const TextStyle(fontSize: 13)),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: HomeLuxuryPalette.textPrimary.withOpacity(0.88),
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                    height: 1.2,
+                    letterSpacing: 0.05,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -1560,41 +1702,62 @@ class _HeroDayCard extends StatelessWidget {
 class _HeroSegmentedDay extends StatelessWidget {
   final int index;
   final ValueChanged<int> onChange;
+  final bool compact;
 
   const _HeroSegmentedDay({
     required this.index,
     required this.onChange,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 148,
-      height: 34,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: _HomeLuxuryPalette.surface.withOpacity(0.9),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: Colors.white.withOpacity(0.06)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _SegItem(
-              label: 'Dnes',
-              active: index == 0,
-              onTap: () => onChange(0),
+    final height = compact ? 42.0 : 46.0;
+    final outerPad = compact ? 5.0 : 6.0;
+    final gap = compact ? 6.0 : 8.0;
+
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+        child: Container(
+          width: double.infinity,
+          height: height,
+          padding: EdgeInsets.all(outerPad),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(color: Colors.white.withOpacity(0.11)),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.09),
+                Colors.white.withOpacity(0.03),
+              ],
             ),
           ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: _SegItem(
-              label: 'Zajtra',
-              active: index == 1,
-              onTap: () => onChange(1),
-            ),
+          child: Row(
+            children: [
+              Expanded(
+                child: _SegItem(
+                  label: 'Dnes',
+                  active: index == 0,
+                  compact: compact,
+                  onTap: () => onChange(0),
+                ),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: _SegItem(
+                  label: 'Zajtra',
+                  active: index == 1,
+                  compact: compact,
+                  onTap: () => onChange(1),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -1603,33 +1766,76 @@ class _HeroSegmentedDay extends StatelessWidget {
 class _SegItem extends StatelessWidget {
   final String label;
   final bool active;
+  final bool compact;
   final VoidCallback onTap;
 
   const _SegItem({
     required this.label,
     required this.active,
     required this.onTap,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 160),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(999),
-          color: active ? _HomeLuxuryPalette.surfaceElevated : Colors.transparent,
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            color: active ? _HomeLuxuryPalette.textPrimary : _HomeLuxuryPalette.textSecondary,
-            fontSize: 12,
-            fontWeight: FontWeight.w800,
+    final fs = compact ? 13.5 : 14.5;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        splashColor: Colors.white.withOpacity(0.07),
+        highlightColor: Colors.white.withOpacity(0.05),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          alignment: Alignment.center,
+          padding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 14,
+            vertical: compact ? 7 : 9,
+          ),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: active
+                  ? HomeLuxuryPalette.accent.withOpacity(0.42)
+                  : Colors.transparent,
+            ),
+            gradient: active
+                ? LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      HomeLuxuryPalette.accent.withOpacity(0.26),
+                      HomeLuxuryPalette.accent.withOpacity(0.10),
+                    ],
+                  )
+                : null,
+            boxShadow: active
+                ? [
+                    BoxShadow(
+                      color: HomeLuxuryPalette.accent.withOpacity(0.32),
+                      blurRadius: 16,
+                      spreadRadius: 0,
+                      offset: const Offset(0, 2),
+                    ),
+                  ]
+                : null,
+          ),
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                color: active
+                    ? HomeLuxuryPalette.textPrimary
+                    : HomeLuxuryPalette.textSecondary.withOpacity(0.92),
+                fontSize: fs,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.15,
+              ),
+            ),
           ),
         ),
       ),
@@ -1661,9 +1867,9 @@ class _SheetChoiceTile extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.9),
+          color: HomeLuxuryPalette.surfaceSoft.withOpacity(0.9),
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: _HomeLuxuryPalette.border),
+          border: Border.all(color: HomeLuxuryPalette.border),
         ),
         child: Row(
           children: [
@@ -1671,10 +1877,10 @@ class _SheetChoiceTile extends StatelessWidget {
               height: 44,
               width: 44,
               decoration: BoxDecoration(
-                color: _HomeLuxuryPalette.accent.withOpacity(0.11),
+                color: HomeLuxuryPalette.accent.withOpacity(0.11),
                 borderRadius: BorderRadius.circular(14),
               ),
-              child: Icon(icon, color: _HomeLuxuryPalette.accent, size: 22),
+              child: Icon(icon, color: HomeLuxuryPalette.accent, size: 22),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -1682,16 +1888,16 @@ class _SheetChoiceTile extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                      style: TextStyle(color: _HomeLuxuryPalette.textPrimary, fontWeight: FontWeight.bold)),
+                      style: TextStyle(color: HomeLuxuryPalette.textPrimary, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 4),
                   Text(
                     subtitle,
-                    style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
+                    style: TextStyle(color: HomeLuxuryPalette.textSecondary, fontSize: 12),
                   ),
                 ],
               ),
             ),
-            Icon(Icons.chevron_right, color: _HomeLuxuryPalette.textSecondary),
+            Icon(Icons.chevron_right, color: HomeLuxuryPalette.textSecondary),
           ],
         ),
       ),
@@ -1703,29 +1909,23 @@ class _HeroOutfitItem {
   final _HeroWearType type;
   final IconData icon;
   final String label;
-  final String? imageAssetPath;
+  final String? brandLine;
   final String? imageUrl;
 
   const _HeroOutfitItem({
     required this.type,
     required this.icon,
     required this.label,
-    this.imageAssetPath,
+    this.brandLine,
     this.imageUrl,
   });
 }
 
 class _HeroBannerVM {
-  final String title;
-  final String subtitle;
   final String description;
-  final List<_HeroChip> chips;
 
   const _HeroBannerVM({
-    required this.title,
-    required this.subtitle,
     required this.description,
-    required this.chips,
   });
 }
 
@@ -1832,93 +2032,283 @@ class _LocalWeather {
     return parts.join(' • ');
   }
 
-  List<_HeroChip> toHeroChips() {
-    final chips = <_HeroChip>[
-      _HeroChip(icon: Icons.thermostat, label: '$tempC°C'),
-    ];
-    if (isWindy) chips.add(const _HeroChip(icon: Icons.air, label: 'vietor'));
-    if (isRainy) chips.add(const _HeroChip(icon: Icons.grain, label: 'dážď'));
-    if (!isWindy && !isRainy) chips.add(const _HeroChip(icon: Icons.wb_sunny, label: 'jasno'));
-    return chips;
-  }
 }
 
-class _HeroOutfitTiles2Rows extends StatelessWidget {
-  final List<_HeroOutfitItem> items;
-  final String description;
+List<_HeroOutfitItem> _orderedHeroOutfitItems(List<_HeroOutfitItem> items) {
+  final orderedItems = <_HeroOutfitItem>[];
+  void addByType(_HeroWearType type) {
+    for (final item in items) {
+      if (item.type == type) {
+        orderedItems.add(item);
+        break;
+      }
+    }
+  }
 
-  const _HeroOutfitTiles2Rows({
+  addByType(_HeroWearType.outerwear);
+  addByType(_HeroWearType.top);
+  addByType(_HeroWearType.bottom);
+  addByType(_HeroWearType.shoes);
+  return orderedItems;
+}
+
+class _HeroOutfitTilesGrid extends StatelessWidget {
+  final List<_HeroOutfitItem> items;
+  final bool compact;
+
+  const _HeroOutfitTilesGrid({
     required this.items,
-    required this.description,
+    this.compact = false,
   });
+
+  /// Same layouts as before, without a bounded parent — used inside [SingleChildScrollView].
+  Widget _buildLooseLayout({
+    required double maxW,
+    required int n,
+    required Widget Function(int i) tile,
+  }) {
+    final narrow = maxW < 168;
+    final gap = narrow ? 8.0 : (compact ? 10.0 : 14.0);
+
+    if (n <= 3) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (var i = 0; i < n; i++) ...[
+            if (i > 0) SizedBox(height: gap),
+            tile(i),
+          ],
+        ],
+      );
+    }
+
+    if (n == 4) {
+      final rowGap = gap + 14;
+      const tileAspect = 0.82;
+      return GridView.builder(
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: 2,
+          crossAxisSpacing: gap,
+          mainAxisSpacing: rowGap,
+          childAspectRatio: tileAspect,
+        ),
+        itemCount: 4,
+        itemBuilder: (_, i) => tile(i),
+      );
+    }
+
+    if (n == 5) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          GridView.count(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 2,
+            crossAxisSpacing: gap,
+            mainAxisSpacing: gap,
+            childAspectRatio: 1,
+            children: [tile(0), tile(1), tile(2), tile(3)],
+          ),
+          SizedBox(height: gap),
+          Align(
+            alignment: Alignment.center,
+            child: FractionallySizedBox(
+              widthFactor: 0.5,
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: tile(4),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return GridView.builder(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        crossAxisSpacing: gap,
+        mainAxisSpacing: gap,
+        childAspectRatio: 1,
+      ),
+      itemCount: n,
+      itemBuilder: (_, i) => tile(i),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final orderedItems = <_HeroOutfitItem>[];
-    void addByType(_HeroWearType type) {
-      for (final item in items) {
-        if (item.type == type) {
-          orderedItems.add(item);
-          break;
+    final ordered = _orderedHeroOutfitItems(items);
+    final display = ordered.length > 6 ? ordered.sublist(0, 6) : ordered;
+    final n = display.length;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final maxW = constraints.maxWidth;
+        final narrow = maxW < 168;
+        final gap = narrow ? 8.0 : (compact ? 10.0 : 14.0);
+        final maxH = constraints.maxHeight;
+        final heightBounded =
+            maxH.isFinite && maxH < double.infinity && maxH > 1;
+
+        Widget tile(int i) => _HeroOutfitTileCard(
+              item: display[i],
+              compact: compact,
+            );
+
+        Widget tileFill(int i) => _HeroOutfitTileCard(
+              item: display[i],
+              compact: compact,
+              expandCell: true,
+            );
+
+        if (n == 0) {
+          return const SizedBox.shrink();
         }
-      }
-    }
 
-    addByType(_HeroWearType.outerwear);
-    addByType(_HeroWearType.top);
-    addByType(_HeroWearType.bottom);
-    addByType(_HeroWearType.shoes);
+        // 2×2 fills the shared hero body; equal row heights; no shrink-wrap grid height.
+        if (n == 4 && heightBounded) {
+          final rowGap = gap + 8;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileFill(0)),
+                    SizedBox(width: gap),
+                    Expanded(child: tileFill(1)),
+                  ],
+                ),
+              ),
+              SizedBox(height: rowGap),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileFill(2)),
+                    SizedBox(width: gap),
+                    Expanded(child: tileFill(3)),
+                  ],
+                ),
+              ),
+            ],
+          );
+        }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          description,
-          maxLines: 6,
-          overflow: TextOverflow.ellipsis,
-          style: TextStyle(
-            color: _HomeLuxuryPalette.textSecondary,
-            fontSize: 12.6,
-            height: 1.3,
-          ),
-        ),
-        const SizedBox(height: 10),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: orderedItems
-              .map((item) => _HeroOutfitMiniTile(item: item))
-              .toList(growable: false),
-        ),
-      ],
+        final loose = _buildLooseLayout(
+          maxW: maxW,
+          n: n,
+          tile: tile,
+        );
+
+        if (heightBounded) {
+          return SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: loose,
+          );
+        }
+
+        return loose;
+      },
     );
   }
 }
 
-class _HeroOutfitMiniTile extends StatelessWidget {
+/// Scale factors for PNG previews — tops/pants run large if over-scaled; shoes stay slightly bolder.
+double _heroOutfitImageScale(_HeroWearType type, {required bool compact}) {
+  if (compact) {
+    switch (type) {
+      case _HeroWearType.top:
+        return 1.07;
+      case _HeroWearType.bottom:
+        return 1.05;
+      case _HeroWearType.outerwear:
+        return 1.12;
+      case _HeroWearType.shoes:
+        return 1.64;
+    }
+  }
+  switch (type) {
+    case _HeroWearType.top:
+      return 1.02;
+    case _HeroWearType.bottom:
+      return 1.0;
+    case _HeroWearType.outerwear:
+      return 1.06;
+    case _HeroWearType.shoes:
+      return 1.52;
+  }
+}
+
+class _HeroOutfitTileCard extends StatelessWidget {
+  const _HeroOutfitTileCard({
+    required this.item,
+    this.compact = false,
+    this.expandCell = false,
+  });
+
   final _HeroOutfitItem item;
-  const _HeroOutfitMiniTile({required this.item});
+  final bool compact;
+
+  /// Fill a flex cell in the 2×2 shared-height grid (non-square cell).
+  final bool expandCell;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 56,
-      height: 56,
-      padding: const EdgeInsets.all(3),
+    final outerR = compact ? 16.0 : 18.0;
+    final innerR = compact ? 14.0 : 14.0;
+    final pad = compact ? 5.0 : 5.0;
+
+    final core = Container(
+      padding: EdgeInsets.all(pad),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _HomeLuxuryPalette.border),
-        color: _HomeLuxuryPalette.surface.withOpacity(0.58),
+        borderRadius: BorderRadius.circular(outerR),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [
+            Colors.white.withOpacity(0.012),
+            Colors.white.withOpacity(0.003),
+          ],
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.14),
+            blurRadius: 12,
+            offset: const Offset(0, 6),
+          ),
+        ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(10), // menší radius vo vnútri
-        child: SizedBox.expand(
+        borderRadius: BorderRadius.circular(innerR),
+        child: ColoredBox(
+          color: HomeLuxuryPalette.bgMid.withOpacity(0.20),
           child: _HeroOutfitImageView(
             imageUrl: item.imageUrl,
             fallbackIcon: item.icon,
+            wearType: item.type,
+            compact: compact,
           ),
         ),
       ),
+    );
+
+    if (expandCell) {
+      return SizedBox.expand(child: core);
+    }
+
+    return AspectRatio(
+      aspectRatio: 1,
+      child: core,
     );
   }
 }
@@ -1926,38 +2316,55 @@ class _HeroOutfitMiniTile extends StatelessWidget {
 class _HeroOutfitImageView extends StatelessWidget {
   final String? imageUrl;
   final IconData fallbackIcon;
+  final _HeroWearType wearType;
+  final bool compact;
 
   const _HeroOutfitImageView({
     required this.imageUrl,
     required this.fallbackIcon,
+    required this.wearType,
+    this.compact = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final normalizedImageUrl = imageUrl?.trim();
     final hasImage = normalizedImageUrl != null && normalizedImageUrl.isNotEmpty;
+    final ph = compact ? 26.0 : 36.0;
+    final inset = compact ? 5.0 : 6.0;
+    final scale = _heroOutfitImageScale(wearType, compact: compact);
 
-    if (!hasImage) {
-      return _OutfitPreviewPlaceholder(icon: fallbackIcon);
+    Widget previewBody({required Widget child}) {
+      return Padding(
+        padding: EdgeInsets.all(inset),
+        child: Center(
+          child: Transform.scale(
+            scale: scale,
+            child: child,
+          ),
+        ),
+      );
     }
 
-    final isShoes = fallbackIcon == Icons.directions_run;
+    if (!hasImage) {
+      return previewBody(
+        child: _OutfitPreviewPlaceholder(icon: fallbackIcon, size: ph),
+      );
+    }
 
-    return Center(
-      child: Transform.scale(
-        scale: isShoes ? 1.75 : 1.45,
-        child: Image.network(
-          normalizedImageUrl,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
-          gaplessPlayback: true,
-          loadingBuilder: (context, child, loadingProgress) {
-            if (loadingProgress == null) return child;
-            return _OutfitPreviewPlaceholder(icon: fallbackIcon);
-          },
-          errorBuilder: (context, error, stackTrace) =>
-              _OutfitPreviewPlaceholder(icon: fallbackIcon),
-        ),
+    return previewBody(
+      child: Image.network(
+        normalizedImageUrl,
+        fit: BoxFit.contain,
+        filterQuality: FilterQuality.high,
+        gaplessPlayback: true,
+        alignment: Alignment.center,
+        loadingBuilder: (context, child, loadingProgress) {
+          if (loadingProgress == null) return child;
+          return _OutfitPreviewPlaceholder(icon: fallbackIcon, size: ph);
+        },
+        errorBuilder: (context, error, stackTrace) =>
+            _OutfitPreviewPlaceholder(icon: fallbackIcon, size: ph),
       ),
     );
   }
@@ -1965,467 +2372,20 @@ class _HeroOutfitImageView extends StatelessWidget {
 
 class _OutfitPreviewPlaceholder extends StatelessWidget {
   final IconData icon;
-  const _OutfitPreviewPlaceholder({required this.icon});
+  final double size;
+
+  const _OutfitPreviewPlaceholder({
+    required this.icon,
+    this.size = 34,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Icon(
         icon,
-        color: _HomeLuxuryPalette.textSecondary.withOpacity(0.92),
-        size: 22,
-      ),
-    );
-  }
-}
-
-class _HeroGlassButton extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  final VoidCallback onTap;
-
-  const _HeroGlassButton({
-    required this.icon,
-    required this.text,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.72),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: _HomeLuxuryPalette.border),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: _HomeLuxuryPalette.textSecondary),
-            const SizedBox(width: 8),
-            Text(
-              text,
-              style: TextStyle(
-                color: _HomeLuxuryPalette.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HeroPrimaryButton extends StatelessWidget {
-  final String text;
-  final VoidCallback onTap;
-
-  const _HeroPrimaryButton({
-    required this.text,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(999),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: [
-              _HomeLuxuryPalette.accent.withOpacity(0.90),
-              _HomeLuxuryPalette.accentSoft.withOpacity(0.94),
-            ],
-          ),
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: _HomeLuxuryPalette.accent.withOpacity(0.45)),
-          boxShadow: [
-            BoxShadow(
-              color: _HomeLuxuryPalette.accent.withOpacity(0.26),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
-              text,
-              style: TextStyle(
-                color: const Color(0xFF191512),
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(width: 10),
-            Icon(
-              Icons.arrow_forward_ios,
-              color: const Color(0xFF191512).withOpacity(0.8),
-              size: 16,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _HeroChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-
-  const _HeroChip({required this.icon, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: _HomeLuxuryPalette.surface.withOpacity(0.85),
-        borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _HomeLuxuryPalette.border),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 14, color: _HomeLuxuryPalette.textSecondary),
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// QUICK ACTIONS GRID
-class _QuickActionsGrid extends StatelessWidget {
-  final List<_QuickAction> items;
-  const _QuickActionsGrid({required this.items});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Expanded(child: _QuickActionTile(action: items[0])),
-        const SizedBox(width: 10),
-        Expanded(child: _QuickActionTile(action: items[1])),
-        const SizedBox(width: 10),
-        Expanded(child: _QuickActionTile(action: items[2])),
-        const SizedBox(width: 10),
-        Expanded(child: _QuickActionTile(action: items[3])),
-      ],
-    );
-  }
-}
-
-class _QuickAction {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  const _QuickAction({required this.icon, required this.label, required this.onTap});
-}
-
-class _QuickActionTile extends StatelessWidget {
-  final _QuickAction action;
-  const _QuickActionTile({required this.action});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: action.onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white.withOpacity(0.06)),
-          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.78),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.20),
-              blurRadius: 14,
-              offset: const Offset(0, 6),
-            ),
-          ],
-        ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _HomeLuxuryPalette.accent.withOpacity(0.11),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Icon(action.icon, color: _HomeLuxuryPalette.accent, size: 22),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              action.label,
-              style: TextStyle(
-                color: _HomeLuxuryPalette.textSecondary,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  final String title;
-  final String? subtitle;
-  final VoidCallback? onSeeAll;
-
-  const _SectionTitle({required this.title, this.subtitle, this.onSeeAll});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                title,
-                style: TextStyle(
-                  color: _HomeLuxuryPalette.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              if (subtitle != null) ...[
-                const SizedBox(height: 2),
-                Text(
-                  subtitle!,
-                  style: TextStyle(color: _HomeLuxuryPalette.textSecondary, fontSize: 12),
-                ),
-              ],
-            ],
-          ),
-        ),
-        if (onSeeAll != null)
-          TextButton(
-            onPressed: onSeeAll,
-            child: Text('Zobraziť', style: TextStyle(color: _HomeLuxuryPalette.accent)),
-          ),
-      ],
-    );
-  }
-}
-
-class _RecommendedCarouselV2 extends StatelessWidget {
-  final VoidCallback onOpenRecommended;
-  const _RecommendedCarouselV2({required this.onOpenRecommended});
-
-  @override
-  Widget build(BuildContext context) {
-    const items = [
-      _RecItemV2(
-          brand: 'ZARA',
-          name: 'Oversize hoodie',
-          price: '34,99 €',
-          matchLabel: 'Match 87%',
-          icon: Icons.checkroom),
-      _RecItemV2(
-          brand: 'Nike',
-          name: 'Air sneakers',
-          price: '129,00 €',
-          matchLabel: 'K tvojim rifliam',
-          icon: Icons.directions_run),
-      _RecItemV2(
-          brand: 'H&M',
-          name: 'Basic tričko',
-          price: '9,99 €',
-          matchLabel: 'Minimal vibe',
-          icon: Icons.heat_pump),
-      _RecItemV2(
-          brand: 'Levi’s',
-          name: 'Slim rifle',
-          price: '89,90 €',
-          matchLabel: 'Na každý deň',
-          icon: Icons.local_mall_outlined),
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionTitle(
-          title: 'Odporúčané pre teba',
-          subtitle: 'Podľa tvojich kúskov a štýlu',
-          onSeeAll: onOpenRecommended,
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          height: 220,
-          child: ListView.separated(
-            scrollDirection: Axis.horizontal,
-            itemCount: items.length,
-            separatorBuilder: (_, __) => const SizedBox(width: 12),
-            itemBuilder: (context, index) =>
-                _RecommendedCardV2(item: items[index], onTap: onOpenRecommended),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _RecItemV2 {
-  final String brand;
-  final String name;
-  final String price;
-  final String matchLabel;
-  final IconData icon;
-
-  const _RecItemV2({
-    required this.brand,
-    required this.name,
-    required this.price,
-    required this.matchLabel,
-    required this.icon,
-  });
-}
-
-class _RecommendedCardV2 extends StatelessWidget {
-  final _RecItemV2 item;
-  final VoidCallback onTap;
-
-  const _RecommendedCardV2({required this.item, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        width: 160,
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: _HomeLuxuryPalette.surfaceSoft.withOpacity(0.86),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: Colors.white.withOpacity(0.06)),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.22),
-              blurRadius: 16,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Stack(
-              children: [
-                Container(
-                  height: 92,
-                  width: double.infinity,
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    gradient: LinearGradient(
-                      colors: [
-                        _HomeLuxuryPalette.surfaceElevated,
-                        _HomeLuxuryPalette.surface,
-                      ],
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                  ),
-                  child: Center(
-                    child: Icon(
-                      item.icon,
-                      color: _HomeLuxuryPalette.accent.withOpacity(0.34),
-                      size: 42,
-                    ),
-                  ),
-                ),
-                Positioned(
-                  left: 8,
-                  top: 8,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: _HomeLuxuryPalette.surface.withOpacity(0.92),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(color: Colors.white.withOpacity(0.07)),
-                    ),
-                    child: Text(
-                      item.matchLabel,
-                      style: TextStyle(
-                        color: _HomeLuxuryPalette.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(
-              item.brand,
-              style: TextStyle(
-                color: _HomeLuxuryPalette.textSecondary,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.5,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(
-              item.name,
-              maxLines: 4,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: _HomeLuxuryPalette.textPrimary,
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Text(item.price,
-                    style: TextStyle(
-                      color: _HomeLuxuryPalette.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.bold,
-                    )),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.all(7),
-                  decoration: BoxDecoration(
-                    color: _HomeLuxuryPalette.surfaceElevated,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Icon(
-                    Icons.bookmark_border,
-                    color: _HomeLuxuryPalette.textSecondary,
-                    size: 18,
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
+        color: HomeLuxuryPalette.textSecondary.withOpacity(0.92),
+        size: size,
       ),
     );
   }
