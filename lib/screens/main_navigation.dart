@@ -118,9 +118,9 @@ class _MainNavigationState extends State<MainNavigation> {
                   label: 'Šatník',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  activeIcon: Icon(Icons.auto_awesome),
-                  label: 'Stylist',
+                  icon: Icon(Icons.face_retouching_natural_rounded),
+                  activeIcon: Icon(Icons.face_retouching_natural_rounded),
+                  label: 'Môj stylista',
                 ),
                 BottomNavigationBarItem(
                   icon: Icon(Icons.calendar_today_outlined),
