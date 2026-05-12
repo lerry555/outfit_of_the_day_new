@@ -125,7 +125,6 @@ class CalendarOutfitService {
       isPremium: isPremiumUser,
       selectedItems: selectedReasonItems,
       hasOuterwear: preview.outerwear != null,
-      seasonLabel: weatherSnapshot.seasonLabel,
     );
     final items = <CalendarOutfitItem>[
       if (preview.outerwear != null) _toCalendarOutfitItem(preview.outerwear!),

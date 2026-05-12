@@ -28,6 +28,9 @@ import 'trip_planner_screen.dart';
 import 'user_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
 import '../utils/outfit_reason_builder.dart';
+import '../utils/briefing_weather_condition.dart';
+import '../Services/hourly_weather_service.dart';
+import '../Services/stylist_day_brief.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -55,6 +58,148 @@ class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey _editSpotlightTargetKey = GlobalKey();
   Size? _editSpotlightSize;
 
+  // Real weather cache (loaded once on init, fallback to fake if API fails).
+  OutfitWeatherDaySnapshot? _weatherSnapToday;
+  OutfitWeatherDaySnapshot? _weatherSnapTomorrow;
+  bool _weatherLoaded = false;
+  String? _weatherLoadError;
+  DateTime? _weatherUpdatedAt;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadWeather();
+  }
+
+  Future<void> _loadWeather() async {
+    if (_weatherLoaded) return;
+    final svc = HourlyWeatherService();
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    try {
+      final results = await Future.wait([
+        svc.getWeatherForCityAndDate(city: 'Martin', date: today),
+        svc.getWeatherForCityAndDate(city: 'Martin', date: tomorrow),
+      ]);
+      if (!mounted) return;
+      setState(() {
+        _weatherSnapToday = results[0];
+        _weatherSnapTomorrow = results[1];
+        _weatherLoaded = true;
+        _weatherLoadError = null;
+        _weatherUpdatedAt = DateTime.now();
+      });
+      debugPrint(
+        'HOME_WEATHER_LOAD api_assign today_openMeteo=${results[0].fromOpenMeteo} '
+        'tomorrow_openMeteo=${results[1].fromOpenMeteo} '
+        'today_basis=${results[0].mainChipBasis} tomorrow_basis=${results[1].mainChipBasis}',
+      );
+      for (final label in ['today', 'tomorrow']) {
+        final s = label == 'today' ? results[0] : results[1];
+        if (!s.fromOpenMeteo) {
+          debugPrint(
+            '[HOME_WEATHER_DEBUG][fallback_reason] $label: ${s.openMeteoFailureNote ?? 'unknown_service_fallback'}',
+          );
+        }
+      }
+      _scheduleHomeWeatherDebugLogAfterFrame(today, tomorrow);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _weatherLoaded = true;
+        _weatherLoadError = e.toString();
+        _weatherUpdatedAt = DateTime.now();
+      });
+      debugPrint('[HOME_WEATHER_DEBUG][fallback_reason] load_exception: $e');
+      _scheduleHomeWeatherDebugLogAfterFrame(today, tomorrow);
+    }
+  }
+
+  void _scheduleHomeWeatherDebugLogAfterFrame(DateTime today, DateTime tomorrow) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _logHomeWeatherDebug(contextTag: 'fetch_done', selectedDate: today);
+      _logHomeWeatherDebug(contextTag: 'fetch_done', selectedDate: tomorrow);
+    });
+  }
+
+  OutfitWeatherDaySnapshot? _weatherSnapForNormalizedDate(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (d == today) return _weatherSnapToday;
+    if (d == today.add(const Duration(days: 1))) return _weatherSnapTomorrow;
+    return null;
+  }
+
+  String _shortWeatherErr(String raw) {
+    final s = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (s.length <= 72) return s;
+    return '${s.substring(0, 69)}...';
+  }
+
+  void _logHomeWeatherDebug({
+    required String contextTag,
+    required DateTime selectedDate,
+  }) {
+    const city = 'Martin';
+    final norm = DateTime(selectedDate.year, selectedDate.month, selectedDate.day);
+    final snap = _weatherSnapForNormalizedDate(norm);
+    final w = _weatherForDate(selectedDate);
+
+    late final String source;
+    if (!_weatherLoaded && _weatherLoadError == null) {
+      source = 'Loading';
+    } else if (_weatherLoadError != null) {
+      source = 'Error: ${_shortWeatherErr(_weatherLoadError!)}';
+    } else if (snap == null) {
+      source = 'Fallback';
+    } else {
+      source = snap.fromOpenMeteo ? 'Open-Meteo' : 'Fallback';
+    }
+
+    if (snap == null && _weatherLoaded && _weatherLoadError == null) {
+      debugPrint(
+        '[HOME_WEATHER_DEBUG][fallback_reason] snapshot_cache_miss date=$norm '
+        '(expected only non-home calendar days)',
+      );
+    } else if (snap != null && !snap.fromOpenMeteo) {
+      debugPrint(
+        '[HOME_WEATHER_DEBUG][fallback_reason] ${snap.openMeteoFailureNote ?? 'service_internal_fallback'}',
+      );
+    }
+
+    final rain = snap?.willRain ?? w.isRainy;
+    final wind = snap?.isWindy ?? w.isWindy;
+    final summary = snap?.summaryText ?? w.summarySubtitle;
+
+    final now = DateTime.now();
+    final todayNorm = DateTime(now.year, now.month, now.day);
+    final isToday = norm == todayNorm;
+    final isTomorrow = norm == todayNorm.add(const Duration(days: 1));
+
+    final chipHour = snap?.mainChipHour;
+    final chipBasis = snap?.mainChipBasis ?? 'n/a';
+    final morn = snap?.morningTempC;
+    final aft = snap?.noonTempC;
+    final eve = snap?.eveningTempC;
+    final chipT = snap?.mainChipTempC ?? w.tempC;
+
+    final rm = snap?.morningRainSegment;
+    final ra = snap?.afternoonRainSegment;
+    final re = snap?.eveningRainSegment;
+
+    debugPrint(
+      '[HOME_WEATHER_DEBUG][$contextTag] date=$norm isToday=$isToday isTomorrow=$isTomorrow '
+      'city=$city source=$source updatedAt=$_weatherUpdatedAt '
+      'mainChipTempC=$chipT mainChipHour=$chipHour mainChipBasis=$chipBasis '
+      'morningTempC=$morn afternoonTempC=$aft eveningTempC=$eve '
+      'rainSegMorning=$rm rainSegAfternoon=$ra rainSegEvening=$re '
+      'outfitTempC=${w.tempC} rain=$rain wind=$wind summary=$summary',
+    );
+  }
+
   void _setDayIndex(int index) {
     setState(() {
       _dayIndex = index;
@@ -62,6 +207,13 @@ class _HomeScreenState extends State<HomeScreen> {
       _focusedEditType = null;
       _likePulseTick = 0;
       _showLikeInlineFeedback = false;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final date = index == 1 ? today.add(const Duration(days: 1)) : today;
+      _logHomeWeatherDebug(contextTag: 'toggle_day', selectedDate: date);
     });
   }
 
@@ -739,9 +891,35 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   _LocalWeather _weatherForDate(DateTime date) {
-    // Dočasné bezpečné počasie (kým nie je napojený zdroj).
-    // Cieľ: nikdy necrashnúť a vždy mať zmysluplný text.
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final normalizedDate = DateTime(date.year, date.month, date.day);
+    OutfitWeatherDaySnapshot? snap;
+    if (normalizedDate == today) {
+      snap = _weatherSnapToday;
+    } else if (normalizedDate == today.add(const Duration(days: 1))) {
+      snap = _weatherSnapTomorrow;
+    }
+    if (snap != null) {
+      return _LocalWeather.fromSnapshot(snap);
+    }
     return _LocalWeather.fallbackFor(date);
+  }
+
+  String _emptyHeroOutfitDescription(_LocalWeather w) {
+    const base =
+        'Dnes zatiaľ nemám dosť vhodných kúskov na kompletný outfit. Skús pridať viac oblečenia do šatníka.';
+    if (!w.isRainy && !w.isWindy && w.tempC >= 12) return base;
+    if (w.isRainy && w.isWindy) {
+      return '$base Keď už budeš vonku, oplatí sa mať poruke dáždnik a niečo, čo drží tvar aj pri vetre.';
+    }
+    if (w.isRainy) {
+      return '$base Keď plánuješ deň mimo domu, dáždnik vie ušetriť nervy aj outfit.';
+    }
+    if (w.isWindy) {
+      return '$base Pri silnejšom vetre sa oplatí myslieť na pevnejší strih a komfort pri pohybe.';
+    }
+    return '$base Pri chladnejšom počasí sa vyplatí mať po ruke aspoň jednu teplejšiu vrstvu.';
   }
 
   _HeroTodayState _buildTodayHero({
@@ -759,8 +937,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (rec == null) {
       return _HeroTodayState(
         vm: _HeroBannerVM(
-          description:
-          'Dnes zatiaľ nemám dosť vhodných kúskov na kompletný outfit. Skús pridať viac oblečenia do šatníka.',
+          description: _emptyHeroOutfitDescription(w),
         ),
         outfitItems: const <_HeroOutfitItem>[],
       );
@@ -1073,6 +1250,15 @@ class _HomeScreenState extends State<HomeScreen> {
         },
     ];
 
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(
+      weather.calendarDate.year,
+      weather.calendarDate.month,
+      weather.calendarDate.day,
+    );
+    final isTomorrowDay = d == today.add(const Duration(days: 1));
+
     final reasonParagraph = OutfitReasonBuilder.build(
       tempC: weather.tempC,
       isRainy: weather.isRainy,
@@ -1080,7 +1266,13 @@ class _HomeScreenState extends State<HomeScreen> {
       isPremium: isPremiumUser,
       selectedItems: selectedReasonItems,
       hasOuterwear: hasOuter,
-      seasonLabel: weather.seasonLabel,
+      isTomorrow: isTomorrowDay,
+      morningTempC: weather.briefingMorningC,
+      noonTempC: weather.briefingAfternoonC,
+      eveningTempC: weather.briefingEveningC,
+      morningRainSegment: weather.morningRainSegment,
+      afternoonRainSegment: weather.afternoonRainSegment,
+      eveningRainSegment: weather.eveningRainSegment,
     );
 
     final rec = _HeroOutfitRecommendation(
@@ -1900,9 +2092,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final greetingName = _getGreetingName(user);
 
     final now = DateTime.now();
-    final todayDate = now;
-    final tomorrowDate = now.add(const Duration(days: 1));
-
+    final todayDate = DateTime(now.year, now.month, now.day);
+    final tomorrowDate = todayDate.add(const Duration(days: 1));
     final activeDate = _isTomorrow ? tomorrowDate : todayDate;
 
     Widget greetingHeader() {
@@ -1942,54 +2133,6 @@ class _HomeScreenState extends State<HomeScreen> {
               outfitItems: const <_HeroOutfitItem>[],
             ),
           ],
-        );
-      }
-
-      if (_isTomorrow && user != null) {
-        return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: _userDocStream(user.uid),
-          builder: (context, userSnap) {
-            final data = userSnap.data?.data();
-            final isPremiumUser = data?['isPremium'] == true ||
-                data?['subscriptionStatus'] == 'premium';
-            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: _wardrobeStream(user.uid),
-              builder: (context, snap) {
-                final docs = snap.data?.docs ?? const [];
-                final wardrobe = docs.map((d) => d.data()).toList();
-                final hero = _buildTodayHero(
-                  date: tomorrowDate,
-                  wardrobe: wardrobe,
-                  isPremiumUser: isPremiumUser,
-                );
-
-                final vm = _HeroBannerVM(
-                  description: hero.vm.description,
-                );
-                final w = _weatherForDate(tomorrowDate);
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    greetingHeader(),
-                    const SizedBox(height: 26),
-                    _heroRowExperiment(
-                      context: context,
-                      vm: vm,
-                      activeDate: activeDate,
-                      cardIsTomorrow: true,
-                      outfitItems: hero.outfitItems,
-                      w: w,
-                    ),
-                    _homeSectionsAfterHero(
-                      context: context,
-                      vm: vm,
-                      outfitItems: hero.outfitItems,
-                    ),
-                  ],
-                );
-              },
-            );
-          },
         );
       }
 
@@ -2033,11 +2176,12 @@ class _HomeScreenState extends State<HomeScreen> {
               final docs = snap.data?.docs ?? const [];
               final wardrobe = docs.map((d) => d.data()).toList();
               final hero = _buildTodayHero(
-                date: todayDate,
+                date: activeDate,
                 wardrobe: wardrobe,
                 isPremiumUser: isPremiumUser,
               );
-              final w = _weatherForDate(todayDate);
+              final w = _weatherForDate(activeDate);
+              final vm = _HeroBannerVM(description: hero.vm.description);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2045,15 +2189,15 @@ class _HomeScreenState extends State<HomeScreen> {
                   const SizedBox(height: 26),
                   _heroRowExperiment(
                     context: context,
-                    vm: hero.vm,
+                    vm: vm,
                     activeDate: activeDate,
-                    cardIsTomorrow: false,
+                    cardIsTomorrow: _isTomorrow,
                     outfitItems: hero.outfitItems,
                     w: w,
                   ),
                   _homeSectionsAfterHero(
                     context: context,
-                    vm: hero.vm,
+                    vm: vm,
                     outfitItems: hero.outfitItems,
                   ),
                 ],
@@ -2805,13 +2949,20 @@ class _UnifiedHeroSurface extends StatelessWidget {
                 Expanded(
                   flex: 9,
                   child: HomeDailyBriefingRow(
+                    key: ValueKey<String>(
+                      'prehlad_${weather.tempC}_${weather.briefingMorningC}_${weather.briefingAfternoonC}_${weather.briefingEveningC}_${weather.briefingMorningCondition}_${weather.briefingAfternoonCondition}_${weather.briefingEveningCondition}_$isTomorrow',
+                    ),
                     unifiedEmbedded: true,
                     unifiedSharedBodyHeight: sharedBodyH,
                     baseTempC: weather.tempC,
-                    isRainy: weather.isRainy,
-                    isWindy: weather.isWindy,
+                    briefingMorningCondition: weather.briefingMorningCondition,
+                    briefingAfternoonCondition: weather.briefingAfternoonCondition,
+                    briefingEveningCondition: weather.briefingEveningCondition,
                     sideColumn: true,
                     compact: true,
+                    briefingMorningTempC: weather.briefingMorningC,
+                    briefingAfternoonTempC: weather.briefingAfternoonC,
+                    briefingEveningTempC: weather.briefingEveningC,
                   ),
                 ),
               ],
@@ -4816,13 +4967,70 @@ class _LocalWeather {
   final bool isRainy;
   final bool isWindy;
   final String seasonLabel; // Jar/Leto/Jeseň/Zima
+  /// Kalendárny deň počasia (deň pre výber outfitu / kontext).
+  final DateTime calendarDate;
+  final bool morningRainSegment;
+  final bool afternoonRainSegment;
+  final bool eveningRainSegment;
+  /// Hourly briefing temps (7–9 / 12–15 / 18–21); null → [HomeDailyBriefingRow] derives from [tempC].
+  final int? briefingMorningC;
+  final int? briefingAfternoonC;
+  final int? briefingEveningC;
+  /// Krátke štítky počasia pre „Prehľad dňa“ (WMO → slovenský štítok).
+  final String briefingMorningCondition;
+  final String briefingAfternoonCondition;
+  final String briefingEveningCondition;
+  final String outfitWhyWeatherNote;
+  /// Ľudsky napísané okná dažďa (napr. „ráno 08:00“) — pre stylistický text, nie hero počasie.
+  final String? rainTimeText;
 
   const _LocalWeather({
     required this.tempC,
     required this.isRainy,
     required this.isWindy,
     required this.seasonLabel,
+    required this.calendarDate,
+    this.morningRainSegment = false,
+    this.afternoonRainSegment = false,
+    this.eveningRainSegment = false,
+    this.briefingMorningC,
+    this.briefingAfternoonC,
+    this.briefingEveningC,
+    required this.briefingMorningCondition,
+    required this.briefingAfternoonCondition,
+    required this.briefingEveningCondition,
+    this.outfitWhyWeatherNote = '',
+    this.rainTimeText,
   });
+
+  static _LocalWeather fromSnapshot(OutfitWeatherDaySnapshot snap) {
+    final month = snap.date.month;
+    final seasonLabel = (month >= 3 && month <= 5)
+        ? 'Jar'
+        : (month >= 6 && month <= 8)
+        ? 'Leto'
+        : (month >= 9 && month <= 11)
+        ? 'Jeseň'
+        : 'Zima';
+    return _LocalWeather(
+      tempC: snap.mainChipTempC,
+      isRainy: snap.willRain,
+      isWindy: snap.isWindy,
+      seasonLabel: seasonLabel,
+      calendarDate: DateTime(snap.date.year, snap.date.month, snap.date.day),
+      morningRainSegment: snap.morningRainSegment,
+      afternoonRainSegment: snap.afternoonRainSegment,
+      eveningRainSegment: snap.eveningRainSegment,
+      briefingMorningC: snap.morningTempC,
+      briefingAfternoonC: snap.noonTempC,
+      briefingEveningC: snap.eveningTempC,
+      briefingMorningCondition: snap.briefingMorningCondition,
+      briefingAfternoonCondition: snap.briefingAfternoonCondition,
+      briefingEveningCondition: snap.briefingEveningCondition,
+      outfitWhyWeatherNote: snap.outfitWhyWeatherNote,
+      rainTimeText: snap.rainTimeText,
+    );
+  }
 
   static _LocalWeather fallbackFor(DateTime date) {
     // Jednoduché, deterministické hodnoty aby UI fungovalo aj offline.
@@ -4855,11 +5063,66 @@ class _LocalWeather {
     final isRainy = rainyMonths.contains(month) && (date.day % 3 == 0);
     final isWindy = date.day % 4 == 0;
 
+    final mt = tempC - 1;
+    final at = tempC;
+    final et = tempC - 2;
+    const morningRainSeg = false;
+    final afternoonRainSeg = isRainy;
+    const eveningRainSeg = false;
+    final d = DateTime(date.year, date.month, date.day);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final isTomorrow = d == today.add(const Duration(days: 1));
+    final minT = tempC - 3;
+    final maxT = tempC + 1;
+    final ux = buildDayWeatherUx(
+      date: d,
+      isTomorrow: isTomorrow,
+      morningTempC: mt,
+      afternoonTempC: at,
+      eveningTempC: et,
+      mainChipTempC: tempC,
+      minTempC: minT,
+      maxTempC: maxT,
+      willRain: isRainy,
+      morningRain: morningRainSeg,
+      afternoonRain: afternoonRainSeg,
+      eveningRain: eveningRainSeg,
+      isWindy: isWindy,
+      windMorning: isWindy,
+      windAfternoon: isWindy,
+      windEvening: isWindy,
+    );
+
     return _LocalWeather(
       tempC: tempC,
       isRainy: isRainy,
       isWindy: isWindy,
       seasonLabel: seasonLabel,
+      calendarDate: d,
+      morningRainSegment: morningRainSeg,
+      afternoonRainSegment: afternoonRainSeg,
+      eveningRainSegment: eveningRainSeg,
+      briefingMorningC: mt,
+      briefingAfternoonC: at,
+      briefingEveningC: et,
+      briefingMorningCondition: BriefingWeatherCondition.fallback(
+        segmentRain: morningRainSeg,
+        segmentWindy: isWindy,
+        segment: BriefingDaySegment.morning,
+      ),
+      briefingAfternoonCondition: BriefingWeatherCondition.fallback(
+        segmentRain: afternoonRainSeg,
+        segmentWindy: isWindy,
+        segment: BriefingDaySegment.afternoon,
+      ),
+      briefingEveningCondition: BriefingWeatherCondition.fallback(
+        segmentRain: eveningRainSeg,
+        segmentWindy: isWindy,
+        segment: BriefingDaySegment.evening,
+      ),
+      outfitWhyWeatherNote: ux.outfitWhyWeatherNote,
+      rainTimeText: isRainy ? 'poobedie okolo 17:00' : null,
     );
   }
 

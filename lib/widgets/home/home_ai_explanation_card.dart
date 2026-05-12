@@ -43,7 +43,8 @@ class _HomeAiExplanationCardState extends State<HomeAiExplanationCard>
 
   @override
   Widget build(BuildContext context) {
-    final display = HomeAiExplanationCard.readableExcerpt(widget.body);
+    final display =
+        _expanded ? widget.body.trim() : HomeAiExplanationCard.readableExcerpt(widget.body);
     final collapsedPreview = _collapsedPreview(display);
     final subtitleColor = HomeLuxuryPalette.textSecondary.withOpacity(0.84);
     final bodyColor = widget.isPlaceholder

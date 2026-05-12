@@ -23,86 +23,82 @@ TextStyle homeUnifiedHeroPrehladTitleStyle() {
   );
 }
 
-/// Tight vertical rhythm between Ráno / Poobedie / Večer in the shared hero body.
 const double _kEmbeddedSharedDaypartGap = 7;
 
-/// Day-part briefing (Ráno / Poobedie / Večer) — display-only microcopy from [baseTempC].
+/// Ráno / Poobedie / Večer — krátke štítky počasia (nie stylistický komentár).
 class HomeDailyBriefingRow extends StatelessWidget {
   const HomeDailyBriefingRow({
     super.key,
     required this.baseTempC,
-    required this.isRainy,
-    required this.isWindy,
+    required this.briefingMorningCondition,
+    required this.briefingAfternoonCondition,
+    required this.briefingEveningCondition,
     this.sideColumn = false,
     this.compact = false,
     this.unifiedEmbedded = false,
-    /// When set with [unifiedEmbedded], day-part cards fill this height and use [MainAxisAlignment.spaceBetween].
     this.unifiedSharedBodyHeight,
+    this.briefingMorningTempC,
+    this.briefingAfternoonTempC,
+    this.briefingEveningTempC,
   });
 
   final int baseTempC;
-  final bool isRainy;
-  final bool isWindy;
-
-  /// Next to outfit card: stacked column, compact cards.
+  final String briefingMorningCondition;
+  final String briefingAfternoonCondition;
+  final String briefingEveningCondition;
+  final int? briefingMorningTempC;
+  final int? briefingAfternoonTempC;
+  final int? briefingEveningTempC;
   final bool sideColumn;
-
-  /// Shorter copy and tighter padding.
   final bool compact;
-
-  /// Inside unified hero: no per-card glass shells — subtle fills only.
   final bool unifiedEmbedded;
-
-  /// Shared hero body (bounded); pairs with [_UnifiedHeroSurface] outfit area height.
   final double? unifiedSharedBodyHeight;
 
   @override
   Widget build(BuildContext context) {
-    final morningT = baseTempC - 1;
-    final noonT = baseTempC + 1;
-    final eveT = baseTempC - 2;
-
-    /// Practical side-column copy (embedded + glass compact).
-    String practicalMorning() => 'Ráno bude chladno.';
-
-    String practicalNoon() => 'Okolo 16:00 môže pršať.';
-
-    String practicalEvening() => 'Večer sa ochladí.';
+    final useHourly = briefingMorningTempC != null &&
+        briefingAfternoonTempC != null &&
+        briefingEveningTempC != null;
+    final morningT = useHourly ? briefingMorningTempC! : baseTempC - 1;
+    final noonT = useHourly ? briefingAfternoonTempC! : baseTempC + 1;
+    final eveT = useHourly ? briefingEveningTempC! : baseTempC - 2;
+    final morningRange = useHourly ? '7–9' : '6–12';
+    final noonRange = useHourly ? '12–15' : '12–18';
+    final eveRange = useHourly ? '18–21' : '18–23';
 
     if (sideColumn && compact) {
       final gap = unifiedEmbedded ? 0.0 : 9.0;
-
-      final morningCard = _DaypartCard(
+      final morningCard = _DailyBriefingItem(
         icon: Icons.wb_twilight_rounded,
-        title: 'Ráno',
-        timeLabel: '6–12',
-        tempLabel: '$morningT°C',
-        body: practicalMorning(),
+        label: 'Ráno',
+        timeRange: morningRange,
+        tempC: morningT,
+        shortPhrase: briefingMorningCondition,
         compact: true,
         embeddedInUnifiedHero: unifiedEmbedded,
       );
-      final noonCard = _DaypartCard(
+      final noonCard = _DailyBriefingItem(
         icon: Icons.wb_sunny_outlined,
-        title: 'Poobedie',
-        timeLabel: '12–18',
-        tempLabel: '$noonT°C',
-        body: practicalNoon(),
+        label: 'Poobedie',
+        timeRange: noonRange,
+        tempC: noonT,
+        shortPhrase: briefingAfternoonCondition,
         compact: true,
         embeddedInUnifiedHero: unifiedEmbedded,
       );
-      final eveCard = _DaypartCard(
+      final eveCard = _DailyBriefingItem(
         icon: Icons.nights_stay_outlined,
-        title: 'Večer',
-        timeLabel: '18–23',
-        tempLabel: '$eveT°C',
-        body: practicalEvening(),
+        label: 'Večer',
+        timeRange: eveRange,
+        tempC: eveT,
+        shortPhrase: briefingEveningCondition,
         compact: true,
         embeddedInUnifiedHero: unifiedEmbedded,
       );
 
       if (unifiedEmbedded) {
         final sharedH = unifiedSharedBodyHeight;
-        final daypartColumn = Column(
+        final column = Column(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -114,30 +110,23 @@ class HomeDailyBriefingRow extends StatelessWidget {
           ],
         );
         if (sharedH != null) {
-          // Header + "Prehľad dňa" live in [_UnifiedHeroSurface] same row as weather; only cards here.
-          return SizedBox(
-            height: sharedH,
-            child: daypartColumn,
-          );
+          return SizedBox(height: sharedH, child: column);
         }
-        final prehladAndGap = <Widget>[
-          SizedBox(height: _kEmbeddedToggleBand),
-          SizedBox(height: _kEmbeddedGapAfterToggle),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Text('Prehľad dňa', style: homeUnifiedHeroPrehladTitleStyle()),
-          ),
-          SizedBox(height: _kEmbeddedGapBeforeGrid),
-        ];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           mainAxisSize: MainAxisSize.min,
           children: [
-            ...prehladAndGap,
+            SizedBox(height: _kEmbeddedToggleBand),
+            SizedBox(height: _kEmbeddedGapAfterToggle),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('Prehľad dňa', style: homeUnifiedHeroPrehladTitleStyle()),
+            ),
+            SizedBox(height: _kEmbeddedGapBeforeGrid),
             morningCard,
-            _BriefingEmbeddedDivider(),
+            const _BriefingEmbeddedDivider(),
             noonCard,
-            _BriefingEmbeddedDivider(),
+            const _BriefingEmbeddedDivider(),
             eveCard,
           ],
         );
@@ -153,12 +142,6 @@ class HomeDailyBriefingRow extends StatelessWidget {
           eveCard,
         ],
       );
-    }
-
-    String weatherHint() {
-      if (isRainy) return 'Ber dáždnik — elegantná vrstva.';
-      if (isWindy) return 'Jemný vietor — drž strih čistý.';
-      return 'Prirodzený lesk materiálov.';
     }
 
     return Column(
@@ -189,31 +172,28 @@ class HomeDailyBriefingRow extends StatelessWidget {
             if (narrow) {
               return Column(
                 children: [
-                  _DaypartCard(
+                  _DailyBriefingItem(
                     icon: Icons.wb_twilight_rounded,
-                    title: 'Ráno',
-                    timeLabel: '6:00 — 12:00',
-                    tempLabel: '$morningT°C',
-                    body:
-                        'Ľahší štart dňa. ${weatherHint()} Zvoľ čistú siluetu a neutrál.',
+                    label: 'Ráno',
+                    timeRange: '6:00 — 12:00',
+                    tempC: morningT,
+                    shortPhrase: briefingMorningCondition,
                   ),
                   const SizedBox(height: 10),
-                  _DaypartCard(
+                  _DailyBriefingItem(
                     icon: Icons.wb_sunny_outlined,
-                    title: 'Poobedie',
-                    timeLabel: '12:00 — 18:00',
-                    tempLabel: '$noonT°C',
-                    body:
-                        'Najdynamickejší blok. Vrstvy vieš upraviť podľa stretnutí.',
+                    label: 'Poobedie',
+                    timeRange: '12:00 — 18:00',
+                    tempC: noonT,
+                    shortPhrase: briefingAfternoonCondition,
                   ),
                   const SizedBox(height: 10),
-                  _DaypartCard(
+                  _DailyBriefingItem(
                     icon: Icons.nights_stay_outlined,
-                    title: 'Večer',
-                    timeLabel: '18:00 — 23:00',
-                    tempLabel: '$eveT°C',
-                    body:
-                        'Teplejší tón svetla — zjemni kontrast a pridaj textúru.',
+                    label: 'Večer',
+                    timeRange: '18:00 — 23:00',
+                    tempC: eveT,
+                    shortPhrase: briefingEveningCondition,
                   ),
                 ],
               );
@@ -222,33 +202,32 @@ class HomeDailyBriefingRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: _DaypartCard(
+                  child: _DailyBriefingItem(
                     icon: Icons.wb_twilight_rounded,
-                    title: 'Ráno',
-                    timeLabel: '6 — 12',
-                    tempLabel: '$morningT°C',
-                    body:
-                        'Ľahší štart. ${weatherHint()} Čistá silueta, neutrál.',
+                    label: 'Ráno',
+                    timeRange: '6 — 12',
+                    tempC: morningT,
+                    shortPhrase: briefingMorningCondition,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: _DaypartCard(
+                  child: _DailyBriefingItem(
                     icon: Icons.wb_sunny_outlined,
-                    title: 'Poobedie',
-                    timeLabel: '12 — 18',
-                    tempLabel: '$noonT°C',
-                    body: 'Najdynamickejší blok. Vrstvy podľa dňa.',
+                    label: 'Poobedie',
+                    timeRange: '12 — 18',
+                    tempC: noonT,
+                    shortPhrase: briefingAfternoonCondition,
                   ),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: _DaypartCard(
+                  child: _DailyBriefingItem(
                     icon: Icons.nights_stay_outlined,
-                    title: 'Večer',
-                    timeLabel: '18 — 23',
-                    tempLabel: '$eveT°C',
-                    body: 'Zjemni kontrast, viac textúry.',
+                    label: 'Večer',
+                    timeRange: '18 — 23',
+                    tempC: eveT,
+                    shortPhrase: briefingEveningCondition,
                   ),
                 ),
               ],
@@ -260,7 +239,6 @@ class HomeDailyBriefingRow extends StatelessWidget {
   }
 }
 
-/// Hairline + micro gold accent — separates embedded hero day-parts without card chrome.
 class _BriefingEmbeddedDivider extends StatelessWidget {
   const _BriefingEmbeddedDivider();
 
@@ -299,24 +277,26 @@ class _BriefingEmbeddedDivider extends StatelessWidget {
   }
 }
 
-class _DaypartCard extends StatelessWidget {
-  const _DaypartCard({
+class _DailyBriefingItem extends StatelessWidget {
+  const _DailyBriefingItem({
     required this.icon,
-    required this.title,
-    required this.timeLabel,
-    required this.tempLabel,
-    required this.body,
+    required this.label,
+    required this.timeRange,
+    required this.tempC,
+    required this.shortPhrase,
     this.compact = false,
     this.embeddedInUnifiedHero = false,
   });
 
   final IconData icon;
-  final String title;
-  final String timeLabel;
-  final String tempLabel;
-  final String body;
+  final String label;
+  final String timeRange;
+  final int tempC;
+  final String shortPhrase;
   final bool compact;
   final bool embeddedInUnifiedHero;
+
+  String get _tempLabel => '$tempC°C';
 
   @override
   Widget build(BuildContext context) {
@@ -329,7 +309,15 @@ class _DaypartCard extends StatelessWidget {
     final titleSize = compact ? 11.5 : 14.0;
     final timeSize = compact ? 9.5 : 11.0;
     final bodySize = compact ? 10.0 : 12.0;
-    final maxBodyLines = compact ? 2 : 4;
+
+    Widget phraseLine(TextStyle style) {
+      return Text(
+        shortPhrase,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: style,
+      );
+    }
 
     if (compact) {
       if (embeddedInUnifiedHero) {
@@ -358,7 +346,7 @@ class _DaypartCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      tempLabel,
+                      _tempLabel,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: HomeLuxuryPalette.textPrimary.withOpacity(0.95),
@@ -382,7 +370,7 @@ class _DaypartCard extends StatelessWidget {
                         alignment: Alignment.centerLeft,
                         fit: BoxFit.scaleDown,
                         child: Text(
-                          title,
+                          label,
                           maxLines: 1,
                           softWrap: false,
                           style: titleStyle,
@@ -391,7 +379,7 @@ class _DaypartCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      timeLabel,
+                      timeRange,
                       style: TextStyle(
                         color:
                             HomeLuxuryPalette.textSecondary.withOpacity(0.72),
@@ -402,15 +390,13 @@ class _DaypartCard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 4),
-                    Text(
-                      body,
-                      softWrap: true,
-                      style: TextStyle(
-                        color:
-                            HomeLuxuryPalette.textSecondary.withOpacity(0.90),
-                        fontSize: 10.5,
-                        height: 1.38,
-                        fontWeight: FontWeight.w500,
+                    phraseLine(
+                      TextStyle(
+                        color: HomeLuxuryPalette.textSecondary.withOpacity(0.90),
+                        fontSize: 9,
+                        height: 1.2,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: -0.04,
                       ),
                     ),
                   ],
@@ -439,7 +425,7 @@ class _DaypartCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                tempLabel,
+                _tempLabel,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -453,7 +439,7 @@ class _DaypartCard extends StatelessWidget {
           ),
           const SizedBox(height: 7),
           Text(
-            '$title · $timeLabel',
+            '$label · $timeRange',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(
@@ -464,15 +450,13 @@ class _DaypartCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 4),
-          Text(
-            body,
-            maxLines: maxBodyLines,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: HomeLuxuryPalette.textSecondary.withOpacity(0.88),
+          phraseLine(
+            TextStyle(
+              color: HomeLuxuryPalette.textSecondary.withOpacity(0.90),
               fontSize: bodySize,
-              height: 1.28,
-              fontWeight: FontWeight.w500,
+              height: 1.22,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.04,
             ),
           ),
         ],
@@ -508,7 +492,7 @@ class _DaypartCard extends StatelessWidget {
               ),
               const Spacer(),
               Text(
-                tempLabel,
+                _tempLabel,
                 style: TextStyle(
                   color: HomeLuxuryPalette.textPrimary,
                   fontSize: tempSize,
@@ -520,7 +504,7 @@ class _DaypartCard extends StatelessWidget {
           ),
           SizedBox(height: compact ? 6 : 10),
           Text(
-            title,
+            label,
             style: TextStyle(
               color: HomeLuxuryPalette.textPrimary,
               fontSize: titleSize,
@@ -529,7 +513,7 @@ class _DaypartCard extends StatelessWidget {
           ),
           SizedBox(height: compact ? 1 : 2),
           Text(
-            timeLabel,
+            timeRange,
             style: TextStyle(
               color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
               fontSize: timeSize,
@@ -538,15 +522,13 @@ class _DaypartCard extends StatelessWidget {
             ),
           ),
           SizedBox(height: compact ? 4 : 8),
-          Text(
-            body,
-            maxLines: maxBodyLines,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: HomeLuxuryPalette.textSecondary.withOpacity(0.9),
+          phraseLine(
+            TextStyle(
+              color: HomeLuxuryPalette.textSecondary.withOpacity(0.92),
               fontSize: bodySize,
-              height: compact ? 1.25 : 1.35,
-              fontWeight: FontWeight.w500,
+              height: compact ? 1.22 : 1.28,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.05,
             ),
           ),
         ],
