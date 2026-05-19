@@ -21,9 +21,38 @@ import 'package:image/image.dart' as img;
 import 'package:crop_your_image/crop_your_image.dart';
 
 import '../constants/app_constants.dart';
+import '../Services/color_naming_service.dart';
+import '../Services/product_link_analyzer_service.dart';
+import '../Services/product_link_image_cleanup.dart';
+import '../Services/product_link_url_fallback.dart';
+import '../utils/product_link_image_resolve.dart';
+import '../utils/product_link_url_sanitize.dart';
+import '../utils/wardrobe_image_processing.dart';
 import '../utils/ai_clothing_parser.dart';
 import '../widgets/category_picker.dart';
+import '../widgets/home/home_luxury_palette.dart';
 import 'stylist_chat_screen.dart';
+
+/// Home screen gold accent for Add Clothing labels and highlights.
+const Color _kAddClothingAccent = Color(0xFFC8A36A);
+TextStyle get _addClothingLabelStyle => TextStyle(
+      color: _kAddClothingAccent.withOpacity(0.92),
+      fontWeight: FontWeight.w600,
+    );
+
+ThemeData _addClothingFormTheme(BuildContext context) {
+  return Theme.of(context).copyWith(
+    colorScheme: Theme.of(context).colorScheme.copyWith(
+          primary: _kAddClothingAccent,
+          secondary: _kAddClothingAccent,
+        ),
+    inputDecorationTheme: InputDecorationTheme(
+      labelStyle: _addClothingLabelStyle,
+      floatingLabelStyle: _addClothingLabelStyle,
+      focusColor: _kAddClothingAccent,
+    ),
+  );
+}
 
 /// ✅ ROTATE helper mimo UI thread (encode/decode je ťažké)
 Uint8List _rotateJpgBytes(Map<String, dynamic> args) {
@@ -107,9 +136,37 @@ Uint8List _prepareJpgForUpload(Map<String, dynamic> args) {
     img.encodeJpg(out, quality: quality),
   );
 }
+
+bool isValidProductLinkUrl(String raw) {
+  final trimmed = raw.trim();
+  if (trimmed.isEmpty) return false;
+  var candidate = trimmed;
+  if (!candidate.contains('://')) {
+    candidate = 'https://$candidate';
+  }
+  final uri = Uri.tryParse(candidate);
+  if (uri == null) return false;
+  final validScheme = uri.scheme == 'http' || uri.scheme == 'https';
+  final hasHost = uri.host.isNotEmpty;
+  debugPrint(
+    '[ADD_CLOTHING_LINK] validate url="$trimmed" normalized="$candidate" '
+    'valid=${validScheme && hasHost}',
+  );
+  return validScheme && hasHost;
+}
+
+String normalizeProductLinkUrl(String raw) {
+  final trimmed = raw.trim();
+  final withScheme =
+      trimmed.contains('://') ? trimmed : 'https://$trimmed';
+  return canonicalProductLinkUrl(withScheme);
+}
+
 class AddClothingScreen extends StatefulWidget {
   final Map<String, dynamic>? initialData;
   final String? imageUrl;
+  /// Product image shown immediately on the analyzing screen (product link flow).
+  final String? initialProductImageUrl;
   final String? itemId;
   final bool isEditing;
 
@@ -117,6 +174,7 @@ class AddClothingScreen extends StatefulWidget {
     super.key,
     this.initialData,
     this.imageUrl,
+    this.initialProductImageUrl,
     this.itemId,
     this.isEditing = false,
   });
@@ -301,7 +359,7 @@ class AddClothingScreen extends StatefulWidget {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  "Pridať nový kúsok",
+                                  'Pridať oblečenie',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 20,
@@ -382,6 +440,15 @@ class AddClothingScreen extends StatefulWidget {
                         subtitle: "Použiť existujúcu fotku oblečenia",
                         onTap: () => Navigator.pop(sheetCtx, 'gallery'),
                       ),
+
+                      const SizedBox(height: 14),
+
+                      actionCard(
+                        icon: Icons.link_rounded,
+                        title: 'Pridať cez link',
+                        subtitle: 'Zara, AboutYou, Zalando, H&M a ďalšie obchody',
+                        onTap: () => Navigator.pop(sheetCtx, 'link'),
+                      ),
                     ],
                   ),
                 ),
@@ -393,6 +460,16 @@ class AddClothingScreen extends StatefulWidget {
     );
 
     if (choice == null) return;
+
+    if (choice == 'link') {
+      if (!context.mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => const _AddClothingProductLinkScreen(),
+        ),
+      );
+      return;
+    }
 
     File? pickedFile;
 
@@ -1189,7 +1266,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   File? _localImageFile;
   String? _uploadedImageUrl;
+  bool _productLinkPreviewFailed = false;
   String? _uploadedStoragePath;
+  String? _sourceUrl;
+  bool _fromProductLink = false;
+  bool _linkAnalysisPartial = false;
+  bool _linkLoadFailed = false;
 
   String? _selectedMainGroupKey;
   String? _selectedCategoryKey;
@@ -1197,6 +1279,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   String? _selectedLayerRole;
 
   List<String> _selectedColors = [];
+  List<String> _selectedBaseColors = [];
+  List<String> _selectedColorHex = [];
   List<String> _selectedStyles = [];
   List<String> _selectedPatterns = [];
   List<String> _selectedSeasons = [];
@@ -1205,6 +1289,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   bool _aiCompleted = false;
   bool _aiFailed = false;
   String? _aiError;
+  String? _productLinkOriginalImageUrl;
+  String? _productLinkCleanImageUrl;
+  bool _productLinkPersonDetected = false;
 
   final List<String> _progressSteps = const [
     'Analyzujem obrázok',
@@ -1294,6 +1381,64 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       });
     }
 
+    if (!widget.isEditing &&
+        widget.initialData?['_analyzeLinkOnLoad'] == true) {
+      _fromProductLink = true;
+      _isAiLoading = true;
+      _aiCompleted = false;
+      _aiFailed = false;
+      final pendingUrl =
+          (widget.initialData?['_pendingLinkUrl'] ?? '').toString().trim();
+      if (pendingUrl.isNotEmpty) _sourceUrl = pendingUrl;
+
+      final prefetchedImage = (widget.initialProductImageUrl ??
+              widget.initialData?['productImageUrl'] ??
+              widget.initialData?['imageUrl'] ??
+              widget.imageUrl ??
+              '')
+          .toString()
+          .trim();
+      if (prefetchedImage.isNotEmpty) {
+        _uploadedImageUrl = prefetchedImage;
+      }
+
+      final prefetchedBrand =
+          (widget.initialData?['brand'] ?? '').toString().trim();
+      if (prefetchedBrand.isNotEmpty) {
+        _brandController.text = prefetchedBrand;
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _fillWithProductLinkAi();
+      });
+    } else if (!widget.isEditing &&
+        widget.initialData?['_fromProductLink'] == true) {
+      _applyProductLinkInitialData(widget.initialData!);
+      if (widget.initialData?['_linkLoadFailed'] == true) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Produkt sa nepodarilo načítať automaticky. Údaje môžeš vyplniť ručne.',
+              ),
+            ),
+          );
+        });
+      } else if (_linkAnalysisPartial) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Niektoré údaje sa nepodarilo vyplniť automaticky.',
+              ),
+            ),
+          );
+        });
+      }
+    }
+
     if (widget.isEditing && widget.initialData != null) {
       final d = widget.initialData!;
       _nameController.text = (d['name'] ?? '').toString();
@@ -1315,7 +1460,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           : (d['layerRole'] ?? '').toString();
 
       _selectedColors =
-          (d['colors'] as List?)?.map((e) => e.toString()).toList() ?? [];
+          _normalizeColorsList(_toStringList(d['colors']));
+      _selectedBaseColors = _toStringList(d['baseColors']);
+      _selectedColorHex = _toStringList(d['colorHex']);
+      if (_selectedBaseColors.isEmpty && _selectedColors.isNotEmpty) {
+        _syncColorDerivatives();
+      }
       _selectedStyles =
           (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
       _selectedPatterns =
@@ -1330,6 +1480,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
           ? null
           : (d['storagePath'] ?? '').toString();
+      final editSourceUrl = (d['sourceUrl'] ?? '').toString().trim();
+      if (editSourceUrl.isNotEmpty) _sourceUrl = editSourceUrl;
       _aiCompleted = true;
 
       _lastTypeLabel =
@@ -1372,6 +1524,423 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
 
     return [];
+  }
+
+  void _applyProductLinkInitialData(
+    Map<String, dynamic> d, {
+    bool markAiComplete = true,
+  }) {
+    _fromProductLink = true;
+    _linkAnalysisPartial = d['_linkPartial'] == true;
+    _linkLoadFailed = d['_linkLoadFailed'] == true;
+    _productLinkPersonDetected = d['personDetected'] == true;
+
+    final sourceUrl = (d['sourceUrl'] ?? '').toString().trim();
+    if (sourceUrl.isNotEmpty) _sourceUrl = sourceUrl;
+
+    final brand = (d['brand'] ?? '').toString().trim();
+    if (brand.isNotEmpty) _brandController.text = brand;
+
+    var main = (d['mainGroupKey'] ?? d['mainGroup'] ?? '').toString().trim();
+    var cat = (d['categoryKey'] ?? d['category'] ?? '').toString().trim();
+    var sub = (d['subCategoryKey'] ?? d['subCategory'] ?? '').toString().trim();
+
+    final canonical = (d['canonical_type'] ?? '').toString().trim();
+    if ((sub.isEmpty || cat.isEmpty || main.isEmpty) && canonical.isNotEmpty) {
+      final mapped = AiClothingParser.fromCanonicalType(canonical);
+      if (mapped != null) {
+        main = main.isEmpty ? mapped.mainGroupKey : main;
+        cat = cat.isEmpty ? mapped.categoryKey : cat;
+        sub = sub.isEmpty ? mapped.subCategoryKey : sub;
+        _selectedLayerRole = mapped.layerRole;
+      }
+    }
+
+    if (main.isNotEmpty) _selectedMainGroupKey = main;
+    if (cat.isNotEmpty) _selectedCategoryKey = cat;
+    if (sub.isNotEmpty) {
+      _selectedSubCategoryKey = sub;
+      _selectedLayerRole ??= subCategoryLayerRoles[sub];
+    }
+
+    final colors = _normalizeColorsList(_toStringList(d['colors']));
+    if (colors.isNotEmpty) _selectedColors = colors;
+    final baseFromDoc = _toStringList(d['baseColors']);
+    final hexFromDoc = _toStringList(d['colorHex']);
+    if (baseFromDoc.isNotEmpty) {
+      _selectedBaseColors = baseFromDoc;
+    } else if (colors.isNotEmpty) {
+      _selectedBaseColors = _resolveBaseColors(colors);
+    }
+    if (hexFromDoc.isNotEmpty) {
+      _selectedColorHex = hexFromDoc;
+    } else if (colors.isNotEmpty) {
+      _selectedColorHex = _resolveColorHex(colors);
+    }
+
+    final styles = _normalizeStylesList(_toStringList(d['styles']));
+    if (styles.isNotEmpty) _selectedStyles = styles;
+
+    final patterns = _toStringList(d['patterns']);
+    if (patterns.isNotEmpty) {
+      _selectedPatterns = [patterns.first];
+    }
+
+    final seasonsRaw = _toStringList(d['seasons'])
+        .where((s) => allowedSeasons.contains(s))
+        .toList();
+    if (seasonsRaw.isNotEmpty) {
+      _selectedSeasons = _sanitizeSeasons(seasonsRaw);
+    }
+
+    _applyProductLinkImageFields(d);
+
+    _applyProductLinkDerivedName();
+
+    if (markAiComplete) {
+      _aiCompleted = true;
+      _aiFailed = false;
+      _isAiLoading = false;
+    }
+    debugPrint(
+      '[ADD_CLOTHING_LINK] prefilled main=$_selectedMainGroupKey '
+      'cat=$_selectedCategoryKey sub=$_selectedSubCategoryKey partial=$_linkAnalysisPartial',
+    );
+  }
+
+  String _shortSubtypeNounForProductLinkName(String? subKey) {
+    if (subKey == null || subKey.isEmpty) return '';
+    const shortByKey = <String, String>{
+      'tricko': 'tričko',
+      'tricko_dlhy_rukav': 'tričko',
+      'polo_tricko': 'polo tričko',
+      'mikina_klasicka': 'mikina',
+      'mikina_s_kapucnou': 'mikina s kapucňou',
+      'mikina_na_zips': 'mikina',
+      'mikina_oversize': 'mikina',
+      'bunda_prechodna': 'prechodná bunda',
+      'bunda_zimna': 'zimná bunda',
+      'bunda_bomber': 'bomber bunda',
+      'bunda_riflova': 'rifľová bunda',
+      'bunda_kozena': 'kožená bunda',
+      'kabat': 'kabát',
+      'rifle': 'džínsy',
+      'rifle_skinny': 'džínsy',
+      'rifle_wide_leg': 'džínsy',
+      'rifle_mom': 'džínsy',
+      'nohavice_klasicke': 'nohavice',
+      'tenisky_fashion': 'tenisky',
+      'tenisky_sportove': 'tenisky',
+      'tenisky_bezecke': 'tenisky',
+      'zabky': 'žabky',
+      'sandale': 'sandále',
+      'kosela_klasicka': 'košeľa',
+      'sveter_klasicky': 'sveter',
+      'plavecke_sortky': 'plavecké šortky',
+      'plavky_jednodielne': 'plavky',
+      'bikiny': 'bikiny',
+    };
+    final mapped = shortByKey[subKey];
+    if (mapped != null) return mapped;
+
+    final label = (subCategoryLabels[subKey] ?? '').trim();
+    if (label.isEmpty) return '';
+    return label[0].toLowerCase() + label.substring(1);
+  }
+
+  String _computeProductLinkAutoName() {
+    final subKey = _selectedSubCategoryKey ?? '';
+    final typePhrase = _shortSubtypeNounForProductLinkName(subKey);
+    final colorRaw =
+        _selectedColors.isNotEmpty ? _selectedColors.first.trim() : '';
+
+    String colorAdj = '';
+    if (colorRaw.isNotEmpty && typePhrase.isNotEmpty) {
+      colorAdj = _colorToAdjectiveForSubcategory(
+        colorRaw,
+        subKey,
+        subCategoryLabels[subKey] ?? typePhrase,
+      );
+      // Neuter garment nouns: biela -> biele (e.g. biele tričko).
+      if (typePhrase == 'tričko' ||
+          typePhrase == 'tielko' ||
+          subKey == 'tricko' ||
+          subKey == 'tricko_dlhy_rukav' ||
+          subKey == 'tielko') {
+        if (colorAdj.endsWith('a') && !colorAdj.endsWith('ia')) {
+          colorAdj = '${colorAdj.substring(0, colorAdj.length - 1)}e';
+        }
+      }
+    }
+
+    String upperFirst(String s) =>
+        s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
+    final parts = <String>[
+      if (colorAdj.isNotEmpty) colorAdj,
+      if (typePhrase.isNotEmpty) typePhrase,
+    ];
+    return upperFirst(parts.join(' ').trim());
+  }
+
+  void _applyProductLinkDerivedName() {
+    final color = _selectedColors.isNotEmpty ? _selectedColors.first : '';
+    final subKey = _selectedSubCategoryKey ?? '';
+    final typeLabel = (subCategoryLabels[subKey] ?? '').trim();
+
+    debugPrint('[ADD_LINK_NAME][color] $color');
+    debugPrint('[ADD_LINK_NAME][type] $typeLabel');
+
+    final auto = _computeProductLinkAutoName();
+    debugPrint('[ADD_LINK_NAME][final] $auto');
+
+    if (auto.trim().isNotEmpty) {
+      _nameController.text = auto;
+      _lastTypeLabel = auto;
+      _isSystemNameSelected = false;
+      _selectedSystemNameLabel = null;
+      _selectedSystemSubCategoryKey = null;
+    } else {
+      final fallbackName = typeLabel.isNotEmpty ? typeLabel : 'Produkt z linku';
+      _nameController.text = fallbackName;
+      _lastTypeLabel = fallbackName;
+    }
+  }
+
+  Future<void> _ensureMinLinkAnalyzingDuration(DateTime started) async {
+    const minMs = 3200;
+    final elapsed = DateTime.now().difference(started).inMilliseconds;
+    if (elapsed < minMs) {
+      await Future.delayed(Duration(milliseconds: minMs - elapsed));
+    }
+  }
+
+  void _applySourceImageToPreview(String? imageUrl) {
+    if (imageUrl == null || !isValidProductLinkImageUrl(imageUrl)) return;
+    _uploadedImageUrl = imageUrl;
+    _productLinkOriginalImageUrl = imageUrl;
+  }
+
+  void _applyProductLinkImageFields(Map<String, dynamic> d) {
+    final original =
+        (d['originalImageUrl'] ?? '').toString().trim();
+    final clean = (d['cleanImageUrl'] ?? '').toString().trim();
+    final product =
+        (d['productImageUrl'] ?? d['imageUrl'] ?? '').toString().trim();
+    var display = clean.isNotEmpty
+        ? clean
+        : (product.isNotEmpty ? product : original);
+
+    if (!isValidProductLinkImageUrl(display)) {
+      final fromMap = resolveProductLinkImageUrl(
+        ProductLinkAnalysis(
+          sourceUrl: (d['sourceUrl'] ?? _sourceUrl ?? '').toString(),
+          name: (d['name'] ?? '').toString(),
+          brand: (d['brand'] ?? '').toString(),
+          imageUrl: product.isNotEmpty ? product : null,
+          productImageUrl: product.isNotEmpty ? product : null,
+          originalImageUrl: original.isNotEmpty ? original : null,
+          cleanImageUrl: clean.isNotEmpty ? clean : null,
+        ),
+      );
+      if (fromMap != null) display = fromMap;
+    }
+
+    if (original.isNotEmpty) _productLinkOriginalImageUrl = original;
+    if (clean.isNotEmpty) _productLinkCleanImageUrl = clean;
+
+    if (display.isNotEmpty && isValidProductLinkImageUrl(display)) {
+      _uploadedImageUrl = display;
+    }
+  }
+
+  Future<void> _fillWithProductLinkAi() async {
+    if (_isAiLoading == false && _aiCompleted) return;
+
+    final url = canonicalProductLinkUrl(
+      (_sourceUrl ?? widget.initialData?['_pendingLinkUrl'] ?? '').toString().trim(),
+    );
+    if (url.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _aiFailed = true;
+        _isAiLoading = false;
+      });
+      return;
+    }
+
+    _sourceUrl = url;
+    _resetProgress();
+    _reachMilestone(0);
+    final started = DateTime.now();
+
+    ProductLinkAnalysis? sourcePage;
+
+    try {
+      sourcePage = await fetchProductLinkSourcePage(url);
+      final previewImage = sourcePage == null
+          ? null
+          : resolveProductLinkImageUrl(sourcePage!);
+      if (previewImage != null &&
+          previewImage.isNotEmpty &&
+          isValidProductLinkImageUrl(previewImage) &&
+          mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = previewImage;
+          _productLinkOriginalImageUrl = previewImage;
+        });
+      } else if (mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = null;
+          _productLinkOriginalImageUrl = null;
+        });
+      }
+    } catch (e) {
+      debugPrint('[ADD_LINK_FLOW][source_page_preview_error] $e');
+      if (mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = null;
+        });
+      }
+    }
+
+    try {
+      final outcome = await analyzeProductLinkForForm(
+        url,
+        skipMetadataFetch: sourcePage != null,
+        prefetchedMetadata: sourcePage,
+      );
+
+      final resolvedPreview = resolveProductLinkImageUrl(outcome.analysis) ??
+          (sourcePage == null
+              ? null
+              : resolveProductLinkImageUrl(sourcePage!));
+      if (resolvedPreview != null &&
+          resolvedPreview.isNotEmpty &&
+          isValidProductLinkImageUrl(resolvedPreview) &&
+          mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = resolvedPreview;
+          _productLinkOriginalImageUrl = resolvedPreview;
+        });
+      }
+
+      await _ensureMinLinkAnalyzingDuration(started);
+
+      if (!mounted) return;
+
+      final hasImage = _uploadedImageUrl != null &&
+          isValidProductLinkImageUrl(_uploadedImageUrl);
+
+      if (!hasImage) {
+        debugPrint('[ADD_LINK_FLOW][source_page_retry]');
+        final retry = await fetchProductLinkSourcePage(url);
+        final retryImg =
+            retry == null ? null : resolveProductLinkImageUrl(retry!);
+        if (retryImg != null &&
+            retryImg.isNotEmpty &&
+            isValidProductLinkImageUrl(retryImg) &&
+            mounted) {
+          setState(() {
+            _productLinkPreviewFailed = false;
+            _uploadedImageUrl = retryImg;
+            _productLinkOriginalImageUrl = retryImg;
+          });
+          sourcePage = retry;
+        }
+      }
+
+      _reachMilestone(2);
+
+      final formImage = resolveProductLinkImageUrl(outcome.analysis) ??
+          (sourcePage == null
+              ? null
+              : resolveProductLinkImageUrl(sourcePage!)) ??
+          _uploadedImageUrl;
+      if (formImage != null &&
+          formImage.isNotEmpty &&
+          isValidProductLinkImageUrl(formImage) &&
+          mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = formImage;
+          _productLinkOriginalImageUrl = formImage;
+        });
+      } else if (mounted) {
+        setState(() {
+          _productLinkPreviewFailed = false;
+          _uploadedImageUrl = null;
+        });
+      }
+
+      setState(() {
+        _applyProductLinkInitialData(
+          outcome.analysis.toInitialData(),
+          markAiComplete: false,
+        );
+        if (_uploadedImageUrl != null) {
+          _applyProductLinkImageFields(outcome.analysis.toInitialData());
+        }
+      });
+
+      _reachMilestone(3);
+      await Future.delayed(const Duration(milliseconds: 400));
+
+      if (!mounted) return;
+      debugPrint('[ADD_LINK_FLOW][open_form]');
+      setState(() {
+        _aiCompleted = true;
+        _aiFailed = false;
+        _isAiLoading = false;
+      });
+      _reachMilestone(4);
+      _stopProgressTimers();
+
+      if (outcome.callableNotFound) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'AI analýza produktu ešte nie je dostupná. Použijem základné údaje z odkazu.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      } else if (_linkAnalysisPartial) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Niektoré údaje sa nepodarilo vyplniť automaticky.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint('[ADD_LINK_FLOW][fallback_used] $e');
+      await _ensureMinLinkAnalyzingDuration(started);
+      debugPrint('[ADD_LINK_FLOW][open_form]');
+      if (!mounted) return;
+      final fallback = detectClothingFromUrlFallback(url);
+      _applyProductLinkInitialData(
+        fallback.toInitialData()..['_linkLoadFailed'] = fallback.partial,
+      );
+      setState(() {
+        _aiCompleted = true;
+        _aiFailed = fallback.partial;
+        _isAiLoading = false;
+      });
+      _stopProgressTimers();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Produkt sa nepodarilo načítať úplne. Skontroluj údaje pred uložením.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _loadBrandSuggestions() async {
@@ -1556,59 +2125,38 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return out.trim();
   }
 
-  String? _normalizeColor(String raw) {
-    final v = _norm(raw);
+  String? _normalizeColor(String raw) =>
+      ColorNamingService.instance.normalizeDisplayColor(raw);
 
-    const map = {
-      'navy': 'tmavomodrá',
-      'dark navy': 'tmavomodrá',
-      'dark blue': 'tmavomodrá',
-      'midnight blue': 'tmavomodrá',
-      'blue': 'modrá',
-      'light blue': 'svetlomodrá',
-      'black': 'čierna',
-      'white': 'biela',
-      'grey': 'sivá',
-      'gray': 'sivá',
-      'beige': 'béžová',
-      'brown': 'hnedá',
-      'tan': 'hnedá',
-      'green': 'zelená',
-      'olive': 'olivová',
-      'khaki': 'khaki',
-      'red': 'červená',
-      'burgundy': 'bordová',
-      'maroon': 'bordová',
-      'yellow': 'žltá',
-      'orange': 'oranžová',
-      'pink': 'ružová',
-      'purple': 'fialová',
-    };
+  List<String> _normalizeColorsList(List<String> input) =>
+      ColorNamingService.instance.normalizeDisplayColors(input);
 
-    final direct = map[v];
-    if (direct != null) return direct;
-
-    if (v.contains('navy')) return 'tmavomodrá';
-    if (v.contains('dark') && v.contains('blue')) return 'tmavomodrá';
-    if (v.contains('blue')) return 'modrá';
-    if (v.contains('black')) return 'čierna';
-    if (v.contains('white')) return 'biela';
-    if (v.contains('grey') || v.contains('gray')) return 'sivá';
-
-    if (allowedColors.contains(raw)) return raw;
-    return null;
+  List<String> _resolveBaseColors(List<String> displayColors) {
+    final out = <String>[];
+    for (final c in displayColors) {
+      final m = ColorNamingService.instance.matchByName(c);
+      if (m != null) out.add(m.baseColor);
+    }
+    return out;
   }
 
-  List<String> _normalizeColorsList(List<String> input) {
+  List<String> _resolveColorHex(List<String> displayColors) {
     final out = <String>[];
-    for (final x in input) {
-      final mapped = _normalizeColor(x);
-      if (mapped != null && allowedColors.contains(mapped)) {
-        out.add(mapped);
-      }
+    for (final c in displayColors) {
+      final m = ColorNamingService.instance.matchByName(c);
+      if (m != null) out.add(m.hex);
     }
-    final seen = <String>{};
-    return out.where((e) => seen.add(e)).toList();
+    return out;
+  }
+
+  void _syncColorDerivatives() {
+    if (_selectedColors.isEmpty) {
+      _selectedBaseColors = [];
+      _selectedColorHex = [];
+      return;
+    }
+    _selectedBaseColors = _resolveBaseColors(_selectedColors);
+    _selectedColorHex = _resolveColorHex(_selectedColors);
   }
 
   List<String> _dedupeKeepAllowed(List<String> input, List<String> allowed) {
@@ -2399,7 +2947,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         if (nextSub != null) _selectedSubCategoryKey = nextSub;
         if (nextLayerRole != null) _selectedLayerRole = nextLayerRole;
 
-        if (filteredColors.isNotEmpty) _selectedColors = filteredColors;
+        if (filteredColors.isNotEmpty) {
+          _selectedColors = filteredColors;
+          _syncColorDerivatives();
+        }
         if (fixedStyles.isNotEmpty) _selectedStyles = fixedStyles;
 
         if (fixedPatterns.isNotEmpty) {
@@ -2463,7 +3014,52 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     try {
       final imageUrl = await _ensureImageUrl();
-      if (imageUrl == null || imageUrl.isEmpty) {
+      final src = canonicalProductLinkUrl((_sourceUrl ?? '').trim());
+      if (src.isNotEmpty) _sourceUrl = src;
+
+      String? pickValidImageUrl(String? a, [String? b, String? c]) {
+        for (final raw in [a, b, c]) {
+          final u = (raw ?? '').trim();
+          if (isValidProductLinkImageUrl(u)) return u;
+        }
+        return null;
+      }
+
+      final displayImageUrl = pickValidImageUrl(
+        imageUrl,
+        _uploadedImageUrl,
+        _productLinkOriginalImageUrl,
+      );
+      final originalImageUrl = _fromProductLink
+          ? ((_productLinkOriginalImageUrl?.trim().isNotEmpty == true
+                  ? _productLinkOriginalImageUrl
+                  : displayImageUrl) ??
+              displayImageUrl)
+          : displayImageUrl;
+      final hasImage =
+          displayImageUrl != null && isValidProductLinkImageUrl(displayImageUrl);
+
+      ProductImageProcessingSaveDecision? preSaveProcessing;
+      if (!widget.isEditing && _fromProductLink && src.isNotEmpty) {
+        preSaveProcessing = decideProductLinkImageProcessing(
+          sourceUrl: src,
+          selectedImageUrl: (displayImageUrl ?? '').trim(),
+          personDetected: _productLinkPersonDetected,
+          cleanImageUrl: _productLinkCleanImageUrl,
+        );
+      }
+
+      if (_fromProductLink && !hasImage && preSaveProcessing?.needsProcessing != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Chýba platný obrázok produktu. Skús znova načítať odkaz.',
+            ),
+          ),
+        );
+        return;
+      }
+      if (!hasImage && !_fromProductLink) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Chýba obrázok.')),
         );
@@ -2474,7 +3070,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           _selectedCategoryKey == null ||
           _selectedSubCategoryKey == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('AI nedokončilo kategóriu/typ. Skús znova alebo oprav ručne.')),
+          SnackBar(
+            content: Text(
+              _fromProductLink
+                  ? 'Vyber kategóriu a typ kúsku.'
+                  : 'AI nedokončilo kategóriu/typ. Skús znova alebo oprav ručne.',
+            ),
+          ),
         );
         return;
       }
@@ -2498,6 +3100,40 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       final safeSeasons = _sanitizeSeasons(_selectedSeasons);
 
+      final seed = (displayImageUrl ?? '').trim();
+      if (_fromProductLink && hasImage && seed.isNotEmpty) {
+        _productLinkOriginalImageUrl ??= seed;
+      }
+      String? productLinkSku;
+      productLinkSku = src.isNotEmpty ? extractProductStyleCodeFromUrl(src) : null;
+      final processingDecision = preSaveProcessing;
+      if (processingDecision != null) {
+        debugPrint(
+          '[PRODUCT_IMAGE][needs_processing] ${processingDecision.needsProcessing}',
+        );
+        debugPrint('[PRODUCT_IMAGE][reason] ${processingDecision.reason}');
+      }
+
+      final queueImageProcessing = processingDecision?.needsProcessing ?? false;
+      final processingReason = processingDecision?.reason;
+      final imageProcessingReason =
+          (processingReason != null &&
+                  processingReason.isNotEmpty &&
+                  processingReason != 'no_product_link')
+              ? processingReason
+              : null;
+      final imageProcessingStatus = queueImageProcessing
+          ? kImageProcessingStatusProcessing
+          : kImageProcessingStatusDone;
+      debugPrint('[ADD_CLOTHING_SAVE][sourceUrl] $src');
+      debugPrint('[ADD_CLOTHING_SAVE][imageUrl] ${displayImageUrl ?? ''}');
+      debugPrint('[ADD_CLOTHING_SAVE][productImageUrl] ${displayImageUrl ?? ''}');
+      debugPrint('[ADD_CLOTHING_SAVE][imageProcessingStatus] $imageProcessingStatus');
+      debugPrint(
+        '[ADD_CLOTHING_SAVE][imageProcessingJobQueued] $queueImageProcessing',
+      );
+      debugPrint('[ADD_CLOTHING_SAVE][productLinkSku] ${productLinkSku ?? ''}');
+
       final data = <String, dynamic>{
         'name': finalName.trim(),
         'brand': brand,
@@ -2516,20 +3152,34 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 ? null
                 : subCategoryLayerRoles[_selectedSubCategoryKey!]),
         'colors': _selectedColors,
+        if (_selectedBaseColors.isNotEmpty) 'baseColors': _selectedBaseColors,
+        if (_selectedColorHex.isNotEmpty) 'colorHex': _selectedColorHex,
         'styles': _selectedStyles,
         'patterns': _selectedPatterns,
         'seasons': safeSeasons.isEmpty ? ['celoročne'] : safeSeasons,
-        'imageUrl': imageUrl,
-        'originalImageUrl': imageUrl,
-        'cutoutImageUrl': null,
-        'productImageUrl': null,
+        if (hasImage) ...{
+          'imageUrl': displayImageUrl!,
+          'originalImageUrl': (originalImageUrl ?? displayImageUrl)!,
+          'productImageUrl': displayImageUrl!,
+          'productLinkSeedImageUrl': seed.isNotEmpty ? seed : displayImageUrl!,
+        },
         'imageVersion': 1,
+        if (src.isNotEmpty) 'sourceUrl': src,
+        if (!widget.isEditing && _fromProductLink && src.isNotEmpty) ...{
+          if (productLinkSku != null && productLinkSku.isNotEmpty)
+            'productLinkSku': productLinkSku,
+          'imageProcessingStatus': imageProcessingStatus,
+          if (imageProcessingReason != null && imageProcessingReason.isNotEmpty)
+            'imageProcessingReason': imageProcessingReason,
+          'imageProcessingJobQueued': queueImageProcessing,
+          'imageProcessingUpdatedAt': FieldValue.serverTimestamp(),
+        },
         if (_uploadedStoragePath != null) 'storagePath': _uploadedStoragePath,
         'updatedAt': FieldValue.serverTimestamp(),
         if (!widget.isEditing) 'createdAt': FieldValue.serverTimestamp(),
       };
 
-      if (!widget.isEditing) {
+      if (!widget.isEditing && hasImage && _uploadedStoragePath != null) {
         data['processing'] = {
           'cutout': 'queued',
           'product': 'queued',
@@ -2545,6 +3195,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         await newDoc.set(data, SetOptions(merge: true));
       }
 
+      if (queueImageProcessing) {
+        debugPrint('[WARDROBE_IMAGE_PROCESS][queued]');
+      }
+
       if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
@@ -2555,13 +3209,72 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
+  Widget _productLinkImagePlaceholder({double height = 190}) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        height: height,
+        width: double.infinity,
+        alignment: Alignment.center,
+        color: Colors.white.withOpacity(0.06),
+        child: const SizedBox(
+          width: 32,
+          height: 32,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+      ),
+    );
+  }
+
+  bool get _hasValidBackendPreviewUrl {
+    final u = (_uploadedImageUrl ?? '').trim();
+    return !_productLinkPreviewFailed &&
+        u.isNotEmpty &&
+        isValidProductLinkImageUrl(u);
+  }
+
   Widget _buildProcessingImagePreview() {
     final Widget imgWidget;
 
     if (_localImageFile != null) {
       imgWidget = Image.file(_localImageFile!, fit: BoxFit.contain);
-    } else if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty) {
-      imgWidget = Image.network(_uploadedImageUrl!, fit: BoxFit.contain);
+    } else if (_hasValidBackendPreviewUrl) {
+      imgWidget = Image.network(
+        _uploadedImageUrl!,
+        fit: BoxFit.contain,
+        loadingBuilder: (context, child, progress) {
+          if (progress == null) return child;
+          return Stack(
+            alignment: Alignment.center,
+            children: [
+              child,
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ],
+          );
+        },
+        errorBuilder: (_, __, ___) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted || _productLinkPreviewFailed) return;
+            setState(() {
+              _productLinkPreviewFailed = true;
+              _uploadedImageUrl = null;
+            });
+          });
+          return const Center(
+            child: SizedBox(
+              width: 32,
+              height: 32,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
+          );
+        },
+      );
+    } else if (_fromProductLink && _isAiLoading) {
+      return _productLinkImagePlaceholder();
     } else {
       return const SizedBox.shrink();
     }
@@ -2585,7 +3298,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               width: double.infinity,
               color: Colors.white.withOpacity(0.04),
               alignment: Alignment.center,
-              child: imgWidget,
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  imgWidget,
+                ],
+              ),
             ),
           ),
         ),
@@ -2617,9 +3335,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              const Text(
-                'Analyzujeme fotku a pripravujeme formulár.',
-                style: TextStyle(
+              Text(
+                _fromProductLink
+                    ? 'Analyzujem produkt z odkazu…'
+                    : 'Analyzujujeme fotku a pripravujeme formulár.',
+                style: const TextStyle(
                   color: Colors.white60,
                   fontSize: 12.5,
                   height: 1.3,
@@ -2634,14 +3354,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 if (done) {
                   leading = const Icon(
                     Icons.check_circle_rounded,
-                    color: Color(0xFF58D26B),
+                    color: Color(0xFFC8A36A),
                     size: 21,
                   );
                 } else if (isActive) {
                   leading = const SizedBox(
                     width: 21,
                     height: 21,
-                    child: CircularProgressIndicator(strokeWidth: 2),
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: _kAddClothingAccent,
+                    ),
                   );
                 } else {
                   leading = Icon(
@@ -2779,12 +3502,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       style: const TextStyle(color: Colors.white),
       decoration: InputDecoration(
         labelText: 'Názov',
-        helperText: 'Aplikácia si názov skladá automaticky (farba + typ).',
-        helperStyle: const TextStyle(
-          color: Colors.white38,
-          fontSize: 11.5,
-        ),
-        labelStyle: const TextStyle(color: Colors.white70),
+        helperText: _fromProductLink
+            ? null
+            : 'Aplikácia si názov skladá automaticky (farba + typ).',
+        helperStyle: _fromProductLink
+            ? null
+            : const TextStyle(
+                color: Colors.white38,
+                fontSize: 11.5,
+              ),
+        labelStyle: _addClothingLabelStyle,
+        floatingLabelStyle: _addClothingLabelStyle,
         filled: true,
         fillColor: Colors.white.withOpacity(0.05),
         contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
@@ -2795,7 +3523,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(
-            color: Colors.white.withOpacity(0.22),
+            color: _kAddClothingAccent.withOpacity(0.55),
             width: 1.2,
           ),
         ),
@@ -2835,7 +3563,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             labelText: 'Značka',
-            labelStyle: const TextStyle(color: Colors.white70),
+            labelStyle: _addClothingLabelStyle,
+            floatingLabelStyle: _addClothingLabelStyle,
             filled: true,
             fillColor: Colors.white.withOpacity(0.05),
             contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
@@ -2846,7 +3575,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide(
-                color: Colors.white.withOpacity(0.22),
+                color: _kAddClothingAccent.withOpacity(0.55),
                 width: 1.2,
               ),
             ),
@@ -2906,7 +3635,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
+          labelStyle: _addClothingLabelStyle,
+          floatingLabelStyle: _addClothingLabelStyle,
           filled: true,
           fillColor: Colors.white.withOpacity(0.05),
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
@@ -2917,7 +3647,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(
-              color: Colors.white.withOpacity(0.22),
+              color: _kAddClothingAccent.withOpacity(0.55),
               width: 1.2,
             ),
           ),
@@ -3060,7 +3790,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.18)),
+                            borderSide: BorderSide(
+                              color: _kAddClothingAccent.withOpacity(0.45),
+                            ),
                           ),
                         ),
                         onChanged: (v) => setSheetState(() => query = v),
@@ -3082,7 +3814,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                               trailing: checked
                                   ? const Icon(
                                 Icons.check_circle_rounded,
-                                color: Color(0xFF58D26B),
+                                color: Color(0xFFC8A36A),
                               )
                                   : const SizedBox(width: 24, height: 24),
                               onTap: () => toggle(o, !checked),
@@ -3159,7 +3891,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       child: InputDecorator(
         decoration: InputDecoration(
           labelText: label,
-          labelStyle: const TextStyle(color: Colors.white70),
+          labelStyle: _addClothingLabelStyle,
+          floatingLabelStyle: _addClothingLabelStyle,
           filled: true,
           fillColor: Colors.white.withOpacity(0.05),
           contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
@@ -3170,7 +3903,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(
-              color: Colors.white.withOpacity(0.22),
+              color: _kAddClothingAccent.withOpacity(0.55),
               width: 1.2,
             ),
           ),
@@ -3271,7 +4004,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.18)),
+                            borderSide: BorderSide(
+                              color: _kAddClothingAccent.withOpacity(0.45),
+                            ),
                           ),
                         ),
                         onChanged: (v) => setSheetState(() => query = v),
@@ -3293,7 +4028,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                               trailing: checked
                                   ? const Icon(
                                 Icons.check_circle_rounded,
-                                color: Color(0xFF58D26B),
+                                color: Color(0xFFC8A36A),
                               )
                                   : const SizedBox(width: 24, height: 24),
                               onTap: () => Navigator.of(ctx).pop(o),
@@ -3348,11 +4083,63 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     });
   }
 
+  Widget _buildLinkPartialHint() {
+    return Text(
+      'Niektoré údaje sa nepodarilo vyplniť automaticky.',
+      style: TextStyle(
+        color: const Color(0xFFC8A36A).withOpacity(0.92),
+        fontSize: 12.5,
+        fontWeight: FontWeight.w600,
+        height: 1.35,
+      ),
+    );
+  }
+
+  Widget _buildProductLinkSourceBanner() {
+    final url = _sourceUrl ?? '';
+    if (url.isEmpty) return const SizedBox.shrink();
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(18),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          color: const Color(0xFFC8A36A).withOpacity(0.08),
+          border: Border.all(color: const Color(0xFFC8A36A).withOpacity(0.16)),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.link_rounded, color: Color(0xFFC8A36A), size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                url,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: Colors.white60,
+                  fontSize: 12.5,
+                  height: 1.35,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildForm() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const SizedBox(height: 16),
+        if (_fromProductLink && _linkAnalysisPartial) ...[
+          _buildLinkPartialHint(),
+          const SizedBox(height: 14),
+        ],
         if (_localImageFile != null)
           ClipRRect(
             borderRadius: BorderRadius.circular(22),
@@ -3383,7 +4170,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               ),
             ),
           )
-        else if (_uploadedImageUrl != null)
+        else if (_hasValidBackendPreviewUrl)
           ClipRRect(
             borderRadius: BorderRadius.circular(22),
             child: BackdropFilter(
@@ -3407,12 +4194,21 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       height: 260,
                       width: double.infinity,
                       fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) {
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          if (!mounted || _productLinkPreviewFailed) return;
+                          setState(() => _productLinkPreviewFailed = true);
+                        });
+                        return _productLinkImagePlaceholder(height: 260);
+                      },
                     ),
                   ),
                 ),
               ),
             ),
-          ),
+          )
+        else if (_fromProductLink)
+          _productLinkImagePlaceholder(height: 260),
         const SizedBox(height: 16),
         _buildNameFreeField(),
         const SizedBox(height: 12),
@@ -3445,10 +4241,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         const SizedBox(height: 12),
         _buildMultiSelectField(
           label: 'Farby',
-          options: allowedColors,
+          options: ColorNamingService.instance.chipColorOptions(_selectedColors),
           selected: _selectedColors,
           onChanged: (v) => setState(() {
             _selectedColors = v;
+            _syncColorDerivatives();
             _refreshAutoName();
           }),
         ),
@@ -3669,9 +4466,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                         height: 46,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: const Color(0xFFD6B36A).withOpacity(0.12),
+                          color: const Color(0xFFC8A36A).withOpacity(0.12),
                           border: Border.all(
-                            color: const Color(0xFFD6B36A).withOpacity(0.18),
+                            color: const Color(0xFFC8A36A).withOpacity(0.18),
                           ),
                         ),
                         child: const Icon(
@@ -3701,7 +4498,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                     shape: BoxShape.circle,
                     gradient: RadialGradient(
                       colors: [
-                        const Color(0xFFD6B36A).withOpacity(0.16),
+                        const Color(0xFFC8A36A).withOpacity(0.16),
                         Colors.white.withOpacity(0.04),
                         Colors.transparent,
                       ],
@@ -3810,7 +4607,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final showPick = !_isAiLoading &&
         _localImageFile == null &&
         (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty) &&
-        !widget.isEditing;
+        !widget.isEditing &&
+        !_fromProductLink;
 
     final showLoader = _isAiLoading;
     final showForm = _aiCompleted || widget.isEditing || _aiFailed;
@@ -3822,6 +4620,199 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       );
     }
 
+    return Theme(
+      data: _addClothingFormTheme(context),
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0C0C0C),
+        body: Stack(
+          children: [
+            const Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: [
+                      Color(0xFF07070A),
+                      Color(0xFF111116),
+                      Color(0xFF050507),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.black.withOpacity(0.80),
+                      Colors.black.withOpacity(0.32),
+                      Colors.black.withOpacity(0.88),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            SafeArea(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(22),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(22),
+                            color: Colors.white.withOpacity(0.06),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: Row(
+                            children: [
+                              InkWell(
+                                borderRadius: BorderRadius.circular(999),
+                                onTap: () => Navigator.pop(context),
+                                child: Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: Colors.white.withOpacity(0.08),
+                                    border: Border.all(color: Colors.white10),
+                                  ),
+                                  child: const Icon(
+                                    Icons.arrow_back_rounded,
+                                    color: Colors.white,
+                                    size: 20,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      widget.isEditing ? 'Upraviť oblečenie' : 'Pridať oblečenie',
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 18,
+                                        fontWeight: FontWeight.w900,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      showLoader
+                                          ? (_fromProductLink
+                                              ? 'Analyzujem produkt z odkazu'
+                                              : 'AI spracováva obrázok')
+                                          : _fromProductLink
+                                              ? 'Skontroluj údaje produktu z odkazu'
+                                              : 'Skontroluj a ulož detaily kúsku',
+                                      style: const TextStyle(
+                                        color: Colors.white60,
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    if (showLoader) ...[
+                      _buildProcessingImagePreview(),
+                      const SizedBox(height: 14),
+                      _buildProgressChecklist(),
+                    ],
+                    if (_aiFailed) ...[
+                      const SizedBox(height: 14),
+                      _buildAiError(),
+                    ],
+                    if (showForm) ...[
+                      const SizedBox(height: 14),
+                      _buildForm(),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Product URL entry — frontend-ready; scraping hooks into [loadProductFromUrl].
+class _AddClothingProductLinkScreen extends StatefulWidget {
+  const _AddClothingProductLinkScreen();
+
+  @override
+  State<_AddClothingProductLinkScreen> createState() =>
+      _AddClothingProductLinkScreenState();
+}
+
+class _AddClothingProductLinkScreenState
+    extends State<_AddClothingProductLinkScreen> {
+  final TextEditingController _urlController = TextEditingController();
+  bool _loading = false;
+  bool _hasNavigatedToAnalyze = false;
+
+  static const Color _gold = _kAddClothingAccent;
+
+  @override
+  void dispose() {
+    _urlController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadProductFromUrl() async {
+    if (_loading || _hasNavigatedToAnalyze) return;
+
+    final raw = _urlController.text.trim();
+    debugPrint('[ADD_CLOTHING_LINK] load tapped raw="$raw"');
+    if (!isValidProductLinkUrl(raw)) {
+      debugPrint('[ADD_CLOTHING_LINK] validation failed');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Zadaj platný link na produkt.')),
+      );
+      return;
+    }
+
+    final normalized = normalizeProductLinkUrl(raw);
+    setState(() => _loading = true);
+    if (!mounted || _hasNavigatedToAnalyze) return;
+    _hasNavigatedToAnalyze = true;
+
+    debugPrint('[ADD_LINK_FLOW][navigate_analyzing_once]');
+    await Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => AddClothingScreen(
+          initialData: <String, dynamic>{
+            '_analyzeLinkOnLoad': true,
+            '_pendingLinkUrl': normalized,
+            'sourceUrl': normalized,
+            '_fromProductLink': true,
+          },
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF0C0C0C),
       body: Stack(
@@ -3858,66 +4849,210 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           ),
           SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              padding: const EdgeInsets.fromLTRB(18, 14, 18, 24),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  Row(
+                    children: [
+                      InkWell(
+                        borderRadius: BorderRadius.circular(999),
+                        onTap: _loading || _hasNavigatedToAnalyze
+                            ? null
+                            : () => Navigator.pop(context),
+                        child: Container(
+                          width: 42,
+                          height: 42,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Colors.white.withOpacity(0.08),
+                            border: Border.all(color: Colors.white10),
+                          ),
+                          child: const Icon(
+                            Icons.arrow_back_rounded,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Pridať cez link',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
+                            SizedBox(height: 3),
+                            Text(
+                              'Vlož odkaz z obchodu s oblečením',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 28),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(22),
                     child: BackdropFilter(
                       filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(22),
                           color: Colors.white.withOpacity(0.06),
                           border: Border.all(color: Colors.white10),
                         ),
-                        child: Row(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            InkWell(
-                              borderRadius: BorderRadius.circular(999),
-                              onTap: () => Navigator.pop(context),
-                              child: Container(
-                                width: 40,
-                                height: 40,
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  color: Colors.white.withOpacity(0.08),
-                                  border: Border.all(color: Colors.white10),
+                            Row(
+                              children: [
+                                Container(
+                                  width: 40,
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: _gold.withOpacity(0.12),
+                                    border: Border.all(
+                                      color: _gold.withOpacity(0.18),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.link_rounded,
+                                    color: _gold,
+                                    size: 20,
+                                  ),
                                 ),
-                                child: const Icon(
-                                  Icons.arrow_back_rounded,
-                                  color: Colors.white,
-                                  size: 20,
+                                const SizedBox(width: 12),
+                                const Expanded(
+                                  child: Text(
+                                    'Podporované obchody',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14.5,
+                                    ),
+                                  ),
                                 ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            const Text(
+                              'Zara, AboutYou, Zalando, H&M a podobné e-shopy.',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 13,
+                                height: 1.35,
                               ),
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    widget.isEditing ? 'Upraviť oblečenie' : 'Pridať oblečenie',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 18,
-                                      fontWeight: FontWeight.w900,
-                                    ),
+                            const SizedBox(height: 18),
+                            TextField(
+                              controller: _urlController,
+                              enabled: !_loading,
+                              keyboardType: TextInputType.url,
+                              textInputAction: TextInputAction.done,
+                              autocorrect: false,
+                              style: const TextStyle(color: Colors.white),
+                              decoration: InputDecoration(
+                                hintText: 'Vlož link na produkt',
+                                hintStyle: TextStyle(
+                                  color: Colors.white.withOpacity(0.38),
+                                ),
+                                filled: true,
+                                fillColor: Colors.white.withOpacity(0.06),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white12,
                                   ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    showLoader
-                                        ? 'AI spracováva obrázok'
-                                        : 'Skontroluj a ulož detaily kúsku',
-                                    style: const TextStyle(
-                                      color: Colors.white60,
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: const BorderSide(
+                                    color: Colors.white12,
                                   ),
-                                ],
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                  borderSide: BorderSide(
+                                    color: _gold.withOpacity(0.45),
+                                  ),
+                                ),
+                              ),
+                              onSubmitted: (_) {
+                                if (!_loading) _loadProductFromUrl();
+                              },
+                            ),
+                            const SizedBox(height: 16),
+                            SizedBox(
+                              width: double.infinity,
+                              child: InkWell(
+                                borderRadius: BorderRadius.circular(999),
+                                onTap: _loading ? null : _loadProductFromUrl,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 18,
+                                    vertical: 15,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(999),
+                                    color: _loading
+                                        ? Colors.white.withOpacity(0.55)
+                                        : Colors.white.withOpacity(0.94),
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      if (_loading) ...[
+                                        const SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2.2,
+                                            color: Colors.black54,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        const Text(
+                                          'Načítavam…',
+                                          style: TextStyle(
+                                            color: Colors.black87,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                      ] else ...[
+                                        const Icon(
+                                          Icons.download_rounded,
+                                          color: Colors.black87,
+                                          size: 20,
+                                        ),
+                                        const SizedBox(width: 10),
+                                        const Text(
+                                          'Načítať produkt',
+                                          style: TextStyle(
+                                            color: Colors.black,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 15,
+                                          ),
+                                        ),
+                                      ],
+                                    ],
+                                  ),
+                                ),
                               ),
                             ),
                           ],
@@ -3925,20 +5060,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       ),
                     ),
                   ),
-                  const SizedBox(height: 14),
-                  if (showLoader) ...[
-                    _buildProcessingImagePreview(),
-                    const SizedBox(height: 14),
-                    _buildProgressChecklist(),
-                  ],
-                  if (_aiFailed) ...[
-                    const SizedBox(height: 14),
-                    _buildAiError(),
-                  ],
-                  if (showForm) ...[
-                    const SizedBox(height: 14),
-                    _buildForm(),
-                  ],
                 ],
               ),
             ),

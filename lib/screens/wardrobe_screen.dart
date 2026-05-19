@@ -7,6 +7,7 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
+import 'package:outfitofTheDay/utils/wardrobe_image_processing.dart';
 class _WardrobeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
   static const Color bgMid = Color(0xFF0C0C0D);
@@ -1090,26 +1091,15 @@ class _CategorySectionGlass extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final data = preview[index];
 
-                          // IMAGE priority
-                          final String? productImage = data['productImageUrl'] as String?;
-                          final String? cleanImage = data['cleanImageUrl'] as String?;
-                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
-                          final String? originalImage = data['originalImageUrl'] as String?;
-                          final String? legacyImage = data['imageUrl'] as String?;
-
-                          final imageUrl = (_isUrlFilled(productImage))
-                              ? productImage!
-                              : (_isUrlFilled(cleanImage))
-                              ? cleanImage!
-                              : (_isUrlFilled(cutoutImage))
-                              ? cutoutImage!
-                              : (_isUrlFilled(originalImage))
-                              ? originalImage!
-                              : (legacyImage ?? '');
+                          final imageUrl = wardrobeTileDisplayImageUrl(data);
 
                           // Spinner logic
                           final cutoutStatus = _statusFromProcessing(data, 'cutout');
                           final productStatus = _statusFromProcessing(data, 'product');
+
+                          final String? cleanImage = data['cleanImageUrl'] as String?;
+                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
+                          final String? productImage = data['productImageUrl'] as String?;
 
                           final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
                           final bool hasProduct = _isUrlFilled(productImage);
@@ -1120,7 +1110,9 @@ class _CategorySectionGlass extends StatelessWidget {
                           final bool productInProgress =
                               hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
 
-                          final bool showSpinner = cutoutInProgress || productInProgress;
+                          final bool showSpinner = cutoutInProgress ||
+                              productInProgress ||
+                              wardrobeItemShowsImageProcessingBadge(data);
                           final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
 
                           final name = (data['name'] as String?)?.trim().isNotEmpty == true
@@ -1300,21 +1292,102 @@ class _WardrobeTileGlass extends StatelessWidget {
                         Positioned.fill(
                           child: imageUrl.trim().isNotEmpty
                               ? Image.network(
-                            imageUrl,
-                            fit: BoxFit.cover,
-                            width: double.infinity,
-                            height: double.infinity,
-                          )
-                              : Container(
-                            color: Colors.white.withOpacity(0.06),
-                            child: const Center(
-                              child: Icon(
-                                Icons.image_not_supported,
-                                size: 42,
-                                color: Colors.white38,
-                              ),
-                            ),
-                          ),
+                                  imageUrl,
+                                  fit: BoxFit.cover,
+                                  width: double.infinity,
+                                  height: double.infinity,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    if (showSpinner) {
+                                      return Container(
+                                        color: Colors.white.withOpacity(0.06),
+                                        child: const Center(
+                                          child: SizedBox(
+                                            width: 28,
+                                            height: 28,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(
+                                                Color(0xFF4A6CF7),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    final fallback =
+                                        wardrobeTileImageFallbackUrl(data, imageUrl);
+                                    if (fallback != null) {
+                                      return Image.network(
+                                        fallback,
+                                        fit: BoxFit.cover,
+                                        width: double.infinity,
+                                        height: double.infinity,
+                                        errorBuilder: (_, __, ___) => Container(
+                                          color: Colors.white.withOpacity(0.06),
+                                          child: const Center(
+                                            child: SizedBox(
+                                              width: 28,
+                                              height: 28,
+                                              child: CircularProgressIndicator(
+                                                strokeWidth: 2,
+                                                valueColor:
+                                                    AlwaysStoppedAnimation<Color>(
+                                                  Color(0xFF4A6CF7),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    return Container(
+                                      color: Colors.white.withOpacity(0.06),
+                                      child: const Center(
+                                        child: SizedBox(
+                                          width: 28,
+                                          height: 28,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                              Color(0xFF4A6CF7),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : showSpinner
+                                  ? Container(
+                                      color: Colors.white.withOpacity(0.06),
+                                      child: const Center(
+                                        child: SizedBox(
+                                          width: 28,
+                                          height: 28,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                              Color(0xFF4A6CF7),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    )
+                                  : Container(
+                                      color: Colors.white.withOpacity(0.06),
+                                      child: const Center(
+                                        child: SizedBox(
+                                          width: 28,
+                                          height: 28,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            valueColor: AlwaysStoppedAnimation<Color>(
+                                              Color(0xFF4A6CF7),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
                         ),
                         if (showSpinner) _topLeftSpinner(),
                         _topRightDeleteButton(),
@@ -1773,24 +1846,14 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         itemBuilder: (context, index) {
                           final data = items[index];
 
-                          final String? productImage = data['productImageUrl'] as String?;
-                          final String? cleanImage = data['cleanImageUrl'] as String?;
-                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
-                          final String? originalImage = data['originalImageUrl'] as String?;
-                          final String? legacyImage = data['imageUrl'] as String?;
-
-                          final imageUrl = (_isUrlFilled(productImage))
-                              ? productImage!
-                              : (_isUrlFilled(cleanImage))
-                              ? cleanImage!
-                              : (_isUrlFilled(cutoutImage))
-                              ? cutoutImage!
-                              : (_isUrlFilled(originalImage))
-                              ? originalImage!
-                              : (legacyImage ?? '');
+                          final imageUrl = wardrobeTileDisplayImageUrl(data);
 
                           final cutoutStatus = _statusFromProcessing(data, 'cutout');
                           final productStatus = _statusFromProcessing(data, 'product');
+
+                          final String? cleanImage = data['cleanImageUrl'] as String?;
+                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
+                          final String? productImage = data['productImageUrl'] as String?;
 
                           final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
                           final bool hasProduct = _isUrlFilled(productImage);
@@ -1801,7 +1864,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                           final bool productInProgress =
                               hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
 
-                          final bool showSpinner = cutoutInProgress || productInProgress;
+                          final bool showSpinner = cutoutInProgress ||
+                              productInProgress ||
+                              wardrobeItemShowsImageProcessingBadge(data);
                           final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
 
                           final name = (data['name'] as String?)?.trim().isNotEmpty == true

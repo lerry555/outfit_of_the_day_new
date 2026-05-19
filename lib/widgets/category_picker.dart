@@ -2,6 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:outfitofTheDay/constants/app_constants.dart';
+import 'package:outfitofTheDay/widgets/home/home_luxury_palette.dart';
 
 class CategoryPicker extends StatelessWidget {
   final String? initialMainGroup;    // napr. "oblecenie"
@@ -36,7 +37,7 @@ class CategoryPicker extends StatelessWidget {
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(16),
         borderSide: BorderSide(
-          color: Colors.white.withOpacity(0.22),
+          color: HomeLuxuryPalette.accent.withOpacity(0.55),
           width: 1.2,
         ),
       ),
@@ -50,8 +51,8 @@ class CategoryPicker extends StatelessWidget {
     );
   }
 
-  TextStyle get _labelStyle => const TextStyle(
-    color: Colors.white70,
+  TextStyle get _labelStyle => TextStyle(
+    color: HomeLuxuryPalette.accent.withOpacity(0.92),
     fontSize: 14,
     fontWeight: FontWeight.w600,
   );
@@ -73,6 +74,13 @@ class CategoryPicker extends StatelessWidget {
     return Theme(
       data: Theme.of(context).copyWith(
         canvasColor: const Color(0xFF121212),
+        colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: HomeLuxuryPalette.accent,
+            ),
+        inputDecorationTheme: InputDecorationTheme(
+          labelStyle: _labelStyle,
+          floatingLabelStyle: _labelStyle,
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../Services/color_naming_service.dart';
+
 /// ---------------------------------------------------------------------------
 /// ZÁKLADNÉ KONŠTANTY
 /// ---------------------------------------------------------------------------
@@ -11,26 +13,8 @@ const List<String> categories = [
   'Doplnky',
 ];
 
-const List<String> colors = [
-  'biela',
-  'čierna',
-  'sivá',
-  'béžová',
-  'hnedá',
-  'modrá',
-  'tmavomodrá',
-  'svetlomodrá',
-  'červená',
-  'bordová',
-  'ružová',
-  'fialová',
-  'zelená',
-  'khaki',
-  'žltá',
-  'oranžová',
-  'zlatá',
-  'strieborná',
-];
+/// Wardrobe color families for UI chips and outfit matching.
+const List<String> colors = wardrobeBaseColors;
 
 const List<String> styles = [
   'casual',
@@ -65,7 +49,7 @@ const List<String> seasons = [
   'celoročne',
 ];
 
-const List<String> allowedColors = colors;
+List<String> get allowedColors => ColorNamingService.instance.baseColorNames;
 const List<String> allowedStyles = styles;
 const List<String> allowedPatterns = patterns;
 const List<String> allowedSeasons = seasons;
@@ -184,6 +168,7 @@ const Map<String, List<String>> categoryTree = {
     'bundy_kabaty',
     'nohavice_rifle',
     'sortky_sukne',
+    'plavky',
     'saty_overaly',
     'sport_oblecenie',
   ],
@@ -210,6 +195,7 @@ const Map<String, String> categoryLabels = {
   'bundy_kabaty': 'Bundy & kabáty',
   'nohavice_rifle': 'Nohavice',
   'sortky_sukne': 'Šortky & sukne',
+  'plavky': 'Plavky',
   'saty_overaly': 'Šaty & overaly',
   'sport_oblecenie': 'Šport – oblečenie',
 
@@ -280,6 +266,14 @@ const Map<String, List<String>> subCategoryTree = {
     'nohavice_elegantne',
     'nohavice_cargo',
     'leginy',
+  ],
+  'plavky': [
+    'plavecke_sortky',
+    'plavky_jednodielne',
+    'plavky_dvojdielne',
+    'bikiny',
+    'plavky_spodok',
+    'plavky_vrch',
   ],
   'sortky_sukne': [
     'sortky',
@@ -420,6 +414,14 @@ const Map<String, String> subCategoryLabels = {
   'nohavice_elegantne': 'Elegantné nohavice',
   'nohavice_cargo': 'Cargo nohavice',
   'leginy': 'Legíny',
+
+  // Plavky
+  'plavecke_sortky': 'Plavecké šortky',
+  'plavky_jednodielne': 'Jednodielne plavky',
+  'plavky_dvojdielne': 'Dvojdielne plavky',
+  'bikiny': 'Bikiny',
+  'plavky_spodok': 'Spodný diel plaviek',
+  'plavky_vrch': 'Vrchný diel plaviek',
 
   // Šortky & sukne
   'sortky': 'Šortky',
@@ -564,6 +566,12 @@ const Map<String, String> subCategoryLayerRoles = {
   'nohavice_joggery': 'main_bottom',
   'nohavice_elegantne': 'main_bottom',
   'nohavice_cargo': 'main_bottom',
+  'plavecke_sortky': 'main_bottom',
+  'plavky_jednodielne': 'main_bottom',
+  'plavky_dvojdielne': 'main_bottom',
+  'bikiny': 'main_bottom',
+  'plavky_spodok': 'main_bottom',
+  'plavky_vrch': 'main_top',
   'sortky': 'main_bottom',
   'sortky_sportove': 'main_bottom',
   'sukna': 'main_bottom',

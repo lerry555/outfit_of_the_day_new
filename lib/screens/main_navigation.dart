@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
-import 'calendar_outfit_screen.dart';
+import 'add_clothing_screen.dart';
 import 'stylist_chat_screen.dart';
 import '../Services/share_intent_service.dart';
 
@@ -31,7 +31,6 @@ class _MainNavigationState extends State<MainNavigation> {
       const HomeScreen(),
       const WardrobeScreen(),
       const StylistChatScreen(),
-      const CalendarOutfitScreen(),
     ];
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -39,9 +38,15 @@ class _MainNavigationState extends State<MainNavigation> {
     });
   }
 
-  void _onTabTapped(int index) {
+  Future<void> _onTabTapped(int index) async {
+    if (index == 2) {
+      await AddClothingScreen.openFromPicker(context);
+      return;
+    }
+
+    final screenIndex = index == 3 ? 2 : index;
     setState(() {
-      _currentIndex = index;
+      _currentIndex = screenIndex;
     });
   }
 
@@ -118,14 +123,14 @@ class _MainNavigationState extends State<MainNavigation> {
                   label: 'Šatník',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.face_retouching_natural_rounded),
-                  activeIcon: Icon(Icons.face_retouching_natural_rounded),
-                  label: 'Môj stylista',
+                  icon: Icon(Icons.add_circle_outline_rounded),
+                  activeIcon: Icon(Icons.add_circle_rounded),
+                  label: 'Pridať',
                 ),
                 BottomNavigationBarItem(
-                  icon: Icon(Icons.calendar_today_outlined),
-                  activeIcon: Icon(Icons.calendar_today),
-                  label: 'Kalendár',
+                  icon: Icon(Icons.face_retouching_natural_rounded),
+                  activeIcon: Icon(Icons.face_retouching_natural_rounded),
+                  label: 'AI Stylista',
                 ),
               ],
             ),

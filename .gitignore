@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Large OurAirports source CSV (regenerate with tool/build_airports_json.py)
+tool/airports_raw.csv

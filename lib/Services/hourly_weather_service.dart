@@ -36,7 +36,7 @@ class OutfitWeatherDaySnapshot {
   final int? mainChipHour;
   /// When [fromOpenMeteo] is false, why the service used deterministic fallback (for debugging).
   final String? openMeteoFailureNote;
-  /// Krátke štítky počasia pre kompaktný „Prehľad dňa“ (nie stylistický text).
+  /// Krátke štítky počasia pod °C v „Prehľad dňa“ (Jasno, Dážď, …).
   final String briefingMorningCondition;
   final String briefingAfternoonCondition;
   final String briefingEveningCondition;
@@ -70,6 +70,13 @@ class OutfitWeatherDaySnapshot {
 
 class HourlyWeatherService {
   static const String _defaultCity = 'Martin, Slovakia';
+
+  /// Krátke označenie miesta zodpovedajúce [_defaultCity] (fallback GPS / trip prefill).
+  static String get defaultWeatherCityShortLabel {
+    final comma = _defaultCity.indexOf(',');
+    if (comma <= 0) return _defaultCity.trim();
+    return _defaultCity.substring(0, comma).trim();
+  }
   static const double _martinSkLat = 49.0665;
   static const double _martinSkLon = 18.9210;
   /// Open-Meteo `hourly.time` is civil time for the requested timezone; match by date prefix
@@ -283,23 +290,29 @@ class HourlyWeatherService {
       final wcAfternoon = _dominantWeatherCodeInRange(weather.points, 12, 15);
       final wcEvening = _dominantWeatherCodeInRange(weather.points, 18, 21);
 
-      final briefingMorningCondition = BriefingWeatherCondition.label(
-        wmoCode: wcMorning,
-        segmentRain: morningRainSeg,
-        segmentWindy: windMorning,
-        segment: BriefingDaySegment.morning,
+      final briefingMorningCondition = BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.label(
+          wmoCode: wcMorning,
+          segmentRain: morningRainSeg,
+          segmentWindy: windMorning,
+          segment: BriefingDaySegment.morning,
+        ),
       );
-      final briefingAfternoonCondition = BriefingWeatherCondition.label(
-        wmoCode: wcAfternoon,
-        segmentRain: afternoonRainSeg,
-        segmentWindy: windAfternoon,
-        segment: BriefingDaySegment.afternoon,
+      final briefingAfternoonCondition = BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.label(
+          wmoCode: wcAfternoon,
+          segmentRain: afternoonRainSeg,
+          segmentWindy: windAfternoon,
+          segment: BriefingDaySegment.afternoon,
+        ),
       );
-      final briefingEveningCondition = BriefingWeatherCondition.label(
-        wmoCode: wcEvening,
-        segmentRain: eveningRainSeg,
-        segmentWindy: windEvening,
-        segment: BriefingDaySegment.evening,
+      final briefingEveningCondition = BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.label(
+          wmoCode: wcEvening,
+          segmentRain: eveningRainSeg,
+          segmentWindy: windEvening,
+          segment: BriefingDaySegment.evening,
+        ),
       );
 
       final ux = buildDayWeatherUx(
@@ -698,20 +711,26 @@ class HourlyWeatherService {
         : 'Ráno okolo ${fallback.tempC - 2}°C, cez obed približne ${fallback.tempC}°C. '
             'Večer by malo byť pokojné.';
 
-    final briefingMorningCondition = BriefingWeatherCondition.fallback(
-      segmentRain: morningRainSeg,
-      segmentWindy: w,
-      segment: BriefingDaySegment.morning,
+    final briefingMorningCondition = BriefingWeatherCondition.briefingUiSk(
+      BriefingWeatherCondition.fallback(
+        segmentRain: morningRainSeg,
+        segmentWindy: w,
+        segment: BriefingDaySegment.morning,
+      ),
     );
-    final briefingAfternoonCondition = BriefingWeatherCondition.fallback(
-      segmentRain: afternoonRainSeg,
-      segmentWindy: w,
-      segment: BriefingDaySegment.afternoon,
+    final briefingAfternoonCondition = BriefingWeatherCondition.briefingUiSk(
+      BriefingWeatherCondition.fallback(
+        segmentRain: afternoonRainSeg,
+        segmentWindy: w,
+        segment: BriefingDaySegment.afternoon,
+      ),
     );
-    final briefingEveningCondition = BriefingWeatherCondition.fallback(
-      segmentRain: eveningRainSeg,
-      segmentWindy: w,
-      segment: BriefingDaySegment.evening,
+    final briefingEveningCondition = BriefingWeatherCondition.briefingUiSk(
+      BriefingWeatherCondition.fallback(
+        segmentRain: eveningRainSeg,
+        segmentWindy: w,
+        segment: BriefingDaySegment.evening,
+      ),
     );
 
     return OutfitWeatherDaySnapshot(

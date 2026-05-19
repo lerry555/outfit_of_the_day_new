@@ -44,6 +44,7 @@ class _HomeQuickActionOrbState extends State<HomeQuickActionOrb>
   static const double _fanEnd = math.pi + 0.78;
 
   static const double _orbitRadius = 84;
+  static const Duration _kActionLaunchDelay = Duration(milliseconds: 150);
 
   @override
   void initState() {
@@ -192,7 +193,10 @@ class _HomeQuickActionOrbState extends State<HomeQuickActionOrb>
                           label: entry.label,
                           onTap: () {
                             _closeMenu();
-                            entry.onTap();
+                            Future.delayed(_kActionLaunchDelay, () {
+                              if (!mounted) return;
+                              entry.onTap();
+                            });
                           },
                         ),
                       ),

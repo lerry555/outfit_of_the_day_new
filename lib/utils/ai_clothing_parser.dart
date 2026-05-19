@@ -308,6 +308,20 @@ class AiClothingParser {
     'leggings': 'leginy',
     'legging': 'leginy',
 
+    'plavecke sortky': 'plavecke_sortky',
+    'plavecké šortky': 'plavecke_sortky',
+    'plavecke sortky': 'plavecke_sortky',
+    'swim shorts': 'plavecke_sortky',
+    'swimming shorts': 'plavecke_sortky',
+    'board shorts': 'plavecke_sortky',
+    'swim trunks': 'plavecke_sortky',
+    'plavecke_sortky': 'plavecke_sortky',
+    'plavky': 'plavky_jednodielne',
+    'swimwear': 'plavky_jednodielne',
+    'swimsuit': 'plavky_jednodielne',
+    'bikiny': 'bikiny',
+    'bikini': 'bikiny',
+
     'sortky': 'sortky',
     'šortky': 'sortky',
     'shorts': 'sortky',
@@ -711,10 +725,27 @@ class AiClothingParser {
       }
       return fromCanonicalType('leginy');
     }
+    if (_hasAny(t, [
+      'plavecke sortky',
+      'plavecké šortky',
+      'swim shorts',
+      'swimming shorts',
+      'board shorts',
+      'swim trunks',
+      'plavky sortky',
+    ])) {
+      return fromCanonicalType('plavecke_sortky');
+    }
+    if (_hasAny(t, ['bikini', 'bikiny', 'two piece swimsuit'])) {
+      return fromCanonicalType('bikiny');
+    }
+    if (_hasAny(t, ['plavky', 'swimwear', 'swimsuit', 'swimming suit', 'bathing suit'])) {
+      return fromCanonicalType('plavky_jednodielne');
+    }
     if (_hasAny(t, ['running shorts', 'gym shorts', 'athletic shorts', 'sport shorts', 'sportove sortky', 'športové šortky'])) {
       return fromCanonicalType('sortky_sportove');
     }
-    if (_hasAny(t, ['shorts', 'sortky', 'šortky'])) {
+    if (_hasAny(t, ['shorts', 'sortky', 'šortky', 'kratasy', 'kraťasy'])) {
       return fromCanonicalType('sortky');
     }
     if (_hasAny(t, ['mini skirt', 'mini sukna', 'mini sukňa'])) {
