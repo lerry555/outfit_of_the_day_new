@@ -67,4 +67,60 @@ abstract final class BriefingWeatherCondition {
 
     return 'Polooblačno';
   }
+
+  /// Krátke štítky pre UI (bez „ráno/večer“ v texte — ten dáva riadok).
+  static String briefingUiSk(String internalSlug) {
+    switch (internalSlug) {
+      case 'Slnečno':
+        return 'Jasno';
+      case 'Zamračené':
+        return 'Oblačno';
+      case 'Prehánky':
+        return 'Dážď';
+      case 'Búrka':
+        return 'Búrky';
+      case 'Mlhavo':
+      case 'Sychravo':
+        return 'Hmlisto';
+      default:
+        return internalSlug;
+    }
+  }
+
+  static bool _briefingLabelIsWet(String s) {
+    final t = s.trim();
+    return t == 'Dážď' || t == 'Búrky';
+  }
+
+  /// Jedna hlavička pod Dnes/Zajtra — súlad ráno / poobedie / večer (nie jeden náhodný štítok).
+  ///
+  /// Postup: ak súčasne mokré a suché segmenty → „Premenlivé“. Inak väčšina (2× rovnaký štítok).
+  /// Bez väčšiny: reprezentant **poobedie** (stred dňa).
+  static String dailyHeadlineSk(String morning, String afternoon, String evening) {
+    final m = morning.trim();
+    final a = afternoon.trim();
+    final e = evening.trim();
+    final parts = <String>[m, a, e].where((s) => s.isNotEmpty).toList(growable: false);
+    if (parts.isEmpty) return 'Polooblačno';
+
+    final hasWet = parts.any(_briefingLabelIsWet);
+    final hasDry = parts.any((s) => !_briefingLabelIsWet(s));
+    if (hasWet && hasDry) {
+      return 'Premenlivé';
+    }
+
+    final tally = <String, int>{};
+    for (final p in parts) {
+      tally[p] = (tally[p] ?? 0) + 1;
+    }
+    for (final entry in tally.entries) {
+      if (entry.value >= 2) {
+        return entry.key;
+      }
+    }
+
+    if (a.isNotEmpty) return a;
+    if (m.isNotEmpty) return m;
+    return e;
+  }
 }

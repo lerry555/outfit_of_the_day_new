@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../utils/wardrobe_image_url_priority.dart';
 
 /// Slim weather snapshot used to pick outfits.
@@ -60,9 +62,46 @@ class OutfitPreview {
 class OutfitGenerationService {
   const OutfitGenerationService._();
 
+  /// Firestore document id merged into wardrobe maps as `id`.
+  static String wardrobeItemId(Map<String, dynamic> raw) {
+    final v = raw['id'] ?? raw['documentId'];
+    final s = v?.toString().trim();
+    return (s == null || s.isEmpty) ? '' : s;
+  }
+
+  static String combinationSignature(
+    Map<String, dynamic> top,
+    Map<String, dynamic> bottom,
+    Map<String, dynamic> shoes,
+    Map<String, dynamic>? outer,
+  ) {
+    final parts = <String>[
+      wardrobeItemId(top),
+      wardrobeItemId(bottom),
+      wardrobeItemId(shoes),
+      if (outer != null) wardrobeItemId(outer),
+    ].where((e) => e.isNotEmpty).toList()
+      ..sort();
+    return parts.join('|');
+  }
+
+  static int overlapCount(Set<String> previousIds, List<Map<String, dynamic>> picks) {
+    if (previousIds.isEmpty) return 0;
+    var n = 0;
+    for (final m in picks) {
+      final id = wardrobeItemId(m);
+      if (id.isNotEmpty && previousIds.contains(id)) n++;
+    }
+    return n;
+  }
+
   static OutfitPreview? generatePreview({
     required List<Map<String, dynamic>> wardrobeItems,
     required OutfitWeatherSnapshot weather,
+    Set<String> excludedItemIds = const {},
+    Set<String> rejectedCombinationSignatures = const {},
+    Set<String> previousItemIds = const {},
+    bool forceDifferentOutfit = false,
   }) {
     Map<String, dynamic> normalize(Map<String, dynamic> raw) {
       final m = Map<String, dynamic>.from(raw);
@@ -242,21 +281,39 @@ class OutfitGenerationService {
       return s;
     }
 
-    Map<String, dynamic>? pickBest(
+    Map<String, dynamic>? pickNthBest(
       List<Map<String, dynamic>> candidates,
-      double Function(Map<String, dynamic>) score,
+      double Function(Map<String, dynamic>) scoreFn,
+      int rankIndex,
     ) {
       if (candidates.isEmpty) return null;
-      Map<String, dynamic>? best;
-      var bestScore = -1e9;
-      for (final c in candidates) {
-        final s = score(c);
-        if (s > bestScore) {
-          bestScore = s;
-          best = c;
-        }
+      final ranked = candidates.map((c) => (c, scoreFn(c))).toList()
+        ..sort((a, b) {
+          final cmp = b.$2.compareTo(a.$2);
+          if (cmp != 0) return cmp;
+          return wardrobeItemId(a.$1).compareTo(wardrobeItemId(b.$1));
+        });
+      final idx = rankIndex.clamp(0, ranked.length - 1);
+      return ranked[idx].$1;
+    }
+
+    List<Map<String, dynamic>> filterExcluded(
+      List<Map<String, dynamic>> pool,
+      String slotLabel,
+    ) {
+      if (excludedItemIds.isEmpty) return pool;
+      final filtered = pool.where((it) {
+        final id = wardrobeItemId(it);
+        return id.isEmpty || !excludedItemIds.contains(id);
+      }).toList();
+      if (filtered.isEmpty) {
+        debugPrint(
+          '[OUTFIT_GEN] excluded fallback slot=$slotLabel pool=${pool.length} '
+          '(žiadna alternatíva mimo excluded)',
+        );
+        return pool;
       }
-      return best;
+      return filtered;
     }
 
     final seasonal = cleanItems.where(matchesSeason).toList();
@@ -275,14 +332,14 @@ class OutfitGenerationService {
     final isCold = temp < 10;
     final needsOuterwear = isCold || weather.isRainy;
 
-    final topItem = pickBest(tops, baseScore);
-    final bottomItem = pickBest(bottoms, (it) {
+    double scoreBottom(Map<String, dynamic> it) {
       final b = blob(it);
       var s = baseScore(it);
       if (isWarm && (b.contains('krať') || b.contains('short'))) s += 1.0;
       return s;
-    });
-    final shoesItem = pickBest(shoes, (it) {
+    }
+
+    double scoreShoes(Map<String, dynamic> it) {
       final b = blob(it);
       var s = baseScore(it);
       if (weather.isRainy &&
@@ -291,21 +348,16 @@ class OutfitGenerationService {
       }
       if (isWarm && (b.contains('sandál') || b.contains('sandal'))) s += 1.0;
       return s;
-    });
-
-    Map<String, dynamic>? outerItem;
-    if (!isWarm && outerwear.isNotEmpty && (needsOuterwear || isMild)) {
-      outerItem = pickBest(outerwear, (it) {
-        final b = blob(it);
-        var s = baseScore(it);
-        if (isCold && isHeavyOuterwear(it)) s += 1.2;
-        if (isMild && isLightOuterwear(it)) s += 1.0;
-        if (weather.isRainy && b.contains('bunda')) s += 0.4;
-        return s;
-      });
     }
 
-    if (topItem == null || bottomItem == null || shoesItem == null) return null;
+    double scoreOuter(Map<String, dynamic> it) {
+      final b = blob(it);
+      var s = baseScore(it);
+      if (isCold && isHeavyOuterwear(it)) s += 1.2;
+      if (isMild && isLightOuterwear(it)) s += 1.0;
+      if (weather.isRainy && b.contains('bunda')) s += 0.4;
+      return s;
+    }
 
     String labelFor(Map<String, dynamic> it, {required String fallback}) {
       final name = (it['name'] ?? '').toString().trim();
@@ -333,30 +385,107 @@ class OutfitGenerationService {
       );
     }
 
-    return OutfitPreview(
-      top: toPreviewItem(
-        type: OutfitWearType.top,
-        item: topItem,
-        fallbackLabel: 'Vrchný diel',
-      ),
-      bottom: toPreviewItem(
-        type: OutfitWearType.bottom,
-        item: bottomItem,
-        fallbackLabel: 'Spodný diel',
-      ),
-      shoes: toPreviewItem(
-        type: OutfitWearType.shoes,
-        item: shoesItem,
-        fallbackLabel: 'Obuv',
-      ),
-      outerwear: outerItem == null
-          ? null
-          : toPreviewItem(
-              type: OutfitWearType.outerwear,
-              item: outerItem,
-              fallbackLabel: 'Vrstva',
-            ),
-    );
+    OutfitPreview buildPreview({
+      required Map<String, dynamic> topItem,
+      required Map<String, dynamic> bottomItem,
+      required Map<String, dynamic> shoesItem,
+      required Map<String, dynamic>? outerItem,
+    }) {
+      return OutfitPreview(
+        top: toPreviewItem(
+          type: OutfitWearType.top,
+          item: topItem,
+          fallbackLabel: 'Vrchný diel',
+        ),
+        bottom: toPreviewItem(
+          type: OutfitWearType.bottom,
+          item: bottomItem,
+          fallbackLabel: 'Spodný diel',
+        ),
+        shoes: toPreviewItem(
+          type: OutfitWearType.shoes,
+          item: shoesItem,
+          fallbackLabel: 'Obuv',
+        ),
+        outerwear: outerItem == null
+            ? null
+            : toPreviewItem(
+                type: OutfitWearType.outerwear,
+                item: outerItem,
+                fallbackLabel: 'Vrstva',
+              ),
+      );
+    }
+
+    final prevIdSet = previousItemIds.toSet();
+
+    const maxAttempts = 14;
+    OutfitPreview? bestOverlapPreview;
+    var bestOverlap = 999;
+
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
+      final ftops = filterExcluded(tops, 'top');
+      final fbottoms = filterExcluded(bottoms, 'bottom');
+      final fshoes = filterExcluded(shoes, 'shoes');
+
+      Map<String, dynamic>? outerItem;
+      if (!isWarm && outerwear.isNotEmpty && (needsOuterwear || isMild)) {
+        final fo = filterExcluded(outerwear, 'outerwear');
+        outerItem = pickNthBest(fo, scoreOuter, attempt);
+      }
+
+      final topItem = pickNthBest(ftops, baseScore, attempt);
+      final bottomItem = pickNthBest(fbottoms, scoreBottom, attempt);
+      final shoesItem = pickNthBest(fshoes, scoreShoes, attempt);
+
+      if (topItem == null || bottomItem == null || shoesItem == null) {
+        continue;
+      }
+
+      final sig = combinationSignature(topItem, bottomItem, shoesItem, outerItem);
+      if (rejectedCombinationSignatures.contains(sig)) {
+        continue;
+      }
+
+      final picks = <Map<String, dynamic>>[
+        topItem,
+        bottomItem,
+        shoesItem,
+        if (outerItem != null) outerItem,
+      ];
+      final overlap = overlapCount(prevIdSet, picks);
+
+      final preview = buildPreview(
+        topItem: topItem,
+        bottomItem: bottomItem,
+        shoesItem: shoesItem,
+        outerItem: outerItem,
+      );
+
+      if (!forceDifferentOutfit || prevIdSet.isEmpty) {
+        return preview;
+      }
+
+      if (overlap >= 3) {
+        if (overlap < bestOverlap) {
+          bestOverlap = overlap;
+          bestOverlapPreview = preview;
+        }
+        continue;
+      }
+
+      return preview;
+    }
+
+    if (bestOverlapPreview != null) {
+      debugPrint(
+        '[OUTFIT_GEN] forceDifferent: žiadna kombinácia s overlap<3; '
+        'vracam najlepší pokus overlap=$bestOverlap',
+      );
+      return bestOverlapPreview;
+    }
+
+    return null;
   }
 }
 

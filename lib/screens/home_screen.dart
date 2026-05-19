@@ -24,13 +24,27 @@ import 'messages_screen.dart';
 import 'premium_screen.dart';
 import 'profile_screen.dart';
 import 'recommended_screen.dart';
-import 'trip_planner_screen.dart';
+import 'trip_packing_screen.dart';
 import 'user_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
 import '../utils/outfit_reason_builder.dart';
 import '../utils/briefing_weather_condition.dart';
+import '../utils/luxury_weather_emoji.dart';
 import '../Services/hourly_weather_service.dart';
+import '../Services/outfit_generation_service.dart';
 import '../Services/stylist_day_brief.dart';
+import '../utils/wardrobe_image_url_priority.dart';
+
+/// Hero outfit: transparent PNG pred produktovou fotkou ([resolveHeroHomeOutfitImageUrl]).
+String? _heroWardrobeDisplayImageUrl(Map<String, dynamic> raw) {
+  final picked = resolveHeroHomeOutfitImageUrl(raw);
+  String t(String k) => (raw[k]?.toString().trim() ?? '');
+  debugPrint(
+    '[HOME_IMAGE_PICK] name=${t('name')} cutout=${t('cutoutImageUrl')} clean=${t('cleanImageUrl')} '
+    'product=${t('productImageUrl')} original=${t('originalImageUrl')} picked=$picked',
+  );
+  return picked;
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -42,7 +56,6 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  int generatedOutfitsToday = 0;
 
   // ✅ prepínač Dnes/Zajtra (UI)
   int _dayIndex = 0; // 0 = dnes, 1 = zajtra
@@ -50,6 +63,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOutfitEditMode = false;
   _HeroWearType? _focusedEditType;
   final Map<int, List<_HeroOutfitItem>> _editedOutfitByDay = {};
+  /// Kombinácie outfitov, ktoré používateľ už odmietol („Nový outfit“).
+  final Map<int, Set<String>> _rejectedOutfitCombinationKeysByDay = {};
+  bool _newOutfitGenerating = false;
   final Map<int, String> _likedOutfitKeyByDay = {};
   int _likePulseTick = 0;
   bool _showLikeInlineFeedback = false;
@@ -319,108 +335,157 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _handleNewOutfitPressed() async {
-    final isPremiumMode = await _isCurrentUserPremium();
-    if (isPremiumMode) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Premium režim: nový outfit vygenerujeme neskôr.'),
-        ),
-      );
-      return;
-    }
+  String _heroOutfitSignatureFromItems(List<_HeroOutfitItem> items) {
+    final ids = items
+        .map((e) => e.wardrobeItemId)
+        .whereType<String>()
+        .where((s) => s.isNotEmpty)
+        .toList()
+      ..sort();
+    return ids.join('|');
+  }
 
-    if (generatedOutfitsToday < 3) {
-      final nextCount = generatedOutfitsToday + 1;
+  int _countChangedHeroPieces(List<_HeroOutfitItem> oldList, List<_HeroOutfitItem> newList) {
+    final oldByType = {for (final o in oldList) o.type: o};
+    var changes = 0;
+    for (final n in newList) {
+      final o = oldByType[n.type];
+      if (o == null) {
+        changes++;
+        continue;
+      }
+      final oid = o.wardrobeItemId;
+      final nid = n.wardrobeItemId;
+      if (oid != null && nid != null) {
+        if (oid != nid) changes++;
+      } else if (o.label != n.label) {
+        changes++;
+      }
+    }
+    return changes;
+  }
+
+  Future<void> _handleNewOutfitPressed() async {
+    if (_newOutfitGenerating) return;
+    final user = _auth.currentUser;
+    if (user == null || !mounted) return;
+
+    final now = DateTime.now();
+    final todayDate = DateTime(now.year, now.month, now.day);
+    final activeDate = _isTomorrow ? todayDate.add(const Duration(days: 1)) : todayDate;
+
+    setState(() => _newOutfitGenerating = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Skúsim úplne inú kombináciu.'),
+        duration: Duration(seconds: 2),
+      ),
+    );
+
+    try {
+      final wardrobeSnap =
+          await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+      final wardrobe = wardrobeSnap.docs.map((d) {
+        final m = Map<String, dynamic>.from(d.data());
+        m['id'] = d.id;
+        return m;
+      }).toList();
+
+      final userDoc = await _firestore.collection('users').doc(user.uid).get();
+      final ud = userDoc.data();
+      final isPremiumUser =
+          ud?['isPremium'] == true || ud?['subscriptionStatus'] == 'premium';
+
+      final w = _weatherForDate(activeDate);
+      final baseHero =
+          _buildTodayHero(date: activeDate, wardrobe: wardrobe, isPremiumUser: isPremiumUser);
+
+      final effectiveItems =
+          List<_HeroOutfitItem>.from(_editedOutfitByDay[_dayIndex] ?? baseHero.outfitItems);
+
+      final excluded = <String>{
+        for (final it in effectiveItems)
+          if ((it.wardrobeItemId ?? '').isNotEmpty) it.wardrobeItemId!,
+      };
+
+      final rejectedSigs =
+          Set<String>.from(_rejectedOutfitCombinationKeysByDay[_dayIndex] ?? {});
+      final prevSig = _heroOutfitSignatureFromItems(effectiveItems);
+      if (prevSig.isNotEmpty) {
+        rejectedSigs.add(prevSig);
+      }
+      _rejectedOutfitCombinationKeysByDay[_dayIndex] = rejectedSigs;
+
+      final rec = _recommendOutfitForWeather(
+        wardrobe: wardrobe,
+        weather: w,
+        isPremiumUser: isPremiumUser,
+        excludedItemIds: excluded,
+        rejectedCombinationSignatures: rejectedSigs,
+        previousOutfitItemIds: excluded,
+        forceDifferentOutfit: effectiveItems.isNotEmpty,
+      );
+
+      if (!mounted) return;
+
+      if (rec == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Nepodarilo sa poskladať nový outfit z šatníka.'),
+          ),
+        );
+        return;
+      }
+
+      final newIds = rec.items
+          .map((e) => e.wardrobeItemId)
+          .whereType<String>()
+          .toList(growable: false);
+      final changed = _countChangedHeroPieces(effectiveItems, rec.items);
+      final newSig = _heroOutfitSignatureFromItems(rec.items);
+
+      debugPrint(
+        '[NEW_OUTFIT] originalIds=$excluded rejectedCombinations=${rejectedSigs.length} '
+        'newIds=$newIds changedPieces=$changed prevSig=$prevSig newSig=$newSig',
+      );
+
+      final identical = effectiveItems.isNotEmpty &&
+          (changed == 0 || (prevSig.isNotEmpty && prevSig == newSig));
+
+      if (identical) {
+        debugPrint('[NEW_OUTFIT] WARNING identical or zero-change outfit — UI neprepísané');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Nepodarilo sa nájsť dosť odlišnú kombináciu — skontroluj šatník.',
+            ),
+          ),
+        );
+        return;
+      }
+
+      if (changed < effectiveItems.length && effectiveItems.length >= 3) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'V šatníku nemáš dosť alternatív, vymenil som aspoň dostupné kúsky.',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+      }
+
+      _setEditedItems(rec.items);
       setState(() {
-        generatedOutfitsToday = nextCount;
         _likedOutfitKeyByDay.remove(_dayIndex);
         _likePulseTick = 0;
         _showLikeInlineFeedback = false;
       });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Nový outfit vygenerujeme neskôr. Test limitu: $nextCount/3',
-          ),
-        ),
-      );
-      return;
+    } finally {
+      if (mounted) {
+        setState(() => _newOutfitGenerating = false);
+      }
     }
-
-    showModalBottomSheet<void>(
-      context: context,
-      backgroundColor: const Color(0xFF121212),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 20),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: Colors.white24,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                const Text(
-                  'Limit outfitov dosiahnutý',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Dnes si už vytvoril 3 outfity. S Premium môžeš generovať neobmedzene a získať presnejšie odporúčania.',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary,
-                    fontSize: 13.5,
-                    height: 1.35,
-                  ),
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: HomeLuxuryPalette.accent,
-                      foregroundColor: const Color(0xFF191512),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onPressed: () {
-                      Navigator.of(sheetContext).pop();
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const PremiumScreen()),
-                      );
-                    },
-                    child: const Text(
-                      'Vyskúšať Premium',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
   }
 
   Future<void> _openVibeComposerPanel() async {
@@ -955,299 +1020,39 @@ class _HomeScreenState extends State<HomeScreen> {
     required List<Map<String, dynamic>> wardrobe,
     required _LocalWeather weather,
     required bool isPremiumUser,
+    Set<String> excludedItemIds = const {},
+    Set<String> rejectedCombinationSignatures = const {},
+    Set<String> previousOutfitItemIds = const {},
+    bool forceDifferentOutfit = false,
   }) {
-    // Minimálna, lokálna logika (bez AI / bez refaktorov).
-    // Cieľ: vybrať Top + Bottom + Shoes + voliteľný Outerwear podľa počasia.
+    final snap = OutfitWeatherSnapshot(
+      tempC: weather.tempC,
+      isRainy: weather.isRainy,
+      isWindy: weather.isWindy,
+      seasonKey: weather.seasonKey,
+    );
+    final preview = OutfitGenerationService.generatePreview(
+      wardrobeItems: wardrobe,
+      weather: snap,
+      excludedItemIds: excludedItemIds,
+      rejectedCombinationSignatures: rejectedCombinationSignatures,
+      previousItemIds: previousOutfitItemIds,
+      forceDifferentOutfit: forceDifferentOutfit,
+    );
+    if (preview == null) return null;
 
+    final topRaw = preview.top.item;
+    final bottomRaw = preview.bottom.item;
+    final shoesRaw = preview.shoes.item;
+    final outerRaw = preview.outerwear?.item;
 
-
-    final clean = wardrobe.where((raw) {
-      final isClean = raw['isClean'];
-      if (isClean is bool) return isClean;
-      return true; // ak pole neexistuje, berieme ako OK
-    }).toList();
-
-    Map<String, dynamic> normalize(Map<String, dynamic> raw) {
-      // Zjednotíme známe polia (nové aj staré verzie dát).
-      final m = Map<String, dynamic>.from(raw);
-      m['name'] = (m['name'] ?? '').toString();
-      m['category'] = (m['categoryKey'] ?? m['category'] ?? '').toString();
-      m['subCategory'] = (m['subCategoryKey'] ?? m['subCategory'] ?? '').toString();
-      m['mainGroup'] = (m['mainGroupKey'] ?? m['mainGroup'] ?? '').toString();
-      m['colors'] = m['colors'] ?? m['color'] ?? const [];
-      m['seasons'] = m['seasons'] ?? m['season'] ?? const [];
-      return m;
-    }
-
-    final items = clean.map(normalize).toList();
-    if (items.isEmpty) return null;
-
-    bool matchesSeason(Map<String, dynamic> item) {
-      final seasonsDyn = item['seasons'];
-      final seasons = <String>[
-        if (seasonsDyn is List) ...seasonsDyn.map((e) => e.toString()),
-        if (seasonsDyn is String && seasonsDyn.trim().isNotEmpty) seasonsDyn,
-      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
-
-      if (seasons.isEmpty) return true;
-      final target = weather.seasonKey; // napr. "jar"
-      return seasons.any((s) => s.contains('cel') || s.contains(target));
-    }
-
-    final seasonal = items.where(matchesSeason).toList();
-    final pool = seasonal.isNotEmpty ? seasonal : items;
-
-    bool containsAny(String haystack, List<String> needles) {
-      final h = haystack.toLowerCase();
-      return needles.any((n) => h.contains(n));
-    }
-
-    String blob(Map<String, dynamic> it) {
-      return [
-        (it['name'] ?? '').toString(),
-        (it['category'] ?? '').toString(),
-        (it['subCategory'] ?? '').toString(),
-        (it['mainGroup'] ?? '').toString(),
-      ].join(' ').toLowerCase();
-    }
-
-    bool isTop(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'trič',
-        'trick',
-        't-shirt',
-        'top',
-        'koše',
-        'kosel',
-        'blúz',
-        'bluz',
-        'sveter',
-        'shirt',
-        'blouse',
-      ]);
-    }
-
-    bool isBottom(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'nohav',
-        'rifl',
-        'džín',
-        'dzín',
-        'jeans',
-        'pants',
-        'sukn',
-        'skirt',
-        'krať',
-        'krat',
-        'short',
-      ]);
-    }
-
-    bool isShoes(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'topán',
-        'topan',
-        'tenis',
-        'sneaker',
-        'boots',
-        'čiž',
-        'ciz',
-        'sandál',
-        'sandal',
-        'obuv',
-        'shoes',
-      ]);
-    }
-
-    bool isOuterwear(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'bunda',
-        'kabát',
-        'kabat',
-        'mikina',
-        'sako',
-        'blazer',
-        'coat',
-        'jacket',
-        'hoodie',
-      ]);
-    }
-
-    bool isHeavyOuterwear(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, ['kabát', 'kabat', 'coat', 'parka', 'čiž', 'ciz']);
-    }
-
-    bool isLightOuterwear(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, ['mikina', 'hoodie', 'sako', 'blazer', 'bunda', 'jacket']);
-    }
-
-    bool isNeutral(Map<String, dynamic> it) {
-      final colorsDyn = it['colors'];
-      final colors = <String>[
-        if (colorsDyn is List) ...colorsDyn.map((e) => e.toString()),
-        if (colorsDyn is String && colorsDyn.trim().isNotEmpty) colorsDyn,
-      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
-
-      if (colors.isEmpty) return false;
-      return colors.any((c) {
-        return c.contains('čier') ||
-            c.contains('cier') ||
-            c.contains('black') ||
-            c.contains('biel') ||
-            c.contains('white') ||
-            c.contains('siv') ||
-            c.contains('gray') ||
-            c.contains('grey') ||
-            c.contains('béž') ||
-            c.contains('bez') ||
-            c.contains('beige') ||
-            c.contains('navy') ||
-            c.contains('tmavomod');
-      });
-    }
-
-    _Scored pickBest(List<Map<String, dynamic>> candidates, double Function(Map<String, dynamic>) score) {
-      if (candidates.isEmpty) return _Scored(null, -1);
-      Map<String, dynamic>? best;
-      var bestScore = -1e9;
-      for (final c in candidates) {
-        final s = score(c);
-        if (s > bestScore) {
-          bestScore = s;
-          best = c;
-        }
-      }
-      return _Scored(best, bestScore);
-    }
-
-    double baseScore(Map<String, dynamic> it) {
-      // Preferuj neutrálne a "basic" kúsky, ak existujú.
-      final b = blob(it);
-      var s = 0.0;
-      if (isNeutral(it)) s += 2.0;
-      if (b.contains('basic')) s += 1.0;
-      if ((it['brand'] ?? '').toString().trim().isNotEmpty) s += 0.2; // jemná preferencia "reálneho" kusu
-      return s;
-    }
-
-    final tops = pool.where(isTop).toList();
-    final bottoms = pool.where(isBottom).toList();
-    final shoes = pool.where(isShoes).toList();
-    final outerwear = pool.where(isOuterwear).toList();
-
-    if (tops.isEmpty || bottoms.isEmpty || shoes.isEmpty) return null;
-
-    final temp = weather.tempC;
-    final isWarm = temp >= 20;
-    final isMild = temp >= 10 && temp < 20;
-    final isCold = temp < 10;
-    final needsOuterwear = isCold || weather.isRainy;
-
-    final topPick = pickBest(tops, (it) => baseScore(it));
-    final bottomPick = pickBest(bottoms, (it) {
-      final b = blob(it);
-      var s = baseScore(it);
-      if (isWarm && (b.contains('krať') || b.contains('short'))) s += 1.0;
-      return s;
-    });
-    final shoesPick = pickBest(shoes, (it) {
-      final b = blob(it);
-      var s = baseScore(it);
-      if (weather.isRainy && (b.contains('čiž') || b.contains('ciz') || b.contains('boots'))) s += 1.0;
-      if (isWarm && (b.contains('sandál') || b.contains('sandal'))) s += 1.0;
-      return s;
-    });
-
-    Map<String, dynamic>? outerPick;
-    if (!isWarm && outerwear.isNotEmpty && (needsOuterwear || isMild)) {
-      outerPick = pickBest(outerwear, (it) {
-        var s = baseScore(it);
-        if (isCold && isHeavyOuterwear(it)) s += 1.2;
-        if (isMild && isLightOuterwear(it)) s += 1.0;
-        if (weather.isRainy && blob(it).contains('bunda')) s += 0.4;
-        return s;
-      }).item;
-    }
-
-    String labelFor(Map<String, dynamic> it, {required String fallback}) {
-      final name = (it['name'] ?? '').toString().trim();
-      if (name.isNotEmpty) return name;
-      final sub = (it['subCategory'] ?? '').toString().trim();
-      if (sub.isNotEmpty) return sub;
-      final cat = (it['category'] ?? '').toString().trim();
-      if (cat.isNotEmpty) return cat;
-      return fallback;
-    }
-
-    IconData iconForType(_HeroWearType type) {
-      if (type == _HeroWearType.top) return Icons.checkroom;
-      if (type == _HeroWearType.bottom) return Icons.style;
-      if (type == _HeroWearType.shoes) return Icons.directions_run;
-      return Icons.umbrella;
-    }
-
-    String fallbackLabelForType(_HeroWearType type) {
-      if (type == _HeroWearType.top) return 'Vrchný diel';
-      if (type == _HeroWearType.bottom) return 'Spodný diel';
-      if (type == _HeroWearType.shoes) return 'Obuv';
-      return 'Vrstva';
-    }
-
-    final selected = <_TypedWardrobePick>[
-      _TypedWardrobePick(type: _HeroWearType.top, item: topPick.item!),
-      _TypedWardrobePick(type: _HeroWearType.bottom, item: bottomPick.item!),
-      _TypedWardrobePick(type: _HeroWearType.shoes, item: shoesPick.item!),
-      if (outerPick != null)
-        _TypedWardrobePick(type: _HeroWearType.outerwear, item: outerPick),
-    ];
-
-    final outfitTiles = selected
-        .map((p) {
-      final label = labelFor(p.item, fallback: fallbackLabelForType(p.type));
-      final resolvedImageUrl = _resolveHeroPreviewImageUrl(p.item);
-      final safeImageUrl = resolvedImageUrl?.trim();
-      final brandRaw = (p.item['brand'] ?? '').toString().trim();
-      final categoryKey = (p.item['category'] ?? '').toString().trim();
-      final subCategoryKey = (p.item['subCategory'] ?? '').toString().trim();
-
-      return _HeroOutfitItem(
-        type: p.type,
-        icon: iconForType(p.type),
-        label: label,
-        brandLine: brandRaw.isNotEmpty ? brandRaw : null,
-        imageUrl: (safeImageUrl?.isNotEmpty ?? false) ? safeImageUrl : null,
-        categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
-        subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
-      );
-    })
-        .toList();
-
-    final hasOuter = outerPick != null;
+    final hasOuter = preview.outerwear != null;
 
     final selectedReasonItems = <Map<String, dynamic>>[
-      {
-        ...topPick.item!,
-        'typeKey': 'top',
-      },
-      {
-        ...bottomPick.item!,
-        'typeKey': 'bottom',
-      },
-      {
-        ...shoesPick.item!,
-        'typeKey': 'shoes',
-      },
-      if (outerPick != null)
-        {
-          ...outerPick,
-          'typeKey': 'outerwear',
-        },
+      {...topRaw, 'typeKey': 'top'},
+      {...bottomRaw, 'typeKey': 'bottom'},
+      {...shoesRaw, 'typeKey': 'shoes'},
+      if (outerRaw != null) {...outerRaw, 'typeKey': 'outerwear'},
     ];
 
     final now = DateTime.now();
@@ -1275,33 +1080,50 @@ class _HomeScreenState extends State<HomeScreen> {
       eveningRainSegment: weather.eveningRainSegment,
     );
 
-    final rec = _HeroOutfitRecommendation(
+    final outfitTiles = <_HeroOutfitItem>[
+      _heroItemFromOutfitPreview(preview.top),
+      _heroItemFromOutfitPreview(preview.bottom),
+      _heroItemFromOutfitPreview(preview.shoes),
+      if (preview.outerwear != null) _heroItemFromOutfitPreview(preview.outerwear!),
+    ];
+
+    if (outfitTiles.length < 3) return null;
+    return _HeroOutfitRecommendation(
       items: outfitTiles,
       reason: reasonParagraph,
     );
-
-    // bezpečnostná kontrola
-    if (rec.items.length < 3) return null;
-    return rec;
   }
 
-  String? _resolveHeroPreviewImageUrl(Map<String, dynamic> item) {
-    String? value(dynamic v) {
-      final s = v?.toString().trim();
-      return (s == null || s.isEmpty) ? null : s;
+  _HeroWearType _heroWearFromOutfitWear(OutfitWearType t) {
+    switch (t) {
+      case OutfitWearType.top:
+        return _HeroWearType.top;
+      case OutfitWearType.bottom:
+        return _HeroWearType.bottom;
+      case OutfitWearType.shoes:
+        return _HeroWearType.shoes;
+      case OutfitWearType.outerwear:
+        return _HeroWearType.outerwear;
     }
+  }
 
-    final cutout = value(item['cutoutImageUrl']);
-    if (cutout != null) return cutout;
-
-    final clean = value(item['cleanImageUrl']);
-    if (clean != null) return clean;
-
-
-    final image = value(item['imageUrl']);
-    if (image != null) return image;
-
-    return null;
+  _HeroOutfitItem _heroItemFromOutfitPreview(OutfitPreviewItem p) {
+    final type = _heroWearFromOutfitWear(p.type);
+    final raw = p.item;
+    final id = OutfitGenerationService.wardrobeItemId(raw);
+    final brandRaw = (raw['brand'] ?? '').toString().trim();
+    final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
+    final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    return _HeroOutfitItem(
+      type: type,
+      icon: _heroIconForType(type),
+      label: p.label,
+      brandLine: brandRaw.isNotEmpty ? brandRaw : null,
+      imageUrl: _heroWardrobeDisplayImageUrl(raw),
+      categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
+      subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
+      wardrobeItemId: id.isEmpty ? null : id,
+    );
   }
 
   IconData _heroIconForType(_HeroWearType type) {
@@ -1335,14 +1157,16 @@ class _HomeScreenState extends State<HomeScreen> {
     final brandRaw = (raw['brand'] ?? '').toString().trim();
     final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
     final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final wid = OutfitGenerationService.wardrobeItemId(raw);
     return _HeroOutfitItem(
       type: type,
       icon: _heroIconForType(type),
       label: _heroLabelForWardrobeItem(raw, fallback: _heroFallbackLabelForType(type)),
       brandLine: brandRaw.isNotEmpty ? brandRaw : null,
-      imageUrl: _resolveHeroPreviewImageUrl(raw),
+      imageUrl: _heroWardrobeDisplayImageUrl(raw),
       categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
       subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
+      wardrobeItemId: wid.isEmpty ? null : wid,
     );
   }
 
@@ -1510,7 +1334,15 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         const SizedBox(height: 22),
         _HeroOutfitActionBar(
-          onNewOutfit: _isOutfitEditMode ? _exitOutfitEditMode : _handleNewOutfitPressed,
+          onNewOutfit: () {
+            if (_newOutfitGenerating && !_isOutfitEditMode) return;
+            if (_isOutfitEditMode) {
+              _exitOutfitEditMode();
+            } else {
+              unawaited(_handleNewOutfitPressed());
+            }
+          },
+          newOutfitLoading: _newOutfitGenerating && !_isOutfitEditMode,
           onSwapPiece: () async {
             if (_isOutfitEditMode) {
               _exitOutfitEditMode();
@@ -2069,11 +1901,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       (
         emoji: '✈️',
-        label: 'Trip planner',
+        label: 'Čo si zbaliť?',
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const TripPlannerScreen()),
+            MaterialPageRoute(builder: (_) => const TripPackingScreen()),
           );
         },
       ),
@@ -2174,7 +2006,11 @@ class _HomeScreenState extends State<HomeScreen> {
             stream: _wardrobeStream(user.uid),
             builder: (context, snap) {
               final docs = snap.data?.docs ?? const [];
-              final wardrobe = docs.map((d) => d.data()).toList();
+              final wardrobe = docs.map((d) {
+                final m = Map<String, dynamic>.from(d.data());
+                m['id'] = d.id;
+                return m;
+              }).toList();
               final hero = _buildTodayHero(
                 date: activeDate,
                 wardrobe: wardrobe,
@@ -2726,40 +2562,51 @@ class _HeroInlineWeather extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final gap = compact ? 20.0 : 26.0;
-    final style = TextStyle(
-      color: HomeLuxuryPalette.textSecondary.withOpacity(0.82),
-      fontSize: compact ? 12.5 : 13,
-      fontWeight: FontWeight.w500,
-      letterSpacing: 0.2,
-      height: 1.25,
-    );
     final emojiStyle = TextStyle(
       fontSize: compact ? 13 : 14,
       height: 1.2,
     );
 
-    final String condEmoji;
-    final String condLabel;
-    if (weather.isRainy) {
-      condEmoji = '🌧';
-      condLabel = 'Dážď';
-    } else if (weather.isWindy) {
-      condEmoji = '💨';
-      condLabel = 'Vietor';
-    } else {
-      condEmoji = '☀';
-      condLabel = 'Jasno';
-    }
+    final headlineLabel = BriefingWeatherCondition.dailyHeadlineSk(
+      weather.briefingMorningCondition,
+      weather.briefingAfternoonCondition,
+      weather.briefingEveningCondition,
+    );
+    final condEmoji = LuxuryWeatherEmoji.forConditionSk(headlineLabel);
+    final condLabel = headlineLabel;
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    final tempStyle = TextStyle(
+      color: HomeLuxuryPalette.textPrimary.withOpacity(0.94),
+      fontSize: compact ? 12.5 : 13,
+      fontWeight: FontWeight.w500,
+      letterSpacing: 0.2,
+      height: 1.2,
+    );
+    final conditionStyle = TextStyle(
+      color: HomeLuxuryPalette.textSecondary.withOpacity(0.82),
+      fontSize: compact ? 11.5 : 12,
+      fontWeight: FontWeight.w500,
+      letterSpacing: 0.08,
+      height: 1.2,
+    );
+    final rowGap = compact ? 4.0 : 5.0;
+    final inlineGap = compact ? 5.0 : 6.0;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Text('🌡', style: emojiStyle),
-        Text(' ${weather.tempC}°C', style: style),
-        SizedBox(width: gap),
-        Text(condEmoji, style: emojiStyle),
-        Text(' $condLabel', style: style),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text('${weather.tempC}°C', style: tempStyle),
+            SizedBox(width: inlineGap),
+            Text(condEmoji, style: emojiStyle),
+          ],
+        ),
+        SizedBox(height: rowGap),
+        Text(condLabel, style: conditionStyle),
       ],
     );
   }
@@ -2768,6 +2615,77 @@ class _HeroInlineWeather extends StatelessWidget {
 /// Gaps in unified hero — keep in sync with [HomeDailyBriefingRow] `_kEmbeddedGapAfterToggle` / `_kEmbeddedGapBeforeGrid`.
 const double _kHeroGapAfterToggle = 8.0;
 const double _kHeroGapBeforeGrid = 14.0;
+
+/// Briefing-only glass inset — subtle separation from outfit tiles (luxury radius matches embedded rows ~14).
+const double _kBriefingGlassRadius = 14.0;
+
+/// Soft inset for „Prehľad dňa“ — content-sized only (no infinite height, no nested BackdropFilter).
+/// Top spacer pre zarovnanie s togglom patrí **nad** kartu (mimo dekorácie), nie do pozadia karty.
+class _UnifiedHeroBriefingGlassPanel extends StatelessWidget {
+  const _UnifiedHeroBriefingGlassPanel({
+    required this.gapBeforeGrid,
+    required this.briefing,
+  });
+
+  final double gapBeforeGrid;
+  final Widget briefing;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = BorderRadius.circular(_kBriefingGlassRadius);
+    return ClipRRect(
+      borderRadius: r,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
+        decoration: BoxDecoration(
+          borderRadius: r,
+          border: Border.all(
+            color: Colors.white.withOpacity(0.078),
+            width: 1,
+          ),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.052),
+              Colors.white.withOpacity(0.030),
+            ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.20),
+              blurRadius: 14,
+              offset: const Offset(0, 6),
+              spreadRadius: -3,
+            ),
+            BoxShadow(
+              color: HomeLuxuryPalette.accent.withOpacity(0.05),
+              blurRadius: 20,
+              spreadRadius: -8,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Prehľad dňa',
+                style: homeUnifiedHeroPrehladTitleStyle(),
+              ),
+            ),
+            SizedBox(height: gapBeforeGrid),
+            briefing,
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 /// Shared outfit / briefing body: bounded height — kept moderate so tiles stay elegant, not oversized.
 double _heroSharedBodyHeight(BuildContext context) {
@@ -2863,18 +2781,21 @@ class _UnifiedHeroSurface extends StatelessWidget {
     /// Matches [_HeroSegmentedDay] `compact` height — keep synced with briefing `_kEmbeddedToggleBand`.
     const segmentedToggleBandHeight = 42.0;
 
-    final heroBodyColumn = Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
+    final toggleWeatherBandHeight =
+        segmentedToggleBandHeight + _kHeroGapAfterToggle;
+
+    final heroBodyColumn = Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 11,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: Column(
+        Expanded(
+          flex: 11,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -2886,87 +2807,58 @@ class _UnifiedHeroSurface extends StatelessWidget {
                     const SizedBox(height: _kHeroGapAfterToggle),
                   ],
                 ),
-              ),
-            ),
-            Expanded(
-              flex: 9,
-              child: SizedBox(
-                height: segmentedToggleBandHeight + _kHeroGapAfterToggle,
-              ),
-            ),
-          ],
-        ),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              flex: 11,
-              child: Padding(
-                padding: const EdgeInsets.only(right: 10),
-                child: _HeroInlineWeather(
+                _HeroInlineWeather(
                   weather: weather,
                   compact: compact,
                 ),
-              ),
-            ),
-            Expanded(
-              flex: 9,
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'Prehľad dňa',
-                  style: homeUnifiedHeroPrehladTitleStyle(),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: _kHeroGapBeforeGrid),
-        CompositedTransformTarget(
-          link: outfitSpotlightLink ?? LayerLink(),
-          child: SizedBox(
-            key: outfitSpotlightTargetKey,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 11,
-                  child: Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: SizedBox(
-                      height: sharedBodyH,
-                      width: double.infinity,
-                      child: hasOutfitTiles
-                          ? outfitSwitcher
-                          : ConstrainedBox(
-                              constraints:
-                                  const BoxConstraints(minHeight: minGridEmpty),
-                              child: outfitSwitcher,
-                            ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  flex: 9,
-                  child: HomeDailyBriefingRow(
-                    key: ValueKey<String>(
-                      'prehlad_${weather.tempC}_${weather.briefingMorningC}_${weather.briefingAfternoonC}_${weather.briefingEveningC}_${weather.briefingMorningCondition}_${weather.briefingAfternoonCondition}_${weather.briefingEveningCondition}_$isTomorrow',
-                    ),
-                    unifiedEmbedded: true,
-                    unifiedSharedBodyHeight: sharedBodyH,
-                    baseTempC: weather.tempC,
-                    briefingMorningCondition: weather.briefingMorningCondition,
-                    briefingAfternoonCondition: weather.briefingAfternoonCondition,
-                    briefingEveningCondition: weather.briefingEveningCondition,
-                    sideColumn: true,
-                    compact: true,
-                    briefingMorningTempC: weather.briefingMorningC,
-                    briefingAfternoonTempC: weather.briefingAfternoonC,
-                    briefingEveningTempC: weather.briefingEveningC,
+                const SizedBox(height: _kHeroGapBeforeGrid),
+                CompositedTransformTarget(
+                  link: outfitSpotlightLink ?? LayerLink(),
+                  child: SizedBox(
+                    key: outfitSpotlightTargetKey,
+                    height: sharedBodyH,
+                    width: double.infinity,
+                    child: hasOutfitTiles
+                        ? outfitSwitcher
+                        : ConstrainedBox(
+                            constraints:
+                                const BoxConstraints(minHeight: minGridEmpty),
+                            child: outfitSwitcher,
+                          ),
                   ),
                 ),
               ],
             ),
+          ),
+        ),
+        Expanded(
+          flex: 9,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(height: toggleWeatherBandHeight),
+              _UnifiedHeroBriefingGlassPanel(
+                gapBeforeGrid: _kHeroGapBeforeGrid,
+                briefing: HomeDailyBriefingRow(
+                  key: ValueKey<String>(
+                    'prehlad_${weather.tempC}_${weather.briefingMorningC}_${weather.briefingAfternoonC}_${weather.briefingEveningC}_${weather.briefingMorningCondition}_${weather.briefingAfternoonCondition}_${weather.briefingEveningCondition}_$isTomorrow',
+                  ),
+                  unifiedEmbedded: true,
+                  unifiedSharedBodyHeight: sharedBodyH,
+                  baseTempC: weather.tempC,
+                  briefingMorningCondition: weather.briefingMorningCondition,
+                  briefingAfternoonCondition:
+                      weather.briefingAfternoonCondition,
+                  briefingEveningCondition: weather.briefingEveningCondition,
+                  sideColumn: true,
+                  compact: true,
+                  briefingMorningTempC: weather.briefingMorningC,
+                  briefingAfternoonTempC: weather.briefingAfternoonC,
+                  briefingEveningTempC: weather.briefingEveningC,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -3717,14 +3609,6 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     return fallback;
   }
 
-  String? _resolveHeroPreviewImageUrlLocal(Map<String, dynamic> item) {
-    String? value(dynamic v) {
-      final s = v?.toString().trim();
-      return (s == null || s.isEmpty) ? null : s;
-    }
-    return value(item['cutoutImageUrl']) ?? value(item['cleanImageUrl']) ?? value(item['imageUrl']);
-  }
-
   _HeroOutfitItem _heroItemFromWardrobeLocal({
     required Map<String, dynamic> raw,
     required _HeroWearType type,
@@ -3752,7 +3636,7 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
             : 'Vrstva',
       ),
       brandLine: brandRaw.isNotEmpty ? brandRaw : null,
-      imageUrl: _resolveHeroPreviewImageUrlLocal(raw),
+      imageUrl: _heroWardrobeDisplayImageUrl(raw),
       categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
       subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
     );
@@ -4347,6 +4231,7 @@ class _HeroOutfitActionBar extends StatelessWidget {
     required this.onLike,
     this.likeActive = false,
     this.likePulseTick = 0,
+    this.newOutfitLoading = false,
   });
 
   final VoidCallback onNewOutfit;
@@ -4354,6 +4239,7 @@ class _HeroOutfitActionBar extends StatelessWidget {
   final VoidCallback onLike;
   final bool likeActive;
   final int likePulseTick;
+  final bool newOutfitLoading;
 
   @override
   Widget build(BuildContext context) {
@@ -4380,7 +4266,7 @@ class _HeroOutfitActionBar extends StatelessWidget {
               Expanded(
                 child: _BarHit(
                   emoji: '❌',
-                  label: 'Nový outfit',
+                  label: newOutfitLoading ? 'Generujem…' : 'Nový outfit',
                   onTap: onNewOutfit,
                 ),
               ),
@@ -4841,6 +4727,8 @@ class _HeroOutfitItem {
   final String? imageUrl;
   final String? categoryKey;
   final String? subCategoryKey;
+  /// Firestore dokument šatníka — na výklik „Nový outfit“ / porovnanie kombinácie.
+  final String? wardrobeItemId;
 
   const _HeroOutfitItem({
     required this.type,
@@ -4850,6 +4738,7 @@ class _HeroOutfitItem {
     this.imageUrl,
     this.categoryKey,
     this.subCategoryKey,
+    this.wardrobeItemId,
   });
 }
 
@@ -4878,12 +4767,6 @@ class _TypedWardrobePick {
   final Map<String, dynamic> item;
 
   const _TypedWardrobePick({required this.type, required this.item});
-}
-
-class _Scored {
-  final Map<String, dynamic>? item;
-  final double score;
-  const _Scored(this.item, this.score);
 }
 
 class _HeroOutfitRecommendation {
@@ -4972,11 +4855,11 @@ class _LocalWeather {
   final bool morningRainSegment;
   final bool afternoonRainSegment;
   final bool eveningRainSegment;
-  /// Hourly briefing temps (7–9 / 12–15 / 18–21); null → [HomeDailyBriefingRow] derives from [tempC].
+  /// Hodinové teploty segmentov; null → [HomeDailyBriefingRow] odvodí z [tempC].
   final int? briefingMorningC;
   final int? briefingAfternoonC;
   final int? briefingEveningC;
-  /// Krátke štítky počasia pre „Prehľad dňa“ (WMO → slovenský štítok).
+  /// Krátke štítky počasia pre „Prehľad dňa“.
   final String briefingMorningCondition;
   final String briefingAfternoonCondition;
   final String briefingEveningCondition;
@@ -5106,20 +4989,26 @@ class _LocalWeather {
       briefingMorningC: mt,
       briefingAfternoonC: at,
       briefingEveningC: et,
-      briefingMorningCondition: BriefingWeatherCondition.fallback(
-        segmentRain: morningRainSeg,
-        segmentWindy: isWindy,
-        segment: BriefingDaySegment.morning,
+      briefingMorningCondition: BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.fallback(
+          segmentRain: morningRainSeg,
+          segmentWindy: isWindy,
+          segment: BriefingDaySegment.morning,
+        ),
       ),
-      briefingAfternoonCondition: BriefingWeatherCondition.fallback(
-        segmentRain: afternoonRainSeg,
-        segmentWindy: isWindy,
-        segment: BriefingDaySegment.afternoon,
+      briefingAfternoonCondition: BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.fallback(
+          segmentRain: afternoonRainSeg,
+          segmentWindy: isWindy,
+          segment: BriefingDaySegment.afternoon,
+        ),
       ),
-      briefingEveningCondition: BriefingWeatherCondition.fallback(
-        segmentRain: eveningRainSeg,
-        segmentWindy: isWindy,
-        segment: BriefingDaySegment.evening,
+      briefingEveningCondition: BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.fallback(
+          segmentRain: eveningRainSeg,
+          segmentWindy: isWindy,
+          segment: BriefingDaySegment.evening,
+        ),
       ),
       outfitWhyWeatherNote: ux.outfitWhyWeatherNote,
       rainTimeText: isRainy ? 'poobedie okolo 17:00' : null,
@@ -5522,8 +5411,8 @@ class _HeroOutfitTileCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            Colors.white.withOpacity(0.012),
-            Colors.white.withOpacity(0.003),
+            HomeLuxuryPalette.surface.withOpacity(0.34),
+            HomeLuxuryPalette.surfaceSoft.withOpacity(0.14),
           ],
         ),
         boxShadow: [
@@ -5549,7 +5438,7 @@ class _HeroOutfitTileCard extends StatelessWidget {
       child: ClipRRect(
         borderRadius: BorderRadius.circular(innerR),
         child: ColoredBox(
-          color: HomeLuxuryPalette.bgMid.withOpacity(0.20),
+          color: HomeLuxuryPalette.surface.withOpacity(0.12),
           child: _HeroOutfitImageView(
             imageUrl: item.imageUrl,
             fallbackIcon: item.icon,
