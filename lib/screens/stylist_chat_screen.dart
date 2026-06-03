@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import '../Services/hourly_weather_service.dart';
 import '../Services/stylist_chat_service.dart';
+import '../utils/wardrobe_image_url_priority.dart';
 
 class StylistChatMessage {
   final String text;
@@ -436,17 +437,7 @@ class _SuggestedItemCard extends StatelessWidget {
   const _SuggestedItemCard({required this.item});
 
   String? _resolveImageUrl(Map<String, dynamic> item) {
-    final candidates = [
-      item['productImageUrl'],
-      item['cutoutImageUrl'],
-      item['cleanImageUrl'],
-      item['imageUrl'],
-    ];
-    for (final candidate in candidates) {
-      final value = candidate?.toString().trim();
-      if (value != null && value.isNotEmpty) return value;
-    }
-    return null;
+    return getBestWardrobeImageUrlOrNull(item);
   }
 
   @override

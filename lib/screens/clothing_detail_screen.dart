@@ -4,6 +4,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import 'package:outfitofTheDay/utils/wardrobe_image_url_priority.dart';
+import 'package:outfitofTheDay/utils/wardrobe_image_processing.dart';
+
 import '../constants/app_constants.dart';
 import 'add_clothing_screen.dart';
 
@@ -19,26 +22,8 @@ class ClothingDetailScreen extends StatelessWidget {
     required this.clothingItemData,
   }) : super(key: key);
 
-  // ---------------------------------------------------------
-  // IMAGE PICKER (rovnaká logika ako v šatníku)
-  // productImageUrl → cutout/clean → original/imageUrl
-  // ---------------------------------------------------------
   static String? _bestImageUrl(Map<String, dynamic> d) {
-    String? str(dynamic v) {
-      final s = v?.toString().trim();
-      return (s == null || s.isEmpty) ? null : s;
-    }
-
-    final product = str(d['productImageUrl']);
-    if (product != null) return product;
-
-    final cutout = str(d['cutoutImageUrl']) ?? str(d['cleanImageUrl']);
-    if (cutout != null) return cutout;
-
-    final original = str(d['originalImageUrl']) ?? str(d['imageUrl']);
-    if (original != null) return original;
-
-    return null;
+    return getBestWardrobeImageUrlOrNull(d);
   }
 
   static List<String> _toStringList(dynamic val) {
@@ -74,7 +59,7 @@ class ClothingDetailScreen extends StatelessWidget {
         height: 320,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(16),
-          color: Colors.grey.shade200,
+          color: wardrobeItemImageBackground,
         ),
         child: const Center(child: Icon(Icons.image_outlined, size: 48)),
       );
@@ -82,20 +67,14 @@ class ClothingDetailScreen extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: Container(
+      child: SizedBox(
         height: 320,
         width: double.infinity,
-        color: Colors.grey.shade100, // jemné pozadie
-        padding: const EdgeInsets.all(16),
-        alignment: Alignment.center,
-        child: Image.network(
-          url,
-          fit: BoxFit.contain, // ✅ celé sa zmestí (žiadne orezanie)
-          errorBuilder: (_, __, ___) => Container(
-            height: 320,
-            color: Colors.grey.shade200,
-            child: const Center(child: Icon(Icons.broken_image, size: 48)),
-          ),
+        child: wardrobeItemImage(
+          data: d,
+          imageUrl: url,
+          showSpinner: false,
+          padding: wardrobeDetailImagePadding,
         ),
       ),
     );

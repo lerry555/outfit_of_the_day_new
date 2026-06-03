@@ -6,6 +6,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
 import 'package:outfitofTheDay/screens/public_clothing_detail_screen.dart';
 import 'package:outfitofTheDay/constants/app_constants.dart';
+import 'package:outfitofTheDay/utils/wardrobe_image_url_priority.dart';
 
 class UserWardrobeDetailScreen extends StatelessWidget {
   final String userId;
@@ -66,13 +67,7 @@ class UserWardrobeDetailScreen extends StatelessWidget {
               final Map<String, dynamic> itemData =
               doc.data() as Map<String, dynamic>;
 
-              // 👇 TU JE DÔLEŽITÁ ZMENA
-              // Ak existuje cleanImageUrl (obrázok bez pozadia), použijeme ten.
-              // Inak fallback na pôvodné imageUrl.
-              final String imageUrl =
-              (itemData['cleanImageUrl'] as String?)?.isNotEmpty == true
-                  ? itemData['cleanImageUrl'] as String
-                  : itemData['imageUrl'] as String? ?? '';
+              final String imageUrl = getBestWardrobeImageUrl(itemData);
 
               final String itemCategory =
                   itemData['category'] as String? ?? 'Neznáma kategória';

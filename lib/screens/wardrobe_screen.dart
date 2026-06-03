@@ -9,6 +9,9 @@ import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
 import 'package:outfitofTheDay/data/clothing_knowledge_base.dart';
 import 'package:outfitofTheDay/utils/wardrobe_image_processing.dart';
+import 'package:outfitofTheDay/utils/wardrobe_image_url_priority.dart';
+import 'package:outfitofTheDay/utils/wardrobe_list_utils.dart';
+import 'package:outfitofTheDay/widgets/wardrobe_processing_banner.dart';
 import 'package:outfitofTheDay/widgets/wardrobe_processing_spinner.dart';
 class _WardrobeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
@@ -410,80 +413,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   // Helpers – triedenie
   // -----------------------------
   int _compareDocs(Map<String, dynamic> a, Map<String, dynamic> b) {
-    switch (_sortOption) {
-      case 'Najnovšie':
-        return _compareByUploadedAt(a, b, desc: true);
-      case 'Najstaršie':
-        return _compareByUploadedAt(a, b, desc: false);
-      case 'Značka':
-        return _compareString((a['brand'] as String?) ?? '', (b['brand'] as String?) ?? '');
-      case 'Farba':
-        final ca = _normalizeList(a['color']);
-        final cb = _normalizeList(b['color']);
-        final firstA = ca.isNotEmpty ? ca.first : '';
-        final firstB = cb.isNotEmpty ? cb.first : '';
-        return _compareString(firstA, firstB);
-      case 'Najčastejšie nosené':
-        final wa = (a['wearCount'] is int) ? a['wearCount'] as int : 0;
-        final wb = (b['wearCount'] is int) ? b['wearCount'] as int : 0;
-        return wb.compareTo(wa);
-      default:
-        return 0;
-    }
-  }
-
-  int _compareByUploadedAt(Map<String, dynamic> a, Map<String, dynamic> b, {required bool desc}) {
-    final ta = a['uploadedAt'];
-    final tb = b['uploadedAt'];
-
-    DateTime da = DateTime.fromMillisecondsSinceEpoch(0);
-    DateTime db = DateTime.fromMillisecondsSinceEpoch(0);
-
-    if (ta is Timestamp) da = ta.toDate();
-    if (tb is Timestamp) db = tb.toDate();
-
-    final cmp = da.compareTo(db);
-    return desc ? -cmp : cmp;
-  }
-
-  int _compareString(String a, String b) {
-    return a.toLowerCase().compareTo(b.toLowerCase());
-  }
-
-  bool _hasActiveProcessing(Map<String, dynamic> data) {
-    String statusFromProcessing(String key) {
-      final p = data['processing'];
-      if (p is Map) {
-        final m = p.cast<String, dynamic>();
-        final v = (m[key] ?? '').toString().trim();
-        if (v.isNotEmpty) return v;
-      }
-      final dotted = data['processing.$key'];
-      if (dotted != null) {
-        final v = dotted.toString().trim();
-        if (v.isNotEmpty) return v;
-      }
-      return '';
-    }
-
-    bool isUrlFilled(String? s) => s != null && s.trim().isNotEmpty;
-
-    final String? productImage = data['productImageUrl'] as String?;
-    final String? cleanImage = data['cleanImageUrl'] as String?;
-    final String? cutoutImage = data['cutoutImageUrl'] as String?;
-
-    final cutoutStatus = statusFromProcessing('cutout');
-    final productStatus = statusFromProcessing('product');
-
-    final hasCutoutOrClean = isUrlFilled(cleanImage) || isUrlFilled(cutoutImage);
-    final hasProduct = isUrlFilled(productImage);
-
-    final cutoutInProgress =
-        !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
-    final productInProgress =
-        hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
-
-    return cutoutInProgress || productInProgress;
+    return wardrobeCompareItems(a, b, sortOption: _sortOption);
   }
 
   // -----------------------------
@@ -594,7 +524,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           normalizeKeysForDisplay: normalizeKeysForDisplay,
                           matchesSearch: _matchesSearch,
                           compareDocs: _compareDocs,
-                          hasActiveProcessing: _hasActiveProcessing,
+                          hasActiveProcessing: wardrobeItemHasActiveProcessing,
                           onDeleteItem: (item) => _confirmAndDelete(context, item),
                         );
                       }).toList(),
@@ -706,6 +636,9 @@ class _WardrobeTabBody extends StatelessWidget {
           byCategory.putIfAbsent(ck, () => []);
           byCategory[ck]!.add(item);
         }
+        for (final list in byCategory.values) {
+          sortWardrobeItemsNewestFirst(list);
+        }
 
         final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
         final totalCount =
@@ -724,7 +657,7 @@ class _WardrobeTabBody extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (hasAnyProcessing) ...[
-              const _ProcessingInfoBanner(),
+              const WardrobeProcessingBanner(),
               const SizedBox(height: 12),
             ],
 
@@ -1116,8 +1049,6 @@ class _CategorySectionGlass extends StatelessWidget {
                         itemBuilder: (context, index) {
                           final data = preview[index];
 
-                          final imageUrl = wardrobeTileDisplayImageUrl(data);
-
                           // Spinner logic
                           final cutoutStatus = _statusFromProcessing(data, 'cutout');
                           final productStatus = _statusFromProcessing(data, 'product');
@@ -1144,13 +1075,13 @@ class _CategorySectionGlass extends StatelessWidget {
                               ? data['name'] as String
                               : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
 
-                          final subline = (data['categoryLabel'] as String?) ?? '';
+                          final subline =
+                              ClothingKnowledgeBase.wardrobeDisplayCategoryLabel(data);
 
                           return SizedBox(
                             width: tileWidth,
                             child: _WardrobeTileGlass(
                               data: data,
-                              imageUrl: imageUrl,
                               title: name,
                               subtitle: subline,
                               showSpinner: showSpinner,
@@ -1191,7 +1122,6 @@ class _CategorySectionGlass extends StatelessWidget {
 /// ============================================================================
 class _WardrobeTileGlass extends StatelessWidget {
   final Map<String, dynamic> data;
-  final String imageUrl;
   final String title;
   final String subtitle;
   final bool showSpinner;
@@ -1201,7 +1131,6 @@ class _WardrobeTileGlass extends StatelessWidget {
 
   const _WardrobeTileGlass({
     required this.data,
-    required this.imageUrl,
     required this.title,
     required this.subtitle,
     required this.showSpinner,
@@ -1244,6 +1173,9 @@ class _WardrobeTileGlass extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    debugLogWardrobeCardImage(data);
+    final imageUrl = getBestWardrobeImageUrl(data);
+
     return InkWell(
       onTap: onOpenDetail,
       borderRadius: BorderRadius.circular(18),
@@ -1273,99 +1205,11 @@ class _WardrobeTileGlass extends StatelessWidget {
                     child: Stack(
                       children: [
                         Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.35),
-                                  blurRadius: 20,
-                                  offset: const Offset(0, 10),
-                                ),
-                              ],
-                            ),
+                          child: wardrobeItemImage(
+                            data: data,
+                            imageUrl: imageUrl,
+                            showSpinner: showSpinner,
                           ),
-                        ),
-                        Positioned.fill(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withOpacity(0.35),
-                                  blurRadius: 25,
-                                  offset: const Offset(0, 12),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        Positioned.fill(
-                          child: imageUrl.trim().isNotEmpty
-                              ? Image.network(
-                                  imageUrl,
-                                  fit: BoxFit.cover,
-                                  width: double.infinity,
-                                  height: double.infinity,
-                                  errorBuilder: (context, error, stackTrace) {
-                                    if (showSpinner) {
-                                      return Container(
-                                        color: Colors.white.withOpacity(0.06),
-                                        child: const Center(
-                                          child: WardrobeProcessingSpinner(
-                                            size: 28,
-                                            strokeWidth: 2,
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                    final fallback =
-                                        wardrobeTileImageFallbackUrl(data, imageUrl);
-                                    if (fallback != null) {
-                                      return Image.network(
-                                        fallback,
-                                        fit: BoxFit.cover,
-                                        width: double.infinity,
-                                        height: double.infinity,
-                                        errorBuilder: (_, __, ___) => Container(
-                                          color: Colors.white.withOpacity(0.06),
-                                          child: const Center(
-                                            child: WardrobeProcessingSpinner(
-                                              size: 28,
-                                              strokeWidth: 2,
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                    return Container(
-                                      color: Colors.white.withOpacity(0.06),
-                                      child: const Center(
-                                        child: WardrobeProcessingSpinner(
-                                          size: 28,
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                )
-                              : showSpinner
-                                  ? Container(
-                                      color: Colors.white.withOpacity(0.06),
-                                      child: const Center(
-                                        child: WardrobeProcessingSpinner(
-                                          size: 28,
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    )
-                                  : Container(
-                                      color: Colors.white.withOpacity(0.06),
-                                      child: const Center(
-                                        child: WardrobeProcessingSpinner(
-                                          size: 28,
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                    ),
                         ),
                         if (showSpinner) _topLeftSpinner(),
                         _topRightDeleteButton(),
@@ -1587,40 +1431,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
   }
 
   int _compareDocs(Map<String, dynamic> a, Map<String, dynamic> b) {
-    switch (_sortOption) {
-      case 'Najnovšie':
-        return _compareByUploadedAt(a, b, desc: true);
-      case 'Najstaršie':
-        return _compareByUploadedAt(a, b, desc: false);
-      case 'Značka':
-        return ((a['brand'] as String?) ?? '').toLowerCase().compareTo(((b['brand'] as String?) ?? '').toLowerCase());
-      case 'Farba':
-        final ca = _normalizeList(a['color']);
-        final cb = _normalizeList(b['color']);
-        final firstA = ca.isNotEmpty ? ca.first : '';
-        final firstB = cb.isNotEmpty ? cb.first : '';
-        return firstA.toLowerCase().compareTo(firstB.toLowerCase());
-      case 'Najčastejšie nosené':
-        final wa = (a['wearCount'] is int) ? a['wearCount'] as int : 0;
-        final wb = (b['wearCount'] is int) ? b['wearCount'] as int : 0;
-        return wb.compareTo(wa);
-      default:
-        return 0;
-    }
-  }
-
-  int _compareByUploadedAt(Map<String, dynamic> a, Map<String, dynamic> b, {required bool desc}) {
-    final ta = a['uploadedAt'];
-    final tb = b['uploadedAt'];
-
-    DateTime da = DateTime.fromMillisecondsSinceEpoch(0);
-    DateTime db = DateTime.fromMillisecondsSinceEpoch(0);
-
-    if (ta is Timestamp) da = ta.toDate();
-    if (tb is Timestamp) db = tb.toDate();
-
-    final cmp = da.compareTo(db);
-    return desc ? -cmp : cmp;
+    return wardrobeCompareItems(a, b, sortOption: _sortOption);
   }
 
   String _statusFromProcessing(Map<String, dynamic> data, String key) {
@@ -1777,15 +1588,17 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         );
                       }
 
-                      List<Map<String, dynamic>> items =
-                          (snapshot.data?.docs ?? []).map((d) {
+                      final allItems = (snapshot.data?.docs ?? []).map((d) {
                         final raw = Map<String, dynamic>.from(d.data() as Map);
                         final data = normalizeKeysForDisplay(raw);
                         data['__id'] = d.id;
                         return data;
                       }).toList();
 
-                      items = items
+                      final hasAnyProcessing =
+                          wardrobeListHasActiveProcessing(allItems);
+
+                      var items = allItems
                           .where(
                             (m) =>
                                 ClothingKnowledgeBase.wardrobeDisplayCategoryKey(
@@ -1807,82 +1620,119 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                       }
 
                       if (_searchQuery.trim().isNotEmpty) {
-                        items = items.where((m) => _matchesSearch(m, _searchQuery.trim())).toList();
+                        items = items
+                            .where((m) => _matchesSearch(m, _searchQuery.trim()))
+                            .toList();
                       }
 
                       items.sort((a, b) => _compareDocs(a, b));
 
                       if (items.isEmpty) {
                         return const Center(
-                          child: Text('V tejto kategórii zatiaľ nič nemáš.', style: TextStyle(color: Colors.white70)),
+                          child: Text(
+                            'V tejto kategórii zatiaľ nič nemáš.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
                         );
                       }
 
-                      return GridView.builder(
-                        padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 12,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.78,
-                        ),
-                        itemCount: items.length,
-                        itemBuilder: (context, index) {
-                          final data = items[index];
+                      return Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (hasAnyProcessing) ...[
+                            const Padding(
+                              padding: EdgeInsets.fromLTRB(12, 0, 12, 12),
+                              child: WardrobeProcessingBanner(),
+                            ),
+                          ],
+                          Expanded(
+                            child: GridView.builder(
+                              padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
+                              gridDelegate:
+                                  const SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: 2,
+                                crossAxisSpacing: 12,
+                                mainAxisSpacing: 12,
+                                childAspectRatio: 0.78,
+                              ),
+                              itemCount: items.length,
+                              itemBuilder: (context, index) {
+                                final data = items[index];
 
-                          final imageUrl = wardrobeTileDisplayImageUrl(data);
+                                final cutoutStatus =
+                                    _statusFromProcessing(data, 'cutout');
+                                final productStatus =
+                                    _statusFromProcessing(data, 'product');
 
-                          final cutoutStatus = _statusFromProcessing(data, 'cutout');
-                          final productStatus = _statusFromProcessing(data, 'product');
+                                final String? cleanImage =
+                                    data['cleanImageUrl'] as String?;
+                                final String? cutoutImage =
+                                    data['cutoutImageUrl'] as String?;
+                                final String? productImage =
+                                    data['productImageUrl'] as String?;
 
-                          final String? cleanImage = data['cleanImageUrl'] as String?;
-                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
-                          final String? productImage = data['productImageUrl'] as String?;
+                                final bool hasCutoutOrClean = _isUrlFilled(
+                                        cleanImage) ||
+                                    _isUrlFilled(cutoutImage);
+                                final bool hasProduct =
+                                    _isUrlFilled(productImage);
 
-                          final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
-                          final bool hasProduct = _isUrlFilled(productImage);
+                                final bool cutoutInProgress = !hasCutoutOrClean &&
+                                    (cutoutStatus == 'queued' ||
+                                        cutoutStatus == 'running');
 
-                          final bool cutoutInProgress =
-                              !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+                                final bool productInProgress =
+                                    hasCutoutOrClean &&
+                                        !hasProduct &&
+                                        (productStatus == 'queued' ||
+                                            productStatus == 'running');
 
-                          final bool productInProgress =
-                              hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
+                                final bool showSpinner = cutoutInProgress ||
+                                    productInProgress ||
+                                    wardrobeItemShowsImageProcessingBadge(
+                                        data);
+                                final bool showError = (!showSpinner) &&
+                                    (cutoutStatus == 'error' ||
+                                        productStatus == 'error');
 
-                          final bool showSpinner = cutoutInProgress ||
-                              productInProgress ||
-                              wardrobeItemShowsImageProcessingBadge(data);
-                          final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
+                                final name =
+                                    (data['name'] as String?)?.trim().isNotEmpty ==
+                                            true
+                                        ? data['name'] as String
+                                        : (data['subCategoryLabel']
+                                                as String?) ??
+                                            'Neznámy kúsok';
 
-                          final name = (data['name'] as String?)?.trim().isNotEmpty == true
-                              ? data['name'] as String
-                              : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
+                                final subline = ClothingKnowledgeBase
+                                    .wardrobeDisplayCategoryLabel(data);
 
-                          final subline = (data['categoryLabel'] as String?) ?? '';
+                                return _WardrobeTileGlass(
+                                  data: data,
+                                  title: name,
+                                  subtitle: subline,
+                                  showSpinner: showSpinner,
+                                  showError: showError,
+                                  onDelete: () =>
+                                      _confirmAndDelete(context, data),
+                                  onOpenDetail: () {
+                                    final id = data['__id'] as String?;
+                                    if (id == null) return;
 
-                          return _WardrobeTileGlass(
-                            data: data,
-                            imageUrl: imageUrl,
-                            title: name,
-                            subtitle: subline,
-                            showSpinner: showSpinner,
-                            showError: showError,
-                            onDelete: () => _confirmAndDelete(context, data),
-                            onOpenDetail: () {
-                              final id = data['__id'] as String?;
-                              if (id == null) return;
-
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => ClothingDetailScreen(
-                                    clothingItemId: id,
-                                    clothingItemData: data,
-                                  ),
-                                ),
-                              );
-                            },
-                          );
-                        },
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ClothingDetailScreen(
+                                          clothingItemId: id,
+                                          clothingItemData: data,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       );
                     },
                   ),
@@ -1966,53 +1816,6 @@ class _GlassChoiceChip extends StatelessWidget {
             fontWeight: FontWeight.w800,
           ),
         ),
-      ),
-    );
-  }
-}
-class _ProcessingInfoBanner extends StatelessWidget {
-  const _ProcessingInfoBanner();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(minHeight: 40, maxHeight: 48),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1B1E),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.white.withOpacity(0.09)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 20,
-            height: 20,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              color: const Color(0x224A6CF7),
-              border: Border.all(color: WardrobeProcessingSpinner.color.withOpacity(0.35)),
-            ),
-            child: const WardrobeProcessingSpinner(
-              size: WardrobeProcessingSpinner.bannerSize,
-            ),
-          ),
-          const SizedBox(width: 8),
-          const Expanded(
-            child: Text(
-              'Niektoré fotky sa ešte upravujú. Modrý kruh zmizne po dokončení.',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 11.8,
-                fontWeight: FontWeight.w600,
-                height: 1.25,
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

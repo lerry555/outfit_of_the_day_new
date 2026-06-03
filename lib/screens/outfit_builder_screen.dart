@@ -16,6 +16,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 // ✅ HTTP na stiahnutie obrázka (trim)
 import 'package:http/http.dart' as http;
 
+import '../utils/wardrobe_image_url_priority.dart';
 
 class OutfitBuilderScreen extends StatefulWidget {
   final String? incomingExternalUrl;
@@ -1420,10 +1421,7 @@ class _WardrobePickerSheetState extends State<_WardrobePickerSheet> {
   }
 
   String? _bestPreviewUrl(Map<String, dynamic> d) {
-    final a = (d['productImageUrl'] ?? d['product_image_url']) as String?;
-    final b = (d['cleanImageUrl'] ?? d['cutoutImageUrl'] ?? d['cutout_image_url']) as String?;
-    final c = (d['imageUrl'] ?? d['image_url']) as String?;
-    return (a != null && a.isNotEmpty) ? a : (b != null && b.isNotEmpty) ? b : c;
+    return getBestWardrobeImageUrlOrNull(d);
   }
 
   String? _cutoutUrl(Map<String, dynamic> d) {

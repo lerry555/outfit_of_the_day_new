@@ -65,7 +65,7 @@ class _Tile extends StatelessWidget {
       'originalImageUrl': item.originalImageUrl,
       'imageUrl': item.imageUrl,
     };
-    final resolvedUrl = resolveWardrobeImageUrl(m);
+    final resolvedUrl = getBestWardrobeImageUrlOrNull(m);
     final hasImage = resolvedUrl != null && resolvedUrl.trim().isNotEmpty;
 
     return Container(

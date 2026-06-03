@@ -28,6 +28,7 @@ import '../Services/product_link_url_fallback.dart';
 import '../utils/product_link_image_resolve.dart';
 import '../utils/product_link_url_sanitize.dart';
 import '../utils/wardrobe_image_processing.dart';
+import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/ai_clothing_parser.dart';
 import '../data/clothing_knowledge_base.dart';
 import '../widgets/category_picker.dart';
@@ -1424,7 +1425,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
       _selectedSeasons = _sanitizeSeasons(loadedSeasons);
 
-      _uploadedImageUrl = widget.imageUrl;
+      _uploadedImageUrl =
+          getBestWardrobeImageUrlOrNull(d) ?? widget.imageUrl;
       _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
           ? null
           : (d['storagePath'] ?? '').toString();
@@ -1730,9 +1732,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final clean = (d['cleanImageUrl'] ?? '').toString().trim();
     final product =
         (d['productImageUrl'] ?? d['imageUrl'] ?? '').toString().trim();
-    var display = clean.isNotEmpty
-        ? clean
-        : (product.isNotEmpty ? product : original);
+    var display = getBestWardrobeImageUrl(d);
+    if (display.isEmpty) {
+      display = clean.isNotEmpty
+          ? clean
+          : (product.isNotEmpty ? product : original);
+    }
 
     if (!isValidProductLinkImageUrl(display)) {
       final fromMap = resolveProductLinkImageUrl(
@@ -3539,12 +3544,20 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return list;
   }
 
+  String _clothingTypeFieldDisplay(String? subKey) {
+    final kbName = _kbTypeDisplayName?.trim();
+    if (kbName != null && kbName.isNotEmpty) return kbName;
+    if (subKey == null || subKey.isEmpty) return 'Vyber...';
+    return subCategoryLabels[subKey] ?? subKey;
+  }
+
   Widget _buildClothingTypeField() {
     return _buildSingleSelectField(
       label: 'Typ oblečenia',
       options: _sortedSubCategoryKeys(),
       selected: _selectedSubCategoryKey,
       formatOption: (key) => subCategoryLabels[key] ?? key,
+      formatSelected: _clothingTypeFieldDisplay,
       onChanged: (subKey) => setState(() {
         if (subKey == null || subKey.isEmpty) {
           _selectedMainGroupKey = null;
@@ -3924,8 +3937,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     required String? selected,
     required ValueChanged<String?> onChanged,
     String Function(String value)? formatOption,
+    String Function(String? selected)? formatSelected,
   }) {
     String display(String? v) {
+      if (formatSelected != null) return formatSelected(v);
       if (v == null || v.isEmpty) return 'Vyber...';
       return formatOption != null ? formatOption(v) : v;
     }
