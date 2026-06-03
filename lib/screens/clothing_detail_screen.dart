@@ -115,7 +115,6 @@ class ClothingDetailScreen extends StatelessWidget {
     final List<String> colors = _readList(d, 'colors', 'color');
     final List<String> styles = _readList(d, 'styles', 'style');
     final List<String> patterns = _readList(d, 'patterns', 'pattern');
-    final List<String> seasons = _readList(d, 'seasons', 'season');
 
     final String brand = (d['brand'] ?? '').toString();
     final int wearCount = d['wearCount'] is int ? d['wearCount'] as int : 0;
@@ -125,10 +124,7 @@ class ClothingDetailScreen extends StatelessWidget {
     final Timestamp? uploadedAtTs = d['uploadedAt'] as Timestamp?;
     final DateTime? createdAt = (createdAtTs ?? uploadedAtTs)?.toDate();
 
-    final List<String> categoryBits = [];
-    if (subLabel.trim().isNotEmpty) categoryBits.add(subLabel.trim());
-    if (seasons.isNotEmpty) categoryBits.add(seasons.join(', '));
-    final String categoryLine = categoryBits.join(' • ');
+    final String categoryLine = subLabel.trim();
 
     final List<String> sp = [];
     if (styles.isNotEmpty) sp.add(styles.join(', '));

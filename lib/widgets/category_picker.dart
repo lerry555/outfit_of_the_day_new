@@ -12,6 +12,9 @@ class CategoryPicker extends StatelessWidget {
   /// ✅ Keď true, skryje "Typ oblečenia" (subCategory) z UI
   final bool hideSubCategory;
 
+  /// Keď true, zobrazí len „Typ oblečenia“ (plochý zoznam); hlavná skupina a kategória ostávajú interné.
+  final bool clothingTypeOnly;
+
   /// onChanged dostane vždy mapu:
   /// { "mainGroup": ..., "category": ..., "subCategory": ... }
   final void Function(Map<String, String?> data) onChanged;
@@ -23,7 +26,37 @@ class CategoryPicker extends StatelessWidget {
     required this.initialSubCategory,
     required this.onChanged,
     this.hideSubCategory = false,
+    this.clothingTypeOnly = false,
   }) : super(key: key);
+
+  static String? categoryKeyForSubKey(String subKey) {
+    for (final entry in subCategoryTree.entries) {
+      if (entry.value.contains(subKey)) return entry.key;
+    }
+    return null;
+  }
+
+  static String? mainGroupKeyForCategoryKey(String? categoryKey) {
+    if (categoryKey == null) return null;
+    for (final entry in categoryTree.entries) {
+      if (entry.value.contains(categoryKey)) return entry.key;
+    }
+    return null;
+  }
+
+  static List<String> _allSubCategoryKeysSorted() {
+    final keys = <String>{};
+    for (final subs in subCategoryTree.values) {
+      keys.addAll(subs);
+    }
+    final list = keys.toList();
+    list.sort((a, b) {
+      final la = subCategoryLabels[a] ?? a;
+      final lb = subCategoryLabels[b] ?? b;
+      return la.compareTo(lb);
+    });
+    return list;
+  }
 
   InputDecoration _fieldDecoration() {
     return InputDecoration(
@@ -59,6 +92,10 @@ class CategoryPicker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (clothingTypeOnly) {
+      return _buildClothingTypeOnly(context);
+    }
+
     final String? selectedMainGroup = initialMainGroup;
     final String? selectedCategory = initialCategory;
     final String? selectedSubCategory = initialSubCategory;
@@ -194,6 +231,73 @@ class CategoryPicker extends StatelessWidget {
               },
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildClothingTypeOnly(BuildContext context) {
+    final allSubs = _allSubCategoryKeysSorted();
+    final selectedSub = allSubs.contains(initialSubCategory)
+        ? initialSubCategory
+        : null;
+
+    return Theme(
+      data: Theme.of(context).copyWith(
+        canvasColor: const Color(0xFF121212),
+        colorScheme: Theme.of(context).colorScheme.copyWith(
+              primary: HomeLuxuryPalette.accent,
+            ),
+        inputDecorationTheme: InputDecorationTheme(
+          labelStyle: _labelStyle,
+          floatingLabelStyle: _labelStyle,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Typ oblečenia',
+            style: _labelStyle,
+          ),
+          const SizedBox(height: 6),
+          DropdownButtonFormField<String>(
+            value: selectedSub,
+            dropdownColor: const Color(0xFF121212),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 14,
+            ),
+            iconEnabledColor: Colors.white70,
+            decoration: _fieldDecoration(),
+            items: allSubs.map((subKey) {
+              final label = subCategoryLabels[subKey] ?? subKey;
+              return DropdownMenuItem<String>(
+                value: subKey,
+                child: Text(
+                  label,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              );
+            }).toList(),
+            onChanged: (subKey) {
+              if (subKey == null) {
+                onChanged({
+                  'mainGroup': null,
+                  'category': null,
+                  'subCategory': null,
+                });
+                return;
+              }
+              final cat = categoryKeyForSubKey(subKey);
+              final main = mainGroupKeyForCategoryKey(cat);
+              onChanged({
+                'mainGroup': main,
+                'category': cat,
+                'subCategory': subKey,
+              });
+            },
+          ),
         ],
       ),
     );

@@ -1345,6 +1345,36 @@ exports.attachCleanImageOnWardrobeWrite = functions
         "fialová",
       ];
 
+      const ALLOWED_FIT = ["slim", "regular", "relaxed", "oversized", "unknown"];
+      const ALLOWED_VIBE = [
+        "basic",
+        "minimalist",
+        "casual",
+        "streetwear",
+        "sport",
+        "business",
+        "elegant",
+        "outdoor",
+        "party",
+        "beach",
+        "urban",
+        "unknown",
+      ];
+      const ALLOWED_LOGO_PROMINENCE = ["none", "small", "medium", "large", "unknown"];
+      const ALLOWED_OCCASION_FIT = [
+        "daily",
+        "work",
+        "date",
+        "party",
+        "sport",
+        "travel",
+        "beach",
+        "home",
+        "outdoor",
+        "formal_event",
+      ];
+      const ALLOWED_LAYER_ROLE = ["base_layer", "mid_layer", "outer_layer"];
+
       const COLOR_MAP = {
         navy: "tmavomodrá",
         "dark blue": "tmavomodrá",
@@ -1413,6 +1443,73 @@ exports.attachCleanImageOnWardrobeWrite = functions
         year: "celoročne",
       };
 
+      const FIT_MAP = {
+        skinny: "slim",
+        tight: "slim",
+        fitted: "slim",
+        normal: "regular",
+        standard: "regular",
+        classic: "regular",
+        loose: "relaxed",
+        baggy: "oversized",
+        oversized: "oversized",
+        oversize: "oversized",
+      };
+
+      const VIBE_MAP = {
+        minimal: "minimalist",
+        minimalist: "minimalist",
+        street: "streetwear",
+        sporty: "sport",
+        athletic: "sport",
+        formal: "elegant",
+        smart: "business",
+        office: "business",
+        city: "urban",
+      };
+
+      const LOGO_MAP = {
+        hidden: "none",
+        subtle: "small",
+        moderate: "medium",
+        prominent: "large",
+        big: "large",
+      };
+
+      const OCCASION_MAP = {
+        everyday: "daily",
+        casual: "daily",
+        office: "work",
+        business: "work",
+        romantic: "date",
+        nightlife: "party",
+        gym: "sport",
+        workout: "sport",
+        vacation: "travel",
+        pool: "beach",
+        lounge: "home",
+        hiking: "outdoor",
+        wedding: "formal_event",
+        gala: "formal_event",
+      };
+
+      const LAYER_ROLE_MAP = {
+        base: "base_layer",
+        baselayer: "base_layer",
+        "base layer": "base_layer",
+        underwear: "base_layer",
+        mid: "mid_layer",
+        middle: "mid_layer",
+        "mid layer": "mid_layer",
+        midlayer: "mid_layer",
+        outer: "outer_layer",
+        "outer layer": "outer_layer",
+        outerlayer: "outer_layer",
+        shell: "outer_layer",
+        jacket: "outer_layer",
+        coat: "outer_layer",
+      };
+
       function toStringArray(x) {
         if (!x) return [];
         if (Array.isArray(x)) return x.map((v) => String(v).trim()).filter(Boolean);
@@ -1437,6 +1534,49 @@ exports.attachCleanImageOnWardrobeWrite = functions
         return null;
       }
 
+      function normalizeScalar(value, allowed, map, fallback) {
+        const mapped = normalizeToAllowed(value, allowed, map);
+        return mapped || fallback;
+      }
+
+      function normalizeFormality(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 5;
+        return Math.min(10, Math.max(1, Math.round(n)));
+      }
+
+      function normalizeWarmthLevel(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 5;
+        return Math.min(10, Math.max(1, Math.round(n)));
+      }
+
+      function normalizeConfidence(value) {
+        const n = Number(value);
+        if (!Number.isFinite(n)) return 0;
+        return Math.min(100, Math.max(0, Math.round(n)));
+      }
+
+      const IDENTITY_CONFIDENCE_THRESHOLD = 80;
+
+      function normalizeVisualIdentity(identityRaw, confidenceRaw) {
+        const identity_confidence = normalizeConfidence(confidenceRaw);
+        let visual_identity = String(identityRaw || "").trim();
+        if (identity_confidence < IDENTITY_CONFIDENCE_THRESHOLD) {
+          visual_identity = "";
+        }
+        return { visual_identity, identity_confidence };
+      }
+
+      function normalizeOccasionFit(values) {
+        const result = [];
+        for (const v of toStringArray(values)) {
+          const mapped = normalizeToAllowed(v, ALLOWED_OCCASION_FIT, OCCASION_MAP);
+          if (mapped && !result.includes(mapped)) result.push(mapped);
+        }
+        return result;
+      }
+
       function stripCodeFences(text) {
         let raw = String(text || "").trim();
         if (raw.startsWith("```")) {
@@ -1452,9 +1592,15 @@ exports.attachCleanImageOnWardrobeWrite = functions
       try {
         const systemPrompt = `
   Si profesionálny módny stylista a expert na rozpoznávanie oblečenia z fotiek pre mobilnú aplikáciu.
+  Tieto metadáta použije osobný stylista na posúdenie, či kusy vizuálne k sebe pasujú (outfity, scoring, odporúčania).
+
+  NEOPTIMALIZUJ pre kategórie e-shopu ani jednu „dokonalú“ produktovú triedu.
+  OPTIMALIZUJ pre styling a skladanie outfitu: vrstva, teplo, vzhľad, príležitosť.
+  Pri nejednoznačných kusoch (track jacket, fleece, overshirt, bomber, zip hoodie, softshell…) nevydávaj sa za istého – radšej uveď secondary_type a nižší confidence.
+
   Vráť STRICTNE jeden JSON objekt. Nepíš žiadny iný text. Žiadny markdown. Žiadne \`\`\`.
 
-  MUSÍŠ vrátiť VŽDY všetky tieto kľúče (aj keď sú prázdne):
+  MUSÍŠ vrátiť VŽDY všetky tieto kľúče (aj keď sú prázdne alebo "unknown"):
   {
     "type": "krátky názov v slovenčine (napr. \\"Nohavice\\")",
     "type_pretty": "detailnejší názov v slovenčine (napr. \\"Chino nohavice\\")",
@@ -1464,20 +1610,80 @@ exports.attachCleanImageOnWardrobeWrite = functions
     "styles": ["zoznam štýlov v slovenčine"],
     "patterns": ["max 1 vzor v slovenčine"],
     "seasons": ["zoznam sezón v slovenčine"],
-    "debug_reason": "stručný dôvod rozhodnutí (1 veta)"
+    "debug_reason": "stručný dôvod rozhodnutí (1 veta)",
+    "fit": "jedna z povolených hodnôt fit",
+    "formality": "číslo 1–10",
+    "vibe": "jedna z povolených hodnôt vibe",
+    "logo_prominence": "jedna z povolených hodnôt logo_prominence",
+    "occasion_fit": ["zoznam príležitostí"],
+    "material_feel": "krátka fráza v angličtine alebo slovenčine (napr. light cotton, denim)",
+    "visual_description": "jedna krátka praktická veta v slovenčine – čo kus vizuálne vyzerá (nie marketing)",
+    "primary_type": "najlepší odhad kategórie v slovenčine pre outfit (napr. tréningová bunda)",
+    "secondary_type": "alternatívna rozumná kategória ak je kus nejednoznačný, inak prázdny string",
+    "layer_role": "jedna z povolených hodnôt layer_role",
+    "warmth_level": "číslo 1–10",
+    "confidence": "číslo 0–100, istota o primary_type",
+    "visual_identity": "krátky rozpoznateľný vizuálny identita (klub, frančíza, tím, značka) alebo prázdny string",
+    "identity_confidence": "číslo 0–100, istota o visual_identity"
   }
+
+  visual_identity sa neskôr použije na vyhýbanie sa vizuálne konfliktným kombináciám v outfite
+  (napr. Chelsea FC + Manchester United, Real Madrid + Barcelona, Ferrari + Mercedes AMG, Marvel + DC, PlayStation + Xbox).
 
   Použi LEN tieto povolené hodnoty:
   FARBY (colors): ${JSON.stringify(ALLOWED_COLORS)}
   ŠTÝLY (styles): ${JSON.stringify(ALLOWED_STYLES)}
   VZORY (patterns): ${JSON.stringify(ALLOWED_PATTERNS)}
   SEZÓNY (seasons): ${JSON.stringify(ALLOWED_SEASONS)}
+  FIT (fit): ${JSON.stringify(ALLOWED_FIT)}
+  VIBE (vibe): ${JSON.stringify(ALLOWED_VIBE)}
+  LOGO (logo_prominence): ${JSON.stringify(ALLOWED_LOGO_PROMINENCE)}
+  OCCASION (occasion_fit): ${JSON.stringify(ALLOWED_OCCASION_FIT)}
+  LAYER (layer_role): ${JSON.stringify(ALLOWED_LAYER_ROLE)}
+
+  Formality (formality): celé číslo 1–10
+  1 = pláž/domov/šport, veľmi casual
+  3 = casual/streetwear
+  5 = smart casual
+  7 = business/elegant
+  10 = formálny oblek / veľmi formálne
+
+  Warmth (warmth_level): celé číslo 1–10
+  1 = tielko / veľmi ľahké
+  3 = tričko
+  5 = mikina / stredné teplo
+  7 = prechodná bunda
+  10 = zimná bunda / veľmi teplé
+
+  Confidence (confidence): 0–100, ako si istý primary_type.
+  Ak confidence < 70 a iná kategória je pravdepodobná, MUSÍŠ vyplniť secondary_type.
+  Pri neistote uprednostni správne layer_role a warmth_level pred falošnou istotou v primary_type.
+
+  Visual identity (visual_identity, identity_confidence):
+  - Krátky oficiálny/rozšírený názov identity v angličtine (napr. "Chelsea FC", "Ferrari", "Marvel", "PlayStation", "Harvard", "Jordan").
+  - identity_confidence: 0–100. visual_identity vráť LEN ak identity_confidence >= 80.
+  - Ak identity_confidence < 80: visual_identity="" a identity_confidence = skutočná istota (nie 0 nasilu).
+  - Ak nie je silná identita: visual_identity="", identity_confidence=0.
+  - NEHÁDAJ agresívne. Identitu detekuj LEN keď je viditeľné logo, erb klubu, čitateľný text alebo zjavné branding.
+  - NEVYVODZUJ identitu len z farby (zlé: modrá športová bunda → Chelsea FC; dobré: viditeľný erb/text Chelsea → Chelsea FC).
+  - brand môže byť Nike/Adidas; visual_identity je silná vizuálna identita na oblečení (klub, frančíza, sub-brand ako Jordan).
+
+  Príklady nejednoznačných kusov:
+  - track jacket → primary_type="tréningová bunda", secondary_type="mikina na zips", layer_role="mid_layer", warmth_level=5, confidence≈68
+  - overshirt → primary_type="košeľa", secondary_type="ľahká bunda", layer_role="mid_layer"
+  - tričko → layer_role="base_layer"; mikina → mid_layer; zimný kabát → outer_layer; softshell → outer_layer
 
   Pravidlá:
+  - type/type_pretty/canonical_type nech ostávajú použiteľné pre UI; primary_type môže byť stylisticky presnejší.
   - Ak si nie si istý farbou/štýlom/vzorom/sezónou, radšej vráť prázdne pole alebo "jednofarebné" pri vzore.
+  - Pri fit, vibe, logo_prominence, material_feel: nehádaj agresívne – ak nie si istý, použij "unknown".
   - patterns: vráť buď [] alebo [jedna_hodnota]
   - seasons: ak je vhodné celoročne, vráť ["celoročne"].
-  - type_pretty má byť prirodzený názov pre človeka, ale bez zdvojení typu.
+  - type_pretty má byť prirodzený názov pre človeka, ale bez zdvojenia typu.
+  - occasion_fit: len hodnoty z povoleného zoznamu; ak nevieš, vráť [].
+  - visual_description: praktický vizuálny opis (farba, strih, logo, materiál), nie reklamný text.
+  - secondary_type: prázdny string ak nie je alternatíva; inak iná rozumná kategória ako primary_type.
+  - visual_identity: prázdny string ak logo/erb/text nie je jednoznačný; inak konzistentný krátky názov identity.
         `.trim();
 
         const openAiBody = {
@@ -1539,6 +1745,20 @@ exports.attachCleanImageOnWardrobeWrite = functions
           patterns: toStringArray(p.patterns),
           seasons: toStringArray(p.seasons),
           debug_reason: String(p.debug_reason || ""),
+          fit: String(p.fit || ""),
+          formality: p.formality,
+          vibe: String(p.vibe || ""),
+          logo_prominence: String(p.logo_prominence || ""),
+          occasion_fit: toStringArray(p.occasion_fit),
+          material_feel: String(p.material_feel || ""),
+          visual_description: String(p.visual_description || ""),
+          primary_type: String(p.primary_type || ""),
+          secondary_type: String(p.secondary_type || ""),
+          layer_role: String(p.layer_role || ""),
+          warmth_level: p.warmth_level,
+          confidence: p.confidence,
+          visual_identity: String(p.visual_identity || ""),
+          identity_confidence: p.identity_confidence,
         };
 
         const colors = [];
@@ -1571,6 +1791,36 @@ exports.attachCleanImageOnWardrobeWrite = functions
         const hasAllFour = ["jar", "leto", "jeseň", "zima"].every((x) => seasons.includes(x));
         if (seasons.includes("celoročne") || hasAllFour) seasons = ["celoročne"];
 
+        const fit = normalizeScalar(out.fit, ALLOWED_FIT, FIT_MAP, "unknown");
+        const formality = normalizeFormality(out.formality);
+        const vibe = normalizeScalar(out.vibe, ALLOWED_VIBE, VIBE_MAP, "unknown");
+        const logo_prominence = normalizeScalar(
+          out.logo_prominence,
+          ALLOWED_LOGO_PROMINENCE,
+          LOGO_MAP,
+          "unknown"
+        );
+        const occasion_fit = normalizeOccasionFit(out.occasion_fit);
+        const material_feel = out.material_feel.trim() || "unknown";
+        const visual_description = out.visual_description.trim();
+
+        const typeFallback = out.type || out.type_pretty || "";
+        let primary_type = out.primary_type.trim() || typeFallback;
+        let secondary_type = out.secondary_type.trim();
+        const layer_role =
+          normalizeScalar(out.layer_role, ALLOWED_LAYER_ROLE, LAYER_ROLE_MAP, "") || "";
+        const warmth_level = normalizeWarmthLevel(out.warmth_level);
+        const confidence = normalizeConfidence(out.confidence);
+
+        if (secondary_type && secondary_type.toLowerCase() === primary_type.toLowerCase()) {
+          secondary_type = "";
+        }
+
+        const { visual_identity, identity_confidence } = normalizeVisualIdentity(
+          out.visual_identity,
+          out.identity_confidence
+        );
+
         const normalized = {
           type: out.type || out.type_pretty || "",
           type_pretty: out.type_pretty || out.type || "",
@@ -1581,6 +1831,20 @@ exports.attachCleanImageOnWardrobeWrite = functions
           patterns,
           seasons,
           debug_reason: out.debug_reason,
+          fit,
+          formality,
+          vibe,
+          logo_prominence,
+          occasion_fit,
+          material_feel,
+          visual_description,
+          primary_type,
+          secondary_type,
+          layer_role,
+          warmth_level,
+          confidence,
+          visual_identity,
+          identity_confidence,
         };
 
         if (!normalized.patterns || normalized.patterns.length === 0) {
@@ -1672,6 +1936,537 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
     return text;
   }
+
+  function extractFirstJsonObject(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch (_) {}
+
+    const start = raw.indexOf("{");
+    const end = raw.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      const candidate = raw.slice(start, end + 1);
+      try {
+        const parsed = JSON.parse(candidate);
+        return parsed && typeof parsed === "object" ? parsed : null;
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function normalizeStringArray(value, max = 200) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .slice(0, max);
+  }
+
+  function compactWardrobeItem(rawDoc) {
+    const name = String(rawDoc.name || rawDoc.typePretty || rawDoc.type || "").trim();
+    const category = String(rawDoc.category || rawDoc.categoryKey || "").trim();
+    const subCategory = String(rawDoc.subCategory || rawDoc.subCategoryKey || "").trim();
+    const mainGroup = String(rawDoc.mainGroup || rawDoc.mainGroupKey || "").trim();
+    const brand = String(rawDoc.brand || "").trim();
+    const colors = normalizeStringArray(rawDoc.colors, 8);
+    const seasons = normalizeStringArray(rawDoc.seasons, 6);
+    const styles = normalizeStringArray(rawDoc.styles, 6);
+    return {name, category, subCategory, mainGroup, brand, colors, seasons, styles};
+  }
+
+  function classifyWearSlot(it) {
+    const blob = [
+      String(it.name || ""),
+      String(it.category || ""),
+      String(it.subCategory || ""),
+      String(it.mainGroup || ""),
+    ].join(" ").toLowerCase();
+
+    const has = (arr) => arr.some((n) => blob.includes(n));
+    if (has(["trič", "trick", "t-shirt", "shirt", "koše", "blúz", "bluz", "top", "sveter", "mikina", "hoodie"])) {
+      return "top";
+    }
+    if (has(["nohav", "rifl", "jeans", "pants", "sukn", "skirt", "short"])) {
+      return "bottom";
+    }
+    if (has(["topán", "topan", "tenis", "sneaker", "boots", "čiž", "ciz", "sand", "obuv", "shoes"])) {
+      return "shoes";
+    }
+    if (has(["bunda", "kabát", "kabat", "coat", "jacket", "blazer", "sako", "parka", "bomber", "overshirt", "shacket"])) {
+      return "outerwear";
+    }
+    return "other";
+  }
+
+  function fallbackHomeOutfit(reply, reason = "unknown") {
+    logger.warn("generateHomeOutfit: fallback", {reason});
+    return {
+      fallback: true,
+      reply: String(reply || "Dnes som nenašiel dosť presný outfit z tvojho šatníka. Skús to znova."),
+      outfitItemIds: [],
+    };
+  }
+
+  function toNumOrNull(v) {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function parseMonthFromDate(dateIso) {
+    if (!dateIso) return null;
+    const d = new Date(String(dateIso));
+    if (Number.isNaN(d.getTime())) return null;
+    return d.getUTCMonth() + 1;
+  }
+
+  function weatherWord(weatherContext) {
+    const summary = String(weatherContext?.summary || weatherContext?.weatherMain || "").toLowerCase();
+    if (summary.includes("sun") || summary.includes("jas") || summary.includes("clear")) return "sunny";
+    if (summary.includes("cloud") || summary.includes("obla")) return "cloudy";
+    return "mixed";
+  }
+
+  function buildStylistConstraints({date, weatherContext, wardrobeItems}) {
+    const month = parseMonthFromDate(date);
+    const warmSeason = month != null ? month >= 4 && month <= 9 : true;
+    const temp = toNumOrNull(weatherContext?.tempC);
+    const noonTemp = toNumOrNull(weatherContext?.noonTempC);
+    const maxTemp = toNumOrNull(weatherContext?.maxTempC) || noonTemp || temp;
+    const morningTemp = toNumOrNull(weatherContext?.morningTempC);
+    const eveningTemp = toNumOrNull(weatherContext?.eveningTempC);
+    const rainy = weatherContext?.isRainy === true || weatherContext?.willRain === true;
+    const windy = weatherContext?.isWindy === true;
+    const morningRainSegment = weatherContext?.morningRainSegment === true;
+    const afternoonRainSegment = weatherContext?.afternoonRainSegment === true;
+    const eveningRainSegment = weatherContext?.eveningRainSegment === true;
+    const rainTimeText = String(weatherContext?.rainTimeText || "").toLowerCase();
+    const rainStartsLater =
+      afternoonRainSegment ||
+      eveningRainSegment ||
+      rainTimeText.includes("17") ||
+      rainTimeText.includes("18") ||
+      rainTimeText.includes("večer") ||
+      rainTimeText.includes("poob");
+    const sky = weatherWord(weatherContext);
+    const sunnyNoRain = !rainy && sky === "sunny";
+    const tempForRules = maxTemp != null ? maxTemp : temp;
+
+    const hasBySlot = {
+      shorts: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return b.includes("short") || b.includes("krať") || b.includes("krat");
+      }),
+      skirt: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return b.includes("sukn") || b.includes("skirt");
+      }),
+      jeansOrPants: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return b.includes("jeans") || b.includes("rifl") || b.includes("nohav") || b.includes("pants");
+      }),
+      lightTop: wardrobeItems.some((it) => it.slotHint === "top"),
+      lightShoes: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return it.slotHint === "shoes" && (b.includes("sneaker") || b.includes("tenis") || b.includes("sand"));
+      }),
+      outerwear: wardrobeItems.some((it) => it.slotHint === "outerwear"),
+      whiteSneakers: wardrobeItems.some((it) => {
+        if (it.slotHint !== "shoes") return false;
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""} ${(it.colors || []).join(" ")}`.toLowerCase();
+        return (b.includes("sneaker") || b.includes("tenis") || b.includes("shoes")) &&
+          (b.includes("white") || b.includes("biel"));
+      }),
+      darkerRainFriendlyShoes: wardrobeItems.some((it) => {
+        if (it.slotHint !== "shoes") return false;
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""} ${(it.colors || []).join(" ")}`.toLowerCase();
+        const looksDark = b.includes("black") || b.includes("cier") || b.includes("tmav") || b.includes("navy");
+        const looksRainFriendly = b.includes("boots") || b.includes("ciz") || b.includes("čiž") || b.includes("koza");
+        return looksDark || looksRainFriendly;
+      }),
+      tankTop: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return b.includes("tielko") || b.includes("tank");
+      }),
+      tShirt: wardrobeItems.some((it) => {
+        const b = `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase();
+        return b.includes("trič") || b.includes("trick") || b.includes("t-shirt");
+      }),
+    };
+
+    // Future preference hook: wire this from user profile later.
+    // Example:
+    // { avoidedTypesForDailyWear: ["tielko"], preferredShortsInWarmWeather: true }
+    const futurePreferenceHook = {
+      avoidedTypesForDailyWear: ["tielko"],
+      preferredShortsInWarmWeather: true,
+    };
+    void futurePreferenceHook;
+
+    const usageContextRaw = String(
+      weatherContext?.usageContext ||
+      weatherContext?.outfitContext ||
+      weatherContext?.eventContext ||
+      ""
+    ).toLowerCase();
+    const hasExplicitContext = usageContextRaw.length > 0;
+    const normalDailyOutside = !hasExplicitContext;
+    const beachOrWaterContext =
+      usageContextRaw.includes("beach") ||
+      usageContextRaw.includes("pool") ||
+      usageContextRaw.includes("water") ||
+      usageContextRaw.includes("pláž") ||
+      usageContextRaw.includes("kup");
+    const sportContext =
+      usageContextRaw.includes("sport") ||
+      usageContextRaw.includes("gym") ||
+      usageContextRaw.includes("run") ||
+      usageContextRaw.includes("workout");
+    const homeContext =
+      usageContextRaw.includes("home") ||
+      usageContextRaw.includes("lounge") ||
+      usageContextRaw.includes("dom");
+
+    const lines = [];
+    let shortsPreferenceTriggered = false;
+    let jeansPenaltyApplied = false;
+    lines.push(`Dátum/obdobie: mesiac ${month || "neznámy"}, ${warmSeason ? "apríl-september (teplejšia sezóna)" : "október-marec (chladnejšia sezóna)"}.`);
+    lines.push(`Počasie: ${sky}, dážď=${rainy ? "áno" : "nie"}, vietor=${windy ? "áno" : "nie"}, max/deň ~${tempForRules != null ? `${Math.round(tempForRules)}°C` : "neznámo"}.`);
+    lines.push(
+      `Denný oblúk: ráno ${morningTemp != null ? `${Math.round(morningTemp)}°C` : "?"}, ` +
+      `poobedie ${noonTemp != null ? `${Math.round(noonTemp)}°C` : "?"}, ` +
+      `večer ${eveningTemp != null ? `${Math.round(eveningTemp)}°C` : "?"}, ` +
+      `dážď neskôr=${rainStartsLater ? "áno" : "nie"}${rainTimeText ? ` (${rainTimeText})` : ""}.`
+    );
+    lines.push(`Dostupnosť šatníka: shorts=${hasBySlot.shorts ? "áno" : "nie"}, skirt=${hasBySlot.skirt ? "áno" : "nie"}, jeans/pants=${hasBySlot.jeansOrPants ? "áno" : "nie"}, outerwear=${hasBySlot.outerwear ? "áno" : "nie"}.`);
+    lines.push(`Assume normal casual outside wear unless the user selected beach, sport, home, pool, or event context.`);
+    if (normalDailyOutside) {
+      lines.push("Kontext: bežné denné nosenie vonku (default).");
+    } else {
+      lines.push(`Kontext používateľa: ${usageContextRaw}.`);
+    }
+
+    if (tempForRules != null && tempForRules >= 25) {
+      lines.push("Pravidlo 25°C+: preferuj tričko/tank + šortky/sukňu + ľahkú obuv.");
+    } else if (tempForRules != null && tempForRules >= 20) {
+      lines.push("Pravidlo 20-24°C: preferuj tričko + šortky pri slnečnom dni bez dažďa.");
+      lines.push("Ľahké nohavice/jeans len ak je vietor, dážď, formálny vibe alebo chýbajú vhodné šortky.");
+    } else if (tempForRules != null && tempForRules >= 16) {
+      lines.push("Pravidlo 16-19°C: ak poobede ide na 19°C+ a bez dažďa, šortky sú povolené/pref.");
+      lines.push("Ak je veterno/daždivo/zatiahnuté, jeans alebo dlhé nohavice sú rozumné.");
+    } else if (tempForRules != null && tempForRules >= 10) {
+      lines.push("Pravidlo 10-15°C: preferuj dlhé nohavice/jeans + mikinu/sveter/ľahkú bundu.");
+    } else {
+      lines.push("Pravidlo pod 10°C: teplé vrstvenie, bunda/kabát, dlhé nohavice.");
+    }
+
+    const strongWarmShortsRule =
+      warmSeason &&
+      !rainy &&
+      !rainStartsLater &&
+      !windy &&
+      noonTemp != null &&
+      noonTemp >= 19 &&
+      hasBySlot.shorts;
+    if (strongWarmShortsRule) {
+      shortsPreferenceTriggered = true;
+      jeansPenaltyApplied = true;
+      lines.push(
+        "Silné pravidlo teplého slnečného dňa: je 19°C+ bez dažďa a bez silného vetra, vhodné šortky existujú -> SILNO preferuj šortky."
+      );
+      lines.push(
+        "Scoring pravidlo: pri tejto situácii daj jeans/long pants penalizáciu minimálne -15."
+      );
+      lines.push(
+        "Jeans môžu vyhrať len ak je kontext formálny/večerný, chýbajú dobré šortky, alebo je neskôr výrazná zmena počasia."
+      );
+    }
+
+    if (warmSeason && sunnyNoRain && tempForRules != null && tempForRules >= 19 && (hasBySlot.shorts || hasBySlot.skirt)) {
+      lines.push("Silné pravidlo neskorá jar/leto: vhodné šortky existujú a je slnečno bez dažďa pri 19°C+ -> SILNO preferuj šortky.");
+      lines.push("Jeans vyber len s jasným dôvodom.");
+      lines.push("Voliteľná mikina/ľahká vrstva je OK ako ranná/večerná rezerva.");
+    }
+
+    if (normalDailyOutside) {
+      lines.push("Tank top/tielko pri bežnom dennom nosení vonku obmedz.");
+      if (tempForRules != null && tempForRules >= 19 && tempForRules <= 24 && sunnyNoRain) {
+        lines.push("Pre 19-24°C slnečný deň preferuj tričko pred tielkom.");
+      }
+      lines.push("Tielko ako hlavný top povoľ len ak je veľmi teplo (25°C+) alebo chýba lepšie tričko.");
+      if (hasBySlot.tankTop && hasBySlot.tShirt) {
+        lines.push("Ak existuje vhodné tričko, vyber tričko namiesto tielka.");
+      }
+      lines.push("Ak aj tak vyberieš tielko, v reply musí byť jasný dôvod.");
+    }
+    if (beachOrWaterContext || sportContext || homeContext) {
+      lines.push("Tielko je v tomto kontexte povolené (beach/pool/sport/home).");
+    }
+
+    if (rainy) {
+      lines.push("Dážď: ak je lepšia alternatíva, nepreferuj biele tenisky.");
+    }
+    if (rainStartsLater) {
+      lines.push("Ak má začať pršať poobede/večer, ber to ako dôležité pravidlo výberu topánok.");
+      lines.push("Vyhni sa bielym teniskám, ak existuje tmavšia/praktickejšia obuv.");
+    }
+    if ((rainy || rainStartsLater) && hasBySlot.whiteSneakers && hasBySlot.darkerRainFriendlyShoes) {
+      lines.push("Scoring pravidlo: penalizuj biele tenisky, bonus pre tmavšiu/praktickejšiu obuv.");
+    }
+    if (windy) {
+      lines.push("Vietor: preferuj väčšie krytie a/alebo vrstvu.");
+    }
+    if (morningTemp != null && maxTemp != null && maxTemp - morningTemp >= 5) {
+      lines.push("Chladné ráno + teplejšie poobedie: základ prispôsob poobediu, vrstva len ako voliteľný doplnok.");
+    }
+    if (eveningTemp != null && maxTemp != null && maxTemp - eveningTemp >= 4 && hasBySlot.outerwear) {
+      lines.push("Večer ochladenie: ľahká vrstva je vhodná, ale outfit nech je stále praktický cez deň.");
+    }
+    if (hasBySlot.outerwear && ((morningTemp != null && morningTemp <= 12) || (eveningTemp != null && eveningTemp <= 10))) {
+      lines.push("Scoring pravidlo: bonus pre mikinu/ľahkú bundu pri chladnom ráne alebo chladnom večeri.");
+    }
+    if (hasBySlot.shorts && eveningTemp != null && eveningTemp < 10 && rainStartsLater && normalDailyOutside) {
+      lines.push("Scoring pravidlo: penalizuj šortky, ak večer klesá pod 10°C a prichádza dážď.");
+      lines.push("Ak aj vyberieš šortky, musíš v reply jasne upozorniť na večerný chlad/dážď.");
+    }
+
+    return {
+      text: lines.join("\n"),
+      shortsPreferenceTriggered,
+      jeansPenaltyApplied,
+    };
+  }
+
+  exports.generateHomeOutfit = functions
+    .region("us-east1")
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid || null;
+      if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+      }
+
+      const apiKey = getOpenAiKey();
+      if (!apiKey) {
+        logger.error("generateHomeOutfit: missing OPENAI_API_KEY");
+        return fallbackHomeOutfit("Outfit AI je teraz nedostupné. Skús neskôr.", "missing_api_key");
+      }
+
+      const date = String(data?.date || "").trim();
+      const weatherContext =
+        data?.weatherContext && typeof data.weatherContext === "object" ?
+          data.weatherContext :
+          {};
+      const excludedItemIds = normalizeStringArray(data?.excludedItemIds, 200);
+      const rejectedCombinationSignatures = normalizeStringArray(data?.rejectedCombinationSignatures, 200);
+      const previousOutfitItemIds = normalizeStringArray(data?.previousOutfitItemIds, 200);
+      const forceDifferentOutfit = data?.forceDifferentOutfit === true;
+
+      try {
+        const snap = await db.collection("users").doc(uid).collection("wardrobe").limit(80).get();
+        const wardrobeDocs = snap.docs.map((doc) => ({id: doc.id, ...(doc.data() || {})}));
+        logger.info("generateHomeOutfit: wardrobe loaded", {
+          uid,
+          wardrobeCount: wardrobeDocs.length,
+        });
+        if (!wardrobeDocs.length) {
+          return fallbackHomeOutfit("Najprv potrebujem aspoň pár kúskov vo vašom šatníku.", "empty_wardrobe");
+        }
+
+        const compact = wardrobeDocs.map((it) => {
+          const base = compactWardrobeItem(it);
+          return {
+            id: String(it.id || "").trim(),
+            ...base,
+            slotHint: classifyWearSlot(base),
+          };
+        }).filter((it) => it.id);
+        logger.info("generateHomeOutfit: compact wardrobe built", {
+          uid,
+          compactWardrobeCount: compact.length,
+        });
+        const stylistRules = buildStylistConstraints({
+          date,
+          weatherContext,
+          wardrobeItems: compact,
+        });
+        const stylistConstraints = stylistRules.text;
+        logger.info("generateHomeOutfit: dayArcSummary", {
+          uid,
+          morningTempC: toNumOrNull(weatherContext?.morningTempC),
+          noonTempC: toNumOrNull(weatherContext?.noonTempC),
+          eveningTempC: toNumOrNull(weatherContext?.eveningTempC),
+          rainTimeText: String(weatherContext?.rainTimeText || ""),
+          morningRainSegment: weatherContext?.morningRainSegment === true,
+          afternoonRainSegment: weatherContext?.afternoonRainSegment === true,
+          eveningRainSegment: weatherContext?.eveningRainSegment === true,
+        });
+        logger.info("generateHomeOutfit: rainAwareShoeRule", {
+          uid,
+          isRainy: weatherContext?.isRainy === true || weatherContext?.willRain === true,
+          rainTimeText: String(weatherContext?.rainTimeText || ""),
+          stylistConstraintsContainsRule: stylistConstraints.includes("Vyhni sa bielym teniskám"),
+        });
+        logger.info("generateHomeOutfit: shortsPreferenceTriggered=true", {
+          uid,
+          shortsPreferenceTriggered: stylistRules.shortsPreferenceTriggered === true,
+        });
+        logger.info("generateHomeOutfit: jeansPenaltyApplied=true", {
+          uid,
+          jeansPenaltyApplied: stylistRules.jeansPenaltyApplied === true,
+        });
+        logger.info("generateHomeOutfit: summerShortsMode=true", {
+          uid,
+          summerShortsMode: stylistRules.shortsPreferenceTriggered === true,
+        });
+        logger.info("generateHomeOutfit: jeansBlocked=true", {
+          uid,
+          jeansBlocked: stylistRules.jeansPenaltyApplied === true,
+        });
+        logger.info("generateHomeOutfit: shortsAvailable=true", {
+          uid,
+          shortsAvailable: compact.some((it) => String(it.slotHint || "") === "bottom" &&
+            (`${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase().includes("short") ||
+            `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase().includes("krať") ||
+            `${it.name || ""} ${it.category || ""} ${it.subCategory || ""}`.toLowerCase().includes("krat"))),
+        });
+
+        const validIds = new Set(compact.map((it) => it.id));
+        if (!validIds.size) {
+          return fallbackHomeOutfit(
+            "Najprv potrebujem aspoň pár kúskov vo vašom šatníku.",
+            "empty_valid_id_set"
+          );
+        }
+
+        const systemPrompt =
+          `Si osobný stylista pre domovskú obrazovku módnej appky.\n` +
+          `Píš po slovensky, prirodzene, profesionálne, prémiovo, ale stručne.\n` +
+          `Tvoj cieľ: vybrať reálny outfit LEN z dodaného šatníka.\n` +
+          `MUSÍŠ rešpektovať počasie: teplota, dážď, vietor, sezóna, vrstvenie.\n` +
+          `Preferuj 3-4 kúsky: top, bottom, shoes, voliteľne outerwear.\n` +
+          `Riaď sa blokom stylistConstraints a rešpektuj ho prednostne.\n` +
+          `NIKDY nevymýšľaj nové kúsky, názvy ani ID.\n` +
+          `Použi iba ID zo zoznamu wardrobeItems.\n` +
+          `Ak nemáš vhodnú kombináciu, vráť prázdne outfitItemIds.\n` +
+          `Reason musí byť krátky pre Home card, bez omáčky a bez fráz typu "praktická vrstva".\n` +
+          `Reply štýl: 3-5 krátkych prirodzených viet ako dobrý stylista/kamarát, hovorovou slovenčinou.\n` +
+          `Použi štruktúru: (1) stručne deň/počasie, (2) prečo outfit dáva zmysel, (3) tip/varovanie na večer alebo dážď.\n` +
+          `Buď konkrétny: spomeň rannú, poobednú a večernú zmenu počasia, čas dažďa/ochladenia ak je známy.\n` +
+          `Zakázané frázy: "súdržný outfit", "nositeľný outfit", "outfit drží spolu", "ideálny na bežné nosenie", "komfortný mestský look", "practical layer", "balanced fit".\n` +
+          `Nepoužívaj módny blog tón ani robotické formulácie. Znieť máš ľudsky.\n` +
+          `Vráť STRICT JSON presne:\n` +
+          `{\n` +
+          `  "reply": "kratky slovensky dovod",\n` +
+          `  "outfitItemIds": ["id1","id2","id3","id4"],\n` +
+          `  "missingItems": [],\n` +
+          `  "confidence": 0.0\n` +
+          `}\n` +
+          `Bez markdownu, bez ďalšieho textu.`;
+
+        const userPrompt = JSON.stringify({
+          date,
+          weatherContext,
+          stylistConstraints,
+          constraints: {
+            excludedItemIds,
+            rejectedCombinationSignatures,
+            previousOutfitItemIds,
+            forceDifferentOutfit,
+          },
+          wardrobeItems: compact,
+        });
+        logger.info("generateHomeOutfit: stylist constraints", {
+          uid,
+          stylistConstraints: String(stylistConstraints).slice(0, 2000),
+        });
+
+        const body = {
+          model: "gpt-4o-mini",
+          temperature: 0.2,
+          max_tokens: 380,
+          messages: [
+            {role: "system", content: systemPrompt},
+            {role: "user", content: userPrompt},
+          ],
+        };
+
+        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => "");
+          logger.error("generateHomeOutfit: OpenAI error", {
+            status: response.status,
+            errorText: String(errorText || "").slice(0, 800),
+          });
+          return fallbackHomeOutfit("Dnes dám radšej lokálny výber outfitu.", "openai_http_error");
+        }
+
+        const json = await response.json();
+        const rawText = json?.choices?.[0]?.message?.content || "";
+        logger.info("generateHomeOutfit: raw ai response", {
+          uid,
+          rawOpenAiText: String(rawText || "").slice(0, 3000),
+        });
+        const parsed = extractFirstJsonObject(rawText);
+        if (!parsed || typeof parsed !== "object") {
+          return fallbackHomeOutfit(
+            "Nepodarilo sa pripraviť AI outfit, skúsim lokálnu kombináciu.",
+            "invalid_json_shape"
+          );
+        }
+
+        const reply = String(parsed.reply || "").trim();
+        const parsedOutfitItemIds = normalizeStringArray(parsed.outfitItemIds, 8);
+        const validOutfitItemIds = parsedOutfitItemIds.filter((id) => validIds.has(id)).slice(0, 4);
+        const invalidIds = parsedOutfitItemIds.filter((id) => !validIds.has(id));
+        const missingItems = normalizeStringArray(parsed.missingItems, 8);
+        const confidenceRaw = Number(parsed.confidence);
+        const confidence = Number.isFinite(confidenceRaw) ?
+          Math.max(0, Math.min(1, confidenceRaw)) :
+          0;
+        logger.info("generateHomeOutfit: parsed ids", {
+          uid,
+          parsedOutfitItemIds,
+          validOutfitItemIds,
+          invalidIds,
+        });
+        logger.info("generateHomeOutfit: stylistReply", {
+          uid,
+          reply: String(reply || "").slice(0, 600),
+        });
+
+        if (!reply) {
+          return fallbackHomeOutfit("Dnes dám radšej lokálny výber outfitu.", "empty_reply");
+        }
+        if (validOutfitItemIds.length < 3) {
+          return fallbackHomeOutfit("Dnes dám radšej lokálny výber outfitu.", "valid_ids_less_than_3");
+        }
+
+        return {
+          reply,
+          outfitItemIds: validOutfitItemIds,
+          missingItems,
+          confidence,
+        };
+      } catch (error) {
+        logger.error("generateHomeOutfit error:", {
+          uid,
+          message: error?.message || String(error),
+        });
+        return fallbackHomeOutfit("Dnes dám radšej lokálny výber outfitu.", "unhandled_exception");
+      }
+    });
 
   exports.stylistChat = functions
     .region("us-east1")

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/stylist_layer_filter.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 
 /// Slim weather snapshot used to pick outfits.
@@ -129,21 +130,12 @@ class OutfitGenerationService {
 
     if (cleanItems.isEmpty) return null;
 
-    bool matchesSeason(Map<String, dynamic> item) {
-      final seasonsDyn = item['seasons'];
-      final seasons = <String>[
-        if (seasonsDyn is List) ...seasonsDyn.map((e) => e.toString()),
-        if (seasonsDyn is String && seasonsDyn.trim().isNotEmpty)
-          seasonsDyn,
-      ]
-          .map((s) => s.trim().toLowerCase())
-          .where((s) => s.isNotEmpty)
-          .toList();
-
-      if (seasons.isEmpty) return true;
-      final target = weather.seasonKey;
-      return seasons.any((s) => s.contains('cel') || s.contains(target));
-    }
+    final stylistWeather = StylistWeatherContext(
+      tempC: weather.tempC,
+      isRainy: weather.isRainy,
+      isWindy: weather.isWindy,
+      seasonKey: weather.seasonKey,
+    );
 
     bool containsAny(String haystack, List<String> needles) {
       final h = haystack.toLowerCase();
@@ -326,8 +318,16 @@ class OutfitGenerationService {
       return filtered;
     }
 
-    final seasonal = cleanItems.where(matchesSeason).toList();
-    final pool = seasonal.isNotEmpty ? seasonal : cleanItems;
+    final layerFiltered = cleanItems
+        .where(
+          (it) => StylistLayerFilter.isItemUsableForWeather(
+            it,
+            stylistWeather,
+            log: kDebugMode,
+          ),
+        )
+        .toList();
+    final pool = layerFiltered.isNotEmpty ? layerFiltered : cleanItems;
 
     final tops = pool.where(isTop).toList();
     final bottoms = pool.where(isBottom).toList();
@@ -340,6 +340,7 @@ class OutfitGenerationService {
     final isWarm = temp >= 20;
     final isMild = temp >= 10 && temp < 20;
     final isCold = temp < 10;
+    final isFreezing = stylistWeather.isFreezing;
     final needsOuterwear = isCold || weather.isRainy;
 
     double scoreBottom(Map<String, dynamic> it) {
@@ -363,8 +364,15 @@ class OutfitGenerationService {
     double scoreOuter(Map<String, dynamic> it) {
       final b = blob(it);
       var s = baseScore(it);
+      final warmth = StylistLayerFilter.inferWarmthLevel(it);
+      final layer = StylistLayerFilter.resolveEffectiveLayerRole(it);
+      if (isCold && warmth >= 7) s += 1.4;
       if (isCold && isHeavyOuterwear(it)) s += 1.2;
+      if (isCold && layer == 'mid_layer') s += 0.35;
+      if (isFreezing && warmth <= 5) s -= 1.1;
       if (isMild && isLightOuterwear(it)) s += 1.0;
+      if (isWarm && warmth >= 7) s -= 1.5;
+      if (isWarm && layer == 'mid_layer') s -= 0.6;
       if (weather.isRainy && b.contains('bunda')) s += 0.4;
       return s;
     }

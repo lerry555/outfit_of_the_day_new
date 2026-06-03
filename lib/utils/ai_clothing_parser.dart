@@ -189,6 +189,15 @@ class AiClothingParser {
     'spring jacket': 'bunda_prechodna',
     'fall jacket': 'bunda_prechodna',
     'transitional jacket': 'bunda_prechodna',
+    'track_jacket': 'bunda_prechodna',
+    'track jacket': 'bunda_prechodna',
+    'training_jacket': 'bunda_prechodna',
+    'training jacket': 'bunda_prechodna',
+    'zip_jacket': 'bunda_prechodna',
+    'zip jacket': 'bunda_prechodna',
+    'treningova bunda': 'bunda_prechodna',
+    'sportova bunda': 'bunda_prechodna',
+    'sport jacket': 'bunda_prechodna',
 
     'denim jacket': 'bunda_riflova',
     'jean jacket': 'bunda_riflova',
@@ -618,7 +627,54 @@ class AiClothingParser {
     'potítka': 'potitka',
   };
 
-  static AiMappedCategory? fromCanonicalType(String canonicalType) {
+  static const Set<String> _trustedAiLayerRoles = {
+    'base_layer',
+    'mid_layer',
+    'outer_layer',
+    'main_top',
+    'main_bottom',
+    'base_bottom',
+    'one_piece',
+    'footwear',
+    'accessory',
+  };
+
+  /// Prefer AI [layer_role] when present; otherwise use subcategory defaults.
+  static String resolveLayerRole({
+    required String subCategoryKey,
+    String? aiLayerRole,
+  }) {
+    final ai = _norm(aiLayerRole ?? '').replaceAll(' ', '_');
+    if (ai.isNotEmpty && _trustedAiLayerRoles.contains(ai)) {
+      return ai;
+    }
+    return subCategoryLayerRoles[subCategoryKey] ??
+        _fallbackLayerRoleForSubKey(subCategoryKey);
+  }
+
+  static bool isTrackJacketSignal({
+    required String canonicalType,
+    String primaryType = '',
+    String rawType = '',
+    String prettyType = '',
+  }) {
+    final blob = _norm('$canonicalType $primaryType $rawType $prettyType');
+    return _hasAny(blob, [
+      'track jacket',
+      'track_jacket',
+      'training jacket',
+      'training_jacket',
+      'zip jacket',
+      'zip_jacket',
+      'treningova bunda',
+      'sportova bunda',
+    ]);
+  }
+
+  static AiMappedCategory? fromCanonicalType(
+    String canonicalType, {
+    String? aiLayerRole,
+  }) {
     final normalized = _norm(canonicalType);
     if (normalized.isEmpty) return null;
 
@@ -633,7 +689,10 @@ class AiClothingParser {
     final mainKey = _findMainGroupForCategory(catKey);
     if (mainKey == null) return null;
 
-    final layerRole = subCategoryLayerRoles[subKey] ?? _fallbackLayerRoleForSubKey(subKey);
+    final layerRole = resolveLayerRole(
+      subCategoryKey: subKey,
+      aiLayerRole: aiLayerRole,
+    );
 
     return AiMappedCategory(
       mainGroupKey: mainKey,
@@ -764,6 +823,21 @@ class AiClothingParser {
       return fromCanonicalType('nohavice_klasicke');
     }
 
+    // 3b) track / training jackets (before tops — avoid long-sleeve tee false positives)
+    if (_hasAny(t, [
+      'track jacket',
+      'track_jacket',
+      'training jacket',
+      'training_jacket',
+      'zip jacket',
+      'zip_jacket',
+      'treningova bunda',
+      'sportova bunda',
+      'sport jacket',
+    ])) {
+      return fromCanonicalType('track_jacket');
+    }
+
     // 4) topy
     if (_hasAny(t, ['blouse', 'bluzka', 'blúzka', 'halenka'])) {
       return fromCanonicalType('bluzka');
@@ -784,7 +858,17 @@ class AiClothingParser {
       return fromCanonicalType('tielko');
     }
     if (_hasAny(t, ['long sleeve', 'longsleeve', 'dlhy rukav', 'dlhym rukavom'])) {
-      return fromCanonicalType('tricko_dlhy_rukav');
+      if (!_hasAny(t, [
+        'jacket',
+        'bunda',
+        'track jacket',
+        'training jacket',
+        'zip jacket',
+        'treningova bunda',
+        'sportova bunda',
+      ])) {
+        return fromCanonicalType('tricko_dlhy_rukav');
+      }
     }
     if (_hasAny(t, ['t-shirt', 'tshirt', 'tee', 'tricko', 'tričko'])) {
       return fromCanonicalType('tricko');
@@ -1116,5 +1200,194 @@ class AiClothingParser {
     }
 
     return 'main_top';
+  }
+}
+
+/// V2 jacket subcategory + seasons from analyzeClothingImage metadata.
+class JacketV2Result {
+  final String subCategoryKey;
+  final List<String> seasons;
+
+  const JacketV2Result({
+    required this.subCategoryKey,
+    required this.seasons,
+  });
+}
+
+class JacketV2Classifier {
+  JacketV2Classifier._();
+
+  static const _winterSeasons = ['jeseň', 'zima'];
+  static const _transitionSeasons = ['jar', 'jeseň'];
+
+  /// Run when generic jacket mapping may need V2 refinement.
+  static bool shouldClassify({
+    required String? currentSub,
+    required String canonicalType,
+    String primaryType = '',
+    String rawType = '',
+    String prettyType = '',
+  }) {
+    final canon = _norm(canonicalType);
+    if (canon == 'jacket' || canon == 'track jacket') return true;
+    if (AiClothingParser.isTrackJacketSignal(
+      canonicalType: canonicalType,
+      primaryType: primaryType,
+      rawType: rawType,
+      prettyType: prettyType,
+    )) {
+      return true;
+    }
+    return currentSub == 'bunda_prechodna' || currentSub == 'bunda_zimna';
+  }
+
+  static JacketV2Result? classify({
+    required String primaryType,
+    required String secondaryType,
+    required int? warmthLevel,
+    required String materialFeel,
+    required String vibe,
+    required String visualDescription,
+    required String rawType,
+    required String prettyType,
+  }) {
+    final typeBlob = _norm(
+      '$primaryType $secondaryType $rawType $prettyType $visualDescription',
+    );
+    final primaryNorm = _norm(primaryType);
+    final secondaryNorm = _norm(secondaryType);
+    final typeNorm = _norm('$primaryType $secondaryType');
+    final materialNorm = _norm(materialFeel);
+    final vibeNorm = _norm(vibe);
+
+    // 1) Winter jacket
+    if (warmthLevel != null && warmthLevel >= 7) {
+      return _winter();
+    }
+    if (_containsAny(typeNorm, const [
+      'zimna',
+      'puffer',
+      'parka',
+      'kabat',
+      'paperova',
+    ])) {
+      return _winter();
+    }
+    if (_containsAny(materialNorm, const [
+      'insulated',
+      'fleece',
+      'heavy',
+      'padded',
+    ])) {
+      return _winter();
+    }
+
+    // 2) Light sport / training jacket (before transition — warmth <= 3)
+    if (warmthLevel != null && warmthLevel <= 3) {
+      return _transition();
+    }
+    if (_containsAny(typeNorm, const [
+      'treningova bunda',
+      'track jacket',
+      'sportova bunda',
+    ])) {
+      return _transition();
+    }
+    if (vibeNorm == 'sport' &&
+        _containsAny(materialNorm, const ['light', 'synthetic', 'technical'])) {
+      return _transition();
+    }
+
+    // 3) Transition jacket
+    if (warmthLevel != null && warmthLevel >= 4 && warmthLevel <= 6) {
+      return _transition();
+    }
+    if (_containsAny(typeNorm, const [
+      'prechodna',
+      'softshell',
+      'windbreaker',
+    ])) {
+      return _transition();
+    }
+
+    // Generic jacket with V2 context but no strong signal — keep transition default
+    if (typeBlob.contains('bunda') ||
+        typeBlob.contains('jacket') ||
+        primaryNorm.isNotEmpty ||
+        secondaryNorm.isNotEmpty) {
+      return _transition();
+    }
+
+    return null;
+  }
+
+  static void logDecision({
+    required String primaryType,
+    required String secondaryType,
+    required int? warmthLevel,
+    required String materialFeel,
+    required String vibe,
+    required JacketV2Result? result,
+  }) {
+    final r = result;
+    // ignore: avoid_print
+    print(
+      'JACKET CLASSIFIER:\n'
+      'primary_type=$primaryType\n'
+      'warmth_level=${warmthLevel ?? 'null'}\n'
+      'material_feel=$materialFeel\n'
+      'vibe=$vibe\n'
+      'final_subcategory=${r?.subCategoryKey ?? '(unchanged)'}\n'
+      'final_seasons=${r?.seasons ?? '(unchanged)'}',
+    );
+  }
+
+  static JacketV2Result _winter() => const JacketV2Result(
+        subCategoryKey: 'bunda_zimna',
+        seasons: _winterSeasons,
+      );
+
+  static JacketV2Result _transition() => const JacketV2Result(
+        subCategoryKey: 'bunda_prechodna',
+        seasons: _transitionSeasons,
+      );
+
+  static bool _containsAny(String blob, List<String> terms) {
+    if (blob.isEmpty) return false;
+    for (final t in terms) {
+      if (blob.contains(_norm(t))) return true;
+    }
+    return false;
+  }
+
+  static String _norm(String s) {
+    var out = s.toLowerCase().trim();
+    const repl = {
+      'á': 'a',
+      'ä': 'a',
+      'č': 'c',
+      'ď': 'd',
+      'é': 'e',
+      'ě': 'e',
+      'í': 'i',
+      'ĺ': 'l',
+      'ľ': 'l',
+      'ň': 'n',
+      'ó': 'o',
+      'ô': 'o',
+      'ŕ': 'r',
+      'ř': 'r',
+      'š': 's',
+      'ť': 't',
+      'ú': 'u',
+      'ů': 'u',
+      'ý': 'y',
+      'ž': 'z',
+    };
+    final b = StringBuffer();
+    for (final ch in out.split('')) {
+      b.write(repl[ch] ?? ch);
+    }
+    return b.toString();
   }
 }

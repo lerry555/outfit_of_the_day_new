@@ -31,14 +31,35 @@ import '../utils/outfit_reason_builder.dart';
 import '../utils/briefing_weather_condition.dart';
 import '../utils/luxury_weather_emoji.dart';
 import '../Services/hourly_weather_service.dart';
+import '../Services/home_ai_outfit_service.dart';
 import '../Services/outfit_generation_service.dart';
 import '../Services/stylist_day_brief.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/wardrobe_image_processing.dart';
 
 /// Hero outfit: transparent PNG pred produktovou fotkou ([resolveHeroHomeOutfitImageUrl]).
+final Map<String, String?> _heroImageUrlCache = <String, String?>{};
+final Set<String> _heroImageLoggedHitKeys = <String>{};
 String? _heroWardrobeDisplayImageUrl(Map<String, dynamic> raw) {
+  final id = OutfitGenerationService.wardrobeItemId(raw);
+  final cacheKey = [
+    id,
+    (raw['cutoutImageUrl'] ?? '').toString().trim(),
+    (raw['cleanImageUrl'] ?? '').toString().trim(),
+    (raw['productImageUrl'] ?? '').toString().trim(),
+    (raw['originalImageUrl'] ?? '').toString().trim(),
+    (raw['imageUrl'] ?? '').toString().trim(),
+  ].join('|');
+  if (_heroImageUrlCache.containsKey(cacheKey)) {
+    if (!_heroImageLoggedHitKeys.contains(cacheKey)) {
+      _heroImageLoggedHitKeys.add(cacheKey);
+      debugPrint('[HOME_IMAGE_PICK] cache_hit=true key=$cacheKey');
+    }
+    return _heroImageUrlCache[cacheKey];
+  }
   final picked = resolveHeroHomeOutfitImageUrl(raw);
+  _heroImageUrlCache[cacheKey] = picked;
+  debugPrint('[HOME_IMAGE_PICK] cache_miss=true key=$cacheKey');
   String t(String k) => (raw[k]?.toString().trim() ?? '');
   debugPrint(
     '[HOME_IMAGE_PICK] name=${t('name')} cutout=${t('cutoutImageUrl')} clean=${t('cleanImageUrl')} '
@@ -57,6 +78,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final HomeAiOutfitService _homeAiOutfitService = const HomeAiOutfitService();
 
   // ✅ prepínač Dnes/Zajtra (UI)
   int _dayIndex = 0; // 0 = dnes, 1 = zajtra
@@ -64,8 +86,28 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _isOutfitEditMode = false;
   _HeroWearType? _focusedEditType;
   final Map<int, List<_HeroOutfitItem>> _editedOutfitByDay = {};
+  final Map<int, String> _lastSourceSignatureByDay = {};
+  final Map<int, bool> _editedManuallyByDay = {};
+  final Map<int, Set<String>> _swapRejectedReplacementItemIdsByDay = {};
+  final Map<int, Map<_HeroWearType, String>> _swapOriginalItemIdByTypeByDay = {};
+  final Map<int, Map<_HeroWearType, String>> _swapLastSuggestedItemIdByTypeByDay = {};
+  final Map<String, _HomeDayHeroCacheEntry> _homeDayHeroCacheByDateKey = {};
   /// Kombinácie outfitov, ktoré používateľ už odmietol („Nový outfit“).
   final Map<int, Set<String>> _rejectedOutfitCombinationKeysByDay = {};
+  final Map<String, _HomeAiCacheEntry> _homeAiCacheBySignature = {};
+  final Set<String> _homeAiRequestInFlight = <String>{};
+  final Map<String, String> _homeAiLatestSignatureByDateKey = {};
+  final Map<String, String> _homeAiLastWeatherSignatureByDateKey = {};
+  final Map<String, String> _homeAiLastWardrobeSignatureByDateKey = {};
+  String? _homeAiLastTriggeredDateKey;
+  final Map<String, bool> _homeAiForceDifferentNextByDateKey = {};
+  int _homeAiRefreshNonce = 0;
+  bool _weatherLoading = false;
+  final Map<String, _HeroOutfitRecommendation?> _localRecCacheByDateSig = {};
+  final Map<String, List<_HeroOutfitItem>> _heroItemsCacheByIdSet = {};
+  String? _lastAiPreservedSignatureLogged;
+  String? _lastFallbackReasonLoggedKey;
+  String? _lastHeroRenderLogKey;
   bool _newOutfitGenerating = false;
   final Map<int, String> _likedOutfitKeyByDay = {};
   int _likePulseTick = 0;
@@ -92,7 +134,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadWeather() async {
-    if (_weatherLoaded) return;
+    if (_weatherLoaded || _weatherLoading) return;
+    _weatherLoading = true;
     final svc = HourlyWeatherService();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -133,6 +176,8 @@ class _HomeScreenState extends State<HomeScreen> {
       });
       debugPrint('[HOME_WEATHER_DEBUG][fallback_reason] load_exception: $e');
       _scheduleHomeWeatherDebugLogAfterFrame(today, tomorrow);
+    } finally {
+      _weatherLoading = false;
     }
   }
 
@@ -241,22 +286,170 @@ class _HomeScreenState extends State<HomeScreen> {
     return _editedOutfitByDay[_dayIndex] ?? source;
   }
 
-  void _syncEditableOutfitFromSource(List<_HeroOutfitItem> source) {
-    if (source.isEmpty) {
-      _editedOutfitByDay.remove(_dayIndex);
-      return;
-    }
-    _editedOutfitByDay.putIfAbsent(_dayIndex, () => List<_HeroOutfitItem>.from(source));
+  String _heroRenderSignature(List<_HeroOutfitItem> items) {
+    return items
+        .map((e) => '${e.type.name}:${e.wardrobeItemId ?? ''}:${e.label}')
+        .join('|');
   }
 
-  void _setEditedItems(List<_HeroOutfitItem> items) {
+  String _canonicalTypeFromRaw(Map<String, dynamic> raw) {
+    final blob = _normalizedScaleToken(
+      '${raw['name'] ?? ''} ${raw['categoryKey'] ?? raw['category'] ?? ''} '
+      '${raw['subCategoryKey'] ?? raw['subCategory'] ?? ''} ${raw['mainGroupKey'] ?? raw['mainGroup'] ?? ''}',
+    );
+    bool has(List<String> words) =>
+        words.any((w) => blob.contains(_normalizedScaleToken(w)));
+    if (has(['short', 'kratasy', 'kraťasy'])) return 'shorts';
+    if (has(['jeans', 'rifle', 'nohavice', 'pants'])) return 'long_pants';
+    if (has(['t-shirt', 'tricko', 'tričko'])) return 'tshirt';
+    if (has(['tank', 'tielko'])) return 'tank_top';
+    if (has(['hoodie', 'mikina'])) return 'hoodie';
+    if (has(['sneaker', 'tenisky', 'shoes', 'obuv'])) return 'sneakers';
+    if (has(['coat', 'kabat', 'kabát', 'jacket', 'bunda', 'blazer', 'sako'])) {
+      return 'outerwear';
+    }
+    return 'other';
+  }
+
+  String _canonicalTypeFromHeroItem(_HeroOutfitItem item) {
+    return _canonicalTypeFromRaw(<String, dynamic>{
+      'name': item.label,
+      'categoryKey': item.categoryKey ?? '',
+      'subCategoryKey': item.subCategoryKey ?? '',
+      'mainGroupKey': item.type.name,
+    });
+  }
+
+  void _syncEditableOutfitFromSource(List<_HeroOutfitItem> source) {
+    if (source.isEmpty) {
+      final existing = _editedOutfitByDay[_dayIndex];
+      final wasManual = _editedManuallyByDay[_dayIndex] ?? false;
+      // Keep accepted manual edits stable through transient loading/source-empty frames.
+      if (wasManual && existing != null && existing.isNotEmpty) {
+        return;
+      }
+      _editedOutfitByDay.remove(_dayIndex);
+      _lastSourceSignatureByDay.remove(_dayIndex);
+      _editedManuallyByDay.remove(_dayIndex);
+      return;
+    }
+    final sourceSig = _heroRenderSignature(source);
+    final existing = _editedOutfitByDay[_dayIndex];
+    final wasManual = _editedManuallyByDay[_dayIndex] ?? false;
+    final lastSourceSig = _lastSourceSignatureByDay[_dayIndex];
+    final shouldReplace = existing == null || (!wasManual && lastSourceSig != sourceSig);
+    if (shouldReplace) {
+      _editedOutfitByDay[_dayIndex] = List<_HeroOutfitItem>.from(source);
+      _lastSourceSignatureByDay[_dayIndex] = sourceSig;
+      _editedManuallyByDay[_dayIndex] = false;
+    }
+  }
+
+  void _setEditedItems(
+    List<_HeroOutfitItem> items, {
+    bool markManual = true,
+    String reasonSource = 'swap',
+  }) {
     setState(() {
-      _editedOutfitByDay[_dayIndex] = _orderedHeroOutfitItems(items);
+      final normalized = _orderedHeroOutfitItems(items);
+      _editedOutfitByDay[_dayIndex] = normalized;
+      _editedManuallyByDay[_dayIndex] = markManual;
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final date = _dayIndex == 1 ? today.add(const Duration(days: 1)) : today;
+      final dateKey = _dateKey(date);
+      final existing = _homeDayHeroCacheByDateKey[dateKey];
+      final weather = _weatherForDate(date);
+      final weatherSig = _homeWeatherSignature(weather);
+      final reason = _regenerateStylistReason(
+        date: date,
+        outfitItems: normalized,
+        source: reasonSource,
+      );
+      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+        state: _HeroTodayState(
+          vm: _HeroBannerVM(
+            description: reason.isNotEmpty
+                ? reason
+                : (existing?.state.vm.description ?? 'Upravený outfit pre tento deň.'),
+          ),
+          outfitItems: normalized,
+          source: markManual ? 'edited' : (existing?.state.source ?? 'local'),
+        ),
+        weatherSignature: weatherSig,
+        wardrobeSignature: existing?.wardrobeSignature ?? '',
+      );
       if (_focusedEditType != null &&
           !_editedOutfitByDay[_dayIndex]!.any((it) => it.type == _focusedEditType)) {
         _focusedEditType = null;
       }
     });
+  }
+
+  String _regenerateStylistReason({
+    required DateTime date,
+    required List<_HeroOutfitItem> outfitItems,
+    required String source,
+  }) {
+    final weather = _weatherForDate(date);
+    final ids = outfitItems
+        .map((e) => e.wardrobeItemId)
+        .whereType<String>()
+        .where((e) => e.isNotEmpty)
+        .join(',');
+    final bottom = outfitItems.firstWhere(
+      (it) => it.type == _HeroWearType.bottom,
+      orElse: () => const _HeroOutfitItem(
+        type: _HeroWearType.bottom,
+        icon: Icons.style,
+        label: '',
+      ),
+    );
+    final hasLayer = outfitItems.any((it) => it.type == _HeroWearType.outerwear);
+    final bottomLabel = _normalizedScaleToken(bottom.label);
+    final isShorts = bottomLabel.contains('short') ||
+        bottomLabel.contains('krat') ||
+        bottomLabel.contains('sukn');
+    final isJeans = bottomLabel.contains('jeans') ||
+        bottomLabel.contains('rifl') ||
+        bottomLabel.contains('nohav');
+    final rainIncoming = weather.isRainy || weather.afternoonRainSegment || weather.eveningRainSegment;
+
+    final lines = <String>[];
+    if (weather.briefingMorningC != null &&
+        weather.briefingAfternoonC != null &&
+        weather.briefingEveningC != null) {
+      lines.add(
+        'Ráno je okolo ${weather.briefingMorningC} °C a poobede sa to vytiahne na ${weather.briefingAfternoonC} °C.',
+      );
+    } else {
+      lines.add('Dnes je približne ${weather.tempC} °C, takže sa oplatí ísť skôr prakticky než ťažko.');
+    }
+
+    if (isShorts && weather.tempC >= 19 && !rainIncoming) {
+      lines.add('Cez deň bude príjemne, takže šortky dnes dávajú väčší zmysel než rifle.');
+    } else if (isJeans && weather.tempC >= 20 && !rainIncoming) {
+      lines.add('Aj keď je teplejšie, tento spodok je stále OK, ak chceš viac krytia počas dňa.');
+    } else {
+      lines.add('Outfit je nastavený tak, aby bol pohodlný cez deň a nezbytočne ťažký.');
+    }
+
+    if (rainIncoming) {
+      final rainTime = (weather.rainTimeText ?? '').trim();
+      if (rainTime.isNotEmpty) {
+        lines.add('Okolo $rainTime môže prísť dážď, tak sa oplatí myslieť na praktickejšiu obuv.');
+      } else {
+        lines.add('Neskôr môže pršať, takže sa hodí mať praktickejšiu obuv a jednu vrstvu navyše.');
+      }
+    } else if ((weather.briefingEveningC ?? weather.tempC) <= 10 || hasLayer) {
+      lines.add('Večer sa môže ochladiť, tak sa hodí mať jednu vrstvu navyše.');
+    }
+
+    final text = lines.take(4).join(' ');
+    debugPrint('[HOME_STYLIST_REASON] regenerated=true');
+    debugPrint('[HOME_STYLIST_REASON] source=$source');
+    debugPrint('[HOME_STYLIST_REASON] currentOutfitIds=$ids');
+    return text;
   }
 
   String _outfitFeedbackKey(List<_HeroOutfitItem> items) {
@@ -298,9 +491,17 @@ class _HomeScreenState extends State<HomeScreen> {
   void _enterOutfitEditMode(List<_HeroOutfitItem> currentItems) {
     if (currentItems.isEmpty) return;
     _syncEditableOutfitFromSource(currentItems);
+    final originals = <_HeroWearType, String>{};
+    for (final it in currentItems) {
+      final id = (it.wardrobeItemId ?? '').trim();
+      if (id.isNotEmpty) originals[it.type] = id;
+    }
     setState(() {
       _isOutfitEditMode = true;
       _focusedEditType = null;
+      _swapRejectedReplacementItemIdsByDay[_dayIndex] = <String>{};
+      _swapOriginalItemIdByTypeByDay[_dayIndex] = originals;
+      _swapLastSuggestedItemIdByTypeByDay[_dayIndex] = <_HeroWearType, String>{};
     });
     WidgetsBinding.instance.addPostFrameCallback((_) => _captureEditSpotlightSize());
   }
@@ -379,6 +580,9 @@ class _HomeScreenState extends State<HomeScreen> {
     final now = DateTime.now();
     final todayDate = DateTime(now.year, now.month, now.day);
     final activeDate = _isTomorrow ? todayDate.add(const Duration(days: 1)) : todayDate;
+      final activeDateKey = _dateKey(activeDate);
+      _homeAiForceDifferentNextByDateKey[activeDateKey] = true;
+      _homeAiRefreshNonce++;
 
     setState(() => _newOutfitGenerating = true);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -481,7 +685,7 @@ class _HomeScreenState extends State<HomeScreen> {
         );
       }
 
-      _setEditedItems(rec.items);
+      _setEditedItems(rec.items, reasonSource: 'new_outfit');
       setState(() {
         _likedOutfitKeyByDay.remove(_dayIndex);
         _likePulseTick = 0;
@@ -946,6 +1150,13 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
+    final currentIds = currentItems
+        .map((e) => e.wardrobeItemId)
+        .whereType<String>()
+        .where((e) => e.isNotEmpty)
+        .join(',');
+    debugPrint('[HOME_SWAP] opened currentOutfitIds=$currentIds');
+    debugPrint('[HOME_SWAP] keeping_existing_hero=true');
     if (isPremiumMode) {
       _enterOutfitEditMode(currentItems);
       return;
@@ -997,29 +1208,559 @@ class _HomeScreenState extends State<HomeScreen> {
     required DateTime date,
     required List<Map<String, dynamic>> wardrobe,
     required bool isPremiumUser,
+    bool dataReady = true,
   }) {
+    final dayIdx = _dayIndexForDate(date);
+    final dateKey = _dateKey(date);
     final w = _weatherForDate(date);
-    final rec = _recommendOutfitForWeather(
+    final weatherSignature = _homeWeatherSignature(w);
+    final wardrobeSignature = _wardrobeSignature(wardrobe);
+    final dayLabel = dayIdx == 0 ? 'today' : 'tomorrow';
+    final cache = _homeDayHeroCacheByDateKey[dateKey];
+
+    if (cache != null &&
+        cache.weatherSignature == weatherSignature &&
+        cache.wardrobeSignature == wardrobeSignature) {
+      if (cache.state.source == 'edited') {
+        debugPrint('[HOME_DAY_CACHE] preserved_edited_outfit=true');
+        debugPrint('[HOME_DAY_CACHE] preserved_swap_state=true');
+      }
+      debugPrint('[HOME_DAY_CACHE] instant_restore=true day=$dayLabel');
+      return cache.state;
+    }
+    debugPrint('[HOME_DAY_CACHE] miss day=$dayLabel');
+
+    final manualItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
+    final isManual = (_editedManuallyByDay[dayIdx] ?? false) && manualItems.isNotEmpty;
+    if (isManual) {
+      final reason = _regenerateStylistReason(
+        date: date,
+        outfitItems: manualItems,
+        source: 'swap',
+      );
+      final state = _HeroTodayState(
+        vm: _HeroBannerVM(
+          description:
+              reason.isNotEmpty ? reason : 'Upravený outfit pre tento deň.',
+        ),
+        outfitItems: manualItems,
+        source: 'edited',
+      );
+      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+        state: state,
+        weatherSignature: weatherSignature,
+        wardrobeSignature: wardrobeSignature,
+      );
+      return state;
+    }
+    final swapVisibleItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
+    if (_isOutfitEditMode && swapVisibleItems.isNotEmpty) {
+      final state = _HeroTodayState(
+        vm: const _HeroBannerVM(description: 'Vyber kúsok, ktorý chceš vymeniť.'),
+        outfitItems: swapVisibleItems,
+        source: 'edited',
+      );
+      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+        state: state,
+        weatherSignature: weatherSignature,
+        wardrobeSignature: wardrobeSignature,
+      );
+      return state;
+    }
+    if (!dataReady) {
+      return _HeroTodayState(
+        vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+        outfitItems: const <_HeroOutfitItem>[],
+        source: 'loading',
+        loadingReason: 'wardrobe_or_weather_pending',
+      );
+    }
+    final latestAiSignature = _homeAiLatestSignatureByDateKey[dateKey];
+    final aiEntry =
+        latestAiSignature == null ? null : _homeAiCacheBySignature[latestAiSignature];
+    final aiCachedRec = aiEntry?.recommendation;
+    final aiPendingForDate = _homeAiRequestInFlight.any(
+      (sig) => sig.startsWith('$dateKey|'),
+    );
+    if (aiCachedRec != null) {
+      if (_lastAiPreservedSignatureLogged != latestAiSignature) {
+        _lastAiPreservedSignatureLogged = latestAiSignature;
+        debugPrint('[HOME_AI_OUTFIT] ai_result_preserved=true');
+      }
+      final state = _HeroTodayState(
+        vm: _HeroBannerVM(description: aiCachedRec.reason),
+        outfitItems: aiCachedRec.items,
+        source: 'ai',
+      );
+      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+        state: state,
+        weatherSignature: weatherSignature,
+        wardrobeSignature: wardrobeSignature,
+      );
+      return state;
+    }
+
+    if (aiEntry == null || aiPendingForDate) {
+      return _HeroTodayState(
+        vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+        outfitItems: const <_HeroOutfitItem>[],
+        source: 'loading',
+        loadingReason: 'ai_pending_no_cached_ai',
+      );
+    }
+
+    const localReason = 'ai_failed_or_fallback';
+    final fallbackLogKey = '$dateKey|$latestAiSignature|$localReason';
+    if (_lastFallbackReasonLoggedKey != fallbackLogKey) {
+      _lastFallbackReasonLoggedKey = fallbackLogKey;
+      debugPrint('[HOME_AI_OUTFIT] local_fallback_applied reason=ai_failed_or_timeout');
+    }
+    final localRec = _recommendOutfitForWeatherCached(
+      dateKey: dateKey,
       wardrobe: wardrobe,
       weather: w,
       isPremiumUser: isPremiumUser,
     );
+    final rec = localRec;
 
     if (rec == null) {
-      return _HeroTodayState(
+      final state = _HeroTodayState(
         vm: _HeroBannerVM(
           description: _emptyHeroOutfitDescription(w),
         ),
         outfitItems: const <_HeroOutfitItem>[],
+        source: 'local',
       );
+      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+        state: state,
+        weatherSignature: weatherSignature,
+        wardrobeSignature: wardrobeSignature,
+      );
+      return state;
     }
 
-    return _HeroTodayState(
+    final state = _HeroTodayState(
       vm: _HeroBannerVM(
         description: rec.reason,
       ),
       outfitItems: rec.items,
+      source: 'local',
     );
+    _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      state: state,
+      weatherSignature: weatherSignature,
+      wardrobeSignature: wardrobeSignature,
+    );
+    return state;
+  }
+
+  void _maybeTriggerHomeAiRecommendation({
+    required DateTime date,
+    required List<Map<String, dynamic>> wardrobe,
+    required _LocalWeather weather,
+    required bool isPremiumUser,
+  }) {
+    final user = _auth.currentUser;
+    if (user == null) return;
+    if (!_weatherLoaded) return;
+    if (wardrobe.isEmpty) return;
+    final dateKey = _dateKey(date);
+    final weatherSignature = _homeWeatherSignature(weather);
+    final wardrobeSignature = _wardrobeSignature(wardrobe);
+    final cached = _homeDayHeroCacheByDateKey[dateKey];
+    if (cached != null &&
+        cached.weatherSignature == weatherSignature &&
+        cached.wardrobeSignature == wardrobeSignature) {
+      return;
+    }
+    final targetDayIdx = _dayIndexForDate(date);
+    final existing = _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
+    if (_isOutfitEditMode && existing.isNotEmpty) {
+      debugPrint('[HOME_AI_OUTFIT] skip reason=swap_mode_existing_outfit');
+      return;
+    }
+    final forceDifferent =
+        (_homeAiForceDifferentNextByDateKey[dateKey] ?? false) == true;
+    final aiSignature =
+        '$dateKey|$weatherSignature|$wardrobeSignature|fd=${forceDifferent ? 1 : 0}|n=$_homeAiRefreshNonce';
+    final excluded = <String>{};
+    final rejected = Set<String>.from(_rejectedOutfitCombinationKeysByDay[_dayIndex] ?? {});
+
+    final effectiveCurrent = _effectiveOutfitItems(
+      _editedOutfitByDay[_dayIndex] ?? const <_HeroOutfitItem>[],
+    );
+    for (final it in effectiveCurrent) {
+      final id = (it.wardrobeItemId ?? '').trim();
+      if (id.isNotEmpty) excluded.add(id);
+    }
+    final prevSig = _heroOutfitSignatureFromItems(effectiveCurrent);
+    if (prevSig.isNotEmpty) rejected.add(prevSig);
+
+    final request = _HomeAiRequestContext(
+      date: date,
+      weather: weather,
+      excludedItemIds: excluded,
+      rejectedCombinationSignatures: rejected,
+      previousOutfitItemIds: excluded,
+      forceDifferentOutfit: forceDifferent,
+      isPremiumUser: isPremiumUser,
+    );
+
+    if (_homeAiCacheBySignature.containsKey(aiSignature)) {
+      _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+      debugPrint('[HOME_AI_OUTFIT] skip reason=cached_signature');
+      return;
+    }
+
+    if (_homeAiRequestInFlight.contains(aiSignature)) {
+      debugPrint('[HOME_AI_OUTFIT] skip reason=in_flight_same_signature');
+      return;
+    }
+
+    final source = _homeAiTriggerSource(
+      dateKey: dateKey,
+      weatherSignature: weatherSignature,
+      wardrobeSignature: wardrobeSignature,
+      forceDifferent: forceDifferent,
+    );
+    debugPrint('[HOME_AI_OUTFIT] trigger source=$source');
+    _homeAiLastTriggeredDateKey = dateKey;
+    _homeAiLastWeatherSignatureByDateKey[dateKey] = weatherSignature;
+    _homeAiLastWardrobeSignatureByDateKey[dateKey] = wardrobeSignature;
+    _homeAiRequestInFlight.add(aiSignature);
+    unawaited(_fetchHomeAiRecommendation(
+      dateKey: dateKey,
+      aiSignature: aiSignature,
+      wardrobe: wardrobe,
+      request: request,
+    ));
+  }
+
+  Future<void> _fetchHomeAiRecommendation({
+    required String dateKey,
+    required String aiSignature,
+    required List<Map<String, dynamic>> wardrobe,
+    required _HomeAiRequestContext request,
+  }) async {
+    final weatherContext = _homeAiWeatherContext(request.weather);
+    debugPrint(
+      '[HOME_AI_OUTFIT] request date=$dateKey forceDifferent=${request.forceDifferentOutfit} '
+      'excluded=${request.excludedItemIds.length} rejected=${request.rejectedCombinationSignatures.length}',
+    );
+    try {
+      final result = await _homeAiOutfitService
+          .generateHomeOutfit(
+            date: request.date,
+            weatherContext: weatherContext,
+            excludedItemIds: request.excludedItemIds.toList(growable: false),
+            rejectedCombinationSignatures: request.rejectedCombinationSignatures.toList(
+              growable: false,
+            ),
+            previousOutfitItemIds: request.previousOutfitItemIds.toList(growable: false),
+            forceDifferentOutfit: request.forceDifferentOutfit,
+          )
+          .timeout(const Duration(seconds: 9));
+
+      if (result.fallback) {
+        debugPrint('[HOME_AI_OUTFIT] fallback reason=server_fallback_marker');
+        if (!mounted) return;
+        setState(() {
+          _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
+            signature: aiSignature,
+            recommendation: null,
+          );
+          _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+          _homeAiForceDifferentNextByDateKey[dateKey] = false;
+        });
+        return;
+      }
+      final rec = _mapAiResultToHeroRecommendation(
+        aiReply: result.reply,
+        aiOutfitItemIds: result.outfitItemIds,
+        wardrobe: wardrobe,
+        weather: request.weather,
+        isPremiumUser: request.isPremiumUser,
+      );
+      if (rec == null || rec.items.length < 3) {
+        debugPrint('[HOME_AI_OUTFIT] fallback reason=invalid_or_short_result');
+        if (!mounted) return;
+        setState(() {
+          _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
+            signature: aiSignature,
+            recommendation: null,
+          );
+          _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+          _homeAiForceDifferentNextByDateKey[dateKey] = false;
+        });
+        return;
+      }
+      final names = rec.items.map((e) => e.label).join(', ');
+      final prevRec = _homeAiCacheBySignature[aiSignature]?.recommendation;
+      final sameAsCached = _sameHeroRecommendation(prevRec, rec);
+      final targetDayIndex = _dayIndexForDate(request.date);
+      final displayed = _editedOutfitByDay[targetDayIndex] ?? const <_HeroOutfitItem>[];
+      final displayedDiffers = !_sameHeroItemsById(displayed, rec.items);
+      if (!mounted) return;
+      if (!sameAsCached || displayedDiffers) {
+        debugPrint('[HOME_STYLIST_REASON] regenerated=true');
+        debugPrint('[HOME_STYLIST_REASON] source=ai_refresh');
+        debugPrint(
+          '[HOME_STYLIST_REASON] currentOutfitIds=${rec.items.map((e) => e.wardrobeItemId).whereType<String>().where((e) => e.isNotEmpty).join(",")}',
+        );
+        setState(() {
+          _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
+            signature: aiSignature,
+            recommendation: rec,
+          );
+          _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+          _homeAiForceDifferentNextByDateKey[dateKey] = false;
+          _editedManuallyByDay[targetDayIndex] = false;
+          _editedOutfitByDay[targetDayIndex] = List<_HeroOutfitItem>.from(rec.items);
+          _lastSourceSignatureByDay[targetDayIndex] = _heroRenderSignature(rec.items);
+          _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+            state: _HeroTodayState(
+              vm: _HeroBannerVM(description: rec.reason),
+              outfitItems: rec.items,
+              source: 'ai',
+            ),
+            weatherSignature: _homeWeatherSignature(request.weather),
+            wardrobeSignature: _wardrobeSignature(wardrobe),
+          );
+        });
+      } else {
+        _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+        _homeAiForceDifferentNextByDateKey[dateKey] = false;
+      }
+      debugPrint(
+        '[HOME_AI_OUTFIT] success ids=${result.outfitItemIds.join(",")} '
+        'confidence=${result.confidence.toStringAsFixed(2)}',
+      );
+      debugPrint('[HOME_AI_OUTFIT] success names=$names');
+      debugPrint('[HOME_AI_OUTFIT] applied_to_hero=true');
+    } catch (e) {
+      debugPrint('[HOME_AI_OUTFIT] error=$e');
+      if (!mounted) return;
+      setState(() {
+        _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
+          signature: aiSignature,
+          recommendation: null,
+        );
+        _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
+        _homeAiForceDifferentNextByDateKey[dateKey] = false;
+      });
+    } finally {
+      _homeAiRequestInFlight.remove(aiSignature);
+    }
+  }
+
+  _HeroOutfitRecommendation? _mapAiResultToHeroRecommendation({
+    required String aiReply,
+    required List<String> aiOutfitItemIds,
+    required List<Map<String, dynamic>> wardrobe,
+    required _LocalWeather weather,
+    required bool isPremiumUser,
+  }) {
+    if (aiOutfitItemIds.isEmpty) return null;
+    final byId = <String, Map<String, dynamic>>{};
+    for (final raw in wardrobe) {
+      final id = OutfitGenerationService.wardrobeItemId(raw);
+      if (id.isNotEmpty) byId[id] = raw;
+    }
+    final selected = <Map<String, dynamic>>[];
+    for (final id in aiOutfitItemIds) {
+      final item = byId[id];
+      if (item != null) selected.add(item);
+    }
+    if (selected.length < 3) return null;
+
+    final typed = _typedPicksFromAiSelected(selected);
+    final top = typed[_HeroWearType.top];
+    final bottom = typed[_HeroWearType.bottom];
+    final shoes = typed[_HeroWearType.shoes];
+    if (top == null || bottom == null || shoes == null) {
+      return null;
+    }
+    final orderedIds = <String>[
+      OutfitGenerationService.wardrobeItemId(top),
+      OutfitGenerationService.wardrobeItemId(bottom),
+      OutfitGenerationService.wardrobeItemId(shoes),
+      if (typed[_HeroWearType.outerwear] != null)
+        OutfitGenerationService.wardrobeItemId(typed[_HeroWearType.outerwear]!),
+    ].where((e) => e.isNotEmpty).toList(growable: false);
+    final heroCacheKey = 'ai|${orderedIds.join('|')}';
+    final ordered = _heroItemsCacheByIdSet[heroCacheKey] ??
+        <_HeroOutfitItem>[
+          _heroItemFromWardrobe(raw: top, type: _HeroWearType.top),
+          _heroItemFromWardrobe(raw: bottom, type: _HeroWearType.bottom),
+          _heroItemFromWardrobe(raw: shoes, type: _HeroWearType.shoes),
+          if (typed[_HeroWearType.outerwear] != null)
+            _heroItemFromWardrobe(
+              raw: typed[_HeroWearType.outerwear]!,
+              type: _HeroWearType.outerwear,
+            ),
+        ];
+    _heroItemsCacheByIdSet[heroCacheKey] = ordered;
+    if (ordered.length < 3) return null;
+
+    final selectedReasonItems = <Map<String, dynamic>>[
+      {...top, 'typeKey': 'top'},
+      {...bottom, 'typeKey': 'bottom'},
+      {...shoes, 'typeKey': 'shoes'},
+      if (typed[_HeroWearType.outerwear] != null)
+        {...typed[_HeroWearType.outerwear]!, 'typeKey': 'outerwear'},
+    ];
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final d = DateTime(
+      weather.calendarDate.year,
+      weather.calendarDate.month,
+      weather.calendarDate.day,
+    );
+    final isTomorrowDay = d == today.add(const Duration(days: 1));
+    final localReason = OutfitReasonBuilder.build(
+      tempC: weather.tempC,
+      isRainy: weather.isRainy,
+      isWindy: weather.isWindy,
+      isPremium: isPremiumUser,
+      selectedItems: selectedReasonItems,
+      hasOuterwear: typed[_HeroWearType.outerwear] != null,
+      isTomorrow: isTomorrowDay,
+      morningTempC: weather.briefingMorningC,
+      noonTempC: weather.briefingAfternoonC,
+      eveningTempC: weather.briefingEveningC,
+      morningRainSegment: weather.morningRainSegment,
+      afternoonRainSegment: weather.afternoonRainSegment,
+      eveningRainSegment: weather.eveningRainSegment,
+    );
+    final reason = aiReply.trim().isNotEmpty ? aiReply.trim() : localReason;
+    return _HeroOutfitRecommendation(items: ordered, reason: reason);
+  }
+
+  Map<_HeroWearType, Map<String, dynamic>> _typedPicksFromAiSelected(
+    List<Map<String, dynamic>> selected,
+  ) {
+    final out = <_HeroWearType, Map<String, dynamic>>{};
+    for (final raw in selected) {
+      if (!out.containsKey(_HeroWearType.top) && _heroWardrobeMatchesType(raw, _HeroWearType.top)) {
+        out[_HeroWearType.top] = raw;
+        continue;
+      }
+      if (!out.containsKey(_HeroWearType.bottom) &&
+          _heroWardrobeMatchesType(raw, _HeroWearType.bottom)) {
+        out[_HeroWearType.bottom] = raw;
+        continue;
+      }
+      if (!out.containsKey(_HeroWearType.shoes) &&
+          _heroWardrobeMatchesType(raw, _HeroWearType.shoes)) {
+        out[_HeroWearType.shoes] = raw;
+        continue;
+      }
+      if (!out.containsKey(_HeroWearType.outerwear) &&
+          _heroWardrobeMatchesType(raw, _HeroWearType.outerwear)) {
+        out[_HeroWearType.outerwear] = raw;
+      }
+    }
+    return out;
+  }
+
+  String _dateKey(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    return d.toIso8601String().substring(0, 10);
+  }
+
+  String _homeWeatherSignature(_LocalWeather weather) {
+    return [
+      weather.tempC,
+      weather.isRainy ? 1 : 0,
+      weather.isWindy ? 1 : 0,
+      weather.seasonKey,
+      weather.morningRainSegment ? 1 : 0,
+      weather.afternoonRainSegment ? 1 : 0,
+      weather.eveningRainSegment ? 1 : 0,
+      weather.briefingMorningC ?? -999,
+      weather.briefingAfternoonC ?? -999,
+      weather.briefingEveningC ?? -999,
+      weather.rainTimeText ?? '',
+    ].join('|');
+  }
+
+  String _wardrobeSignature(List<Map<String, dynamic>> wardrobe) {
+    final ids = wardrobe
+        .map((e) => OutfitGenerationService.wardrobeItemId(e))
+        .where((e) => e.isNotEmpty)
+        .toList()
+      ..sort();
+    return '${wardrobe.length}:${ids.join(",")}';
+  }
+
+  Map<String, dynamic> _homeAiWeatherContext(_LocalWeather weather) {
+    return <String, dynamic>{
+      'tempC': weather.tempC,
+      'seasonKey': weather.seasonKey,
+      'isRainy': weather.isRainy,
+      'isWindy': weather.isWindy,
+      'morningTempC': weather.briefingMorningC,
+      'noonTempC': weather.briefingAfternoonC,
+      'eveningTempC': weather.briefingEveningC,
+      'morningRainSegment': weather.morningRainSegment,
+      'afternoonRainSegment': weather.afternoonRainSegment,
+      'eveningRainSegment': weather.eveningRainSegment,
+      'rainTimeText': weather.rainTimeText,
+      'summary': weather.summarySubtitle,
+    };
+  }
+
+  String _homeAiTriggerSource({
+    required String dateKey,
+    required String weatherSignature,
+    required String wardrobeSignature,
+    required bool forceDifferent,
+  }) {
+    if (forceDifferent) return 'regenerate';
+    if (_homeAiLastTriggeredDateKey != null && _homeAiLastTriggeredDateKey != dateKey) {
+      return 'date_change';
+    }
+    final prevWeather = _homeAiLastWeatherSignatureByDateKey[dateKey];
+    final prevWardrobe = _homeAiLastWardrobeSignatureByDateKey[dateKey];
+    if (prevWeather == null && prevWardrobe == null) return 'initial_load';
+    if (prevWeather != weatherSignature) return 'weather_change';
+    if (prevWardrobe != wardrobeSignature) return 'initial_load';
+    return 'initial_load';
+  }
+
+  bool _sameHeroRecommendation(
+    _HeroOutfitRecommendation? a,
+    _HeroOutfitRecommendation? b,
+  ) {
+    if (a == null || b == null) return false;
+    if (a.reason != b.reason) return false;
+    if (a.items.length != b.items.length) return false;
+    for (var i = 0; i < a.items.length; i++) {
+      final ai = a.items[i];
+      final bi = b.items[i];
+      if (ai.type != bi.type) return false;
+      if ((ai.wardrobeItemId ?? '') != (bi.wardrobeItemId ?? '')) return false;
+      if (ai.label != bi.label) return false;
+    }
+    return true;
+  }
+
+  bool _sameHeroItemsById(List<_HeroOutfitItem> a, List<_HeroOutfitItem> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].type != b[i].type) return false;
+      if ((a[i].wardrobeItemId ?? '') != (b[i].wardrobeItemId ?? '')) return false;
+    }
+    return true;
+  }
+
+  int _dayIndexForDate(DateTime date) {
+    final d = DateTime(date.year, date.month, date.day);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (d == today.add(const Duration(days: 1))) return 1;
+    return 0;
   }
 
   _HeroOutfitRecommendation? _recommendOutfitForWeather({
@@ -1098,6 +1839,25 @@ class _HomeScreenState extends State<HomeScreen> {
       items: outfitTiles,
       reason: reasonParagraph,
     );
+  }
+
+  _HeroOutfitRecommendation? _recommendOutfitForWeatherCached({
+    required String dateKey,
+    required List<Map<String, dynamic>> wardrobe,
+    required _LocalWeather weather,
+    required bool isPremiumUser,
+  }) {
+    final localSig = '$dateKey|${_homeWeatherSignature(weather)}|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
+    if (_localRecCacheByDateSig.containsKey(localSig)) {
+      return _localRecCacheByDateSig[localSig];
+    }
+    final rec = _recommendOutfitForWeather(
+      wardrobe: wardrobe,
+      weather: weather,
+      isPremiumUser: isPremiumUser,
+    );
+    _localRecCacheByDateSig[localSig] = rec;
+    return rec;
   }
 
   _HeroWearType _heroWearFromOutfitWear(OutfitWearType t) {
@@ -1319,13 +2079,27 @@ class _HomeScreenState extends State<HomeScreen> {
     required bool cardIsTomorrow,
     required List<_HeroOutfitItem> outfitItems,
     required _LocalWeather w,
+    required String heroSource,
+    String? heroLoadingReason,
   }) {
     _editSpotlightVm = vm;
     _editSpotlightWeather = w;
     _editSpotlightIsTomorrow = cardIsTomorrow;
+    _syncEditableOutfitFromSource(outfitItems);
     final effectiveItems = _effectiveOutfitItems(outfitItems);
     final likeActive = _isCurrentOutfitLiked(effectiveItems);
-    _syncEditableOutfitFromSource(outfitItems);
+    final renderedNames = effectiveItems.map((e) => e.label).join(', ');
+    final renderLogKey = '$heroSource|${_heroRenderSignature(effectiveItems)}';
+    if (_lastHeroRenderLogKey != renderLogKey) {
+      _lastHeroRenderLogKey = renderLogKey;
+      final renderSource =
+          (_editedManuallyByDay[_dayIndex] ?? false) ? 'edited' : heroSource;
+      if (heroSource == 'loading' && heroLoadingReason != null) {
+        debugPrint('[HOME_HERO_RENDER] source=loading reason=$heroLoadingReason');
+      } else {
+        debugPrint('[HOME_HERO_RENDER] source=$renderSource names=$renderedNames');
+      }
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1336,6 +2110,7 @@ class _HomeScreenState extends State<HomeScreen> {
           weather: w,
           isTomorrow: cardIsTomorrow,
           outfitItems: effectiveItems,
+          loadingMode: heroSource == 'loading',
           editMode: false,
           focusedType: null,
           onItemTap: null,
@@ -1502,9 +2277,62 @@ class _HomeScreenState extends State<HomeScreen> {
     final idx = current.indexWhere((it) => it.type == type);
     if (idx < 0) return;
     final old = current[idx];
+    final oldId = (old.wardrobeItemId ?? '').trim();
+    final rejected = _swapRejectedReplacementItemIdsByDay.putIfAbsent(
+      _dayIndex,
+      () => <String>{},
+    );
+    final lastSuggested = _swapLastSuggestedItemIdByTypeByDay[_dayIndex]?[type];
+    if (lastSuggested != null && lastSuggested.isNotEmpty) {
+      rejected.add(lastSuggested);
+    }
+    if (oldId.isNotEmpty) {
+      rejected.add(oldId);
+    }
+
+    final originalsByType = _swapOriginalItemIdByTypeByDay[_dayIndex] ?? const {};
+    final originalId = (originalsByType[type] ?? '').trim();
+    if (originalId.isNotEmpty) {
+      rejected.add(originalId);
+    }
+
+    final usedInOtherSlots = <String>{
+      for (final it in current)
+        if (it.type != type && (it.wardrobeItemId ?? '').trim().isNotEmpty)
+          (it.wardrobeItemId ?? '').trim(),
+    };
+
     final snap = await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
-    final docs = snap.docs.map((d) => d.data()).toList();
-    final candidates = docs.where((raw) => _heroWardrobeMatchesType(raw, type)).toList();
+    final docs = snap.docs.map((d) {
+      final raw = Map<String, dynamic>.from(d.data());
+      raw['id'] = d.id;
+      return raw;
+    }).toList();
+    final sameRole = docs.where((raw) => _heroWardrobeMatchesType(raw, type)).toList();
+    bool validRaw(Map<String, dynamic> raw) {
+      final id = OutfitGenerationService.wardrobeItemId(raw);
+      if (id.isEmpty) return false;
+      if (rejected.contains(id)) return false;
+      if (usedInOtherSlots.contains(id)) return false;
+      return true;
+    }
+
+    final oldSubKey = _normalizedScaleToken(old.subCategoryKey ?? '');
+    final oldCanonical = _canonicalTypeFromHeroItem(old);
+    final tier1 = sameRole.where((raw) {
+      if (!validRaw(raw)) return false;
+      final sub = _normalizedScaleToken(
+        (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString(),
+      );
+      return oldSubKey.isNotEmpty && sub == oldSubKey;
+    }).toList();
+    final tier2 = sameRole.where((raw) {
+      if (!validRaw(raw)) return false;
+      return _canonicalTypeFromRaw(raw) == oldCanonical;
+    }).toList();
+    final tier3 = sameRole.where(validRaw).toList();
+    final candidates =
+        tier1.isNotEmpty ? tier1 : (tier2.isNotEmpty ? tier2 : tier3);
     if (candidates.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1512,12 +2340,25 @@ class _HomeScreenState extends State<HomeScreen> {
       );
       return;
     }
-    final replacementRaw = candidates.firstWhere(
-      (raw) => _heroLabelForWardrobeItem(raw, fallback: old.label) != old.label,
-      orElse: () => candidates.first,
-    );
-    current[idx] = _heroItemFromWardrobe(raw: replacementRaw, type: type);
+    candidates.sort((a, b) {
+      final ia = OutfitGenerationService.wardrobeItemId(a);
+      final ib = OutfitGenerationService.wardrobeItemId(b);
+      return ia.compareTo(ib);
+    });
+    final replacementRaw = candidates.first;
+    final replacement = _heroItemFromWardrobe(raw: replacementRaw, type: type);
+    final newId = (replacement.wardrobeItemId ?? '').trim();
+    if (newId.isNotEmpty) {
+      _swapLastSuggestedItemIdByTypeByDay.putIfAbsent(_dayIndex, () => {})[type] =
+          newId;
+    }
+    current[idx] = replacement;
     _setEditedItems(current);
+    debugPrint('[HOME_SWAP] accept replacement oldId=$oldId newId=$newId');
+    debugPrint('[HOME_SWAP] updated_edited_outfit=true');
+    debugPrint('[HOME_SWAP] persisted_to_home=true dayIndex=$_dayIndex');
+    debugPrint('[HOME_SWAP] marked_manual_edit=true');
+    debugPrint('[HOME_SWAP] prevented_ai_restore=true');
   }
 
   Future<void> _openEditFeedbackInput(_HeroWearType type) async {
@@ -1786,12 +2627,29 @@ class _HomeScreenState extends State<HomeScreen> {
                                       _editedOutfitByDay[_dayIndex] ?? const [],
                                     );
                                     final idx = current.indexWhere((it) => it.type == type);
+                                    final oldId = idx >= 0
+                                        ? (current[idx].wardrobeItemId ?? '').trim()
+                                        : '';
                                     if (idx >= 0) {
                                       current[idx] = item;
                                     } else {
                                       current.add(item);
                                     }
+                                    final newId = (item.wardrobeItemId ?? '').trim();
                                     _setEditedItems(current);
+                                    if (newId.isNotEmpty) {
+                                      _swapLastSuggestedItemIdByTypeByDay
+                                          .putIfAbsent(_dayIndex, () => {})[type] = newId;
+                                    }
+                                    debugPrint(
+                                      '[HOME_SWAP] accept replacement oldId=$oldId newId=$newId',
+                                    );
+                                    debugPrint('[HOME_SWAP] updated_edited_outfit=true');
+                                    debugPrint(
+                                      '[HOME_SWAP] persisted_to_home=true dayIndex=$_dayIndex',
+                                    );
+                                    debugPrint('[HOME_SWAP] marked_manual_edit=true');
+                                    debugPrint('[HOME_SWAP] prevented_ai_restore=true');
                                     Navigator.of(sheetContext).pop();
                                   },
                                   child: Container(
@@ -1969,6 +2827,8 @@ class _HomeScreenState extends State<HomeScreen> {
               cardIsTomorrow: true,
               outfitItems: const <_HeroOutfitItem>[],
               w: w,
+              heroSource: 'local',
+              heroLoadingReason: null,
             ),
             _homeSectionsAfterHero(
               context: context,
@@ -1997,6 +2857,8 @@ class _HomeScreenState extends State<HomeScreen> {
               cardIsTomorrow: false,
               outfitItems: const <_HeroOutfitItem>[],
               w: w,
+              heroSource: 'local',
+              heroLoadingReason: null,
             ),
             _homeSectionsAfterHero(
               context: context,
@@ -2022,12 +2884,25 @@ class _HomeScreenState extends State<HomeScreen> {
                 m['id'] = d.id;
                 return m;
               }).toList();
+              final w = _weatherForDate(activeDate);
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                _maybeTriggerHomeAiRecommendation(
+                  date: activeDate,
+                  wardrobe: wardrobe,
+                  weather: w,
+                  isPremiumUser: isPremiumUser,
+                );
+              });
+              final dataReady = _weatherLoaded &&
+                  userSnap.connectionState != ConnectionState.waiting &&
+                  snap.connectionState != ConnectionState.waiting;
               final hero = _buildTodayHero(
                 date: activeDate,
                 wardrobe: wardrobe,
                 isPremiumUser: isPremiumUser,
+                dataReady: dataReady,
               );
-              final w = _weatherForDate(activeDate);
               final vm = _HeroBannerVM(description: hero.vm.description);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2041,6 +2916,8 @@ class _HomeScreenState extends State<HomeScreen> {
                     cardIsTomorrow: _isTomorrow,
                     outfitItems: hero.outfitItems,
                     w: w,
+                    heroSource: hero.source,
+                    heroLoadingReason: hero.loadingReason,
                   ),
                   _homeSectionsAfterHero(
                     context: context,
@@ -2727,6 +3604,7 @@ class _UnifiedHeroSurface extends StatelessWidget {
     required this.weather,
     required this.isTomorrow,
     required this.outfitItems,
+    this.loadingMode = false,
     this.editMode = false,
     this.focusedType,
     this.onItemTap,
@@ -2741,6 +3619,7 @@ class _UnifiedHeroSurface extends StatelessWidget {
   final _LocalWeather weather;
   final bool isTomorrow;
   final List<_HeroOutfitItem> outfitItems;
+  final bool loadingMode;
   final bool editMode;
   final _HeroWearType? focusedType;
   final ValueChanged<_HeroOutfitItem>? onItemTap;
@@ -2757,7 +3636,7 @@ class _UnifiedHeroSurface extends StatelessWidget {
     final sharedBodyH = _heroSharedBodyHeight(context);
 
     final outfitSwitcher = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 240),
+      duration: const Duration(milliseconds: 0),
       switchInCurve: Curves.easeOutCubic,
       switchOutCurve: Curves.easeInCubic,
       transitionBuilder: (child, anim) {
@@ -2772,8 +3651,10 @@ class _UnifiedHeroSurface extends StatelessWidget {
       },
       child: KeyedSubtree(
         key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
-        child: !hasOutfitTiles
-            ? Center(
+        child: loadingMode
+            ? const SizedBox.expand()
+            : !hasOutfitTiles
+                ? Center(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 8),
                   child: Text(
@@ -4795,10 +5676,14 @@ class _HeroBannerVM {
 class _HeroTodayState {
   final _HeroBannerVM vm;
   final List<_HeroOutfitItem> outfitItems;
+  final String source;
+  final String? loadingReason;
 
   const _HeroTodayState({
     required this.vm,
     required this.outfitItems,
+    required this.source,
+    this.loadingReason,
   });
 }
 
@@ -4884,6 +5769,48 @@ class _VibeComposition {
     required this.missingPieces,
     required this.suggestedFillers,
     required this.honestyMessage,
+  });
+}
+
+class _HomeAiCacheEntry {
+  final String signature;
+  final _HeroOutfitRecommendation? recommendation;
+
+  const _HomeAiCacheEntry({
+    required this.signature,
+    required this.recommendation,
+  });
+}
+
+class _HomeAiRequestContext {
+  final DateTime date;
+  final _LocalWeather weather;
+  final Set<String> excludedItemIds;
+  final Set<String> rejectedCombinationSignatures;
+  final Set<String> previousOutfitItemIds;
+  final bool forceDifferentOutfit;
+  final bool isPremiumUser;
+
+  const _HomeAiRequestContext({
+    required this.date,
+    required this.weather,
+    required this.excludedItemIds,
+    required this.rejectedCombinationSignatures,
+    required this.previousOutfitItemIds,
+    required this.forceDifferentOutfit,
+    required this.isPremiumUser,
+  });
+}
+
+class _HomeDayHeroCacheEntry {
+  final _HeroTodayState state;
+  final String weatherSignature;
+  final String wardrobeSignature;
+
+  const _HomeDayHeroCacheEntry({
+    required this.state,
+    required this.weatherSignature,
+    required this.wardrobeSignature,
   });
 }
 
@@ -5255,6 +6182,33 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
           return const SizedBox.shrink();
         }
 
+        // Exactly 3 items: 2 tiles on top row, 1 tile on bottom-left.
+        // Keeps the outfit compact and fully visible in shared hero body.
+        if (n == 3 && heightBounded && !disableBoundedScroll) {
+          final rowGap = (vGap * 0.92).clamp(4.0, 12.0);
+          return AnimatedSize(
+            duration: const Duration(milliseconds: 260),
+            curve: Curves.easeOutCubic,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Expanded(child: tileFill(0)),
+                      SizedBox(width: hGap),
+                      Expanded(child: tileFill(1)),
+                    ],
+                  ),
+                ),
+                SizedBox(height: rowGap),
+                Expanded(child: tileFill(2)),
+              ],
+            ),
+          );
+        }
+
         // 2×2 fills the shared hero body; equal row heights; no shrink-wrap grid height.
         if (n == 4 && heightBounded && !disableBoundedScroll) {
           final rowGap = vGap + 4;
@@ -5316,78 +6270,114 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
   }
 }
 
+
 /// Scale factors for PNG previews — tops/pants run large if over-scaled; shoes stay slightly bolder.
 double _heroOutfitImageScale(_HeroWearType type, {required bool compact}) {
   if (compact) {
     switch (type) {
       case _HeroWearType.top:
-        return 1.07;
+        return 1.02;
       case _HeroWearType.bottom:
-        return 1.05;
+        return 0.94;
       case _HeroWearType.outerwear:
-        return 1.12;
+        return 0.98;
       case _HeroWearType.shoes:
-        return 1.20;
+        return 1.08;
     }
   }
   switch (type) {
     case _HeroWearType.top:
-      return 1.02;
-    case _HeroWearType.bottom:
       return 1.0;
+    case _HeroWearType.bottom:
+      return 0.92;
     case _HeroWearType.outerwear:
-      return 1.06;
+      return 0.96;
     case _HeroWearType.shoes:
-      return 1.10;
+      return 1.06;
   }
+}
+
+enum _HeroImageRole { top, outerwear, pants, shorts, shoes, other }
+
+_HeroImageRole _heroImageRole({
+  required _HeroWearType wearType,
+  required String? categoryKey,
+  required String? subCategoryKey,
+  required String? label,
+}) {
+  final blob = _normalizedScaleToken('$categoryKey $subCategoryKey $label');
+  bool has(List<String> words) => words.any((w) => blob.contains(_normalizedScaleToken(w)));
+  if (wearType == _HeroWearType.shoes || has(['sneaker', 'tenisky', 'topanky', 'topánky', 'obuv', 'shoes'])) {
+    return _HeroImageRole.shoes;
+  }
+  if (has(['short', 'kratasy', 'kraťasy'])) return _HeroImageRole.shorts;
+  if (has(['jeans', 'rifle', 'nohavice', 'pants'])) return _HeroImageRole.pants;
+  if (wearType == _HeroWearType.outerwear ||
+      has(['hoodie', 'mikina', 'jacket', 'bunda', 'coat', 'kabat', 'kabát', 'blazer', 'sako'])) {
+    return _HeroImageRole.outerwear;
+  }
+  if (wearType == _HeroWearType.top || has(['t-shirt', 'tricko', 'tričko', 'tank', 'tielko', 'shirt', 'kosela', 'koše'])) {
+    return _HeroImageRole.top;
+  }
+  return _HeroImageRole.other;
 }
 
 double _heroCategoryScaleBoost({
+  required _HeroWearType wearType,
   required String? categoryKey,
   required String? subCategoryKey,
   required String? label,
   required bool compact,
 }) {
-  final blob = _normalizedScaleToken('$categoryKey $subCategoryKey $label');
-  bool has(List<String> words) => words.any((w) => blob.contains(_normalizedScaleToken(w)));
-
-  if (has(['hoodie', 'mikina'])) return compact ? 0.38 : 0.30;
-  if (has(['jacket', 'bunda'])) return compact ? 0.34 : 0.27;
-  if (has(['coat', 'kabat', 'kabát'])) return compact ? 0.30 : 0.24;
-  if (has(['long sleeve', 'dlhy rukav', 'dlhym rukavom', 'sveter'])) {
-    return compact ? 0.24 : 0.19;
+  final role = _heroImageRole(
+    wearType: wearType,
+    categoryKey: categoryKey,
+    subCategoryKey: subCategoryKey,
+    label: label,
+  );
+  switch (role) {
+    case _HeroImageRole.top:
+      return 0.0;
+    case _HeroImageRole.outerwear:
+      return compact ? -0.02 : -0.02;
+    case _HeroImageRole.pants:
+      return compact ? -0.08 : -0.07;
+    case _HeroImageRole.shorts:
+      return 0.0;
+    case _HeroImageRole.shoes:
+      return compact ? 0.02 : 0.02;
+    case _HeroImageRole.other:
+      return 0.0;
   }
-  if (has(['jeans', 'rifle', 'nohavice', 'pants'])) return compact ? 0.32 : 0.26;
-  if (has(['sneaker', 'tenisky', 'topanky', 'topánky', 'obuv', 'shoes'])) {
-    return 0.0;
-  }
-
-  // Keep tees/tanks/shorts near natural baseline.
-  if (has(['t-shirt', 'tricko', 'tričko', 'tank', 'tielko', 'short', 'kratasy', 'kraťasy'])) {
-    return 0.0;
-  }
-  return 0.08;
 }
 
 double _heroCategoryInsetAdjust({
+  required _HeroWearType wearType,
   required String? categoryKey,
   required String? subCategoryKey,
   required String? label,
   required bool compact,
 }) {
-  final blob = _normalizedScaleToken('$categoryKey $subCategoryKey $label');
-  bool has(List<String> words) => words.any((w) => blob.contains(_normalizedScaleToken(w)));
-
-  if (has(['hoodie', 'mikina', 'jacket', 'bunda', 'coat', 'kabat', 'kabát'])) {
-    return compact ? -2.4 : -2.0;
+  final role = _heroImageRole(
+    wearType: wearType,
+    categoryKey: categoryKey,
+    subCategoryKey: subCategoryKey,
+    label: label,
+  );
+  switch (role) {
+    case _HeroImageRole.top:
+      return 0.0;
+    case _HeroImageRole.outerwear:
+      return compact ? 0.2 : 0.2;
+    case _HeroImageRole.pants:
+      return compact ? 0.9 : 0.8;
+    case _HeroImageRole.shorts:
+      return 0.0;
+    case _HeroImageRole.shoes:
+      return -0.2;
+    case _HeroImageRole.other:
+      return 0.0;
   }
-  if (has(['jeans', 'rifle', 'nohavice', 'pants'])) {
-    return compact ? -1.8 : -1.4;
-  }
-  if (has(['sneaker', 'tenisky', 'topanky', 'topánky', 'obuv', 'shoes'])) {
-    return 0;
-  }
-  return 0;
 }
 
 String _normalizedScaleToken(String raw) {
@@ -5595,18 +6585,37 @@ class _HeroOutfitImageView extends StatelessWidget {
     final baseInset = compact ? 5.0 : 6.0;
     final baseScale = _heroOutfitImageScale(wearType, compact: compact);
     final categoryBoost = _heroCategoryScaleBoost(
+      wearType: wearType,
       categoryKey: categoryKey,
       subCategoryKey: subCategoryKey,
       label: itemLabel,
       compact: compact,
     );
     final insetAdjust = _heroCategoryInsetAdjust(
+      wearType: wearType,
       categoryKey: categoryKey,
       subCategoryKey: subCategoryKey,
       label: itemLabel,
       compact: compact,
     );
+    final role = _heroImageRole(
+      wearType: wearType,
+      categoryKey: categoryKey,
+      subCategoryKey: subCategoryKey,
+      label: itemLabel,
+    );
     final inset = (baseInset + insetAdjust).clamp(2.2, 7.0).toDouble();
+    double insetX = inset;
+    double insetY = inset;
+    if (role == _HeroImageRole.pants) {
+      insetY = (inset + (compact ? 1.0 : 0.8)).clamp(2.2, 8.0);
+      insetX = (inset - 0.4).clamp(1.8, 6.6);
+    } else if (role == _HeroImageRole.shoes) {
+      insetX = (inset - (compact ? 0.7 : 0.5)).clamp(1.6, 6.4);
+      insetY = (inset + 0.2).clamp(2.2, 7.6);
+    } else if (role == _HeroImageRole.outerwear) {
+      insetY = (inset + 0.3).clamp(2.2, 7.6);
+    }
     final localShoeBoost = wearType == _HeroWearType.shoes ? recreatedShoeScaleBoost : 1.0;
     final scale = ((baseScale + categoryBoost) * imageScaleMultiplier * localShoeBoost)
         .clamp(0.72, compact ? 2.08 : 1.84)
@@ -5614,7 +6623,7 @@ class _HeroOutfitImageView extends StatelessWidget {
 
     Widget previewBody({required Widget child}) {
       return Padding(
-        padding: EdgeInsets.all(inset),
+        padding: EdgeInsets.symmetric(horizontal: insetX, vertical: insetY),
         child: Center(
           child: Transform.scale(
             scale: scale,

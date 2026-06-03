@@ -70,9 +70,6 @@ class PublicClothingDetailScreen extends StatelessWidget {
     final List<dynamic> patternsData = clothingItemData['pattern'] is List ? clothingItemData['pattern'] : (clothingItemData['pattern'] != null ? [clothingItemData['pattern']] : []);
     final String pattern = patternsData.isNotEmpty ? (patternsData.first.toString()) : 'Neznámy vzor';
     final String brand = clothingItemData['brand'] as String? ?? 'Neznáma značka';
-    final List<dynamic> seasonsData = clothingItemData['season'] is List ? clothingItemData['season'] : (clothingItemData['season'] != null ? [clothingItemData['season']] : []);
-    final String season = seasonsData.isNotEmpty ? (seasonsData.first.toString()) : 'Neznáma sezóna';
-
     final String? userName = clothingItemData['userName'] as String? ?? 'Neznámy používateľ';
     final String? userId = clothingItemData['userId'] as String? ?? 'Neznámy používateľ';
 
@@ -106,7 +103,6 @@ class PublicClothingDetailScreen extends StatelessWidget {
             _buildInfoRow('Štýl:', style),
             _buildInfoRow('Vzor:', pattern),
             _buildInfoRow('Značka:', brand),
-            _buildInfoRow('Sezóna:', season),
             const SizedBox(height: 20),
             _buildInfoRow('Zdieľal:', userName ?? userId),
             _buildInfoRow('Nahrané:', (clothingItemData['uploadedAt'] as Timestamp?)?.toDate().toString().split(' ')[0] ?? 'N/A'),

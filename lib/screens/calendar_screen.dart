@@ -10,6 +10,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:http/http.dart' as http;
 import 'package:table_calendar/table_calendar.dart';
 
+import '../widgets/ootd_cta_system.dart';
+
 /// Hlavná obrazovka kalendára udalostí.
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({Key? key}) : super(key: key);
@@ -906,9 +908,18 @@ class _AddCalendarEventScreenState extends State<AddCalendarEventScreen> {
               ),
               const SizedBox(height: 24),
 
-              ElevatedButton(
-                onPressed: _saveEvent,
-                child: const Text('Uložiť udalosť'),
+              SizedBox(
+                width: double.infinity,
+                child: OotdPrimaryButton(
+                  text: 'Uložiť udalosť',
+                  onPressed: _saveEvent,
+                  showTrailingArrow: false,
+                  borderRadius: 18,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
+                ),
               ),
             ],
           ),

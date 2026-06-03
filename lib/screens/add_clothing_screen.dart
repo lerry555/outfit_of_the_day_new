@@ -29,12 +29,16 @@ import '../utils/product_link_image_resolve.dart';
 import '../utils/product_link_url_sanitize.dart';
 import '../utils/wardrobe_image_processing.dart';
 import '../utils/ai_clothing_parser.dart';
+import '../data/clothing_knowledge_base.dart';
 import '../widgets/category_picker.dart';
+import '../widgets/clothing_image_preview.dart';
 import '../widgets/home/home_luxury_palette.dart';
+import '../widgets/ootd_cta_system.dart';
+import '../widgets/ootd_luxury_background.dart';
 import 'stylist_chat_screen.dart';
 
 /// Home screen gold accent for Add Clothing labels and highlights.
-const Color _kAddClothingAccent = Color(0xFFC8A36A);
+const Color _kAddClothingAccent = OotdCtaColors.gold;
 TextStyle get _addClothingLabelStyle => TextStyle(
       color: _kAddClothingAccent.withOpacity(0.92),
       fontWeight: FontWeight.w600,
@@ -160,6 +164,28 @@ String normalizeProductLinkUrl(String raw) {
   final withScheme =
       trimmed.contains('://') ? trimmed : 'https://$trimmed';
   return canonicalProductLinkUrl(withScheme);
+}
+
+/// Copies a picked/cropped wardrobe photo into app-private cache only (never public gallery).
+Future<File> storeAddClothingImageInternally(
+  File source, {
+  String stage = 'picked',
+}) async {
+  final dir = await getTemporaryDirectory();
+  final internalDir = Directory(p.join(dir.path, 'ootd_add_clothing'));
+  if (!await internalDir.exists()) {
+    await internalDir.create(recursive: true);
+  }
+  final outPath = p.join(
+    internalDir.path,
+    'ootd_${stage}_${DateTime.now().millisecondsSinceEpoch}.jpg',
+  );
+  final out = File(outPath);
+  await out.writeAsBytes(await source.readAsBytes(), flush: true);
+  debugPrint(
+    '[ADD_CLOTHING_IMAGE] picked/cropped image stored internally only, not saved to gallery',
+  );
+  return out;
 }
 
 class AddClothingScreen extends StatefulWidget {
@@ -294,40 +320,9 @@ class AddClothingScreen extends StatefulWidget {
 
         return Container(
           height: MediaQuery.of(sheetCtx).size.height,
-          decoration: const BoxDecoration(color: Color(0xFF0C0C0C)),
-          child: Stack(
-            children: [
-              const Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Color(0xFF07070A),
-                        Color(0xFF111116),
-                        Color(0xFF050507),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              Positioned.fill(
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [
-                        Colors.black.withOpacity(0.80),
-                        Colors.black.withOpacity(0.42),
-                        Colors.black.withOpacity(0.88),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              SafeArea(
+          decoration: const BoxDecoration(color: HomeLuxuryPalette.bgBottom),
+          child: OotdLuxuryBackground(
+            child: SafeArea(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
                   child: Column(
@@ -335,45 +330,26 @@ class AddClothingScreen extends StatefulWidget {
                     children: [
                       Row(
                         children: [
-                          InkWell(
-                            borderRadius: BorderRadius.circular(999),
+                          OotdBackButton(
                             onTap: () => Navigator.pop(sheetCtx),
-                            child: Container(
-                              width: 42,
-                              height: 42,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.white.withOpacity(0.08),
-                                border: Border.all(color: Colors.white10),
-                              ),
-                              child: const Icon(
-                                Icons.arrow_back_rounded,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                            ),
+                            size: 42,
                           ),
                           const SizedBox(width: 12),
-                          const Expanded(
+                          Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
                                   'Pridať oblečenie',
-                                  style: TextStyle(
-                                    color: Colors.white,
+                                  style: OotdHeaderStyle.screenTitle(
                                     fontSize: 20,
                                     fontWeight: FontWeight.w900,
                                   ),
                                 ),
-                                SizedBox(height: 3),
+                                const SizedBox(height: 3),
                                 Text(
-                                  "Vyber spôsob pridania oblečenia",
-                                  style: TextStyle(
-                                    color: Colors.white60,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                                  'Vyber spôsob pridania oblečenia',
+                                  style: OotdHeaderStyle.subtitle(),
                                 ),
                               ],
                             ),
@@ -452,8 +428,7 @@ class AddClothingScreen extends StatefulWidget {
                     ],
                   ),
                 ),
-              ),
-            ],
+            ),
           ),
         );
       },
@@ -487,6 +462,9 @@ class AddClothingScreen extends StatefulWidget {
         allowMultiple: false,
         withData: false,
         dialogTitle: 'Vyber fotku',
+        // Avoid FilePicker Android compression — it writes to public Pictures/.
+        allowCompression: false,
+        compressionQuality: 0,
       );
 
       if (result == null || result.files.isEmpty) return;
@@ -494,10 +472,20 @@ class AddClothingScreen extends StatefulWidget {
       final path = result.files.single.path;
       if (path == null) return;
 
-      pickedFile = File(path);
+      pickedFile = await storeAddClothingImageInternally(
+        File(path),
+        stage: 'picked',
+      );
     }
 
     if (pickedFile == null) return;
+
+    if (choice == 'camera') {
+      pickedFile = await storeAddClothingImageInternally(
+        pickedFile!,
+        stage: 'picked',
+      );
+    }
 
     // ignore: use_build_context_synchronously
     Navigator.of(context).push(
@@ -681,12 +669,19 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
 
   Future<void> _continueWithBytes(Uint8List bytes) async {
     final dir = await getTemporaryDirectory();
+    final internalDir = Directory(p.join(dir.path, 'ootd_add_clothing'));
+    if (!await internalDir.exists()) {
+      await internalDir.create(recursive: true);
+    }
     final outPath = p.join(
-      dir.path,
-      'ootd_preflight_${DateTime.now().millisecondsSinceEpoch}.jpg',
+      internalDir.path,
+      'ootd_cropped_${DateTime.now().millisecondsSinceEpoch}.jpg',
     );
     final outFile = File(outPath);
     await outFile.writeAsBytes(bytes, flush: true);
+    debugPrint(
+      '[ADD_CLOTHING_IMAGE] picked/cropped image stored internally only, not saved to gallery',
+    );
 
     if (!mounted) return;
     Navigator.of(context).pushReplacement(
@@ -772,8 +767,28 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
           padding: padding ?? const EdgeInsets.all(16),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(22),
-            border: Border.all(color: Colors.white10),
-            color: Colors.white.withOpacity(0.06),
+            border: Border.all(color: HomeLuxuryPalette.border),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                HomeLuxuryPalette.surfaceSoft.withOpacity(0.52),
+                HomeLuxuryPalette.surface.withOpacity(0.38),
+                HomeLuxuryPalette.bgMid.withOpacity(0.42),
+              ],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.35),
+                blurRadius: 24,
+                offset: const Offset(0, 14),
+              ),
+              BoxShadow(
+                color: HomeLuxuryPalette.accent.withOpacity(0.06),
+                blurRadius: 28,
+                spreadRadius: -4,
+              ),
+            ],
           ),
           child: child,
         ),
@@ -781,86 +796,47 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
     );
   }
 
-  Widget _pillButton({
-    required IconData icon,
-    required String text,
-    required VoidCallback? onTap,
-    bool active = false,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(999),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(999),
-              border: Border.all(color: Colors.white10),
-              color: active
-                  ? Colors.white.withOpacity(0.16)
-                  : Colors.white.withOpacity(0.07),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(icon, size: 16, color: Colors.white70),
-                const SizedBox(width: 8),
-                Text(
-                  text,
-                  style: const TextStyle(
-                    color: Colors.white70,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
+  Widget _tipCard() {
+    return _glassCard(
+      padding: const EdgeInsets.all(14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            Icons.auto_awesome_rounded,
+            size: 20,
+            color: _kAddClothingAccent.withOpacity(0.95),
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _primaryButton({
-    required String text,
-    required VoidCallback? onTap,
-    bool loading = false,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(999),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white.withOpacity(0.92),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            if (loading)
-              const SizedBox(
-                width: 18,
-                height: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              )
-            else
-              const Icon(Icons.check, size: 18, color: Colors.black87),
-            const SizedBox(width: 10),
-            Text(
-              text,
-              style: const TextStyle(
-                color: Colors.black,
-                fontWeight: FontWeight.bold,
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text.rich(
+              TextSpan(
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  height: 1.4,
+                ),
+                children: [
+                  TextSpan(
+                    text: 'Tip: ',
+                    style: TextStyle(
+                      color: HomeLuxuryPalette.textSecondary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  TextSpan(
+                    text:
+                        'Nech je kúsok celý v zábere a čo najmenej pozadia. '
+                        'Výsledok bude čistejší a AI presnejšia.',
+                    style: TextStyle(
+                      color: HomeLuxuryPalette.textSecondary.withOpacity(0.92),
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(width: 10),
-            const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.black54),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -870,40 +846,9 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
     final bytes = _imageBytes;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0E0E0E),
-      body: Stack(
-        children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [
-                    Color(0xFF07070A),
-                    Color(0xFF111116),
-                    Color(0xFF050507),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Colors.black.withOpacity(0.72),
-                    Colors.black.withOpacity(0.18),
-                    Colors.black.withOpacity(0.82),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          SafeArea(
+      backgroundColor: HomeLuxuryPalette.bgBottom,
+      body: OotdLuxuryBackground(
+        child: SafeArea(
             child: Column(
               children: [
                 Padding(
@@ -912,61 +857,24 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                     padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                     child: Row(
                       children: [
-                        InkWell(
-                          borderRadius: BorderRadius.circular(999),
-                          onTap: () => Navigator.pop(context),
-                          child: Container(
-                            padding: const EdgeInsets.all(8),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withOpacity(0.08),
-                              borderRadius: BorderRadius.circular(999),
-                              border: Border.all(color: Colors.white10),
-                            ),
-                            child: const Icon(Icons.arrow_back, color: Colors.white, size: 20),
-                          ),
-                        ),
+                        OotdBackButton(onTap: () => Navigator.pop(context)),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text(
+                              Text(
                                 'Úprava fotky',
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 17,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                                style: OotdHeaderStyle.screenTitle(fontSize: 17),
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(height: 3),
                               Text(
                                 _isCropping
                                     ? 'Orež oblečenie čo najpresnejšie'
                                     : 'Otoč alebo orež pred spracovaním',
-                                style: const TextStyle(
-                                  color: Colors.white60,
-                                  fontSize: 12.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
+                                style: OotdHeaderStyle.subtitle(),
                               ),
                             ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.08),
-                            borderRadius: BorderRadius.circular(999),
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: Text(
-                            _isCropping ? 'OREZ' : 'NÁHĽAD',
-                            style: const TextStyle(
-                              color: Colors.white70,
-                              fontSize: 11.5,
-                              fontWeight: FontWeight.w900,
-                              letterSpacing: 0.2,
-                            ),
                           ),
                         ),
                       ],
@@ -975,23 +883,7 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                 ),
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                  child: _glassCard(
-                    padding: const EdgeInsets.all(14),
-                    child: const Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Icon(Icons.auto_awesome_outlined, size: 18, color: Colors.white70),
-                        SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Tip: Nech je kúsok celý v zábere a čo najmenej pozadia. '
-                                'Výsledok bude čistejší a AI presnejšia.',
-                            style: TextStyle(color: Colors.white70, height: 1.35),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
+                  child: _tipCard(),
                 ),
                 Expanded(
                   child: Padding(
@@ -1010,18 +902,22 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                                   ? Center(
                                 child: Column(
                                   mainAxisSize: MainAxisSize.min,
-                                  children: const [
-                                    SizedBox(
+                                  children: [
+                                    const SizedBox(
                                       width: 22,
                                       height: 22,
-                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: _kAddClothingAccent,
+                                      ),
                                     ),
-                                    SizedBox(height: 10),
+                                    const SizedBox(height: 10),
                                     Text(
                                       'Pripravujem orez…',
                                       style: TextStyle(
-                                        color: Colors.white70,
-                                        fontWeight: FontWeight.w800,
+                                        color: HomeLuxuryPalette.textPrimary
+                                            .withOpacity(0.88),
+                                        fontWeight: FontWeight.w700,
                                       ),
                                     ),
                                   ],
@@ -1073,7 +969,13 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                                 baseColor: Colors.black,
                                 maskColor: Colors.black.withOpacity(0.55),
                                 radius: 0,
-                                interactive: true,
+                                interactive: false,
+                                willUpdateScale: (_) => false,
+                                cornerDotBuilder: (size, edgeAlignment) =>
+                                    const DotControl(
+                                  color: Color(0xFFC8A36A),
+                                  padding: 4,
+                                ),
                               )
                                   : Center(
                                 child: RotatedBox(
@@ -1087,7 +989,9 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                                 child: Container(
                                   decoration: BoxDecoration(
                                     borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(color: Colors.white10),
+                                    border: Border.all(
+                                      color: HomeLuxuryPalette.border,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1108,29 +1012,29 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                           spacing: 10,
                           runSpacing: 10,
                           children: [
-                            _pillButton(
+                            OotdSecondaryButton(
                               icon: Icons.rotate_left,
                               text: 'Vľavo',
-                              onTap: (_saving || _isCropping)
+                              onPressed: (_saving || _isCropping)
                                   ? null
                                   : () => setState(
                                     () => _quarterTurns = (_quarterTurns + 3) % 4,
                               ),
                             ),
-                            _pillButton(
+                            OotdSecondaryButton(
                               icon: Icons.rotate_right,
                               text: 'Vpravo',
-                              onTap: (_saving || _isCropping)
+                              onPressed: (_saving || _isCropping)
                                   ? null
                                   : () => setState(
                                     () => _quarterTurns = (_quarterTurns + 1) % 4,
                               ),
                             ),
-                            _pillButton(
+                            OotdSecondaryButton(
                               icon: _isCropping ? Icons.close : Icons.crop,
                               text: _isCropping ? 'Zrušiť orez' : 'Orezať',
                               active: _isCropping,
-                              onTap: _saving
+                              onPressed: _saving
                                   ? null
                                   : () async {
                                 if (_isCropping) {
@@ -1145,10 +1049,11 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                         const SizedBox(height: 12),
                         SizedBox(
                           width: double.infinity,
-                          child: _primaryButton(
+                          child: OotdPrimaryButton(
                             text: _saving ? 'Pripravujem…' : 'Pokračovať',
-                            loading: _saving,
-                            onTap: _saving ? null : _confirm,
+                            isLoading: _saving,
+                            onPressed: _saving ? null : _confirm,
+                            showTrailingArrow: true,
                           ),
                         ),
                       ],
@@ -1157,8 +1062,7 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
                 ),
               ],
             ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -1260,10 +1164,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _brandController = TextEditingController();
 
-  bool _isSystemNameSelected = false;
-  String? _selectedSystemNameLabel;
-  String? _selectedSystemSubCategoryKey;
-
   File? _localImageFile;
   String? _uploadedImageUrl;
   bool _productLinkPreviewFailed = false;
@@ -1277,6 +1177,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   String? _selectedCategoryKey;
   String? _selectedSubCategoryKey;
   String? _selectedLayerRole;
+  String? _aiStylingLayerRole;
+  int? _aiWarmthLevel;
+  /// KB [ClothingKbItem.skName] when [ClothingKnowledgeBase.resolveClothingType] matched.
+  String? _kbTypeDisplayName;
 
   List<String> _selectedColors = [];
   List<String> _selectedBaseColors = [];
@@ -1284,6 +1188,28 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _selectedStyles = [];
   List<String> _selectedPatterns = [];
   List<String> _selectedSeasons = [];
+  Map<String, dynamic> _hiddenAiMetadata = {};
+
+  static const List<String> _hiddenAiFieldKeys = [
+    'canonical_type',
+    'type',
+    'type_pretty',
+    'primary_type',
+    'secondary_type',
+    'layer_role',
+    'warmth_level',
+    'confidence',
+    'fit',
+    'formality',
+    'vibe',
+    'logo_prominence',
+    'occasion_fit',
+    'material_feel',
+    'visual_description',
+    'visual_identity',
+    'identity_confidence',
+    'debug_reason',
+  ];
 
   bool _isAiLoading = false;
   bool _aiCompleted = false;
@@ -1297,7 +1223,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     'Analyzujem obrázok',
     'Rozpoznávam typ kúsku',
     'Zaraďujem do kategórie',
-    'Kontrolujem farby, vzor, sezónu',
+    'Kontrolujem farbu a typ',
     'Pripravujem formulár',
   ];
 
@@ -1307,8 +1233,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   Timer? _uxTimer;
   final int _uxIntervalMs = 2000;
   final int _maxFakeDoneIndex = 3;
-
-  String? _lastTypeLabel;
 
   List<String> _brandOptions = [];
   bool _brandsLoaded = false;
@@ -1441,7 +1365,24 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     if (widget.isEditing && widget.initialData != null) {
       final d = widget.initialData!;
-      _nameController.text = (d['name'] ?? '').toString();
+      _loadHiddenAiMetadataFromDoc(d);
+      final editCanonical =
+          (_hiddenAiMetadata['canonical_type'] ?? d['canonical_type'] ?? '')
+              .toString()
+              .trim();
+      final editKb = ClothingKnowledgeBase.resolveClothingType(
+        canonicalType: editCanonical,
+        type: (_hiddenAiMetadata['type'] ?? d['type'] ?? '').toString(),
+        typePretty:
+            (_hiddenAiMetadata['type_pretty'] ?? d['type_pretty'] ?? '')
+                .toString(),
+        primaryType:
+            (_hiddenAiMetadata['primary_type'] ?? d['primary_type'] ?? '')
+                .toString(),
+      );
+      if (editKb != null) {
+        _kbTypeDisplayName = editKb.skName;
+      }
       _brandController.text = (d['brand'] ?? '').toString();
 
       _selectedMainGroupKey =
@@ -1458,6 +1399,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       (d['layerRole'] ?? '').toString().isEmpty
           ? null
           : (d['layerRole'] ?? '').toString();
+      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
+      _aiStylingLayerRole = loadedLayerRole.isEmpty ? null : loadedLayerRole;
+      final warmthRaw = d['warmth_level'] ?? d['warmthLevel'];
+      if (warmthRaw != null) {
+        final w = num.tryParse(warmthRaw.toString());
+        if (w != null) _aiWarmthLevel = w.round().clamp(1, 10);
+      }
 
       _selectedColors =
           _normalizeColorsList(_toStringList(d['colors']));
@@ -1483,26 +1431,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final editSourceUrl = (d['sourceUrl'] ?? '').toString().trim();
       if (editSourceUrl.isNotEmpty) _sourceUrl = editSourceUrl;
       _aiCompleted = true;
-
-      _lastTypeLabel =
-      _nameController.text.trim().isEmpty ? null : _nameController.text.trim();
+      _refreshAutoName();
     }
 
     _loadBrandSuggestions();
-    _syncSystemNameValidity();
-
-    _nameController.addListener(() {
-      final current = _nameController.text.trim();
-      if (_selectedSystemNameLabel != null && current != _selectedSystemNameLabel) {
-        if (_isSystemNameSelected) {
-          setState(() {
-            _isSystemNameSelected = false;
-            _selectedSystemNameLabel = null;
-            _selectedSystemSubCategoryKey = null;
-          });
-        }
-      }
-    });
   }
 
   @override
@@ -1526,6 +1458,89 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return [];
   }
 
+  void _loadHiddenAiMetadataFromDoc(Map<String, dynamic> d) {
+    final hidden = <String, dynamic>{};
+    for (final key in _hiddenAiFieldKeys) {
+      final v = d[key];
+      if (v == null) continue;
+      if (v is String && v.trim().isEmpty) continue;
+      if (v is List && v.isEmpty) continue;
+      hidden[key] = v;
+    }
+    _hiddenAiMetadata = hidden;
+  }
+
+  void _storeHiddenAiMetadataFromAnalysis(
+    Map<String, dynamic> m, {
+    required String canonical,
+    required String rawType,
+    required String prettyType,
+    required List<String> styles,
+    required List<String> patterns,
+    required List<String> seasons,
+    String? layerRoleFromAi,
+    int? warmthLevelFromAi,
+    int? formalityLevel,
+    String? primaryTypeFromAi,
+    String? secondaryTypeFromAi,
+  }) {
+    final hidden = <String, dynamic>{
+      if (canonical.isNotEmpty) 'canonical_type': canonical,
+      if (rawType.isNotEmpty) 'type': rawType,
+      if (prettyType.isNotEmpty) 'type_pretty': prettyType,
+      if (primaryTypeFromAi != null && primaryTypeFromAi.isNotEmpty)
+        'primary_type': primaryTypeFromAi,
+      if (secondaryTypeFromAi != null && secondaryTypeFromAi.isNotEmpty)
+        'secondary_type': secondaryTypeFromAi,
+      if (styles.isNotEmpty) 'styles': styles,
+      if (patterns.isNotEmpty) 'patterns': patterns,
+      if (seasons.isNotEmpty) 'seasons': seasons,
+      if (layerRoleFromAi != null && layerRoleFromAi.isNotEmpty)
+        'layer_role': layerRoleFromAi,
+      if (warmthLevelFromAi != null) 'warmth_level': warmthLevelFromAi,
+      if (formalityLevel != null) 'formality': formalityLevel,
+    };
+
+    for (final key in [
+      'fit',
+      if (formalityLevel == null) 'formality',
+      'vibe',
+      'logo_prominence',
+      'occasion_fit',
+      'material_feel',
+      'visual_description',
+      'visual_identity',
+      'identity_confidence',
+      'confidence',
+      'debug_reason',
+    ]) {
+      final v = m[key];
+      if (v == null) continue;
+      if (v is String && v.trim().isEmpty) continue;
+      if (v is List && v.isEmpty) continue;
+      hidden[key] = v;
+    }
+
+    _hiddenAiMetadata = hidden;
+  }
+
+  Map<String, dynamic> _hiddenAiFieldsForSave() {
+    final out = Map<String, dynamic>.from(_hiddenAiMetadata);
+    if (_selectedStyles.isNotEmpty) out['styles'] = _selectedStyles;
+    if (_selectedPatterns.isNotEmpty) out['patterns'] = _selectedPatterns;
+    final seasons = _sanitizeSeasons(_selectedSeasons);
+    if (seasons.isNotEmpty) {
+      out['seasons'] = seasons;
+    } else if (!out.containsKey('seasons')) {
+      out['seasons'] = ['celoročne'];
+    }
+    if (_aiStylingLayerRole != null && _aiStylingLayerRole!.isNotEmpty) {
+      out['layer_role'] = _aiStylingLayerRole;
+    }
+    if (_aiWarmthLevel != null) out['warmth_level'] = _aiWarmthLevel;
+    return out;
+  }
+
   void _applyProductLinkInitialData(
     Map<String, dynamic> d, {
     bool markAiComplete = true,
@@ -1547,7 +1562,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     final canonical = (d['canonical_type'] ?? '').toString().trim();
     if ((sub.isEmpty || cat.isEmpty || main.isEmpty) && canonical.isNotEmpty) {
-      final mapped = AiClothingParser.fromCanonicalType(canonical);
+      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
+      final mapped = AiClothingParser.fromCanonicalType(
+        canonical,
+        aiLayerRole: loadedLayerRole.isNotEmpty ? loadedLayerRole : null,
+      );
       if (mapped != null) {
         main = main.isEmpty ? mapped.mainGroupKey : main;
         cat = cat.isEmpty ? mapped.categoryKey : cat;
@@ -1560,7 +1579,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     if (cat.isNotEmpty) _selectedCategoryKey = cat;
     if (sub.isNotEmpty) {
       _selectedSubCategoryKey = sub;
-      _selectedLayerRole ??= subCategoryLayerRoles[sub];
+      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
+      _selectedLayerRole = AiClothingParser.resolveLayerRole(
+        subCategoryKey: sub,
+        aiLayerRole: loadedLayerRole.isNotEmpty ? loadedLayerRole : null,
+      );
     }
 
     final colors = _normalizeColorsList(_toStringList(d['colors']));
@@ -1593,9 +1616,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _selectedSeasons = _sanitizeSeasons(seasonsRaw);
     }
 
+    _loadHiddenAiMetadataFromDoc(d);
     _applyProductLinkImageFields(d);
-
-    _applyProductLinkDerivedName();
+    _refreshAutoName();
 
     if (markAiComplete) {
       _aiCompleted = true;
@@ -1684,27 +1707,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   void _applyProductLinkDerivedName() {
-    final color = _selectedColors.isNotEmpty ? _selectedColors.first : '';
-    final subKey = _selectedSubCategoryKey ?? '';
-    final typeLabel = (subCategoryLabels[subKey] ?? '').trim();
-
-    debugPrint('[ADD_LINK_NAME][color] $color');
-    debugPrint('[ADD_LINK_NAME][type] $typeLabel');
-
-    final auto = _computeProductLinkAutoName();
-    debugPrint('[ADD_LINK_NAME][final] $auto');
-
-    if (auto.trim().isNotEmpty) {
-      _nameController.text = auto;
-      _lastTypeLabel = auto;
-      _isSystemNameSelected = false;
-      _selectedSystemNameLabel = null;
-      _selectedSystemSubCategoryKey = null;
-    } else {
-      final fallbackName = typeLabel.isNotEmpty ? typeLabel : 'Produkt z linku';
-      _nameController.text = fallbackName;
-      _lastTypeLabel = fallbackName;
-    }
+    _refreshAutoName();
   }
 
   Future<void> _ensureMinLinkAnalyzingDuration(DateTime started) async {
@@ -2611,20 +2614,29 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     return c;
   }
+  String _displayColorName(String raw) {
+    final s = raw.trim();
+    if (s.isEmpty) return s;
+    return s[0].toUpperCase() + s.substring(1);
+  }
+
   String _computeAutoNameWithColor() {
     final subKey = _selectedSubCategoryKey;
-    final subLabelRaw = (subCategoryLabels[subKey] ?? '').trim();
+    final subLabelRaw = (_kbTypeDisplayName ?? subCategoryLabels[subKey] ?? '')
+        .trim();
 
     String lowerFirst(String s) => s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
     String upperFirst(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
     String colorPart = '';
     if (_selectedColors.isNotEmpty) {
-      colorPart = _colorToAdjectiveForSubcategory(
-        _selectedColors.first,
-        subKey ?? '',
-        subLabelRaw ?? '',
-      ).trim();
+      colorPart = _displayColorName(
+        _colorToAdjectiveForSubcategory(
+          _selectedColors.first,
+          subKey ?? '',
+          subLabelRaw,
+        ).trim(),
+      );
     }
 
     final subLabel = lowerFirst(subLabelRaw);
@@ -2641,17 +2653,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   void _refreshAutoName() {
     final auto = _computeAutoNameWithColor();
     if (auto.trim().isEmpty) return;
-
-    final current = _nameController.text.trim();
-    final lastAuto = (_lastTypeLabel ?? '').trim();
-
-    final shouldOverwrite =
-        current.isEmpty || (lastAuto.isNotEmpty && current == lastAuto) || _isSystemNameSelected;
-
-    if (shouldOverwrite) {
-      _nameController.text = auto;
-      _lastTypeLabel = auto;
-    }
+    _nameController.text = auto;
   }
 
   Future<void> _fillWithAi() async {
@@ -2745,32 +2747,69 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final stylesFromAi = _toStringList(m['style'] ?? m['styles']);
       final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
       final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
-      final normStyles = stylesFromAi.map((e) => _norm(e)).toList();
-      final normPretty = _norm(prettyType);
-      final normRawType = _norm(rawType);
-      final normCanonical = _norm(canonical);
-      final normSeasons = seasonsFromAi.map((e) => _norm(e)).toList();
+      final String primaryTypeFromAi =
+          (m['primary_type'] ?? '').toString().trim();
+      final String secondaryTypeFromAi =
+          (m['secondary_type'] ?? '').toString().trim();
+      final String materialFeelFromAi =
+          (m['material_feel'] ?? '').toString().trim();
+      final String vibeFromAi = (m['vibe'] ?? '').toString().trim();
+      final String visualDescFromAi =
+          (m['visual_description'] ?? '').toString().trim();
+      var layerRoleFromAi = (m['layer_role'] ?? '').toString().trim();
+      int? warmthLevelFromAi;
+      if (m['warmth_level'] != null) {
+        final n = num.tryParse(m['warmth_level'].toString());
+        if (n != null) warmthLevelFromAi = n.round().clamp(1, 10);
+      }
+
+      int? formalityFromAi;
+      if (m['formality'] != null) {
+        final n = num.tryParse(m['formality'].toString());
+        if (n != null) formalityFromAi = n.round().clamp(1, 10);
+      }
+
+      final kbItem = ClothingKnowledgeBase.resolveClothingType(
+        canonicalType: canonical,
+        type: rawType,
+        typePretty: prettyType,
+        primaryType: primaryTypeFromAi,
+      );
+      if (kbItem != null) {
+        ClothingKnowledgeBase.logMatch(kbItem);
+        layerRoleFromAi = kbItem.layerRole;
+        warmthLevelFromAi = kbItem.warmthDefault;
+        formalityFromAi = kbItem.formalityDefault;
+        _kbTypeDisplayName = kbItem.skName;
+      } else {
+        ClothingKnowledgeBase.logNoMatch(
+          canonicalType: canonical,
+          primaryType: primaryTypeFromAi,
+          type: rawType,
+          typePretty: prettyType,
+        );
+        _kbTypeDisplayName = null;
+      }
 
       String? nextMain;
       String? nextCat;
       String? nextSub;
       String? nextLayerRole;
 
+      final aiLayerForMapping = kbItem == null && layerRoleFromAi.isNotEmpty
+          ? layerRoleFromAi
+          : null;
+
       if (canonical.isNotEmpty && canonical != 'sneakers' && canonical != 'sneaker') {
-        final mapped = AiClothingParser.fromCanonicalType(canonical);
+        final mapped = AiClothingParser.fromCanonicalType(
+          canonical,
+          aiLayerRole: aiLayerForMapping,
+        );
         if (mapped != null) {
           nextMain = mapped.mainGroupKey;
           nextCat = mapped.categoryKey;
           nextSub = mapped.subCategoryKey;
           nextLayerRole = mapped.layerRole;
-        }
-      }
-      if (canonical.isNotEmpty && canonical != 'sneakers' && canonical != 'sneaker') {
-        final mapped = AiClothingParser.fromCanonicalType(canonical);
-        if (mapped != null) {
-          nextMain = mapped.mainGroupKey;
-          nextCat = mapped.categoryKey;
-          nextSub = mapped.subCategoryKey;
         }
       }
 
@@ -2779,7 +2818,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           AiParserInput(
             rawType: rawType,
             aiName: prettyType,
-            userName: _nameController.text.trim(),
+            userName: _computeAutoNameWithColor(),
             seasons: seasonsFromAi,
             brand: brandFromAi,
           ),
@@ -2789,7 +2828,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           nextMain = mapped.mainGroupKey;
           nextCat = mapped.categoryKey;
           nextSub = mapped.subCategoryKey;
-          nextLayerRole = mapped.layerRole;
+          if (kbItem == null) {
+            nextLayerRole = AiClothingParser.resolveLayerRole(
+              subCategoryKey: mapped.subCategoryKey,
+              aiLayerRole: aiLayerForMapping,
+            );
+          }
 
           print(
             'AI TYPE FALLBACK OK => canonical="$canonical", raw="$rawType", pretty="$prettyType" => '
@@ -2806,31 +2850,67 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
         );
       }
-      final bool jacketLooksWinter =
-          nextSub == 'bunda_prechodna' &&
-              (normCanonical == 'jacket' || normRawType.contains('bunda')) &&
-              (
-                  normStyles.contains('outdoor') ||
-                      normStyles.contains('sportovy') ||
-                      normStyles.contains('sportový') ||
-                      normPretty.contains('outdoor') ||
-                      normPretty.contains('zimna') ||
-                      normPretty.contains('zimná') ||
-                      normRawType.contains('zimna') ||
-                      normRawType.contains('zimná') ||
-                      normSeasons.contains('zima')
-              );
 
-      if (jacketLooksWinter) {
-        nextSub = 'bunda_zimna';
-        nextCat = _findCategoryForSubKeyLocal('bunda_zimna');
-        nextMain = _findMainGroupForCategoryLocal(nextCat);
-        nextLayerRole = subCategoryLayerRoles['bunda_zimna'] ?? 'outer_layer';
-
+      if (AiClothingParser.isTrackJacketSignal(
+        canonicalType: canonical,
+        primaryType: primaryTypeFromAi,
+        rawType: rawType,
+        prettyType: prettyType,
+      )) {
         print(
-          'AI JACKET WINTER GUARD => overriding subcategory to "bunda_zimna" '
-              'because canonical="$canonical", raw="$rawType", pretty="$prettyType", '
-              'styles="$stylesFromAi", seasons="$seasonsFromAi"',
+          'AI TYPE TRACK_JACKET OK => canonical=$canonical primary=$primaryTypeFromAi '
+          'sub=$nextSub layer_role=${aiLayerForMapping ?? nextLayerRole ?? ''}',
+        );
+      }
+
+      List<String>? jacketSeasonsOverride;
+      if (JacketV2Classifier.shouldClassify(
+        currentSub: nextSub,
+        canonicalType: canonical,
+        primaryType: primaryTypeFromAi,
+        rawType: rawType,
+        prettyType: prettyType,
+      )) {
+        final jacketV2 = JacketV2Classifier.classify(
+          primaryType: primaryTypeFromAi,
+          secondaryType: secondaryTypeFromAi,
+          warmthLevel: warmthLevelFromAi,
+          materialFeel: materialFeelFromAi,
+          vibe: vibeFromAi,
+          visualDescription: visualDescFromAi,
+          rawType: rawType,
+          prettyType: prettyType,
+        );
+        JacketV2Classifier.logDecision(
+          primaryType: primaryTypeFromAi,
+          secondaryType: secondaryTypeFromAi,
+          warmthLevel: warmthLevelFromAi,
+          materialFeel: materialFeelFromAi,
+          vibe: vibeFromAi,
+          result: jacketV2,
+        );
+        if (jacketV2 != null) {
+          nextSub = jacketV2.subCategoryKey;
+          nextCat = _findCategoryForSubKeyLocal(jacketV2.subCategoryKey);
+          nextMain = _findMainGroupForCategoryLocal(nextCat);
+          if (kbItem == null) {
+            nextLayerRole = AiClothingParser.resolveLayerRole(
+              subCategoryKey: jacketV2.subCategoryKey,
+              aiLayerRole: aiLayerForMapping,
+            );
+          }
+          jacketSeasonsOverride = jacketV2.seasons;
+        }
+      }
+
+      if (kbItem != null) {
+        nextLayerRole = kbItem.layerRole;
+        warmthLevelFromAi = kbItem.warmthDefault;
+        formalityFromAi = kbItem.formalityDefault;
+      } else if (nextSub != null) {
+        nextLayerRole = AiClothingParser.resolveLayerRole(
+          subCategoryKey: nextSub!,
+          aiLayerRole: aiLayerForMapping,
         );
       }
       _reachMilestone(2);
@@ -2869,7 +2949,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final typeForSeason = nextSub ?? '';
       print('CHECKPOINT S3 => typeForSeason=$typeForSeason');
 
-      if (typeForSeason == 'bunda_zimna') {
+      if (jacketSeasonsOverride != null) {
+        filteredSeasons = jacketSeasonsOverride;
+        print(
+          'CHECKPOINT JACKET V2 => seasons from classifier: $filteredSeasons',
+        );
+      } else if (typeForSeason == 'bunda_zimna') {
         print('CHECKPOINT DIRECT WINTER => forcing winter seasons');
         filteredSeasons = ['jeseň', 'zima'];
         print('CHECKPOINT DX => after direct winter assign, filteredSeasons=$filteredSeasons');
@@ -2894,6 +2979,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             typeForSeason == 'vesta' ||
             typeForSeason == 'flisova_bunda' ||
             typeForSeason == 'softshell_bunda') {
+          if (filteredSeasons.isEmpty ||
+              filteredSeasons.contains('celoročne')) {
+            filteredSeasons = ['jar', 'jeseň'];
+          }
         } else if (typeForSeason == 'sveter_klasicky' ||
             typeForSeason == 'sveter_rolak' ||
             typeForSeason == 'sveter_kardigan' ||
@@ -2946,6 +3035,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         if (nextCat != null) _selectedCategoryKey = nextCat;
         if (nextSub != null) _selectedSubCategoryKey = nextSub;
         if (nextLayerRole != null) _selectedLayerRole = nextLayerRole;
+        _aiStylingLayerRole =
+            layerRoleFromAi.isNotEmpty ? layerRoleFromAi : null;
+        _aiWarmthLevel = warmthLevelFromAi;
 
         if (filteredColors.isNotEmpty) {
           _selectedColors = filteredColors;
@@ -2963,9 +3055,20 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           _selectedSeasons = filteredSeasons;
         }
 
-        _isSystemNameSelected = false;
-        _selectedSystemNameLabel = null;
-        _selectedSystemSubCategoryKey = null;
+        _storeHiddenAiMetadataFromAnalysis(
+          m,
+          canonical: canonical,
+          rawType: rawType,
+          prettyType: prettyType,
+          styles: fixedStyles,
+          patterns: fixedPatterns,
+          seasons: filteredSeasons,
+          layerRoleFromAi: layerRoleFromAi.isNotEmpty ? layerRoleFromAi : null,
+          warmthLevelFromAi: warmthLevelFromAi,
+          formalityLevel: formalityFromAi,
+          primaryTypeFromAi: primaryTypeFromAi,
+          secondaryTypeFromAi: secondaryTypeFromAi,
+        );
 
         _refreshAutoName();
 
@@ -3081,16 +3184,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         return;
       }
 
-      final typed = _nameController.text.trim();
-      final lastAuto = (_lastTypeLabel ?? '').trim();
-      final shouldAuto =
-          typed.isEmpty || (lastAuto.isNotEmpty && typed == lastAuto) || _isSystemNameSelected;
+      if (_selectedColors.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Vyber farbu kúsku.')),
+        );
+        return;
+      }
 
-      final finalName = shouldAuto ? _computeAutoNameWithColor() : typed;
-
+      final finalName = _computeAutoNameWithColor();
       if (finalName.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('AI nevie vytvoriť názov – chýba farba alebo typ.')),
+          const SnackBar(content: Text('Chýba farba alebo typ na vytvorenie názvu.')),
         );
         return;
       }
@@ -3098,7 +3202,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final brand = _brandController.text.trim();
       await _saveBrandSuggestion(brand);
 
-      final safeSeasons = _sanitizeSeasons(_selectedSeasons);
+      final hiddenAi = _hiddenAiFieldsForSave();
+      final safeSeasons = _toStringList(hiddenAi['seasons']);
 
       final seed = (displayImageUrl ?? '').trim();
       if (_fromProductLink && hasImage && seed.isNotEmpty) {
@@ -3138,14 +3243,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'name': finalName.trim(),
         'brand': brand,
         'mainGroup': _selectedMainGroupKey,
+        'mainGroupKey': _selectedMainGroupKey,
         'category': _selectedCategoryKey,
-        'subCategory': _selectedSubCategoryKey,
-        'mainGroupKey': _selectedMainGroupKey,
         'categoryKey': _selectedCategoryKey,
-        'subCategoryKey': _selectedSubCategoryKey,
         'subCategory': _selectedSubCategoryKey,
-        'mainGroupKey': _selectedMainGroupKey,
-        'categoryKey': _selectedCategoryKey,
         'subCategoryKey': _selectedSubCategoryKey,
         'layerRole': _selectedLayerRole ??
             (_selectedSubCategoryKey == null
@@ -3154,9 +3255,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'colors': _selectedColors,
         if (_selectedBaseColors.isNotEmpty) 'baseColors': _selectedBaseColors,
         if (_selectedColorHex.isNotEmpty) 'colorHex': _selectedColorHex,
-        'styles': _selectedStyles,
-        'patterns': _selectedPatterns,
-        'seasons': safeSeasons.isEmpty ? ['celoročne'] : safeSeasons,
+        ...hiddenAi,
+        if (safeSeasons.isEmpty && !hiddenAi.containsKey('seasons'))
+          'seasons': ['celoročne'],
         if (hasImage) ...{
           'imageUrl': displayImageUrl!,
           'originalImageUrl': (originalImageUrl ?? displayImageUrl)!,
@@ -3209,15 +3310,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     }
   }
 
-  Widget _productLinkImagePlaceholder({double height = 190}) {
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        height: height,
-        width: double.infinity,
-        alignment: Alignment.center,
-        color: Colors.white.withOpacity(0.06),
-        child: const SizedBox(
+  Widget _productLinkImagePlaceholder() {
+    return const ClothingImagePreview(
+      image: Center(
+        child: SizedBox(
           width: 32,
           height: 32,
           child: CircularProgressIndicator(strokeWidth: 2),
@@ -3233,13 +3329,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         isValidProductLinkImageUrl(u);
   }
 
-  Widget _buildProcessingImagePreview() {
-    final Widget imgWidget;
-
+  Widget? _buildClothingPreviewImageChild() {
     if (_localImageFile != null) {
-      imgWidget = Image.file(_localImageFile!, fit: BoxFit.contain);
-    } else if (_hasValidBackendPreviewUrl) {
-      imgWidget = Image.network(
+      return Image.file(_localImageFile!, fit: BoxFit.contain);
+    }
+    if (_hasValidBackendPreviewUrl) {
+      return Image.network(
         _uploadedImageUrl!,
         fit: BoxFit.contain,
         loadingBuilder: (context, child, progress) {
@@ -3273,42 +3368,23 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           );
         },
       );
-    } else if (_fromProductLink && _isAiLoading) {
-      return _productLinkImagePlaceholder();
-    } else {
-      return const SizedBox.shrink();
     }
+    return null;
+  }
 
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            color: Colors.white.withOpacity(0.06),
-            border: Border.all(color: Colors.white10),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              height: 190,
-              width: double.infinity,
-              color: Colors.white.withOpacity(0.04),
-              alignment: Alignment.center,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [
-                  imgWidget,
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
+  Widget _buildClothingImagePreview({bool allowProductLinkPlaceholder = false}) {
+    final imageChild = _buildClothingPreviewImageChild();
+    if (imageChild != null) {
+      return ClothingImagePreview(image: imageChild);
+    }
+    if (allowProductLinkPlaceholder && _fromProductLink && _isAiLoading) {
+      return _productLinkImagePlaceholder();
+    }
+    return const SizedBox.shrink();
+  }
+
+  Widget _buildProcessingImagePreview() {
+    return _buildClothingImagePreview(allowProductLinkPlaceholder: true);
   }
 
   Widget _buildProgressChecklist() {
@@ -3326,24 +3402,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
+              Text(
                 'AI spracovanie',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w800,
-                ),
+                style: OotdHeaderStyle.sectionTitle(),
               ),
               const SizedBox(height: 6),
               Text(
                 _fromProductLink
                     ? 'Analyzujem produkt z odkazu…'
                     : 'Analyzujujeme fotku a pripravujeme formulár.',
-                style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12.5,
-                  height: 1.3,
-                ),
+                style: OotdHeaderStyle.subtitle().copyWith(height: 1.3),
               ),
               const SizedBox(height: 8),
               ...List.generate(_progressSteps.length, (i) {
@@ -3457,60 +3525,51 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
-  List<String> get _systemNameOptions {
-    final set = <String>{};
-    for (final v in subCategoryLabels.values) {
-      final s = v.toString().trim();
-      if (s.isNotEmpty) set.add(s);
+  List<String> _sortedSubCategoryKeys() {
+    final keys = <String>{};
+    for (final subs in subCategoryTree.values) {
+      keys.addAll(subs);
     }
-    final list = set.toList()..sort();
+    final list = keys.toList();
+    list.sort((a, b) {
+      final la = subCategoryLabels[a] ?? a;
+      final lb = subCategoryLabels[b] ?? b;
+      return la.compareTo(lb);
+    });
     return list;
   }
 
-  String? _findSubCategoryKeyForLabel(String label) {
-    final target = label.trim();
-    for (final entry in subCategoryLabels.entries) {
-      if (entry.value == target) return entry.key;
-    }
-    return null;
+  Widget _buildClothingTypeField() {
+    return _buildSingleSelectField(
+      label: 'Typ oblečenia',
+      options: _sortedSubCategoryKeys(),
+      selected: _selectedSubCategoryKey,
+      formatOption: (key) => subCategoryLabels[key] ?? key,
+      onChanged: (subKey) => setState(() {
+        if (subKey == null || subKey.isEmpty) {
+          _selectedMainGroupKey = null;
+          _selectedCategoryKey = null;
+          _selectedSubCategoryKey = null;
+          _selectedLayerRole = null;
+          _kbTypeDisplayName = null;
+        } else {
+          _kbTypeDisplayName = null;
+          _selectedSubCategoryKey = subKey;
+          _selectedCategoryKey = CategoryPicker.categoryKeyForSubKey(subKey);
+          _selectedMainGroupKey =
+              CategoryPicker.mainGroupKeyForCategoryKey(_selectedCategoryKey);
+          _selectedLayerRole = subCategoryLayerRoles[subKey];
+        }
+        _refreshAutoName();
+      }),
+    );
   }
 
-  void _syncSystemNameValidity() {
-    final current = _nameController.text.trim();
-    if (current.isEmpty) {
-      _isSystemNameSelected = false;
-      _selectedSystemNameLabel = null;
-      _selectedSystemSubCategoryKey = null;
-      return;
-    }
-
-    final subKey = _findSubCategoryKeyForLabel(current);
-    if (subKey != null) {
-      _isSystemNameSelected = true;
-      _selectedSystemNameLabel = current;
-      _selectedSystemSubCategoryKey = subKey;
-    } else {
-      _isSystemNameSelected = false;
-      _selectedSystemNameLabel = null;
-      _selectedSystemSubCategoryKey = null;
-    }
-  }
-
-  Widget _buildNameFreeField() {
-    return TextField(
-      controller: _nameController,
-      style: const TextStyle(color: Colors.white),
+  Widget _buildGeneratedNameField() {
+    final name = _computeAutoNameWithColor();
+    return InputDecorator(
       decoration: InputDecoration(
         labelText: 'Názov',
-        helperText: _fromProductLink
-            ? null
-            : 'Aplikácia si názov skladá automaticky (farba + typ).',
-        helperStyle: _fromProductLink
-            ? null
-            : const TextStyle(
-                color: Colors.white38,
-                fontSize: 11.5,
-              ),
         labelStyle: _addClothingLabelStyle,
         floatingLabelStyle: _addClothingLabelStyle,
         filled: true,
@@ -3520,21 +3579,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide(
-            color: _kAddClothingAccent.withOpacity(0.55),
-            width: 1.2,
-          ),
-        ),
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
+      ),
+      child: Text(
+        name.isEmpty ? 'Vyber...' : name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: name.isEmpty ? Colors.white54 : Colors.white,
         ),
       ),
-      textInputAction: TextInputAction.next,
-      onChanged: (_) {
-        _syncSystemNameValidity();
-      },
     );
   }
 
@@ -3628,7 +3682,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           title: label,
           options: options,
           initialSelected: selected,
-          enforceSeasonRules: (label == 'Sezóny'),
+          enforceSeasonRules: false,
         );
         if (result != null) onChanged(result);
       },
@@ -3825,32 +3879,26 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          TextButton(
+                          OotdSecondaryTextButton(
+                            label: 'Zrušiť',
                             onPressed: () => Navigator.of(ctx).pop(null),
-                            child: const Text(
-                              'Zrušiť',
-                              style: TextStyle(color: Colors.white70),
-                            ),
                           ),
                           const Spacer(),
-                          TextButton(
+                          OotdSecondaryTextButton(
+                            label: 'Vymazať',
                             onPressed: () => setSheetState(() => tempSelected.clear()),
-                            child: const Text(
-                              'Vymazať',
-                              style: TextStyle(color: Colors.white70),
-                            ),
                           ),
                           const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () => Navigator.of(ctx).pop(tempSelected.toList()),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
+                          OotdPrimaryButton(
+                            text: 'Hotovo',
+                            onPressed: () =>
+                                Navigator.of(ctx).pop(tempSelected.toList()),
+                            showTrailingArrow: false,
+                            borderRadius: 14,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 12,
                             ),
-                            child: const Text('Hotovo'),
                           ),
                         ],
                       ),
@@ -3875,8 +3923,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     required List<String> options,
     required String? selected,
     required ValueChanged<String?> onChanged,
+    String Function(String value)? formatOption,
   }) {
-    final text = (selected == null || selected.isEmpty) ? 'Vyber...' : selected;
+    String display(String? v) {
+      if (v == null || v.isEmpty) return 'Vyber...';
+      return formatOption != null ? formatOption(v) : v;
+    }
+    final text = display(selected);
 
     return InkWell(
       borderRadius: BorderRadius.circular(16),
@@ -3885,6 +3938,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           title: label,
           options: options,
           selected: selected,
+          formatOption: formatOption,
         );
         if (result != null) onChanged(result);
       },
@@ -3940,6 +3994,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     required String title,
     required List<String> options,
     required String? selected,
+    String Function(String value)? formatOption,
   }) async {
     return showModalBottomSheet<String>(
       context: context,
@@ -3955,7 +4010,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         List<String> filtered() {
           final q = query.trim().toLowerCase();
           if (q.isEmpty) return options;
-          return options.where((o) => o.toLowerCase().contains(q)).toList();
+          return options.where((o) {
+            final label = formatOption != null ? formatOption(o) : o;
+            return o.toLowerCase().contains(q) ||
+                label.toLowerCase().contains(q);
+          }).toList();
         }
 
         final height = MediaQuery.of(ctx).size.height * 0.75;
@@ -3977,9 +4036,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Vzor',
-                        style: TextStyle(
+                      Text(
+                        title,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontSize: 18,
                           fontWeight: FontWeight.w800,
@@ -4018,11 +4077,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                           itemBuilder: (ctx, i) {
                             final o = items[i];
                             final checked = (selected == o);
+                            final label =
+                                formatOption != null ? formatOption(o) : o;
 
                             return ListTile(
                               contentPadding: EdgeInsets.zero,
                               title: Text(
-                                o,
+                                label,
                                 style: const TextStyle(color: Colors.white),
                               ),
                               trailing: checked
@@ -4039,32 +4100,26 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       const SizedBox(height: 8),
                       Row(
                         children: [
-                          TextButton(
+                          OotdSecondaryTextButton(
+                            label: 'Zrušiť',
                             onPressed: () => Navigator.of(ctx).pop(null),
-                            child: const Text(
-                              'Zrušiť',
-                              style: TextStyle(color: Colors.white70),
-                            ),
                           ),
                           const Spacer(),
-                          TextButton(
+                          OotdSecondaryTextButton(
+                            label: 'Vymazať',
                             onPressed: () => Navigator.of(ctx).pop(''),
-                            child: const Text(
-                              'Vymazať',
-                              style: TextStyle(color: Colors.white70),
-                            ),
                           ),
                           const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () => Navigator.of(ctx).pop(selected ?? ''),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.white,
-                              foregroundColor: Colors.black,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
-                              ),
+                          OotdPrimaryButton(
+                            text: 'Hotovo',
+                            onPressed: () =>
+                                Navigator.of(ctx).pop(selected ?? ''),
+                            showTrailingArrow: false,
+                            borderRadius: 14,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 18,
+                              vertical: 12,
                             ),
-                            child: const Text('Hotovo'),
                           ),
                         ],
                       ),
@@ -4135,181 +4190,54 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 16),
+        const SizedBox(height: 12),
         if (_fromProductLink && _linkAnalysisPartial) ...[
           _buildLinkPartialHint(),
           const SizedBox(height: 14),
         ],
-        if (_localImageFile != null)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  color: Colors.white.withOpacity(0.06),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    height: 260,
-                    width: double.infinity,
-                    color: Colors.white.withOpacity(0.04),
-                    alignment: Alignment.center,
-                    child: Image.file(
-                      _localImageFile!,
-                      height: 260,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          )
-        else if (_hasValidBackendPreviewUrl)
-          ClipRRect(
-            borderRadius: BorderRadius.circular(22),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-              child: Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(22),
-                  color: Colors.white.withOpacity(0.06),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(18),
-                  child: Container(
-                    height: 260,
-                    width: double.infinity,
-                    color: Colors.white.withOpacity(0.04),
-                    alignment: Alignment.center,
-                    child: Image.network(
-                      _uploadedImageUrl!,
-                      height: 260,
-                      width: double.infinity,
-                      fit: BoxFit.contain,
-                      errorBuilder: (_, __, ___) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          if (!mounted || _productLinkPreviewFailed) return;
-                          setState(() => _productLinkPreviewFailed = true);
-                        });
-                        return _productLinkImagePlaceholder(height: 260);
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          )
+        if (_localImageFile != null || _hasValidBackendPreviewUrl)
+          _buildClothingImagePreview()
         else if (_fromProductLink)
-          _productLinkImagePlaceholder(height: 260),
-        const SizedBox(height: 16),
-        _buildNameFreeField(),
+          _productLinkImagePlaceholder(),
         const SizedBox(height: 12),
-        _brandAutoComplete(),
+        _buildGeneratedNameField(),
         const SizedBox(height: 12),
-        CategoryPicker(
-          hideSubCategory: false,
-          initialMainGroup: _selectedMainGroupKey,
-          initialCategory: _selectedCategoryKey,
-          initialSubCategory: _selectedSubCategoryKey,
-          onChanged: (data) {
-            final main = data['mainGroup'];
-            final cat = data['category'];
-            final sub = data['subCategory'];
-
-            setState(() {
-              _selectedMainGroupKey = main;
-              _selectedCategoryKey = cat;
-              _selectedSubCategoryKey = sub;
-              _selectedLayerRole =
-              sub == null ? null : subCategoryLayerRoles[sub];
-
-              _isSystemNameSelected = false;
-              _selectedSystemNameLabel = null;
-              _selectedSystemSubCategoryKey = null;
-              _refreshAutoName();
-            });
-          },
-        ),
-        const SizedBox(height: 12),
-        _buildMultiSelectField(
-          label: 'Farby',
+        _buildSingleSelectField(
+          label: 'Farba',
           options: ColorNamingService.instance.chipColorOptions(_selectedColors),
-          selected: _selectedColors,
+          selected: _selectedColors.isEmpty ? null : _selectedColors.first,
+          formatOption: _displayColorName,
           onChanged: (v) => setState(() {
-            _selectedColors = v;
-            _syncColorDerivatives();
+            if (v == null || v.isEmpty) {
+              _selectedColors = [];
+              _selectedBaseColors = [];
+              _selectedColorHex = [];
+            } else {
+              _selectedColors = [v];
+              _syncColorDerivatives();
+            }
             _refreshAutoName();
           }),
         ),
         const SizedBox(height: 12),
-        _buildMultiSelectField(
-          label: 'Štýly',
-          options: allowedStyles,
-          selected: _selectedStyles,
-          onChanged: (v) => setState(() => _selectedStyles = v),
-        ),
+        _brandAutoComplete(),
         const SizedBox(height: 12),
-        _buildSingleSelectField(
-          label: 'Vzor',
-          options: allowedPatterns,
-          selected: _selectedPatterns.isEmpty ? null : _selectedPatterns.first,
-          onChanged: (v) {
-            setState(() {
-              if (v == null) return;
-              if (v.isEmpty) {
-                _selectedPatterns = [];
-              } else {
-                _selectedPatterns = [v];
-              }
-            });
-          },
-        ),
+        _buildClothingTypeField(),
         const SizedBox(height: 12),
-        _buildMultiSelectField(
-          label: 'Sezóny',
-          options: allowedSeasons,
-          selected: _selectedSeasons,
-          onChanged: (v) => setState(() => _selectedSeasons = _sanitizeSeasons(v)),
-        ),
-    const SizedBox(height: 16),
-    SizedBox(
-    width: double.infinity,
-    height: 52,
-    child: ElevatedButton(
-    onPressed: _save,
-    style: ElevatedButton.styleFrom(
-    backgroundColor: Colors.white,
-    foregroundColor: Colors.black,
-    elevation: 0,
-    shape: RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(18),
-    ),
-    ),
-    child: const Text(
-    'Uložiť do šatníka',
-    style: TextStyle(
-    fontSize: 16,
-    fontWeight: FontWeight.w700,
-    ),
-    ),
-    ),
+    OotdPrimaryButton(
+      text: 'Uložiť do šatníka',
+      onPressed: _save,
+      showTrailingArrow: false,
+      height: 52,
+      borderRadius: 18,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
     ),
     const SizedBox(height: 10),
     if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
     OutlinedButton.icon(
     onPressed: () {
     final payload = <String, dynamic>{
-    'name': (_nameController.text.trim().isNotEmpty
-    ? _nameController.text.trim()
-        : _computeAutoNameWithColor()),
+    'name': _computeAutoNameWithColor(),
     'brand': _brandController.text.trim(),
     'mainGroupKey': _selectedMainGroupKey,
     'categoryKey': _selectedCategoryKey,
@@ -4367,39 +4295,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       );
     }
 
-    return Stack(
-      children: [
-        const Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Color(0xFF07070A),
-                  Color(0xFF111116),
-                  Color(0xFF050507),
-                ],
-              ),
-            ),
-          ),
-        ),
-        Positioned.fill(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withOpacity(0.78),
-                  Colors.black.withOpacity(0.34),
-                  Colors.black.withOpacity(0.86),
-                ],
-              ),
-            ),
-          ),
-        ),
-        SafeArea(
+    return OotdLuxuryBackground(
+      child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
             child: Column(
@@ -4479,7 +4376,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       const SizedBox(width: 12),
                       const Expanded(
                         child: Text(
-                          'Vyber fotku a AI automaticky rozpozná typ oblečenia, farby, vzor aj sezónu.',
+                          'Vyber fotku a AI automaticky rozpozná typ oblečenia a farbu.',
                           style: TextStyle(
                             color: Colors.white70,
                             fontSize: 13,
@@ -4598,7 +4495,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             ),
           ),
         ),
-      ],
     );
   }
 
@@ -4615,7 +4511,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     if (showPick) {
       return Scaffold(
-        backgroundColor: const Color(0xFF0C0C0C),
+        backgroundColor: HomeLuxuryPalette.bgBottom,
         body: _buildLuxuryEmptyState(),
       );
     }
@@ -4623,40 +4519,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return Theme(
       data: _addClothingFormTheme(context),
       child: Scaffold(
-        backgroundColor: const Color(0xFF0C0C0C),
-        body: Stack(
-          children: [
-            const Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      Color(0xFF07070A),
-                      Color(0xFF111116),
-                      Color(0xFF050507),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            Positioned.fill(
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Colors.black.withOpacity(0.80),
-                      Colors.black.withOpacity(0.32),
-                      Colors.black.withOpacity(0.88),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-            SafeArea(
+        backgroundColor: HomeLuxuryPalette.bgBottom,
+        body: OotdLuxuryBackground(
+          child: SafeArea(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
                 child: Column(
@@ -4675,33 +4540,17 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                           ),
                           child: Row(
                             children: [
-                              InkWell(
-                                borderRadius: BorderRadius.circular(999),
-                                onTap: () => Navigator.pop(context),
-                                child: Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    shape: BoxShape.circle,
-                                    color: Colors.white.withOpacity(0.08),
-                                    border: Border.all(color: Colors.white10),
-                                  ),
-                                  child: const Icon(
-                                    Icons.arrow_back_rounded,
-                                    color: Colors.white,
-                                    size: 20,
-                                  ),
-                                ),
-                              ),
+                              OotdBackButton(onTap: () => Navigator.pop(context)),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      widget.isEditing ? 'Upraviť oblečenie' : 'Pridať oblečenie',
-                                      style: const TextStyle(
-                                        color: Colors.white,
+                                      widget.isEditing
+                                          ? 'Upraviť oblečenie'
+                                          : 'Pridať oblečenie',
+                                      style: OotdHeaderStyle.screenTitle(
                                         fontSize: 18,
                                         fontWeight: FontWeight.w900,
                                       ),
@@ -4715,11 +4564,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                                           : _fromProductLink
                                               ? 'Skontroluj údaje produktu z odkazu'
                                               : 'Skontroluj a ulož detaily kúsku',
-                                      style: const TextStyle(
-                                        color: Colors.white60,
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w600,
-                                      ),
+                                      style: OotdHeaderStyle.subtitle(),
                                     ),
                                   ],
                                 ),
@@ -4746,8 +4591,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                   ],
                 ),
               ),
-            ),
-          ],
+          ),
         ),
       ),
     );

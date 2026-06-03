@@ -8,6 +8,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
+import '../widgets/ootd_cta_system.dart';
+
 class TripPlannerScreen extends StatefulWidget {
   const TripPlannerScreen({Key? key}) : super(key: key);
 
@@ -460,40 +462,45 @@ class _TripPlannerScreenState extends State<TripPlannerScreen> {
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
-                          child: ElevatedButton(
-                            onPressed: () async {
-                              if (!_formKey.currentState!.validate()) return;
+                          child: OotdPrimaryButton(
+                          text: 'Uložiť cestu',
+                          onPressed: () async {
+                            if (!_formKey.currentState!.validate()) return;
 
-                              final user = _auth.currentUser;
-                              if (user == null) return;
+                            final user = _auth.currentUser;
+                            if (user == null) return;
 
-                              final tripsRef = _firestore
-                                  .collection('users')
-                                  .doc(user.uid)
-                                  .collection('trips');
+                            final tripsRef = _firestore
+                                .collection('users')
+                                .doc(user.uid)
+                                .collection('trips');
 
-                              await tripsRef.add({
-                                'title': titleController.text.trim(),
-                                'tripType': tripType,
-                                'destinationName':
-                                destinationController.text.trim(),
-                                'travelMode': travelMode,
-                                'startDate': DateFormat('yyyy-MM-dd')
-                                    .format(startDate),
-                                'endDate': DateFormat('yyyy-MM-dd')
-                                    .format(endDate),
-                                'notes': notesController.text.trim(),
-                                'packingSuggestion': '',
-                                'createdAt':
-                                FieldValue.serverTimestamp(),
-                              });
+                            await tripsRef.add({
+                              'title': titleController.text.trim(),
+                              'tripType': tripType,
+                              'destinationName':
+                                  destinationController.text.trim(),
+                              'travelMode': travelMode,
+                              'startDate':
+                                  DateFormat('yyyy-MM-dd').format(startDate),
+                              'endDate':
+                                  DateFormat('yyyy-MM-dd').format(endDate),
+                              'notes': notesController.text.trim(),
+                              'packingSuggestion': '',
+                              'createdAt': FieldValue.serverTimestamp(),
+                            });
 
-                              if (context.mounted) {
-                                Navigator.pop(context);
-                              }
-                            },
-                            child: const Text('Uložiť cestu'),
+                            if (context.mounted) {
+                              Navigator.pop(context);
+                            }
+                          },
+                          showTrailingArrow: false,
+                          borderRadius: 18,
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 14,
                           ),
+                        ),
                         ),
                       ],
                     ),

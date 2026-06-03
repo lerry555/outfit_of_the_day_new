@@ -7,7 +7,9 @@ import 'package:firebase_storage/firebase_storage.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
+import 'package:outfitofTheDay/data/clothing_knowledge_base.dart';
 import 'package:outfitofTheDay/utils/wardrobe_image_processing.dart';
+import 'package:outfitofTheDay/widgets/wardrobe_processing_spinner.dart';
 class _WardrobeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
   static const Color bgMid = Color(0xFF0C0C0D);
@@ -25,6 +27,223 @@ class _WardrobeLuxuryPalette {
   static const Color accentGlow = Color(0x66C8A36A);
   static const Color border = Color(0x26FFFFFF);
 }
+
+String _wardrobeNormalizeText(String input) {
+  final lower = input.toLowerCase();
+
+  const from = 'áäčďéěíĺľňóôŕřšťúůýžÁÄČĎÉĚÍĹĽŇÓÔŔŘŠŤÚŮÝŽ';
+  const to = 'aacdeeillnoorrstuuyzAACDEEILLNOORRSTUUYZ';
+
+  var result = lower;
+  for (var i = 0; i < from.length; i++) {
+    result = result.replaceAll(from[i], to[i].toLowerCase());
+  }
+  return result;
+}
+
+String? _legacyMainToNewMainGroup(String legacyMain) {
+  final lm = _wardrobeNormalizeText(legacyMain);
+  if (lm == _wardrobeNormalizeText('Vrch') || lm == _wardrobeNormalizeText('Spodok')) {
+    return 'oblecenie';
+  }
+  if (lm == _wardrobeNormalizeText('Obuv')) return 'obuv';
+  if (lm == _wardrobeNormalizeText('Doplnky')) return 'doplnky';
+  return null;
+}
+
+Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String mainGroup) {
+  final lc = _wardrobeNormalizeText(legacyCategory);
+
+  if (mainGroup == 'oblecenie') {
+    if (lc.contains(_wardrobeNormalizeText('tričko')) ||
+        lc.contains(_wardrobeNormalizeText('tricko')) ||
+        lc.contains('tshirt')) {
+      return {'categoryKey': 'tricka_topy', 'subCategoryKey': 'tricko'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('košeľa')) ||
+        lc.contains(_wardrobeNormalizeText('kosela')) ||
+        lc.contains('shirt')) {
+      return {'categoryKey': 'kosele', 'subCategoryKey': 'kosela_klasicka'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('mikina')) ||
+        lc.contains('hoodie') ||
+        lc.contains('sweat')) {
+      return {'categoryKey': 'mikiny', 'subCategoryKey': 'mikina_klasicka'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('sveter')) ||
+        lc.contains(_wardrobeNormalizeText('svetre')) ||
+        lc.contains(_wardrobeNormalizeText('rolák')) ||
+        lc.contains(_wardrobeNormalizeText('rolak'))) {
+      return {'categoryKey': 'svetre', 'subCategoryKey': 'sveter_rolak'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('bunda')) ||
+        lc.contains(_wardrobeNormalizeText('kabát')) ||
+        lc.contains(_wardrobeNormalizeText('kabat')) ||
+        lc.contains('jacket') ||
+        lc.contains('coat')) {
+      return {'categoryKey': 'bundy_kabaty', 'subCategoryKey': 'bunda_prechodna'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('nohavice')) ||
+        lc.contains(_wardrobeNormalizeText('rifle')) ||
+        lc.contains('jeans') ||
+        lc.contains('pants')) {
+      return {'categoryKey': 'nohavice_rifle', 'subCategoryKey': 'rifle'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('šortky')) ||
+        lc.contains(_wardrobeNormalizeText('sortky')) ||
+        lc.contains(_wardrobeNormalizeText('kraťasy')) ||
+        lc.contains(_wardrobeNormalizeText('kratasy')) ||
+        lc.contains(_wardrobeNormalizeText('sukňa')) ||
+        lc.contains(_wardrobeNormalizeText('sukna'))) {
+      return {'categoryKey': 'sortky_sukne', 'subCategoryKey': 'sortky'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('šaty')) ||
+        lc.contains(_wardrobeNormalizeText('saty')) ||
+        lc.contains('dress') ||
+        lc.contains(_wardrobeNormalizeText('overal'))) {
+      return {'categoryKey': 'saty_overaly', 'subCategoryKey': 'saty_kratke'};
+    }
+    return {'categoryKey': null, 'subCategoryKey': null};
+  }
+
+  if (mainGroup == 'obuv') {
+    if (lc.contains(_wardrobeNormalizeText('tenisky')) || lc.contains('sneaker')) {
+      return {'categoryKey': 'tenisky', 'subCategoryKey': 'tenisky_fashion'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('čižmy')) ||
+        lc.contains(_wardrobeNormalizeText('cizmy')) ||
+        lc.contains('boots')) {
+      return {'categoryKey': 'cizmy', 'subCategoryKey': 'cizmy_clenkove'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('sandále')) ||
+        lc.contains(_wardrobeNormalizeText('sandale')) ||
+        lc.contains('sandal')) {
+      return {'categoryKey': 'letna_obuv', 'subCategoryKey': 'sandale'};
+    }
+    return {'categoryKey': null, 'subCategoryKey': null};
+  }
+
+  if (mainGroup == 'doplnky') {
+    if (lc.contains(_wardrobeNormalizeText('čiapka')) ||
+        lc.contains(_wardrobeNormalizeText('ciapka')) ||
+        lc.contains('beanie')) {
+      return {'categoryKey': 'dopl_hlava', 'subCategoryKey': 'ciapka'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('šál')) ||
+        lc.contains(_wardrobeNormalizeText('sal')) ||
+        lc.contains('scarf')) {
+      return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'sal'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('rukavice')) || lc.contains('gloves')) {
+      return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'rukavice'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('opasok')) || lc.contains('belt')) {
+      return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'opasok'};
+    }
+    if (lc.contains(_wardrobeNormalizeText('okuliare')) || lc.contains('glasses')) {
+      return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'slnecne_okuliare'};
+    }
+    return {'categoryKey': null, 'subCategoryKey': null};
+  }
+
+  if (mainGroup == 'sport') {
+    return {'categoryKey': 'sport_oblecenie', 'subCategoryKey': 'sport_tricko'};
+  }
+
+  return {'categoryKey': null, 'subCategoryKey': null};
+}
+
+Map<String, dynamic> normalizeKeysForDisplay(Map<String, dynamic> input) {
+  final data = Map<String, dynamic>.from(input);
+
+  final String? mainGroup = data['mainGroup'] as String?;
+  final String? categoryKey = data['categoryKey'] as String?;
+  final String? subCategoryKey = data['subCategoryKey'] as String?;
+
+  if (mainGroup != null &&
+      categoryKey != null &&
+      subCategoryKey != null &&
+      mainCategoryGroups.containsKey(mainGroup)) {
+    data['mainGroupLabel'] =
+        (data['mainGroupLabel'] as String?) ?? (mainCategoryGroups[mainGroup] ?? mainGroup);
+    data['categoryLabel'] =
+        (data['categoryLabel'] as String?) ?? (categoryLabels[categoryKey] ?? categoryKey);
+    data['subCategoryLabel'] = (data['subCategoryLabel'] as String?) ??
+        (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
+    return data;
+  }
+
+  final String? categoryLabel = data['categoryLabel'] as String?;
+  final String? subLabel = data['subCategoryLabel'] as String?;
+  final String? mainLabel = data['mainGroupLabel'] as String?;
+
+  String? mgKey;
+  if (mainLabel != null && mainLabel.isNotEmpty) {
+    mgKey = mainCategoryGroups.entries
+        .firstWhere(
+          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(mainLabel),
+          orElse: () => const MapEntry('', ''),
+        )
+        .key;
+    if (mgKey.isEmpty) mgKey = null;
+  }
+
+  String? ck;
+  if (categoryLabel != null && categoryLabel.isNotEmpty) {
+    ck = categoryLabels.entries
+        .firstWhere(
+          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(categoryLabel),
+          orElse: () => const MapEntry('', ''),
+        )
+        .key;
+    if (ck.isEmpty) ck = null;
+  }
+
+  String? sk;
+  if (subLabel != null && subLabel.isNotEmpty) {
+    sk = subCategoryLabels.entries
+        .firstWhere(
+          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(subLabel),
+          orElse: () => const MapEntry('', ''),
+        )
+        .key;
+    if (sk.isEmpty) sk = null;
+  }
+
+  final String legacyMain = (data['mainCategory'] as String?) ?? '';
+  final String legacyCat = (data['category'] as String?) ?? '';
+
+  var mgKeyResolved = mgKey ?? _legacyMainToNewMainGroup(legacyMain);
+
+  if (mgKeyResolved != null && mgKeyResolved.isNotEmpty) {
+    final mapped = _legacyCategoryToNewKeys(legacyCat, mgKeyResolved);
+    ck ??= mapped['categoryKey'];
+    sk ??= mapped['subCategoryKey'];
+  }
+
+  if (mgKeyResolved != null && mgKeyResolved.isNotEmpty) {
+    final cats = categoryTree[mgKeyResolved] ?? [];
+    ck ??= cats.isNotEmpty ? cats.first : null;
+
+    if (ck != null) {
+      final subs = subCategoryTree[ck] ?? [];
+      sk ??= subs.isNotEmpty ? subs.first : null;
+    }
+  }
+
+  if (mgKeyResolved != null) data['mainGroup'] = mgKeyResolved;
+  if (ck != null) data['categoryKey'] = ck;
+  if (sk != null) data['subCategoryKey'] = sk;
+
+  if (mgKeyResolved != null) {
+    data['mainGroupLabel'] = mainCategoryGroups[mgKeyResolved] ?? mgKeyResolved;
+  }
+  if (ck != null) data['categoryLabel'] = categoryLabels[ck] ?? ck;
+  if (sk != null) data['subCategoryLabel'] = subCategoryLabels[sk] ?? sk;
+
+  return data;
+}
+
 class WardrobeScreen extends StatefulWidget {
   const WardrobeScreen({Key? key}) : super(key: key);
 
@@ -180,24 +399,12 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     addField(data['color']);
     addField(data['style']);
     addField(data['pattern']);
-    addField(data['season']);
 
     final text = _normalizeText(buffer.toString());
     return text.contains(q);
   }
 
-  String _normalizeText(String input) {
-    final lower = input.toLowerCase();
-
-    const from = 'áäčďéěíĺľňóôŕřšťúůýžÁÄČĎÉĚÍĹĽŇÓÔŔŘŠŤÚŮÝŽ';
-    const to = 'aacdeeillnoorrstuuyzAACDEEILLNOORRSTUUYZ';
-
-    String result = lower;
-    for (int i = 0; i < from.length; i++) {
-      result = result.replaceAll(from[i], to[i].toLowerCase());
-    }
-    return result;
-  }
+  String _normalizeText(String input) => _wardrobeNormalizeText(input);
 
   // -----------------------------
   // Helpers – triedenie
@@ -277,188 +484,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
         hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
 
     return cutoutInProgress || productInProgress;
-  }
-
-  // -----------------------------
-  // Tichý fallback mapping (bez "Nezaradené")
-  // -----------------------------
-  Map<String, dynamic> _normalizeKeysForDisplay(Map<String, dynamic> raw) {
-    final data = Map<String, dynamic>.from(raw);
-
-    final String? mainGroup = data['mainGroup'] as String?;
-    final String? categoryKey = data['categoryKey'] as String?;
-    final String? subCategoryKey = data['subCategoryKey'] as String?;
-
-    if (mainGroup != null &&
-        categoryKey != null &&
-        subCategoryKey != null &&
-        mainCategoryGroups.containsKey(mainGroup)) {
-      data['mainGroupLabel'] =
-          (data['mainGroupLabel'] as String?) ?? (mainCategoryGroups[mainGroup] ?? mainGroup);
-      data['categoryLabel'] =
-          (data['categoryLabel'] as String?) ?? (categoryLabels[categoryKey] ?? categoryKey);
-      data['subCategoryLabel'] = (data['subCategoryLabel'] as String?) ??
-          (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
-      return data;
-    }
-
-    final String? categoryLabel = data['categoryLabel'] as String?;
-    final String? subLabel = data['subCategoryLabel'] as String?;
-    final String? mainLabel = data['mainGroupLabel'] as String?;
-
-    String? mgKey;
-    if (mainLabel != null && mainLabel.isNotEmpty) {
-      mgKey = mainCategoryGroups.entries
-          .firstWhere(
-            (e) => _normalizeText(e.value) == _normalizeText(mainLabel),
-        orElse: () => const MapEntry('', ''),
-      )
-          .key;
-      if (mgKey.isEmpty) mgKey = null;
-    }
-
-    String? ck;
-    if (categoryLabel != null && categoryLabel.isNotEmpty) {
-      ck = categoryLabels.entries
-          .firstWhere(
-            (e) => _normalizeText(e.value) == _normalizeText(categoryLabel),
-        orElse: () => const MapEntry('', ''),
-      )
-          .key;
-      if (ck.isEmpty) ck = null;
-    }
-
-    String? sk;
-    if (subLabel != null && subLabel.isNotEmpty) {
-      sk = subCategoryLabels.entries
-          .firstWhere(
-            (e) => _normalizeText(e.value) == _normalizeText(subLabel),
-        orElse: () => const MapEntry('', ''),
-      )
-          .key;
-      if (sk.isEmpty) sk = null;
-    }
-
-    final String legacyMain = (data['mainCategory'] as String?) ?? '';
-    final String legacyCat = (data['category'] as String?) ?? '';
-
-    mgKey ??= _legacyMainToNewMainGroup(legacyMain);
-
-    if (mgKey != null && mgKey.isNotEmpty) {
-      final mapped = _legacyCategoryToNewKeys(legacyCat, mgKey);
-      ck ??= mapped['categoryKey'];
-      sk ??= mapped['subCategoryKey'];
-    }
-
-    if (mgKey != null && mgKey.isNotEmpty) {
-      final cats = categoryTree[mgKey] ?? [];
-      ck ??= cats.isNotEmpty ? cats.first : null;
-
-      if (ck != null) {
-        final subs = subCategoryTree[ck] ?? [];
-        sk ??= subs.isNotEmpty ? subs.first : null;
-      }
-    }
-
-    if (mgKey != null) data['mainGroup'] = mgKey;
-    if (ck != null) data['categoryKey'] = ck;
-    if (sk != null) data['subCategoryKey'] = sk;
-
-    if (mgKey != null) data['mainGroupLabel'] = mainCategoryGroups[mgKey] ?? mgKey;
-    if (ck != null) data['categoryLabel'] = categoryLabels[ck] ?? ck;
-    if (sk != null) data['subCategoryLabel'] = subCategoryLabels[sk] ?? sk;
-
-    return data;
-  }
-
-  String? _legacyMainToNewMainGroup(String legacyMain) {
-    final lm = _normalizeText(legacyMain);
-    if (lm == _normalizeText('Vrch') || lm == _normalizeText('Spodok')) return 'oblecenie';
-    if (lm == _normalizeText('Obuv')) return 'obuv';
-    if (lm == _normalizeText('Doplnky')) return 'doplnky';
-    return null;
-  }
-
-  Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String mainGroup) {
-    final lc = _normalizeText(legacyCategory);
-
-    if (mainGroup == 'oblecenie') {
-      if (lc.contains(_normalizeText('tričko')) || lc.contains(_normalizeText('tricko')) || lc.contains('tshirt')) {
-        return {'categoryKey': 'tricka_topy', 'subCategoryKey': 'tricko'};
-      }
-      if (lc.contains(_normalizeText('košeľa')) || lc.contains(_normalizeText('kosela')) || lc.contains('shirt')) {
-        return {'categoryKey': 'kosele', 'subCategoryKey': 'kosela_klasicka'};
-      }
-      if (lc.contains(_normalizeText('mikina')) || lc.contains('hoodie') || lc.contains('sweat')) {
-        return {'categoryKey': 'mikiny', 'subCategoryKey': 'mikina_klasicka'};
-      }
-      if (lc.contains(_normalizeText('sveter')) ||
-          lc.contains(_normalizeText('svetre')) ||
-          lc.contains(_normalizeText('rolák')) ||
-          lc.contains(_normalizeText('rolak'))) {
-        return {'categoryKey': 'svetre', 'subCategoryKey': 'sveter_rolak'};
-      }
-      if (lc.contains(_normalizeText('bunda')) ||
-          lc.contains(_normalizeText('kabát')) ||
-          lc.contains(_normalizeText('kabat')) ||
-          lc.contains('jacket') ||
-          lc.contains('coat')) {
-        return {'categoryKey': 'bundy_kabaty', 'subCategoryKey': 'bunda_prechodna'};
-      }
-      if (lc.contains(_normalizeText('nohavice')) || lc.contains(_normalizeText('rifle')) || lc.contains('jeans') || lc.contains('pants')) {
-        return {'categoryKey': 'nohavice', 'subCategoryKey': 'rifle'};
-      }
-      if (lc.contains(_normalizeText('šortky')) ||
-          lc.contains(_normalizeText('sortky')) ||
-          lc.contains(_normalizeText('kraťasy')) ||
-          lc.contains(_normalizeText('kratasy')) ||
-          lc.contains(_normalizeText('sukňa')) ||
-          lc.contains(_normalizeText('sukna'))) {
-        return {'categoryKey': 'sortky_sukne', 'subCategoryKey': 'sortky'};
-      }
-      if (lc.contains(_normalizeText('šaty')) || lc.contains(_normalizeText('saty')) || lc.contains('dress') || lc.contains(_normalizeText('overal'))) {
-        return {'categoryKey': 'saty_overaly', 'subCategoryKey': 'saty_kratke'};
-      }
-      return {'categoryKey': null, 'subCategoryKey': null};
-    }
-
-    if (mainGroup == 'obuv') {
-      if (lc.contains(_normalizeText('tenisky')) || lc.contains('sneaker')) {
-        return {'categoryKey': 'tenisky', 'subCategoryKey': 'tenisky_fashion'};
-      }
-      if (lc.contains(_normalizeText('čižmy')) || lc.contains(_normalizeText('cizmy')) || lc.contains('boots')) {
-        return {'categoryKey': 'cizmy', 'subCategoryKey': 'cizmy_clenkove'};
-      }
-      if (lc.contains(_normalizeText('sandále')) || lc.contains(_normalizeText('sandale')) || lc.contains('sandal')) {
-        return {'categoryKey': 'letna_obuv', 'subCategoryKey': 'sandale'};
-      }
-      return {'categoryKey': null, 'subCategoryKey': null};
-    }
-
-    if (mainGroup == 'doplnky') {
-      if (lc.contains(_normalizeText('čiapka')) || lc.contains(_normalizeText('ciapka')) || lc.contains('beanie')) {
-        return {'categoryKey': 'dopl_hlava', 'subCategoryKey': 'ciapka'};
-      }
-      if (lc.contains(_normalizeText('šál')) || lc.contains(_normalizeText('sal')) || lc.contains('scarf')) {
-        return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'sal'};
-      }
-      if (lc.contains(_normalizeText('rukavice')) || lc.contains('gloves')) {
-        return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'rukavice'};
-      }
-      if (lc.contains(_normalizeText('opasok')) || lc.contains('belt')) {
-        return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'opasok'};
-      }
-      if (lc.contains(_normalizeText('okuliare')) || lc.contains('glasses')) {
-        return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'slnecne_okuliare'};
-      }
-      return {'categoryKey': null, 'subCategoryKey': null};
-    }
-
-    if (mainGroup == 'sport') {
-      return {'categoryKey': 'sport_oblecenie', 'subCategoryKey': 'sport_tricko'};
-    }
-
-    return {'categoryKey': null, 'subCategoryKey': null};
   }
 
   // -----------------------------
@@ -566,7 +591,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           searchQuery: _searchQuery,
                           onSearchChanged: (v) => setState(() => _searchQuery = v),
                           onSortChanged: (v) => setState(() => _sortOption = v),
-                          normalizeKeysForDisplay: _normalizeKeysForDisplay,
+                          normalizeKeysForDisplay: normalizeKeysForDisplay,
                           matchesSearch: _matchesSearch,
                           compareDocs: _compareDocs,
                           hasActiveProcessing: _hasActiveProcessing,
@@ -659,8 +684,8 @@ class _WardrobeTabBody extends StatelessWidget {
 
         final normalized = <Map<String, dynamic>>[];
         for (final d in docs) {
-          final m = d.data() as Map<String, dynamic>;
-          final data = normalizeKeysForDisplay(m);
+          final raw = Map<String, dynamic>.from(d.data() as Map);
+          final data = normalizeKeysForDisplay(raw);
           data['__id'] = d.id;
 
           if (searchQuery.trim().isNotEmpty &&
@@ -676,7 +701,7 @@ class _WardrobeTabBody extends StatelessWidget {
 
         final Map<String, List<Map<String, dynamic>>> byCategory = {};
         for (final item in normalized) {
-          final ck = (item['categoryKey'] as String?) ?? '';
+          final ck = ClothingKnowledgeBase.wardrobeDisplayCategoryKey(item);
           if (ck.isEmpty) continue;
           byCategory.putIfAbsent(ck, () => []);
           byCategory[ck]!.add(item);
@@ -1119,16 +1144,7 @@ class _CategorySectionGlass extends StatelessWidget {
                               ? data['name'] as String
                               : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
 
-                          final categoryLine = (data['categoryLabel'] as String?) ?? '';
-                          final seasons = _normalizeList(data['season']);
-                          String subline = '';
-                          if (categoryLine.isNotEmpty && seasons.isNotEmpty) {
-                            subline = '$categoryLine • ${seasons.join(', ')}';
-                          } else if (categoryLine.isNotEmpty) {
-                            subline = categoryLine;
-                          } else if (seasons.isNotEmpty) {
-                            subline = seasons.join(', ');
-                          }
+                          final subline = (data['categoryLabel'] as String?) ?? '';
 
                           return SizedBox(
                             width: tileWidth,
@@ -1198,14 +1214,7 @@ class _WardrobeTileGlass extends StatelessWidget {
     return const Positioned(
       top: 10,
       left: 10,
-      child: SizedBox(
-        width: 12,
-        height: 12,
-        child: CircularProgressIndicator(
-          strokeWidth: 1.6,
-          valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A6CF7)),
-        ),
-      ),
+      child: WardrobeProcessingSpinner(),
     );
   }
 
@@ -1301,15 +1310,9 @@ class _WardrobeTileGlass extends StatelessWidget {
                                       return Container(
                                         color: Colors.white.withOpacity(0.06),
                                         child: const Center(
-                                          child: SizedBox(
-                                            width: 28,
-                                            height: 28,
-                                            child: CircularProgressIndicator(
-                                              strokeWidth: 2,
-                                              valueColor: AlwaysStoppedAnimation<Color>(
-                                                Color(0xFF4A6CF7),
-                                              ),
-                                            ),
+                                          child: WardrobeProcessingSpinner(
+                                            size: 28,
+                                            strokeWidth: 2,
                                           ),
                                         ),
                                       );
@@ -1325,16 +1328,9 @@ class _WardrobeTileGlass extends StatelessWidget {
                                         errorBuilder: (_, __, ___) => Container(
                                           color: Colors.white.withOpacity(0.06),
                                           child: const Center(
-                                            child: SizedBox(
-                                              width: 28,
-                                              height: 28,
-                                              child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                valueColor:
-                                                    AlwaysStoppedAnimation<Color>(
-                                                  Color(0xFF4A6CF7),
-                                                ),
-                                              ),
+                                            child: WardrobeProcessingSpinner(
+                                              size: 28,
+                                              strokeWidth: 2,
                                             ),
                                           ),
                                         ),
@@ -1343,15 +1339,9 @@ class _WardrobeTileGlass extends StatelessWidget {
                                     return Container(
                                       color: Colors.white.withOpacity(0.06),
                                       child: const Center(
-                                        child: SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation<Color>(
-                                              Color(0xFF4A6CF7),
-                                            ),
-                                          ),
+                                        child: WardrobeProcessingSpinner(
+                                          size: 28,
+                                          strokeWidth: 2,
                                         ),
                                       ),
                                     );
@@ -1361,30 +1351,18 @@ class _WardrobeTileGlass extends StatelessWidget {
                                   ? Container(
                                       color: Colors.white.withOpacity(0.06),
                                       child: const Center(
-                                        child: SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation<Color>(
-                                              Color(0xFF4A6CF7),
-                                            ),
-                                          ),
+                                        child: WardrobeProcessingSpinner(
+                                          size: 28,
+                                          strokeWidth: 2,
                                         ),
                                       ),
                                     )
                                   : Container(
                                       color: Colors.white.withOpacity(0.06),
                                       child: const Center(
-                                        child: SizedBox(
-                                          width: 28,
-                                          height: 28,
-                                          child: CircularProgressIndicator(
-                                            strokeWidth: 2,
-                                            valueColor: AlwaysStoppedAnimation<Color>(
-                                              Color(0xFF4A6CF7),
-                                            ),
-                                          ),
+                                        child: WardrobeProcessingSpinner(
+                                          size: 28,
+                                          strokeWidth: 2,
                                         ),
                                       ),
                                     ),
@@ -1579,18 +1557,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     return [];
   }
 
-  String _normalizeText(String input) {
-    final lower = input.toLowerCase();
-
-    const from = 'áäčďéěíĺľňóôŕřšťúůýžÁÄČĎÉĚÍĹĽŇÓÔŔŘŠŤÚŮÝŽ';
-    const to = 'aacdeeillnoorrstuuyzAACDEEILLNOORRSTUUYZ';
-
-    String result = lower;
-    for (int i = 0; i < from.length; i++) {
-      result = result.replaceAll(from[i], to[i].toLowerCase());
-    }
-    return result;
-  }
+  String _normalizeText(String input) => _wardrobeNormalizeText(input);
 
   bool _matchesSearch(Map<String, dynamic> data, String query) {
     final q = _normalizeText(query);
@@ -1615,7 +1582,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     addField(data['color']);
     addField(data['style']);
     addField(data['pattern']);
-    addField(data['season']);
 
     return _normalizeText(buffer.toString()).contains(q);
   }
@@ -1798,7 +1764,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         .doc(_authUser!.uid)
                         .collection('wardrobe')
                         .where('mainGroup', isEqualTo: widget.mainGroupKey)
-                        .where('categoryKey', isEqualTo: widget.categoryKey)
                         .snapshots(),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
@@ -1812,14 +1777,33 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         );
                       }
 
-                      var items = (snapshot.data?.docs ?? []).map((d) {
-                        final m = d.data() as Map<String, dynamic>;
-                        m['__id'] = d.id;
-                        return m;
+                      List<Map<String, dynamic>> items =
+                          (snapshot.data?.docs ?? []).map((d) {
+                        final raw = Map<String, dynamic>.from(d.data() as Map);
+                        final data = normalizeKeysForDisplay(raw);
+                        data['__id'] = d.id;
+                        return data;
                       }).toList();
 
+                      items = items
+                          .where(
+                            (m) =>
+                                ClothingKnowledgeBase.wardrobeDisplayCategoryKey(
+                                  m,
+                                ) ==
+                                widget.categoryKey,
+                          )
+                          .toList();
+
                       if (_selectedSubKey != null) {
-                        items = items.where((m) => (m['subCategoryKey'] as String?) == _selectedSubKey).toList();
+                        items = items
+                            .where(
+                              (m) =>
+                                  ClothingKnowledgeBase
+                                      .wardrobeDisplaySubCategoryKey(m) ==
+                                  _selectedSubKey,
+                            )
+                            .toList();
                       }
 
                       if (_searchQuery.trim().isNotEmpty) {
@@ -1873,8 +1857,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                               ? data['name'] as String
                               : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
 
-                          final seasons = _normalizeList(data['season']);
-                          final subline = seasons.isNotEmpty ? seasons.join(', ') : '';
+                          final subline = (data['categoryLabel'] as String?) ?? '';
 
                           return _WardrobeTileGlass(
                             data: data,
@@ -2005,15 +1988,14 @@ class _ProcessingInfoBanner extends StatelessWidget {
           Container(
             width: 20,
             height: 20,
+            alignment: Alignment.center,
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(999),
               color: const Color(0x224A6CF7),
-              border: Border.all(color: _WardrobeLuxuryPalette.accent.withOpacity(0.45)),
+              border: Border.all(color: WardrobeProcessingSpinner.color.withOpacity(0.35)),
             ),
-            child: const Icon(
-              Icons.hourglass_top_rounded,
-              size: 12,
-              color: Color(0xFF8DA7FF),
+            child: const WardrobeProcessingSpinner(
+              size: WardrobeProcessingSpinner.bannerSize,
             ),
           ),
           const SizedBox(width: 8),
