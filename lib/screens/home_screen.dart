@@ -39,35 +39,45 @@ import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/wardrobe_image_processing.dart';
 
 /// Hero outfit tiles — transparent PNG on dark canvas ([getHomeOutfitImageUrlOrNull]).
-final Map<String, String?> _heroImageUrlCache = <String, String?>{};
-final Set<String> _heroImageLoggedHitKeys = <String>{};
-String? _heroWardrobeDisplayImageUrl(Map<String, dynamic> raw) {
+final Map<String, String?> _heroImagePickByItemVersion = <String, String?>{};
+final Set<String> _heroImagePickLoggedMissKeys = <String>{};
+/// Network images already displayed on Home hero — avoids placeholder flash on resume.
+final Set<String> _homeHeroNetworkImageLoadedUrls = <String>{};
+final Set<String> _homeHeroImagePrecacheScheduled = <String>{};
+
+String _heroImagePickVersionKey(Map<String, dynamic> raw) {
   final id = OutfitGenerationService.wardrobeItemId(raw);
-  final cacheKey = [
-    id,
-    (raw['cutoutImageUrl'] ?? '').toString().trim(),
-    (raw['cleanImageUrl'] ?? '').toString().trim(),
-    (raw['productImageUrl'] ?? '').toString().trim(),
-    (raw['originalImageUrl'] ?? '').toString().trim(),
-    (raw['imageUrl'] ?? '').toString().trim(),
+  if (id.isEmpty) return '';
+  final updatedAt = (raw['updatedAt'] ??
+          raw['updatedAtMs'] ??
+          raw['imageVersion'] ??
+          '')
+      .toString()
+      .trim();
+  final processing = [
     _processingStatusForCache(raw, 'product'),
     _processingStatusForCache(raw, 'cutout'),
   ].join('|');
-  if (_heroImageUrlCache.containsKey(cacheKey)) {
-    if (!_heroImageLoggedHitKeys.contains(cacheKey)) {
-      _heroImageLoggedHitKeys.add(cacheKey);
-      debugPrint('[HOME_IMAGE_PICK] cache_hit=true key=$cacheKey');
-    }
-    return _heroImageUrlCache[cacheKey];
+  return '$id|$updatedAt|$processing';
+}
+
+String? _heroWardrobeDisplayImageUrl(
+  Map<String, dynamic> raw, {
+  bool allowPick = true,
+}) {
+  final versionKey = _heroImagePickVersionKey(raw);
+  if (versionKey.isNotEmpty && _heroImagePickByItemVersion.containsKey(versionKey)) {
+    return _heroImagePickByItemVersion[versionKey];
   }
+  if (!allowPick) return null;
   final picked = getHomeOutfitImageUrlOrNull(raw);
-  _heroImageUrlCache[cacheKey] = picked;
-  debugPrint('[HOME_IMAGE_PICK] cache_miss=true key=$cacheKey');
-  String t(String k) => (raw[k]?.toString().trim() ?? '');
-  debugPrint(
-    '[HOME_IMAGE_PICK] name=${t('name')} cutout=${t('cutoutImageUrl')} clean=${t('cleanImageUrl')} '
-    'product=${t('productImageUrl')} original=${t('originalImageUrl')} picked=$picked',
-  );
+  if (versionKey.isNotEmpty) {
+    _heroImagePickByItemVersion[versionKey] = picked;
+    if (picked == null && !_heroImagePickLoggedMissKeys.contains(versionKey)) {
+      _heroImagePickLoggedMissKeys.add(versionKey);
+      debugPrint('[HOME_IMAGE_PICK] cache_miss=true key=$versionKey');
+    }
+  }
   return picked;
 }
 
@@ -87,7 +97,14 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  static Future<void>? _sharedHomeWeatherLoad;
+  static bool _sharedHomeWeatherFetchInFlight = false;
+  static OutfitWeatherDaySnapshot? _sharedWeatherSnapToday;
+  static OutfitWeatherDaySnapshot? _sharedWeatherSnapTomorrow;
+  static bool _sharedWeatherLoaded = false;
+  static DateTime? _sharedLastWeatherFetchAt;
+  static const Duration _weatherFreshDuration = Duration(minutes: 15);
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final HomeAiOutfitService _homeAiOutfitService = const HomeAiOutfitService();
@@ -119,12 +136,50 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _homeAiLastTriggeredDateKey;
   final Map<String, bool> _homeAiForceDifferentNextByDateKey = {};
   int _homeAiRefreshNonce = 0;
-  bool _weatherLoading = false;
+  bool _weatherFetchInFlight = false;
+  DateTime? _lastWeatherFetchAt;
+  String? _lastWardrobeStreamSig;
+  final Map<String, String> _cachedHeroBuildKeyByDateKey = {};
+  final Map<String, _HeroTodayState> _cachedHeroBuildStateByDateKey = {};
   final Map<String, _HeroOutfitRecommendation?> _localRecCacheByDateSig = {};
   final Map<String, List<_HeroOutfitItem>> _heroItemsCacheByIdSet = {};
   String? _lastAiPreservedSignatureLogged;
   String? _lastFallbackReasonLoggedKey;
-  String? _lastHeroRenderLogKey;
+  final Map<String, String> _lastHeroRenderLogKeyByDayLabel = {};
+  String? _lastHomeRebuildLogKey;
+  final Map<int, String> _cachedHeroPanelContentSigByDayIndex = {};
+  final Map<int, ({
+    List<_HeroOutfitItem> displayItems,
+    List<_HeroOutfitItem> effectiveItems,
+    String renderHeroSource,
+  })> _cachedHeroPanelContentByDayIndex = {};
+  String? _lastHomeAiOutfitLogKey;
+  String? _lastPreservedDateKey;
+  String? _lastPreservedOutfitSignature;
+  String? _lastSyncedEditableOutfitKey;
+  final Set<String> _loggedRestoreDateKeys = {};
+  final Set<String> _hydratedHomeCacheDateKeys = {};
+  bool _homePreloadInFlight = false;
+  bool _homePreloadPassCompleted = false;
+  bool _isRestoringHomeCache = false;
+  final Set<String> _generatingDateKeys = {};
+  final Set<String> _loggedHomeDayCacheCheckLines = {};
+  final Set<String> _loggedHomeDayCacheHits = {};
+  final Set<String> _loggedHomeDayCacheMisses = {};
+  final Set<String> _loggedHomeDayCacheMemoryHits = {};
+  bool _loggedHomeBootSnapshot = false;
+  final Map<String, _HeroTodayState> _stickyVisibleHeroByDateKey = {};
+  final Map<String, String> _lastVisibleHomeImageUrlByItemId = {};
+  final Map<String, Map<String, String>> _homeImageUrlByDateKeyAndItemId = {};
+  final Map<String, List<_HeroOutfitItem>> _homeHydratedOutfitItemsByDateKey = {};
+  final Map<String, _HeroTodayState> _daySwitchPinnedHeroByDateKey = {};
+  final Map<String, String> _homeOutfitIdsSignatureByDateKey = {};
+  String? _currentHeroBuildDateKey;
+  final Set<String> _loggedHomeHeroImageMemoryHits = {};
+  final Set<String> _loggedHomeHeroImageMemoryMisses = {};
+  final Set<String> _loggedHomeHeroUsingCachedImages = {};
+  bool _homePreloadRanChecks = false;
+  bool _lastIsPremiumUser = false;
   bool _newOutfitGenerating = false;
   final Map<int, String> _likedOutfitKeyByDay = {};
   int _likePulseTick = 0;
@@ -147,12 +202,171 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _syncWeatherFromSharedCache();
     _loadWeather();
   }
 
-  Future<void> _loadWeather() async {
-    if (_weatherLoaded || _weatherLoading) return;
-    _weatherLoading = true;
+  bool _syncWeatherFromSharedCache({bool triggerRebuild = false}) {
+    if (!_sharedWeatherLoaded) return false;
+    if (_sharedLastWeatherFetchAt != null &&
+        DateTime.now().difference(_sharedLastWeatherFetchAt!) >
+            _weatherFreshDuration) {
+      return false;
+    }
+    if (_sharedWeatherSnapToday == null || _sharedWeatherSnapTomorrow == null) {
+      return false;
+    }
+    final alreadySynced = _weatherLoaded &&
+        _weatherSnapToday == _sharedWeatherSnapToday &&
+        _weatherSnapTomorrow == _sharedWeatherSnapTomorrow;
+    if (alreadySynced) return true;
+
+    void apply() {
+      _weatherSnapToday = _sharedWeatherSnapToday;
+      _weatherSnapTomorrow = _sharedWeatherSnapTomorrow;
+      _weatherLoaded = true;
+      _weatherLoadError = null;
+      _lastWeatherFetchAt = _sharedLastWeatherFetchAt;
+      _weatherUpdatedAt = _sharedLastWeatherFetchAt ?? DateTime.now();
+    }
+
+    if (mounted && triggerRebuild) {
+      setState(apply);
+    } else {
+      apply();
+    }
+    return true;
+  }
+
+  void _commitHomeWeatherSnapshots({
+    required OutfitWeatherDaySnapshot todaySnapshot,
+    required OutfitWeatherDaySnapshot tomorrowSnapshot,
+  }) {
+    final now = DateTime.now();
+    _sharedWeatherSnapToday = todaySnapshot;
+    _sharedWeatherSnapTomorrow = tomorrowSnapshot;
+    _sharedWeatherLoaded = true;
+    _sharedLastWeatherFetchAt = now;
+
+    void applyLocal() {
+      _weatherSnapToday = todaySnapshot;
+      _weatherSnapTomorrow = tomorrowSnapshot;
+      _weatherLoaded = true;
+      _weatherLoadError = null;
+      _weatherUpdatedAt = now;
+      _lastWeatherFetchAt = now;
+    }
+
+    if (mounted) {
+      setState(applyLocal);
+    } else {
+      applyLocal();
+    }
+
+    debugPrint('[HOME_WEATHER] assigned today=true tomorrow=true');
+    _invalidateHomeHeroBuildCache();
+    _homePreloadPassCompleted = false;
+    _homePreloadRanChecks = false;
+    _debugHomeBootState(force: true);
+    if (mounted) {
+      _tryScheduleHomeOutfitPreload();
+    }
+  }
+
+  Future<void> _awaitSharedHomeWeatherLoad() async {
+    final load = _sharedHomeWeatherLoad;
+    if (load == null) return;
+    await load;
+    if (_syncWeatherFromSharedCache(triggerRebuild: true)) {
+      _debugHomeBootState(force: true);
+      if (mounted) {
+        _tryScheduleHomeOutfitPreload();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      if (_weatherLoaded &&
+          _lastWeatherFetchAt != null &&
+          DateTime.now().difference(_lastWeatherFetchAt!) < _weatherFreshDuration) {
+        debugPrint('[HOME_WEATHER] skip reason=fresh');
+      }
+      _tryScheduleHomeOutfitPreload();
+    }
+  }
+
+  Future<void> _loadWeather({bool force = false}) async {
+    if (_weatherFetchInFlight || _sharedHomeWeatherFetchInFlight) {
+      debugPrint('[HOME_WEATHER] skip reason=in_flight');
+      await _awaitSharedHomeWeatherLoad();
+      return;
+    }
+    if (!force &&
+        _weatherLoaded &&
+        _weatherSnapToday != null &&
+        _weatherSnapTomorrow != null &&
+        _lastWeatherFetchAt != null &&
+        DateTime.now().difference(_lastWeatherFetchAt!) < _weatherFreshDuration) {
+      debugPrint('[HOME_WEATHER] skip reason=fresh');
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _tryScheduleHomeOutfitPreload();
+      });
+      return;
+    }
+    if (!force && _sharedWeatherLoaded && _sharedLastWeatherFetchAt != null) {
+      if (DateTime.now().difference(_sharedLastWeatherFetchAt!) <
+          _weatherFreshDuration) {
+        if (_syncWeatherFromSharedCache(triggerRebuild: true)) {
+          _debugHomeBootState(force: true);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            _tryScheduleHomeOutfitPreload();
+          });
+        }
+        debugPrint('[HOME_WEATHER] skip reason=fresh');
+        return;
+      }
+    }
+    if (!force && _sharedHomeWeatherLoad != null) {
+      await _awaitSharedHomeWeatherLoad();
+      if (_weatherLoaded &&
+          _weatherSnapToday != null &&
+          _weatherSnapTomorrow != null) {
+        debugPrint('[HOME_WEATHER] skip reason=fresh');
+        return;
+      }
+      _sharedHomeWeatherLoad = null;
+    }
+    _weatherFetchInFlight = true;
+    _sharedHomeWeatherFetchInFlight = true;
+    _sharedHomeWeatherLoad = _loadWeatherOnce();
+    try {
+      await _sharedHomeWeatherLoad;
+      _syncWeatherFromSharedCache();
+      if (_weatherLoaded &&
+          _weatherSnapToday != null &&
+          _weatherSnapTomorrow != null &&
+          mounted) {
+        _debugHomeBootState(force: true);
+        _tryScheduleHomeOutfitPreload();
+      }
+    } finally {
+      _weatherFetchInFlight = false;
+      _sharedHomeWeatherFetchInFlight = false;
+    }
+  }
+
+  Future<void> _loadWeatherOnce() async {
     final svc = HourlyWeatherService();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -162,14 +376,10 @@ class _HomeScreenState extends State<HomeScreen> {
         svc.getWeatherForCityAndDate(city: 'Martin', date: today),
         svc.getWeatherForCityAndDate(city: 'Martin', date: tomorrow),
       ]);
-      if (!mounted) return;
-      setState(() {
-        _weatherSnapToday = results[0];
-        _weatherSnapTomorrow = results[1];
-        _weatherLoaded = true;
-        _weatherLoadError = null;
-        _weatherUpdatedAt = DateTime.now();
-      });
+      _commitHomeWeatherSnapshots(
+        todaySnapshot: results[0],
+        tomorrowSnapshot: results[1],
+      );
       debugPrint(
         'HOME_WEATHER_LOAD api_assign today_openMeteo=${results[0].fromOpenMeteo} '
         'tomorrow_openMeteo=${results[1].fromOpenMeteo} '
@@ -184,18 +394,67 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       }
       _scheduleHomeWeatherDebugLogAfterFrame(today, tomorrow);
+      if (mounted) {
+        unawaited(
+          _ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache),
+        );
+      }
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
+      final failedAt = DateTime.now();
+      _sharedWeatherLoaded = true;
+      _sharedLastWeatherFetchAt = failedAt;
+      void applyError() {
         _weatherLoaded = true;
         _weatherLoadError = e.toString();
-        _weatherUpdatedAt = DateTime.now();
+        _weatherUpdatedAt = failedAt;
+        _lastWeatherFetchAt = failedAt;
+      }
+      if (mounted) {
+        setState(applyError);
+      } else {
+        applyError();
+      }
+      _invalidateHomeHeroBuildCache();
+      _homePreloadPassCompleted = false;
+      _homePreloadRanChecks = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _tryScheduleHomeOutfitPreload();
       });
       debugPrint('[HOME_WEATHER_DEBUG][fallback_reason] load_exception: $e');
       _scheduleHomeWeatherDebugLogAfterFrame(today, tomorrow);
+      _debugHomeBootState(force: true);
+      if (mounted) {
+        unawaited(
+          _ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache),
+        );
+      }
     } finally {
-      _weatherLoading = false;
+      _sharedHomeWeatherLoad = null;
     }
+  }
+
+  void _invalidateHomeHeroBuildCache({String? dateKey}) {
+    if (dateKey == null) {
+      _cachedHeroBuildKeyByDateKey.clear();
+      _cachedHeroBuildStateByDateKey.clear();
+      _invalidateHeroPanelContentCache();
+    } else {
+      _cachedHeroBuildKeyByDateKey.remove(dateKey);
+      _cachedHeroBuildStateByDateKey.remove(dateKey);
+      final dayIdx = _dayIndexForDateKey(dateKey);
+      if (dayIdx != null) {
+        _invalidateHeroPanelContentCache(dayIndex: dayIdx);
+      }
+    }
+  }
+
+  int? _dayIndexForDateKey(String dateKey) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (dateKey == _dateKey(today)) return 0;
+    if (dateKey == _dateKey(today.add(const Duration(days: 1)))) return 1;
+    return null;
   }
 
   void _scheduleHomeWeatherDebugLogAfterFrame(DateTime today, DateTime tomorrow) {
@@ -283,6 +542,12 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _setDayIndex(int index) {
+    if (_dayIndex == index) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final date = index == 1 ? today.add(const Duration(days: 1)) : today;
+    final dateKey = _dateKey(date);
+
     setState(() {
       _dayIndex = index;
       _isOutfitEditMode = false;
@@ -292,15 +557,46 @@ class _HomeScreenState extends State<HomeScreen> {
     });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final date = index == 1 ? today.add(const Duration(days: 1)) : today;
       _logHomeWeatherDebug(contextTag: 'toggle_day', selectedDate: date);
+      if (_lastWardrobeForCache.isNotEmpty && _weatherLoaded) {
+        _refreshMissingHomeImageUrlsInBackground(
+          dateKey: dateKey,
+          items: _homeHydratedOutfitItemsByDateKey[dateKey] ??
+              _daySwitchPinnedHeroByDateKey[dateKey]?.outfitItems ??
+              const <_HeroOutfitItem>[],
+          wardrobe: _lastWardrobeForCache,
+        );
+        unawaited(
+          _ensureDailyOutfit(
+            date: date,
+            wardrobe: _lastWardrobeForCache,
+            isPremiumUser: _lastIsPremiumUser,
+          ),
+        );
+      }
     });
   }
 
-  List<_HeroOutfitItem> _effectiveOutfitItems(List<_HeroOutfitItem> source) {
-    return _editedOutfitByDay[_dayIndex] ?? source;
+  bool _skipHomeImagePickForDateKey(String dateKey) {
+    final hydrated = _homeHydratedOutfitItemsByDateKey[dateKey];
+    if (hydrated != null &&
+        hydrated.length >= 3 &&
+        _heroOutfitTilesHaveVisibleImages(hydrated)) {
+      return true;
+    }
+    final pinned = _daySwitchPinnedHeroByDateKey[dateKey];
+    return pinned != null && _heroOutfitTilesHaveVisibleImages(pinned.outfitItems);
+  }
+
+  bool _allowHomeImagePickForBuild(String dateKey) {
+    return !_skipHomeImagePickForDateKey(dateKey);
+  }
+
+  List<_HeroOutfitItem> _effectiveOutfitItems(
+    List<_HeroOutfitItem> source, {
+    required int dayIndex,
+  }) {
+    return _editedOutfitByDay[dayIndex] ?? source;
   }
 
   String _heroRenderSignature(List<_HeroOutfitItem> items) {
@@ -337,29 +633,184 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  void _syncEditableOutfitFromSource(List<_HeroOutfitItem> source) {
+  void _syncEditableOutfitFromSourceIfNeeded(
+    List<_HeroOutfitItem> source, {
+    required int dayIndex,
+  }) {
+    final sourceSig = source.isEmpty
+        ? 'empty'
+        : _heroOutfitSignatureFromItems(source);
+    final syncKey = '$dayIndex|$sourceSig';
+    if (_lastSyncedEditableOutfitKey == syncKey) return;
+    _lastSyncedEditableOutfitKey = syncKey;
+    _syncEditableOutfitFromSource(source, dayIndex: dayIndex);
+  }
+
+  bool _hasSameHomeCachePreserveSignature({
+    required String dateKey,
+    required List<_HeroOutfitItem> items,
+  }) {
+    final sig = _heroOutfitSignatureFromItems(items);
+    return _lastPreservedDateKey == dateKey &&
+        _lastPreservedOutfitSignature == sig;
+  }
+
+  void _markHomeCachePreserveSignature({
+    required String dateKey,
+    required List<_HeroOutfitItem> items,
+  }) {
+    _lastPreservedDateKey = dateKey;
+    _lastPreservedOutfitSignature = _heroOutfitSignatureFromItems(items);
+  }
+
+  void _logHomeCacheRestoreIfNeeded({
+    required String dateKey,
+    required List<_HeroOutfitItem> items,
+  }) {
+    if (_hasSameHomeCachePreserveSignature(dateKey: dateKey, items: items)) {
+      return;
+    }
+    if (_loggedRestoreDateKeys.contains(dateKey) &&
+        _lastPreservedDateKey == dateKey) {
+      return;
+    }
+    _markHomeCachePreserveSignature(dateKey: dateKey, items: items);
+    _loggedRestoreDateKeys.add(dateKey);
+    debugPrint('[HOME_DAY_CACHE] restored user_modified=true date=$dateKey');
+  }
+
+  void _logHomeCacheUserPreserveIfNeeded({
+    required String dateKey,
+    required List<_HeroOutfitItem> items,
+    required String reason,
+  }) {
+    if (_hasSameHomeCachePreserveSignature(dateKey: dateKey, items: items)) {
+      return;
+    }
+    _markHomeCachePreserveSignature(dateKey: dateKey, items: items);
+    debugPrint('[HOME_DAY_CACHE] preserved_edited_outfit=true');
+    debugPrint('[HOME_DAY_CACHE] preserved_swap_state=true');
+  }
+
+  void _syncEditableOutfitFromSource(
+    List<_HeroOutfitItem> source, {
+    required int dayIndex,
+  }) {
     if (source.isEmpty) {
-      final existing = _editedOutfitByDay[_dayIndex];
-      final wasManual = _editedManuallyByDay[_dayIndex] ?? false;
+      final existing = _editedOutfitByDay[dayIndex];
+      final wasManual = _editedManuallyByDay[dayIndex] ?? false;
       // Keep accepted manual edits stable through transient loading/source-empty frames.
       if (wasManual && existing != null && existing.isNotEmpty) {
         return;
       }
-      _editedOutfitByDay.remove(_dayIndex);
-      _lastSourceSignatureByDay.remove(_dayIndex);
-      _editedManuallyByDay.remove(_dayIndex);
+      _editedOutfitByDay.remove(dayIndex);
+      _lastSourceSignatureByDay.remove(dayIndex);
+      _editedManuallyByDay.remove(dayIndex);
       return;
     }
     final sourceSig = _heroRenderSignature(source);
-    final existing = _editedOutfitByDay[_dayIndex];
-    final wasManual = _editedManuallyByDay[_dayIndex] ?? false;
-    final lastSourceSig = _lastSourceSignatureByDay[_dayIndex];
+    final existing = _editedOutfitByDay[dayIndex];
+    final wasManual = _editedManuallyByDay[dayIndex] ?? false;
+    final lastSourceSig = _lastSourceSignatureByDay[dayIndex];
     final shouldReplace = existing == null || (!wasManual && lastSourceSig != sourceSig);
     if (shouldReplace) {
-      _editedOutfitByDay[_dayIndex] = List<_HeroOutfitItem>.from(source);
-      _lastSourceSignatureByDay[_dayIndex] = sourceSig;
-      _editedManuallyByDay[_dayIndex] = false;
+      _editedOutfitByDay[dayIndex] = List<_HeroOutfitItem>.from(source);
+      _lastSourceSignatureByDay[dayIndex] = sourceSig;
+      _editedManuallyByDay[dayIndex] = false;
     }
+  }
+
+  void _invalidateHeroPanelContentCache({int? dayIndex}) {
+    if (dayIndex == null) {
+      _cachedHeroPanelContentSigByDayIndex.clear();
+      _cachedHeroPanelContentByDayIndex.clear();
+    } else {
+      _cachedHeroPanelContentSigByDayIndex.remove(dayIndex);
+      _cachedHeroPanelContentByDayIndex.remove(dayIndex);
+    }
+  }
+
+  String _heroPanelContentSignature({
+    required int panelDayIndex,
+    required _HeroTodayState hero,
+    required DateTime activeDate,
+  }) {
+    final weatherSig = _homeWeatherSignature(_weatherForDate(activeDate));
+    final editSig = (_editedManuallyByDay[panelDayIndex] ?? false)
+        ? _heroRenderSignature(_editedOutfitByDay[panelDayIndex] ?? const [])
+        : '';
+    return '${hero.source}|${_heroRenderSignature(hero.outfitItems)}|$weatherSig|$editSig';
+  }
+
+  void _logHomeRebuild({
+    required String reason,
+    required bool todayChanged,
+    required bool tomorrowChanged,
+  }) {
+    final key = '$reason|$todayChanged|$tomorrowChanged';
+    if (_lastHomeRebuildLogKey == key) return;
+    _lastHomeRebuildLogKey = key;
+    debugPrint('[HOME_REBUILD] reason=$reason');
+    debugPrint('[HOME_REBUILD] today_changed=$todayChanged');
+    debugPrint('[HOME_REBUILD] tomorrow_changed=$tomorrowChanged');
+  }
+
+  void _syncHomeOutfitStateToAllCaches({
+    required int dayIndex,
+    required String dateKey,
+    required String dayLabel,
+    required List<_HeroOutfitItem> normalized,
+    required _HeroTodayState heroState,
+  }) {
+    final hydrated = _heroTodayStateWithStableImages(dateKey, heroState);
+    final items = _heroOutfitTilesHaveVisibleImages(hydrated.outfitItems)
+        ? List<_HeroOutfitItem>.from(hydrated.outfitItems)
+        : _heroItemsFromCachedUrlsOnly(
+            dateKey: dateKey,
+            dayLabel: dayLabel,
+            items: hydrated.outfitItems,
+            logUsingCached: false,
+          );
+    final stored = _HeroTodayState(
+      vm: hydrated.vm,
+      outfitItems: items,
+      source: hydrated.source,
+      loadingReason: hydrated.loadingReason,
+    );
+    _homeHydratedOutfitItemsByDateKey[dateKey] = items;
+    _stickyVisibleHeroByDateKey[dateKey] = stored;
+    _daySwitchPinnedHeroByDateKey[dateKey] = stored;
+    for (final item in items) {
+      final id = (item.wardrobeItemId ?? '').trim();
+      final url = (item.imageUrl ?? '').trim();
+      if (id.isNotEmpty && url.isNotEmpty) {
+        _rememberHomeImageUrl(dateKey, id, url, dayLabel: dayLabel);
+      }
+    }
+    _cachedHeroBuildKeyByDateKey.remove(dateKey);
+    _cachedHeroBuildStateByDateKey.remove(dateKey);
+    _invalidateHeroPanelContentCache(dayIndex: dayIndex);
+    debugPrint('[HOME_REPLACE] updated_memory_cache day=$dayLabel');
+    debugPrint('[HOME_REPLACE] updated_home_state day=$dayLabel');
+  }
+
+  void _commitHomeOutfitItemReplacement({
+    required _HeroWearType wearType,
+    required _HeroOutfitItem newItem,
+    required List<_HeroOutfitItem> updatedOutfit,
+    _HeroOutfitItem? replacedItem,
+  }) {
+    final dayLabel = _dayIndex == 0 ? 'today' : 'tomorrow';
+    final oldId = (replacedItem?.wardrobeItemId ?? '').trim();
+    final newId = (newItem.wardrobeItemId ?? '').trim();
+    debugPrint(
+      '[HOME_REPLACE] day=$dayLabel slot=${wearType.name} old=$oldId new=$newId',
+    );
+    _setEditedItems(
+      updatedOutfit,
+      markManual: true,
+      reasonSource: 'replace_item',
+    );
   }
 
   void _setEditedItems(
@@ -367,34 +818,36 @@ class _HomeScreenState extends State<HomeScreen> {
     bool markManual = true,
     String reasonSource = 'swap',
   }) {
+    final normalized = _orderedHeroOutfitItems(items);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final date = _dayIndex == 1 ? today.add(const Duration(days: 1)) : today;
+    final dateKey = _dateKey(date);
+    final dayLabel = _dayIndex == 0 ? 'today' : 'tomorrow';
+    final weather = _weatherForDate(date);
+    final weatherSig = _homeWeatherSignature(weather);
+    final reason = _regenerateStylistReason(
+      date: date,
+      outfitItems: normalized,
+      source: reasonSource,
+    );
+    final wardrobeSig = _wardrobeSignature(_lastWardrobeForCache);
+    final persistSource = _persistSourceForReason(reasonSource);
+    final existing = _homeDayHeroCacheByDateKey[dateKey];
+    final heroState = _HeroTodayState(
+      vm: _HeroBannerVM(
+        description: reason.isNotEmpty
+            ? reason
+            : (existing?.state.vm.description ?? 'Upravený outfit pre tento deň.'),
+      ),
+      outfitItems: normalized,
+      source: markManual ? 'edited' : (existing?.state.source ?? 'local'),
+    );
     setState(() {
-      final normalized = _orderedHeroOutfitItems(items);
       _editedOutfitByDay[_dayIndex] = normalized;
       _editedManuallyByDay[_dayIndex] = markManual;
-      final now = DateTime.now();
-      final today = DateTime(now.year, now.month, now.day);
-      final date = _dayIndex == 1 ? today.add(const Duration(days: 1)) : today;
-      final dateKey = _dateKey(date);
-      final existing = _homeDayHeroCacheByDateKey[dateKey];
-      final weather = _weatherForDate(date);
-      final weatherSig = _homeWeatherSignature(weather);
-      final reason = _regenerateStylistReason(
-        date: date,
-        outfitItems: normalized,
-        source: reasonSource,
-      );
-      final wardrobeSig = _wardrobeSignature(_lastWardrobeForCache);
-      final persistSource = _persistSourceForReason(reasonSource);
       _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
-        state: _HeroTodayState(
-          vm: _HeroBannerVM(
-            description: reason.isNotEmpty
-                ? reason
-                : (existing?.state.vm.description ?? 'Upravený outfit pre tento deň.'),
-          ),
-          outfitItems: normalized,
-          source: markManual ? 'edited' : (existing?.state.source ?? 'local'),
-        ),
+        state: heroState,
         weatherSignature: weatherSig,
         wardrobeSignature: wardrobeSig.isNotEmpty
             ? wardrobeSig
@@ -402,23 +855,22 @@ class _HomeScreenState extends State<HomeScreen> {
         userModified: markManual,
         persistSource: persistSource,
       );
+      _syncHomeOutfitStateToAllCaches(
+        dayIndex: _dayIndex,
+        dateKey: dateKey,
+        dayLabel: dayLabel,
+        normalized: normalized,
+        heroState: heroState,
+      );
       if (_focusedEditType != null &&
           !_editedOutfitByDay[_dayIndex]!.any((it) => it.type == _focusedEditType)) {
         _focusedEditType = null;
       }
     });
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final date = _dayIndex == 1 ? today.add(const Duration(days: 1)) : today;
-    final reason = _regenerateStylistReason(
-      date: date,
-      outfitItems: _orderedHeroOutfitItems(items),
-      source: reasonSource,
-    );
     unawaited(
       _persistDailyOutfitCache(
         date: date,
-        items: _orderedHeroOutfitItems(items),
+        items: normalized,
         reasonText: reason,
         persistSource: _persistSourceForReason(reasonSource),
         userModified: markManual,
@@ -426,6 +878,13 @@ class _HomeScreenState extends State<HomeScreen> {
         likedOutfitKey: _likedOutfitKeyByDay[_dayIndex],
       ),
     );
+    if (markManual) {
+      _logHomeCacheUserPreserveIfNeeded(
+        dateKey: dateKey,
+        items: normalized,
+        reason: reasonSource == 'new_outfit' ? 'new_outfit' : 'replace_item',
+      );
+    }
   }
 
   String _persistSourceForReason(String reasonSource) {
@@ -563,7 +1022,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _ensurePersistedDailyOutfitsHydrated({
     required List<Map<String, dynamic>> wardrobe,
   }) async {
-    if (_persistedDailyHydrationDone) return;
     if (_persistedDailyHydrationInFlight) {
       while (_persistedDailyHydrationInFlight) {
         await Future<void>.delayed(const Duration(milliseconds: 25));
@@ -571,7 +1029,12 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
     final user = _auth.currentUser;
-    if (user == null || !_weatherLoaded || wardrobe.isEmpty) return;
+    if (user == null || !_weatherLoaded) return;
+    if (_persistedDailyHydrationDone &&
+        wardrobe.isEmpty &&
+        _hasRestoredDailyOutfitCacheForBoot()) {
+      return;
+    }
     _persistedDailyHydrationInFlight = true;
     try {
       await _hydratePersistedDailyOutfits(wardrobe: wardrobe);
@@ -581,72 +1044,131 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  bool _hasRestoredDailyOutfitCacheForBoot() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    for (final date in [today, tomorrow]) {
+      final dateKey = _dateKey(date);
+      final cache = _homeDayHeroCacheByDateKey[dateKey];
+      if (cache != null && _heroStateHasValidOutfit(cache.state)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  String _homeBootCacheLabel(String dateKey) {
+    final cache = _homeDayHeroCacheByDateKey[dateKey];
+    if (cache != null && _heroStateHasValidOutfit(cache.state)) {
+      return 'hit';
+    }
+    if (_hydratedHomeCacheDateKeys.contains(dateKey)) {
+      return 'hydrated';
+    }
+    return 'miss';
+  }
+
+  void _debugHomeBootState({bool force = false}) {
+    if (!force && _loggedHomeBootSnapshot) return;
+    _loggedHomeBootSnapshot = true;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final weatherReady = _weatherLoaded &&
+        _weatherSnapToday != null &&
+        _weatherSnapTomorrow != null;
+    debugPrint(
+      '[HOME_BOOT] weatherReady=$weatherReady wardrobeReady=${_lastWardrobeForCache.isNotEmpty} '
+      'todayCache=${_homeBootCacheLabel(_dateKey(today))} '
+      'tomorrowCache=${_homeBootCacheLabel(_dateKey(tomorrow))}',
+    );
+  }
+
+  void _logHomeRestoreSkipped(String dayLabel, String reason) {
+    debugPrint('[HOME_RESTORE] skipped reason=$reason day=$dayLabel');
+  }
+
+  void _logHomeRestoreFromDailyCache(String dayLabel) {
+    debugPrint('[HOME_RESTORE] from_daily_cache day=$dayLabel');
+  }
+
   Future<void> _hydratePersistedDailyOutfits({
     required List<Map<String, dynamic>> wardrobe,
   }) async {
     final user = _auth.currentUser;
     if (user == null || !_weatherLoaded) return;
+    _isRestoringHomeCache = true;
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final dates = [today, today.add(const Duration(days: 1))];
     var anyRestored = false;
 
-    for (final date in dates) {
-      final dateKey = _dateKey(date);
-      final doc = await _dailyOutfitCacheService.load(user.uid, dateKey);
-      if (doc == null) continue;
+    try {
+      for (final date in dates) {
+        final dateKey = _dateKey(date);
+        final dayLabel = _dayIndexForDate(date) == 0 ? 'today' : 'tomorrow';
+        if (_hydratedHomeCacheDateKeys.contains(dateKey)) {
+          final cached = _homeDayHeroCacheByDateKey[dateKey];
+          if (cached != null && _heroStateHasValidOutfit(cached.state)) {
+            continue;
+          }
+        }
+        final doc = await _dailyOutfitCacheService.load(user.uid, dateKey);
+        if (doc == null) {
+          _logHomeRestoreSkipped(dayLabel, 'no_document');
+          continue;
+        }
 
-      final w = _weatherForDate(date);
-      final weatherSig = _homeWeatherSignature(w);
-      final wardrobeSig = _wardrobeSignature(wardrobe);
+        final w = _weatherForDate(date);
+        final weatherSig = _homeWeatherSignature(w);
+        final wardrobeSig = _wardrobeSignature(wardrobe);
 
-      if (doc.weatherSignature != weatherSig) {
-        debugPrint(
-          '[HOME_DAY_CACHE] skip_restore reason=weather_changed date=$dateKey',
-        );
-        continue;
-      }
+        if (doc.weatherSignature != weatherSig) {
+          _logHomeRestoreSkipped(dayLabel, 'weather_changed');
+          debugPrint(
+            '[HOME_DAY_CACHE] skip_restore reason=weather_changed date=$dateKey',
+          );
+          continue;
+        }
 
-      if (!doc.userModified && doc.wardrobeSignature != wardrobeSig) {
-        continue;
-      }
+        if (wardrobe.isNotEmpty &&
+            !doc.userModified &&
+            doc.wardrobeSignature != wardrobeSig) {
+          _logHomeRestoreSkipped(dayLabel, 'wardrobe_signature_mismatch');
+          continue;
+        }
 
-      if (doc.userModified && !_validatePersistedItemIds(doc.itemIds, wardrobe)) {
-        debugPrint(
-          '[HOME_DAY_CACHE] skip_restore reason=missing_items date=$dateKey',
-        );
-        continue;
-      }
+        if (doc.userModified &&
+            wardrobe.isNotEmpty &&
+            !_validatePersistedItemIds(doc.itemIds, wardrobe)) {
+          _logHomeRestoreSkipped(dayLabel, 'missing_items');
+          debugPrint(
+            '[HOME_DAY_CACHE] skip_restore reason=missing_items date=$dateKey',
+          );
+          continue;
+        }
 
-      final items = _heroItemsFromPersistedMaps(doc.items, wardrobe);
-      if (doc.userModified && items.length < 3) continue;
+        final items = _heroItemsFromPersistedMaps(doc.items, wardrobe);
+        if (items.length < 3) {
+          _logHomeRestoreSkipped(dayLabel, 'too_few_items');
+          continue;
+        }
 
-      final dayIdx = _dayIndexForDate(date);
-      final reason = doc.reasonText.isNotEmpty
-          ? doc.reasonText
-          : _regenerateStylistReason(
-              date: date,
-              outfitItems: items,
-              source: doc.userModified ? 'swap' : 'ai',
-            );
-      final heroSource = doc.userModified
-          ? 'edited'
-          : (doc.source == 'fallback' ? 'local' : 'ai');
+        final dayIdx = _dayIndexForDate(date);
+        final reason = doc.reasonText.isNotEmpty
+            ? doc.reasonText
+            : _regenerateStylistReason(
+                date: date,
+                outfitItems: items,
+                source: doc.userModified ? 'swap' : 'ai',
+              );
+        final heroSource = doc.userModified
+            ? 'edited'
+            : (doc.source == 'fallback' ? 'local' : 'ai');
 
-      _editedOutfitByDay[dayIdx] = List<_HeroOutfitItem>.from(items);
-      _editedManuallyByDay[dayIdx] = doc.userModified;
-      if (doc.userModified) {
-        _lastSourceSignatureByDay[dayIdx] = _heroRenderSignature(items);
-        debugPrint(
-          '[HOME_DAY_CACHE] restored user_modified=true date=$dateKey',
-        );
-      }
-      if (doc.likedOutfitKey != null && doc.likedOutfitKey!.isNotEmpty) {
-        _likedOutfitKeyByDay[dayIdx] = doc.likedOutfitKey!;
-      }
-
-      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
-        state: _HeroTodayState(
+        final existingHero = _homeDayHeroCacheByDateKey[dateKey];
+        final nextState = _HeroTodayState(
           vm: _HeroBannerVM(
             description: reason.isNotEmpty
                 ? reason
@@ -654,16 +1176,47 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           outfitItems: items,
           source: heroSource,
-        ),
-        weatherSignature: weatherSig,
-        wardrobeSignature: wardrobeSig,
-        userModified: doc.userModified,
-        persistSource: doc.source,
-      );
-      anyRestored = true;
+        );
+        if (existingHero != null &&
+            existingHero.weatherSignature == weatherSig &&
+            existingHero.wardrobeSignature == wardrobeSig &&
+            existingHero.userModified == doc.userModified &&
+            _sameHeroTodayState(existingHero.state, nextState)) {
+          _hydratedHomeCacheDateKeys.add(dateKey);
+          continue;
+        }
+
+        _editedOutfitByDay[dayIdx] = List<_HeroOutfitItem>.from(items);
+        _editedManuallyByDay[dayIdx] = doc.userModified;
+        if (doc.userModified) {
+          _lastSourceSignatureByDay[dayIdx] = _heroRenderSignature(items);
+          _logHomeCacheRestoreIfNeeded(dateKey: dateKey, items: items);
+        }
+        if (doc.likedOutfitKey != null && doc.likedOutfitKey!.isNotEmpty) {
+          _likedOutfitKeyByDay[dayIdx] = doc.likedOutfitKey!;
+        }
+
+        _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+          state: nextState,
+          weatherSignature: weatherSig,
+          wardrobeSignature: wardrobeSig,
+          userModified: doc.userModified,
+          persistSource: doc.source,
+        );
+        _persistHomeHydratedOutfit(dateKey, nextState);
+        _hydratedHomeCacheDateKeys.add(dateKey);
+        _logHomeRestoreFromDailyCache(dayLabel);
+        anyRestored = true;
+      }
+    } finally {
+      _isRestoringHomeCache = false;
     }
 
-    if (anyRestored && mounted) setState(() {});
+    if (anyRestored) {
+      _invalidateHomeHeroBuildCache();
+      if (mounted) setState(() {});
+    }
+    _debugHomeBootState(force: true);
   }
 
   String _regenerateStylistReason({
@@ -786,6 +1339,11 @@ class _HomeScreenState extends State<HomeScreen> {
         likedOutfitKey: key,
       ),
     );
+    _logHomeCacheUserPreserveIfNeeded(
+      dateKey: dateKey,
+      items: items,
+      reason: 'like',
+    );
     unawaited(
       Future<void>.delayed(const Duration(milliseconds: 4100), () {
         if (!mounted || token != _likeFeedbackToken) return;
@@ -796,7 +1354,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _enterOutfitEditMode(List<_HeroOutfitItem> currentItems) {
     if (currentItems.isEmpty) return;
-    _syncEditableOutfitFromSource(currentItems);
+    _syncEditableOutfitFromSource(currentItems, dayIndex: _dayIndex);
     final originals = <_HeroWearType, String>{};
     for (final it in currentItems) {
       final id = (it.wardrobeItemId ?? '').trim();
@@ -887,6 +1445,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final todayDate = DateTime(now.year, now.month, now.day);
     final activeDate = _isTomorrow ? todayDate.add(const Duration(days: 1)) : todayDate;
       final activeDateKey = _dateKey(activeDate);
+      _clearDaySwitchPinnedHero(activeDateKey);
       _homeAiForceDifferentNextByDateKey[activeDateKey] = true;
       _homeAiRefreshNonce++;
 
@@ -1510,6 +2069,606 @@ class _HomeScreenState extends State<HomeScreen> {
     return '$base Pri chladnejšom počasí sa vyplatí mať po ruke aspoň jednu teplejšiu vrstvu.';
   }
 
+  bool _heroStateHasValidOutfit(_HeroTodayState state) {
+    if (state.source == 'loading') return false;
+    final items = state.outfitItems;
+    if (items.length < 3) return false;
+    final withId = items
+        .where((it) => (it.wardrobeItemId ?? '').trim().isNotEmpty)
+        .length;
+    if (withId >= 3) return true;
+    return items
+            .where((it) => (it.imageUrl ?? '').trim().isNotEmpty)
+            .length >=
+        3;
+  }
+
+  _HeroOutfitRecommendation? _validAiRecommendationForSignature(String signature) {
+    final rec = _homeAiCacheBySignature[signature]?.recommendation;
+    if (rec == null || rec.items.length < 3) return null;
+    return rec;
+  }
+
+  bool _hasValidDailyOutfitForDate({
+    required String dateKey,
+    required String weatherSignature,
+    required String wardrobeSignature,
+  }) {
+    final hero = _homeDayHeroCacheByDateKey[dateKey];
+    if (hero != null &&
+        hero.weatherSignature == weatherSignature &&
+        _heroStateHasValidOutfit(hero.state)) {
+      if (hero.userModified || hero.wardrobeSignature == wardrobeSignature) {
+        return true;
+      }
+      if (hero.state.source == 'ai' || hero.state.source == 'local') {
+        return true;
+      }
+    }
+    final latestSig = _homeAiLatestSignatureByDateKey[dateKey];
+    if (latestSig != null &&
+        latestSig.startsWith('$dateKey|$weatherSignature|') &&
+        _validAiRecommendationForSignature(latestSig) != null) {
+      return true;
+    }
+    return false;
+  }
+
+  bool _sameHeroTodayState(_HeroTodayState a, _HeroTodayState b) {
+    if (a.source != b.source) return false;
+    if (a.vm.description != b.vm.description) return false;
+    if (a.loadingReason != b.loadingReason) return false;
+    return _sameHeroItemsById(a.outfitItems, b.outfitItems);
+  }
+
+  void _writeHomeDayHeroCacheIfChanged({
+    required String dateKey,
+    required _HeroTodayState state,
+    required String weatherSignature,
+    required String wardrobeSignature,
+    bool userModified = false,
+    String? persistSource,
+  }) {
+    final existing = _homeDayHeroCacheByDateKey[dateKey];
+    if (existing != null &&
+        existing.weatherSignature == weatherSignature &&
+        existing.wardrobeSignature == wardrobeSignature &&
+        existing.userModified == userModified &&
+        (existing.persistSource ?? '') == (persistSource ?? '') &&
+        _sameHeroTodayState(existing.state, state)) {
+      return;
+    }
+    _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      state: state,
+      weatherSignature: weatherSignature,
+      wardrobeSignature: wardrobeSignature,
+      userModified: userModified,
+      persistSource: persistSource,
+    );
+  }
+
+  void _logHomeDayCacheCheckOnce(String dayLabel, String dateKey) {
+    final key = '$dayLabel|$dateKey';
+    if (!_loggedHomeDayCacheCheckLines.add(key)) return;
+    debugPrint('[HOME_DAY_CACHE] check day=$dayLabel date=$dateKey');
+  }
+
+  void _logHomeDayCacheHitOnce(String dayLabel) {
+    if (!_loggedHomeDayCacheHits.add(dayLabel)) return;
+    debugPrint('[HOME_DAY_CACHE] hit day=$dayLabel');
+  }
+
+  void _logHomeDayCacheMissOnce(String dayLabel) {
+    if (!_loggedHomeDayCacheMisses.add(dayLabel)) return;
+    debugPrint('[HOME_DAY_CACHE] miss day=$dayLabel');
+  }
+
+  void _logHomeDayCacheMemoryHitOnce(String dayLabel) {
+    if (!_loggedHomeDayCacheMemoryHits.add(dayLabel)) return;
+    debugPrint('[HOME_DAY_CACHE] memory_hit day=$dayLabel');
+  }
+
+  void _tryScheduleHomeOutfitPreload() {
+    if (!_weatherLoaded) return;
+    unawaited(_ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache));
+    if (_lastWardrobeForCache.isEmpty) return;
+    _scheduleHomeOutfitPreloadOnce(
+      wardrobe: _lastWardrobeForCache,
+      isPremiumUser: _lastIsPremiumUser,
+    );
+  }
+
+  void _scheduleHomeOutfitPreloadOnce({
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+  }) {
+    if (wardrobe.isEmpty || !_weatherLoaded) return;
+    if (_homePreloadPassCompleted || _homePreloadInFlight) return;
+    _homePreloadInFlight = true;
+    _lastIsPremiumUser = isPremiumUser;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        _runHomeOutfitPreload(
+          wardrobe: wardrobe,
+          isPremiumUser: isPremiumUser,
+        ).whenComplete(() {
+          _homePreloadInFlight = false;
+          if (_homePreloadRanChecks) {
+            _homePreloadPassCompleted = true;
+          }
+        }),
+      );
+    });
+  }
+
+  Future<void> _runHomeOutfitPreload({
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+  }) async {
+    if (!mounted) return;
+    await _ensurePersistedDailyOutfitsHydrated(wardrobe: wardrobe);
+    if (!mounted) return;
+    await _ensureDailyOutfitsForTodayAndTomorrow(
+      wardrobe: wardrobe,
+      isPremiumUser: isPremiumUser,
+    );
+  }
+
+  Future<void> _ensureDailyOutfitsForTodayAndTomorrow({
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+  }) async {
+    if (!_weatherLoaded || wardrobe.isEmpty) return;
+    _homePreloadRanChecks = true;
+    debugPrint('[HOME_PRELOAD] ensure_today_tomorrow started');
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    await Future.wait([
+      _ensureDailyOutfitChecked(
+        date: today,
+        wardrobe: wardrobe,
+        isPremiumUser: isPremiumUser,
+      ),
+      _ensureDailyOutfitChecked(
+        date: tomorrow,
+        wardrobe: wardrobe,
+        isPremiumUser: isPremiumUser,
+      ),
+    ]);
+  }
+
+  Future<void> _ensureDailyOutfitChecked({
+    required DateTime date,
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+  }) async {
+    if (!_weatherLoaded || wardrobe.isEmpty) return;
+    final dateKey = _dateKey(date);
+    final dayLabel = _dayIndexForDate(date) == 0 ? 'today' : 'tomorrow';
+    final weather = _weatherForDate(date);
+    final weatherSignature = _homeWeatherSignature(weather);
+    final wardrobeSignature = _wardrobeSignature(wardrobe);
+
+    _logHomeDayCacheCheckOnce(dayLabel, dateKey);
+    if (_hasValidDailyOutfitForDate(
+      dateKey: dateKey,
+      weatherSignature: weatherSignature,
+      wardrobeSignature: wardrobeSignature,
+    )) {
+      _logHomeDayCacheHitOnce(dayLabel);
+    } else {
+      _logHomeDayCacheMissOnce(dayLabel);
+    }
+
+    await _ensureDailyOutfit(
+      date: date,
+      wardrobe: wardrobe,
+      isPremiumUser: isPremiumUser,
+    );
+
+    if (dayLabel == 'today') {
+      debugPrint('[HOME_PRELOAD] ensure_today done');
+    } else {
+      debugPrint('[HOME_PRELOAD] ensure_tomorrow done');
+    }
+  }
+
+  Future<void> _ensureDailyOutfit({
+    required DateTime date,
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+  }) async {
+    if (!_weatherLoaded || wardrobe.isEmpty) return;
+    final weather = _weatherForDate(date);
+    _maybeTriggerHomeAiRecommendation(
+      date: date,
+      wardrobe: wardrobe,
+      weather: weather,
+      isPremiumUser: isPremiumUser,
+    );
+  }
+
+  _HeroTodayState? _stickyHeroForDateKey(String dateKey) {
+    final sticky = _stickyVisibleHeroByDateKey[dateKey];
+    if (sticky == null || !_heroStateHasValidOutfit(sticky)) return null;
+    return sticky;
+  }
+
+  String _dayLabelForDateKey(String dateKey) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (dateKey == _dateKey(today)) return 'today';
+    return 'tomorrow';
+  }
+
+  void _logHomeHeroImageMemoryHitOnce(String dayLabel, String itemId) {
+    final key = '$dayLabel|$itemId';
+    if (!_loggedHomeHeroImageMemoryHits.add(key)) return;
+    debugPrint('[HOME_HERO_IMAGE] memory_url_hit day=$dayLabel item=$itemId');
+  }
+
+  void _logHomeHeroImageMemoryMissOnce(String dayLabel, String itemId) {
+    final key = '$dayLabel|$itemId';
+    if (!_loggedHomeHeroImageMemoryMisses.add(key)) return;
+    debugPrint('[HOME_HERO_IMAGE] memory_url_miss day=$dayLabel item=$itemId');
+  }
+
+  void _logHomeHeroUsingCachedImagesOnce(String dayLabel) {
+    if (!_loggedHomeHeroUsingCachedImages.add(dayLabel)) return;
+    debugPrint('[HOME_HERO_RENDER] using_cached_images=true day=$dayLabel');
+  }
+
+  String? _cachedHomeImageUrlForItem(String dateKey, String itemId) {
+    if (itemId.isEmpty) return null;
+    final byItem = _homeImageUrlByDateKeyAndItemId[dateKey];
+    final dayCached = byItem?[itemId]?.trim();
+    if (dayCached != null && dayCached.isNotEmpty) return dayCached;
+    return _lastVisibleHomeImageUrlByItemId[itemId]?.trim();
+  }
+
+  String? _heroWardrobeDisplayImageUrlForHome(
+    Map<String, dynamic> raw, {
+    String? dateKey,
+    bool allowPick = true,
+  }) {
+    final id = OutfitGenerationService.wardrobeItemId(raw);
+    if (dateKey != null && id.isNotEmpty) {
+      final dayCached = _cachedHomeImageUrlForItem(dateKey, id);
+      if (dayCached != null && dayCached.isNotEmpty) {
+        return dayCached;
+      }
+      if (!allowPick) return null;
+    }
+    return _heroWardrobeDisplayImageUrl(raw, allowPick: allowPick);
+  }
+
+  void _refreshMissingHomeImageUrlsInBackground({
+    required String dateKey,
+    required List<_HeroOutfitItem> items,
+    required List<Map<String, dynamic>> wardrobe,
+  }) {
+    if (items.isEmpty || wardrobe.isEmpty) return;
+    final byId = <String, Map<String, dynamic>>{};
+    for (final raw in wardrobe) {
+      final id = OutfitGenerationService.wardrobeItemId(raw);
+      if (id.isNotEmpty) byId[id] = raw;
+    }
+    final dayLabel = _dayLabelForDateKey(dateKey);
+    for (final item in items) {
+      final id = (item.wardrobeItemId ?? '').trim();
+      if (id.isEmpty) continue;
+      final existing = _cachedHomeImageUrlForItem(dateKey, id);
+      if (existing != null && existing.isNotEmpty) continue;
+      final raw = byId[id];
+      if (raw == null) continue;
+      final picked = _heroWardrobeDisplayImageUrlForHome(
+        raw,
+        dateKey: dateKey,
+        allowPick: true,
+      );
+      if (picked != null && picked.isNotEmpty) {
+        _rememberHomeImageUrl(dateKey, id, picked, dayLabel: dayLabel);
+      }
+    }
+  }
+
+  _HeroTodayState? _renderHeroStateForDateKey(String dateKey, String dayLabel) {
+    final pinned = _daySwitchPinnedHeroByDateKey[dateKey];
+    if (pinned != null && _heroOutfitTilesHaveVisibleImages(pinned.outfitItems)) {
+      _logHomeDayCacheMemoryHitOnce(dayLabel);
+      _logHomeHeroUsingCachedImagesOnce(dayLabel);
+      return pinned;
+    }
+    final hydrated = _homeHydratedOutfitItemsByDateKey[dateKey];
+    if (hydrated != null &&
+        hydrated.length >= 3 &&
+        _heroOutfitTilesHaveVisibleImages(hydrated)) {
+      _logHomeDayCacheMemoryHitOnce(dayLabel);
+      _logHomeHeroUsingCachedImagesOnce(dayLabel);
+      final cache = _homeDayHeroCacheByDateKey[dateKey];
+      final sticky = _stickyVisibleHeroByDateKey[dateKey];
+      return _HeroTodayState(
+        vm: cache?.state.vm ??
+            sticky?.vm ??
+            const _HeroBannerVM(description: ''),
+        outfitItems: List<_HeroOutfitItem>.from(hydrated),
+        source: cache?.state.source ?? sticky?.source ?? 'cached',
+      );
+    }
+    final sticky = _stickyVisibleHeroByDateKey[dateKey];
+    if (sticky != null && _heroOutfitTilesHaveVisibleImages(sticky.outfitItems)) {
+      _logHomeDayCacheMemoryHitOnce(dayLabel);
+      _logHomeHeroUsingCachedImagesOnce(dayLabel);
+      return sticky;
+    }
+    return null;
+  }
+
+  void _clearDaySwitchPinnedHero(String dateKey) {
+    _daySwitchPinnedHeroByDateKey.remove(dateKey);
+  }
+
+  void _rememberHomeImageUrl(
+    String dateKey,
+    String itemId,
+    String url, {
+    required String dayLabel,
+  }) {
+    final trimmed = url.trim();
+    if (trimmed.isEmpty) return;
+    _homeImageUrlByDateKeyAndItemId.putIfAbsent(dateKey, () => <String, String>{})[itemId] =
+        trimmed;
+    _lastVisibleHomeImageUrlByItemId[itemId] = trimmed;
+    _homeHeroNetworkImageLoadedUrls.add(trimmed);
+  }
+
+  void _syncHomeImageCacheForDateKey(String dateKey, List<_HeroOutfitItem> items) {
+    final ids = <String>[
+      for (final it in items)
+        if ((it.wardrobeItemId ?? '').trim().isNotEmpty)
+          (it.wardrobeItemId ?? '').trim(),
+    ]..sort();
+    final sig = ids.join('|');
+    if (_homeOutfitIdsSignatureByDateKey[dateKey] != sig) {
+      _homeOutfitIdsSignatureByDateKey[dateKey] = sig;
+      final keep = ids.toSet();
+      final byItem = _homeImageUrlByDateKeyAndItemId[dateKey];
+      byItem?.removeWhere((id, _) => !keep.contains(id));
+    }
+    final dayLabel = _dayLabelForDateKey(dateKey);
+    for (final item in items) {
+      final id = (item.wardrobeItemId ?? '').trim();
+      if (id.isEmpty) continue;
+      final url = item.imageUrl?.trim();
+      if (url != null && url.isNotEmpty) {
+        _rememberHomeImageUrl(dateKey, id, url, dayLabel: dayLabel);
+      }
+    }
+  }
+
+  ({String? url, bool fromMemory}) _resolveHomeOutfitDisplayImageUrlWithMeta({
+    required String dateKey,
+    required String dayLabel,
+    required _HeroOutfitItem item,
+  }) {
+    final id = (item.wardrobeItemId ?? '').trim();
+    final byItem = _homeImageUrlByDateKeyAndItemId[dateKey];
+    final memory =
+        id.isNotEmpty && byItem != null ? byItem[id]?.trim() : null;
+
+    final current = item.imageUrl?.trim();
+    if (current != null && current.isNotEmpty) {
+      if (id.isNotEmpty) {
+        _rememberHomeImageUrl(dateKey, id, current, dayLabel: dayLabel);
+      } else {
+        _homeHeroNetworkImageLoadedUrls.add(current);
+      }
+      return (url: current, fromMemory: false);
+    }
+
+    if (memory != null && memory.isNotEmpty) {
+      _logHomeHeroImageMemoryHitOnce(dayLabel, id);
+      _homeHeroNetworkImageLoadedUrls.add(memory);
+      return (url: memory, fromMemory: true);
+    }
+
+    if (id.isNotEmpty) {
+      final last = _lastVisibleHomeImageUrlByItemId[id]?.trim();
+      if (last != null && last.isNotEmpty) {
+        _rememberHomeImageUrl(dateKey, id, last, dayLabel: dayLabel);
+        return (url: last, fromMemory: false);
+      }
+      _logHomeHeroImageMemoryMissOnce(dayLabel, id);
+    }
+    return (url: null, fromMemory: false);
+  }
+
+  String? _resolveHomeOutfitDisplayImageUrl({
+    required String dateKey,
+    required String dayLabel,
+    required _HeroOutfitItem item,
+  }) {
+    return _resolveHomeOutfitDisplayImageUrlWithMeta(
+      dateKey: dateKey,
+      dayLabel: dayLabel,
+      item: item,
+    ).url;
+  }
+
+  _HeroOutfitItem _heroItemWithDisplayImageUrl(
+    _HeroOutfitItem item,
+    String? displayUrl,
+  ) {
+    return _HeroOutfitItem(
+      type: item.type,
+      icon: item.icon,
+      label: item.label,
+      brandLine: item.brandLine,
+      imageUrl: displayUrl,
+      categoryKey: item.categoryKey,
+      subCategoryKey: item.subCategoryKey,
+      wardrobeItemId: item.wardrobeItemId,
+      imageProcessing: item.imageProcessing,
+    );
+  }
+
+  List<_HeroOutfitItem> _heroItemsFromCachedUrlsOnly({
+    required String dateKey,
+    required String dayLabel,
+    required List<_HeroOutfitItem> items,
+    bool logUsingCached = true,
+  }) {
+    if (logUsingCached && items.isNotEmpty) {
+      _logHomeHeroUsingCachedImagesOnce(dayLabel);
+    }
+    _syncHomeImageCacheForDateKey(dateKey, items);
+    return [
+      for (final item in items)
+        _heroItemWithDisplayImageUrl(
+          item,
+          _resolveHomeOutfitDisplayImageUrl(
+            dateKey: dateKey,
+            dayLabel: dayLabel,
+            item: item,
+          ),
+        ),
+    ];
+  }
+
+  List<_HeroOutfitItem> _heroItemsWithStableImageUrls({
+    required String dateKey,
+    required String dayLabel,
+    required List<_HeroOutfitItem> items,
+  }) {
+    if (_heroOutfitTilesHaveVisibleImages(items)) {
+      return items;
+    }
+    return _heroItemsFromCachedUrlsOnly(
+      dateKey: dateKey,
+      dayLabel: dayLabel,
+      items: items,
+      logUsingCached: false,
+    );
+  }
+
+  _HeroTodayState _heroTodayStateWithStableImages(
+    String dateKey,
+    _HeroTodayState state,
+  ) {
+    final dayLabel = _dayLabelForDateKey(dateKey);
+    final items = _heroItemsWithStableImageUrls(
+      dateKey: dateKey,
+      dayLabel: dayLabel,
+      items: state.outfitItems,
+    );
+    return _HeroTodayState(
+      vm: state.vm,
+      outfitItems: items,
+      source: state.source,
+      loadingReason: state.loadingReason,
+    );
+  }
+
+  void _persistHomeHydratedOutfit(String dateKey, _HeroTodayState state) {
+    if (!_heroStateHasValidOutfit(state)) return;
+    final dayLabel = _dayLabelForDateKey(dateKey);
+    final hydrated = _heroOutfitTilesHaveVisibleImages(state.outfitItems)
+        ? state
+        : _heroTodayStateWithStableImages(dateKey, state);
+    final items = _heroOutfitTilesHaveVisibleImages(hydrated.outfitItems)
+        ? hydrated.outfitItems
+        : _heroItemsFromCachedUrlsOnly(
+            dateKey: dateKey,
+            dayLabel: dayLabel,
+            items: hydrated.outfitItems,
+            logUsingCached: false,
+          );
+    final stored = _HeroTodayState(
+      vm: hydrated.vm,
+      outfitItems: items,
+      source: hydrated.source,
+      loadingReason: hydrated.loadingReason,
+    );
+    _homeHydratedOutfitItemsByDateKey[dateKey] = items;
+    _stickyVisibleHeroByDateKey[dateKey] = stored;
+  }
+
+  _HeroTodayState? _instantHeroStateForDateKey(String dateKey) {
+    final sticky = _stickyVisibleHeroByDateKey[dateKey];
+    if (sticky != null && _heroStateHasValidOutfit(sticky)) {
+      return sticky;
+    }
+    final hydrated = _homeHydratedOutfitItemsByDateKey[dateKey];
+    if (hydrated != null && hydrated.length >= 3) {
+      final cache = _homeDayHeroCacheByDateKey[dateKey];
+      return _HeroTodayState(
+        vm: cache?.state.vm ??
+            sticky?.vm ??
+            const _HeroBannerVM(description: ''),
+        outfitItems: hydrated,
+        source: cache?.state.source ?? sticky?.source ?? 'cached',
+      );
+    }
+    final cache = _homeDayHeroCacheByDateKey[dateKey];
+    if (cache != null && _heroStateHasValidOutfit(cache.state)) {
+      return _heroTodayStateWithStableImages(dateKey, cache.state);
+    }
+    return null;
+  }
+
+  bool _heroOutfitTilesHaveVisibleImages(List<_HeroOutfitItem> items) {
+    if (items.isEmpty) return false;
+    final withUrl =
+        items.where((i) => (i.imageUrl?.trim().isNotEmpty ?? false)).length;
+    return withUrl >= 3 || withUrl == items.length;
+  }
+
+  _HeroTodayState _finalizeHeroState({
+    required String dateKey,
+    required _HeroTodayState state,
+  }) {
+    var resolved = state;
+    if (!_heroStateHasValidOutfit(resolved)) {
+      final instant = _instantHeroStateForDateKey(dateKey);
+      if (instant != null) resolved = instant;
+    } else {
+      resolved = _heroTodayStateWithStableImages(dateKey, resolved);
+    }
+    if (_heroStateHasValidOutfit(resolved)) {
+      _persistHomeHydratedOutfit(dateKey, resolved);
+      if (mounted) {
+        _precacheHomeOutfitImages(resolved.outfitItems);
+      }
+      return resolved;
+    }
+    if (state.source == 'loading') {
+      return _instantHeroStateForDateKey(dateKey) ?? resolved;
+    }
+    return resolved;
+  }
+
+  void _precacheHomeOutfitImages(List<_HeroOutfitItem> items) {
+    if (!mounted) return;
+    final ctx = context;
+    for (final item in items) {
+      final url = item.imageUrl?.trim();
+      if (url == null || url.isEmpty) continue;
+      if (!_homeHeroImagePrecacheScheduled.add(url)) continue;
+      unawaited(
+        precacheImage(NetworkImage(url), ctx).then((_) {
+          _homeHeroNetworkImageLoadedUrls.add(url);
+        }),
+      );
+    }
+  }
+
+  void _logHomeAiOutfitOnce(String message) {
+    if (_lastHomeAiOutfitLogKey == message) return;
+    _lastHomeAiOutfitLogKey = message;
+    debugPrint(message);
+  }
+
   _HeroTodayState _buildTodayHero({
     required DateTime date,
     required List<Map<String, dynamic>> wardrobe,
@@ -1518,25 +2677,63 @@ class _HomeScreenState extends State<HomeScreen> {
   }) {
     final dayIdx = _dayIndexForDate(date);
     final dateKey = _dateKey(date);
+    final previousBuildDateKey = _currentHeroBuildDateKey;
+    _currentHeroBuildDateKey = dateKey;
+    try {
+      return _buildTodayHeroInner(
+        date: date,
+        wardrobe: wardrobe,
+        isPremiumUser: isPremiumUser,
+        dataReady: dataReady,
+        dayIdx: dayIdx,
+        dateKey: dateKey,
+      );
+    } finally {
+      _currentHeroBuildDateKey = previousBuildDateKey;
+    }
+  }
+
+  _HeroTodayState _buildTodayHeroInner({
+    required DateTime date,
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+    required bool dataReady,
+    required int dayIdx,
+    required String dateKey,
+  }) {
     final w = _weatherForDate(date);
     final weatherSignature = _homeWeatherSignature(w);
     final wardrobeSignature = _wardrobeSignature(wardrobe);
     final dayLabel = dayIdx == 0 ? 'today' : 'tomorrow';
+
+    final immediate = _renderHeroStateForDateKey(dateKey, dayLabel);
+    if (immediate != null) {
+      return immediate;
+    }
+
     final cache = _homeDayHeroCacheByDateKey[dateKey];
 
-    if (cache != null && cache.weatherSignature == weatherSignature) {
-      final sigOk =
-          cache.userModified || cache.wardrobeSignature == wardrobeSignature;
-      if (sigOk) {
-        if (cache.state.source == 'edited' || cache.userModified) {
-          debugPrint('[HOME_DAY_CACHE] preserved_edited_outfit=true');
-          debugPrint('[HOME_DAY_CACHE] preserved_swap_state=true');
-        }
-        debugPrint('[HOME_DAY_CACHE] instant_restore=true day=$dayLabel');
-        return cache.state;
+    if (cache != null && _heroStateHasValidOutfit(cache.state)) {
+      _logHomeDayCacheMemoryHitOnce(dayLabel);
+      final hydrated = _homeHydratedOutfitItemsByDateKey[dateKey];
+      if (hydrated != null && _heroOutfitTilesHaveVisibleImages(hydrated)) {
+        _logHomeHeroUsingCachedImagesOnce(dayLabel);
+        return _HeroTodayState(
+          vm: cache.state.vm,
+          outfitItems: List<_HeroOutfitItem>.from(hydrated),
+          source: cache.state.source,
+        );
       }
+      return _finalizeHeroState(dateKey: dateKey, state: cache.state);
     }
-    debugPrint('[HOME_DAY_CACHE] miss day=$dayLabel');
+
+    final instant = _instantHeroStateForDateKey(dateKey);
+    if (instant != null) {
+      if (_heroOutfitTilesHaveVisibleImages(instant.outfitItems)) {
+        return instant;
+      }
+      return _finalizeHeroState(dateKey: dateKey, state: instant);
+    }
 
     final manualItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
     final isManual = (_editedManuallyByDay[dayIdx] ?? false) && manualItems.isNotEmpty;
@@ -1554,14 +2751,15 @@ class _HomeScreenState extends State<HomeScreen> {
         outfitItems: manualItems,
         source: 'edited',
       );
-      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      _writeHomeDayHeroCacheIfChanged(
+        dateKey: dateKey,
         state: state,
         weatherSignature: weatherSignature,
         wardrobeSignature: wardrobeSignature,
         userModified: true,
         persistSource: 'manual_replaced',
       );
-      return state;
+      return _finalizeHeroState(dateKey: dateKey, state: state);
     }
     final swapVisibleItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
     if (_isOutfitEditMode && swapVisibleItems.isNotEmpty) {
@@ -1570,19 +2768,51 @@ class _HomeScreenState extends State<HomeScreen> {
         outfitItems: swapVisibleItems,
         source: 'edited',
       );
-      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      _writeHomeDayHeroCacheIfChanged(
+        dateKey: dateKey,
         state: state,
         weatherSignature: weatherSignature,
         wardrobeSignature: wardrobeSignature,
+        userModified: true,
+        persistSource: 'manual_replaced',
       );
-      return state;
+      return _finalizeHeroState(dateKey: dateKey, state: state);
+    }
+    if (_isRestoringHomeCache) {
+      final restoringCache = _homeDayHeroCacheByDateKey[dateKey];
+      if (restoringCache != null && _heroStateHasValidOutfit(restoringCache.state)) {
+        return _finalizeHeroState(dateKey: dateKey, state: restoringCache.state);
+      }
     }
     if (!dataReady) {
-      return _HeroTodayState(
-        vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
-        outfitItems: const <_HeroOutfitItem>[],
-        source: 'loading',
-        loadingReason: 'wardrobe_or_weather_pending',
+      final cachedWhileLoading = _renderHeroStateForDateKey(dateKey, dayLabel);
+      if (cachedWhileLoading != null) return cachedWhileLoading;
+      final instantWhileLoading = _instantHeroStateForDateKey(dateKey);
+      if (instantWhileLoading != null) return instantWhileLoading;
+      final memCache = _homeDayHeroCacheByDateKey[dateKey];
+      if (memCache != null && _heroStateHasValidOutfit(memCache.state)) {
+        return _finalizeHeroState(dateKey: dateKey, state: memCache.state);
+      }
+      if (!_weatherLoaded) {
+        return _finalizeHeroState(
+          dateKey: dateKey,
+          state: _HeroTodayState(
+            vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+            outfitItems: const <_HeroOutfitItem>[],
+            source: 'loading',
+            loadingReason: 'wardrobe_or_weather_pending',
+          ),
+        );
+      }
+      // Weather ready — wait for wardrobe/preload without blanking cached hero.
+      return _finalizeHeroState(
+        dateKey: dateKey,
+        state: _HeroTodayState(
+          vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+          outfitItems: const <_HeroOutfitItem>[],
+          source: 'loading',
+          loadingReason: 'wardrobe_pending',
+        ),
       );
     }
     final latestAiSignature = _homeAiLatestSignatureByDateKey[dateKey];
@@ -1592,7 +2822,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final aiPendingForDate = _homeAiRequestInFlight.any(
       (sig) => sig.startsWith('$dateKey|'),
     );
-    if (aiCachedRec != null) {
+    if (aiCachedRec != null && aiCachedRec.items.length >= 3) {
       if (_lastAiPreservedSignatureLogged != latestAiSignature) {
         _lastAiPreservedSignatureLogged = latestAiSignature;
         debugPrint('[HOME_AI_OUTFIT] ai_result_preserved=true');
@@ -1602,21 +2832,33 @@ class _HomeScreenState extends State<HomeScreen> {
         outfitItems: aiCachedRec.items,
         source: 'ai',
       );
-      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      _writeHomeDayHeroCacheIfChanged(
+        dateKey: dateKey,
         state: state,
         weatherSignature: weatherSignature,
         wardrobeSignature: wardrobeSignature,
+        persistSource: 'ai_generated',
       );
-      return state;
+      return _finalizeHeroState(dateKey: dateKey, state: state);
     }
 
     if (aiEntry == null || aiPendingForDate) {
-      return _HeroTodayState(
-        vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
-        outfitItems: const <_HeroOutfitItem>[],
-        source: 'loading',
-        loadingReason: 'ai_pending_no_cached_ai',
+      final cachedWhilePending = _renderHeroStateForDateKey(dateKey, dayLabel);
+      if (cachedWhilePending != null) return cachedWhilePending;
+      return _finalizeHeroState(
+        dateKey: dateKey,
+        state: _HeroTodayState(
+          vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+          outfitItems: const <_HeroOutfitItem>[],
+          source: 'loading',
+          loadingReason: 'ai_pending_no_cached_ai',
+        ),
       );
+    }
+
+    if (_skipHomeImagePickForDateKey(dateKey)) {
+      final cachedBeforePick = _renderHeroStateForDateKey(dateKey, dayLabel);
+      if (cachedBeforePick != null) return cachedBeforePick;
     }
 
     const localReason = 'ai_failed_or_fallback';
@@ -1641,12 +2883,13 @@ class _HomeScreenState extends State<HomeScreen> {
         outfitItems: const <_HeroOutfitItem>[],
         source: 'local',
       );
-      _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      _writeHomeDayHeroCacheIfChanged(
+        dateKey: dateKey,
         state: state,
         weatherSignature: weatherSignature,
         wardrobeSignature: wardrobeSignature,
       );
-      return state;
+      return _finalizeHeroState(dateKey: dateKey, state: state);
     }
 
     final state = _HeroTodayState(
@@ -1656,12 +2899,14 @@ class _HomeScreenState extends State<HomeScreen> {
       outfitItems: rec.items,
       source: 'local',
     );
-    _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+    _writeHomeDayHeroCacheIfChanged(
+      dateKey: dateKey,
       state: state,
       weatherSignature: weatherSignature,
       wardrobeSignature: wardrobeSignature,
+      persistSource: 'fallback',
     );
-    return state;
+    return _finalizeHeroState(dateKey: dateKey, state: state);
   }
 
   void _maybeTriggerHomeAiRecommendation({
@@ -1678,11 +2923,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final weatherSignature = _homeWeatherSignature(weather);
     final wardrobeSignature = _wardrobeSignature(wardrobe);
     final targetDayIdx = _dayIndexForDate(date);
+    final dayLabel = targetDayIdx == 0 ? 'today' : 'tomorrow';
     if (_editedManuallyByDay[targetDayIdx] == true) {
       final manualItems =
           _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
       if (manualItems.isNotEmpty) {
-        debugPrint(
+        _logHomeAiOutfitOnce(
           '[HOME_AI_OUTFIT] skip_generate reason=user_modified_cache_hit',
         );
         return;
@@ -1691,32 +2937,45 @@ class _HomeScreenState extends State<HomeScreen> {
     final cached = _homeDayHeroCacheByDateKey[dateKey];
     if (cached != null &&
         cached.userModified &&
-        cached.weatherSignature == weatherSignature) {
-      debugPrint(
+        cached.weatherSignature == weatherSignature &&
+        _heroStateHasValidOutfit(cached.state)) {
+      _logHomeAiOutfitOnce(
         '[HOME_AI_OUTFIT] skip_generate reason=user_modified_cache_hit',
       );
       return;
     }
-    if (cached != null &&
-        cached.weatherSignature == weatherSignature &&
-        cached.wardrobeSignature == wardrobeSignature) {
+    if (_hasValidDailyOutfitForDate(
+      dateKey: dateKey,
+      weatherSignature: weatherSignature,
+      wardrobeSignature: wardrobeSignature,
+    )) {
+      _logHomeAiOutfitOnce(
+        '[HOME_AI_OUTFIT] skip_generate reason=cache_hit day=$dayLabel',
+      );
       return;
     }
     final existing = _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
     if (_isOutfitEditMode && existing.isNotEmpty) {
-      debugPrint('[HOME_AI_OUTFIT] skip reason=swap_mode_existing_outfit');
+      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=swap_mode_existing_outfit');
       return;
     }
     final forceDifferent =
         (_homeAiForceDifferentNextByDateKey[dateKey] ?? false) == true;
+    if (_generatingDateKeys.contains(dateKey)) {
+      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=generation_in_progress');
+      return;
+    }
+    if (_homeAiRequestInFlight.any((sig) => sig.startsWith('$dateKey|'))) {
+      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=generation_in_progress');
+      return;
+    }
     final aiSignature =
         '$dateKey|$weatherSignature|$wardrobeSignature|fd=${forceDifferent ? 1 : 0}|n=$_homeAiRefreshNonce';
     final excluded = <String>{};
-    final rejected = Set<String>.from(_rejectedOutfitCombinationKeysByDay[_dayIndex] ?? {});
+    final rejected =
+        Set<String>.from(_rejectedOutfitCombinationKeysByDay[targetDayIdx] ?? {});
 
-    final effectiveCurrent = _effectiveOutfitItems(
-      _editedOutfitByDay[_dayIndex] ?? const <_HeroOutfitItem>[],
-    );
+    final effectiveCurrent = _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
     for (final it in effectiveCurrent) {
       final id = (it.wardrobeItemId ?? '').trim();
       if (id.isNotEmpty) excluded.add(id);
@@ -1734,16 +2993,22 @@ class _HomeScreenState extends State<HomeScreen> {
       isPremiumUser: isPremiumUser,
     );
 
-    if (_homeAiCacheBySignature.containsKey(aiSignature)) {
+    if (_validAiRecommendationForSignature(aiSignature) != null) {
       _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
-      debugPrint('[HOME_AI_OUTFIT] skip reason=cached_signature');
+      _logHomeAiOutfitOnce(
+        '[HOME_AI_OUTFIT] skip_generate reason=cache_hit day=$dayLabel',
+      );
       return;
     }
 
-    if (_homeAiRequestInFlight.contains(aiSignature)) {
-      debugPrint('[HOME_AI_OUTFIT] skip reason=in_flight_same_signature');
-      return;
+    if (_homeAiCacheBySignature.containsKey(aiSignature)) {
+      _homeAiCacheBySignature.remove(aiSignature);
     }
+
+    _logHomeAiOutfitOnce(
+      '[HOME_AI_OUTFIT] generate reason=cache_missing day=$dayLabel',
+    );
+    _generatingDateKeys.add(dateKey);
 
     final source = _homeAiTriggerSource(
       dateKey: dateKey,
@@ -1868,6 +3133,7 @@ class _HomeScreenState extends State<HomeScreen> {
             likedOutfitKey: _likedOutfitKeyByDay[targetDayIndex],
           ),
         );
+        _precacheHomeOutfitImages(rec.items);
       } else {
         _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
         _homeAiForceDifferentNextByDateKey[dateKey] = false;
@@ -1891,6 +3157,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     } finally {
       _homeAiRequestInFlight.remove(aiSignature);
+      _generatingDateKeys.remove(dateKey);
     }
   }
 
@@ -2033,6 +3300,69 @@ class _HomeScreenState extends State<HomeScreen> {
         .toList()
       ..sort();
     return '${wardrobe.length}:${ids.join(",")}';
+  }
+
+  void _syncWardrobeSnapshotIfChanged({
+    required AsyncSnapshot<QuerySnapshot<Map<String, dynamic>>> snap,
+    required bool isPremiumUser,
+  }) {
+    if (!snap.hasData || snap.data == null) return;
+    final docs = snap.data!.docs;
+    final streamSig = '${docs.length}:${docs.map((d) => d.id).join(",")}';
+    if (streamSig == _lastWardrobeStreamSig) return;
+    final hadWardrobe = _lastWardrobeForCache.isNotEmpty;
+    _lastWardrobeStreamSig = streamSig;
+    _lastWardrobeForCache = docs.map((d) {
+      final m = Map<String, dynamic>.from(d.data());
+      m['id'] = d.id;
+      return m;
+    }).toList();
+    _lastIsPremiumUser = isPremiumUser;
+    _invalidateHomeHeroBuildCache();
+    if (!hadWardrobe && _lastWardrobeForCache.isNotEmpty) {
+      _persistedDailyHydrationDone = false;
+      _homePreloadPassCompleted = false;
+      _homePreloadRanChecks = false;
+    }
+    _debugHomeBootState(force: true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _tryScheduleHomeOutfitPreload();
+    });
+  }
+
+  _HeroTodayState _resolveHomeHero({
+    required DateTime activeDate,
+    required List<Map<String, dynamic>> wardrobe,
+    required bool isPremiumUser,
+    required bool dataReady,
+  }) {
+    final dayIdx = _dayIndexForDate(activeDate);
+    final editedSig = (_editedManuallyByDay[dayIdx] ?? false)
+        ? _heroRenderSignature(_editedOutfitByDay[dayIdx] ?? const [])
+        : '';
+    final dateKey = _dateKey(activeDate);
+    final buildKey =
+        '$dateKey|${_wardrobeSignature(wardrobe)}|$_weatherLoaded|$_homeAiRefreshNonce|ready=$dataReady|edit=$editedSig';
+    final cachedKey = _cachedHeroBuildKeyByDateKey[dateKey];
+    final cachedState = _cachedHeroBuildStateByDateKey[dateKey];
+    if (cachedKey == buildKey && cachedState != null) {
+      return cachedState;
+    }
+    final hero = _buildTodayHero(
+      date: activeDate,
+      wardrobe: wardrobe,
+      isPremiumUser: isPremiumUser,
+      dataReady: dataReady,
+    );
+    if (hero.source != 'loading' || hero.outfitItems.length >= 3) {
+      _cachedHeroBuildKeyByDateKey[dateKey] = buildKey;
+      _cachedHeroBuildStateByDateKey[dateKey] = hero;
+    } else {
+      _cachedHeroBuildKeyByDateKey.remove(dateKey);
+      _cachedHeroBuildStateByDateKey.remove(dateKey);
+    }
+    return hero;
   }
 
   Map<String, dynamic> _homeAiWeatherContext(_LocalWeather weather) {
@@ -2221,12 +3551,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final brandRaw = (raw['brand'] ?? '').toString().trim();
     final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
     final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final dateKey = _currentHeroBuildDateKey;
+    final allowPick =
+        dateKey == null || _allowHomeImagePickForBuild(dateKey);
     return _HeroOutfitItem(
       type: type,
       icon: _heroIconForType(type),
       label: p.label,
       brandLine: brandRaw.isNotEmpty ? brandRaw : null,
-      imageUrl: _heroWardrobeDisplayImageUrl(raw),
+      imageUrl: dateKey == null
+          ? _heroWardrobeDisplayImageUrl(raw, allowPick: allowPick)
+          : _heroWardrobeDisplayImageUrlForHome(
+              raw,
+              dateKey: dateKey,
+              allowPick: allowPick,
+            ),
       categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
       subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
       wardrobeItemId: id.isEmpty ? null : id,
@@ -2266,12 +3605,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
     final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
     final wid = OutfitGenerationService.wardrobeItemId(raw);
+    final dateKey = _currentHeroBuildDateKey;
+    final allowPick =
+        dateKey == null || _allowHomeImagePickForBuild(dateKey);
     return _HeroOutfitItem(
       type: type,
       icon: _heroIconForType(type),
       label: _heroLabelForWardrobeItem(raw, fallback: _heroFallbackLabelForType(type)),
       brandLine: brandRaw.isNotEmpty ? brandRaw : null,
-      imageUrl: _heroWardrobeDisplayImageUrl(raw),
+      imageUrl: dateKey == null
+          ? _heroWardrobeDisplayImageUrl(raw, allowPick: allowPick)
+          : _heroWardrobeDisplayImageUrlForHome(
+              raw,
+              dateKey: dateKey,
+              allowPick: allowPick,
+            ),
       categoryKey: categoryKey.isNotEmpty ? categoryKey : null,
       subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
       wardrobeItemId: wid.isEmpty ? null : wid,
@@ -2412,52 +3760,238 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  /// Visual experiment: outfit (~65%) + daily briefing (~35%) on one row; action bar below.
-  Widget _heroRowExperiment({
-    required BuildContext context,
-    required _HeroBannerVM vm,
+  ({
+    List<_HeroOutfitItem> displayItems,
+    List<_HeroOutfitItem> effectiveItems,
+    String renderHeroSource,
+  }) _getHeroPanelContent({
+    required int panelDayIndex,
+    required String dayLabel,
     required DateTime activeDate,
-    required bool cardIsTomorrow,
+    required _HeroTodayState hero,
+    String? heroLoadingReason,
+  }) {
+    final sig = _heroPanelContentSignature(
+      panelDayIndex: panelDayIndex,
+      hero: hero,
+      activeDate: activeDate,
+    );
+    final cachedSig = _cachedHeroPanelContentSigByDayIndex[panelDayIndex];
+    final cached = _cachedHeroPanelContentByDayIndex[panelDayIndex];
+    if (cachedSig == sig && cached != null) {
+      return cached;
+    }
+    final todayChanged = panelDayIndex == 0;
+    final tomorrowChanged = panelDayIndex == 1;
+    _logHomeRebuild(
+      reason: 'panel_content_refresh',
+      todayChanged: todayChanged,
+      tomorrowChanged: tomorrowChanged,
+    );
+    final content = _resolveHeroPanelContent(
+      panelDayIndex: panelDayIndex,
+      dayLabel: dayLabel,
+      activeDate: activeDate,
+      outfitItems: hero.outfitItems,
+      heroSource: hero.source,
+      heroLoadingReason: heroLoadingReason ?? hero.loadingReason,
+    );
+    _cachedHeroPanelContentSigByDayIndex[panelDayIndex] = sig;
+    _cachedHeroPanelContentByDayIndex[panelDayIndex] = content;
+    return content;
+  }
+
+  ({
+    List<_HeroOutfitItem> displayItems,
+    List<_HeroOutfitItem> effectiveItems,
+    String renderHeroSource,
+  }) _resolveHeroPanelContent({
+    required int panelDayIndex,
+    required String dayLabel,
+    required DateTime activeDate,
     required List<_HeroOutfitItem> outfitItems,
-    required _LocalWeather w,
     required String heroSource,
     String? heroLoadingReason,
   }) {
-    _editSpotlightVm = vm;
-    _editSpotlightWeather = w;
-    _editSpotlightIsTomorrow = cardIsTomorrow;
-    _syncEditableOutfitFromSource(outfitItems);
-    final effectiveItems = _effectiveOutfitItems(outfitItems);
-    final likeActive = _isCurrentOutfitLiked(effectiveItems);
-    final renderedNames = effectiveItems.map((e) => e.label).join(', ');
-    final renderLogKey = '$heroSource|${_heroRenderSignature(effectiveItems)}';
-    if (_lastHeroRenderLogKey != renderLogKey) {
-      _lastHeroRenderLogKey = renderLogKey;
-      final renderSource =
-          (_editedManuallyByDay[_dayIndex] ?? false) ? 'edited' : heroSource;
-      if (heroSource == 'loading' && heroLoadingReason != null) {
-        debugPrint('[HOME_HERO_RENDER] source=loading reason=$heroLoadingReason');
+    final dateKey = _dateKey(activeDate);
+
+    List<_HeroOutfitItem> effectiveItems;
+    final isManual = _editedManuallyByDay[panelDayIndex] ?? false;
+    final editedItems = _editedOutfitByDay[panelDayIndex];
+    final cacheEntry = _homeDayHeroCacheByDateKey[dateKey];
+    if (isManual &&
+        editedItems != null &&
+        editedItems.length >= 3 &&
+        _heroOutfitTilesHaveVisibleImages(editedItems)) {
+      effectiveItems = List<_HeroOutfitItem>.from(editedItems);
+    } else if (cacheEntry?.userModified == true &&
+        _heroStateHasValidOutfit(cacheEntry!.state)) {
+      effectiveItems = List<_HeroOutfitItem>.from(cacheEntry.state.outfitItems);
+    } else if (_heroOutfitTilesHaveVisibleImages(outfitItems) &&
+        outfitItems.length >= 3) {
+      _syncEditableOutfitFromSourceIfNeeded(
+        outfitItems,
+        dayIndex: panelDayIndex,
+      );
+      effectiveItems = _effectiveOutfitItems(
+        outfitItems,
+        dayIndex: panelDayIndex,
+      );
+    } else {
+      final cachedRender =
+          _daySwitchPinnedHeroByDateKey[dateKey] ??
+              _renderHeroStateForDateKey(dateKey, dayLabel);
+      if (cachedRender != null &&
+          _heroOutfitTilesHaveVisibleImages(cachedRender.outfitItems)) {
+        effectiveItems = cachedRender.outfitItems;
       } else {
-        debugPrint('[HOME_HERO_RENDER] source=$renderSource names=$renderedNames');
+        _syncEditableOutfitFromSourceIfNeeded(
+          outfitItems,
+          dayIndex: panelDayIndex,
+        );
+        effectiveItems = _effectiveOutfitItems(
+          outfitItems,
+          dayIndex: panelDayIndex,
+        );
+        if (!_heroOutfitTilesHaveVisibleImages(effectiveItems)) {
+          final hydrated = _homeHydratedOutfitItemsByDateKey[dateKey];
+          if (hydrated != null && hydrated.length >= 3) {
+            effectiveItems = hydrated;
+            _logHomeHeroUsingCachedImagesOnce(dayLabel);
+          }
+        }
       }
     }
+
+    final displayItems = _heroOutfitTilesHaveVisibleImages(effectiveItems)
+        ? effectiveItems
+        : _heroItemsFromCachedUrlsOnly(
+            dateKey: dateKey,
+            dayLabel: dayLabel,
+            items: effectiveItems,
+          );
+    final hasVisibleImages = _heroOutfitTilesHaveVisibleImages(displayItems);
+    final renderHeroSource = hasVisibleImages && heroSource == 'loading'
+        ? (cacheEntry?.state.source ?? 'cached')
+        : heroSource;
+    final renderedNames = effectiveItems.map((e) => e.label).join(', ');
+    final renderLogKey = '$renderHeroSource|${_heroRenderSignature(effectiveItems)}';
+    if (_lastHeroRenderLogKeyByDayLabel[dayLabel] != renderLogKey) {
+      _lastHeroRenderLogKeyByDayLabel[dayLabel] = renderLogKey;
+      final renderSource = (_editedManuallyByDay[panelDayIndex] ?? false)
+          ? 'edited'
+          : renderHeroSource;
+      if (renderHeroSource == 'loading' &&
+          heroLoadingReason != null &&
+          !hasVisibleImages) {
+        debugPrint(
+          '[HOME_HERO_RENDER] day=$dayLabel source=loading reason=$heroLoadingReason',
+        );
+      } else if (renderHeroSource != 'loading') {
+        debugPrint(
+          '[HOME_HERO_RENDER] day=$dayLabel source=$renderSource names=$renderedNames',
+        );
+      }
+    }
+    return (
+      displayItems: displayItems,
+      effectiveItems: effectiveItems,
+      renderHeroSource: renderHeroSource,
+    );
+  }
+
+  Widget _buildHeroDayPanel({
+    required int panelDayIndex,
+    required String heroPanelId,
+    required _HeroBannerVM vm,
+    required DateTime activeDate,
+    required bool cardIsTomorrow,
+    required _LocalWeather w,
+    required ({
+      List<_HeroOutfitItem> displayItems,
+      List<_HeroOutfitItem> effectiveItems,
+      String renderHeroSource,
+    }) resolved,
+  }) {
+    if (panelDayIndex == _dayIndex) {
+      _editSpotlightVm = vm;
+      _editSpotlightWeather = w;
+      _editSpotlightIsTomorrow = cardIsTomorrow;
+    }
+    return _HomeHeroDayPanel(
+      panelDayIndex: panelDayIndex,
+      selectedDayIndex: _dayIndex,
+      heroPanelId: heroPanelId,
+      onChangeDay: _setDayIndex,
+      vm: vm,
+      weather: w,
+      isTomorrow: cardIsTomorrow,
+      displayItems: resolved.displayItems,
+      loadingMode:
+          resolved.renderHeroSource == 'loading' && resolved.displayItems.isEmpty,
+      outfitSpotlightTargetKey:
+          panelDayIndex == _dayIndex ? _editSpotlightTargetKey : null,
+      outfitSpotlightLink: panelDayIndex == _dayIndex ? _editSpotlightLink : null,
+    );
+  }
+
+  /// Both hero panels stay mounted; Dnes/Zajtra only changes [IndexedStack] index.
+  Widget _buildDualHeroRow({
+    required BuildContext context,
+    required _HeroTodayState todayHero,
+    required _HeroTodayState tomorrowHero,
+    required DateTime todayDate,
+    required DateTime tomorrowDate,
+  }) {
+    final todayResolved = _getHeroPanelContent(
+      panelDayIndex: 0,
+      dayLabel: 'today',
+      activeDate: todayDate,
+      hero: todayHero,
+      heroLoadingReason: todayHero.loadingReason,
+    );
+    final tomorrowResolved = _getHeroPanelContent(
+      panelDayIndex: 1,
+      dayLabel: 'tomorrow',
+      activeDate: tomorrowDate,
+      hero: tomorrowHero,
+      heroLoadingReason: tomorrowHero.loadingReason,
+    );
+    final activeResolved = _dayIndex == 0 ? todayResolved : tomorrowResolved;
+    final likeActive = _isCurrentOutfitLiked(activeResolved.effectiveItems);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _UnifiedHeroSurface(
-          dayIndex: _dayIndex,
-          onChangeDay: _setDayIndex,
-          vm: vm,
-          weather: w,
-          isTomorrow: cardIsTomorrow,
-          outfitItems: effectiveItems,
-          loadingMode: heroSource == 'loading',
-          editMode: false,
-          focusedType: null,
-          onItemTap: null,
-          onRemoveTap: null,
-          outfitSpotlightTargetKey: _editSpotlightTargetKey,
-          outfitSpotlightLink: _editSpotlightLink,
+        IndexedStack(
+          index: _dayIndex,
+          sizing: StackFit.passthrough,
+          children: [
+            KeyedSubtree(
+              key: const ValueKey('home_hero_today'),
+              child: _buildHeroDayPanel(
+                panelDayIndex: 0,
+                heroPanelId: 'today',
+                vm: todayHero.vm,
+                activeDate: todayDate,
+                cardIsTomorrow: false,
+                w: _weatherForDate(todayDate),
+                resolved: todayResolved,
+              ),
+            ),
+            KeyedSubtree(
+              key: const ValueKey('home_hero_tomorrow'),
+              child: _buildHeroDayPanel(
+                panelDayIndex: 1,
+                heroPanelId: 'tomorrow',
+                vm: tomorrowHero.vm,
+                activeDate: tomorrowDate,
+                cardIsTomorrow: true,
+                w: _weatherForDate(tomorrowDate),
+                resolved: tomorrowResolved,
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 22),
         _HeroOutfitActionBar(
@@ -2475,9 +4009,9 @@ class _HomeScreenState extends State<HomeScreen> {
               _exitOutfitEditMode();
               return;
             }
-            await _handleSwapPieceTap(context, effectiveItems);
+            await _handleSwapPieceTap(context, activeResolved.effectiveItems);
           },
-          onLike: () => _handleLikeTap(effectiveItems),
+          onLike: () => _handleLikeTap(activeResolved.effectiveItems),
           likeActive: likeActive,
           likePulseTick: _likePulseTick,
         ),
@@ -2517,6 +4051,81 @@ class _HomeScreenState extends State<HomeScreen> {
               : const SizedBox(
                   key: ValueKey('like_feedback_hidden'),
                 ),
+        ),
+      ],
+    );
+  }
+
+  /// Guest / signed-out single-day hero (no dual cache).
+  Widget _heroRowExperiment({
+    required BuildContext context,
+    required _HeroBannerVM vm,
+    required DateTime activeDate,
+    required bool cardIsTomorrow,
+    required List<_HeroOutfitItem> outfitItems,
+    required _LocalWeather w,
+    required String heroSource,
+    String? heroLoadingReason,
+  }) {
+    final panelDayIndex = cardIsTomorrow ? 1 : 0;
+    final heroPanelId = cardIsTomorrow ? 'tomorrow' : 'today';
+    final hero = _HeroTodayState(
+      vm: vm,
+      outfitItems: outfitItems,
+      source: heroSource,
+      loadingReason: heroLoadingReason,
+    );
+    final resolved = _getHeroPanelContent(
+      panelDayIndex: panelDayIndex,
+      dayLabel: heroPanelId,
+      activeDate: activeDate,
+      hero: hero,
+      heroLoadingReason: heroLoadingReason,
+    );
+    _editSpotlightVm = vm;
+    _editSpotlightWeather = w;
+    _editSpotlightIsTomorrow = cardIsTomorrow;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _UnifiedHeroSurface(
+          dayIndex: _dayIndex,
+          heroDayKey: heroPanelId,
+          onChangeDay: _setDayIndex,
+          vm: vm,
+          weather: w,
+          isTomorrow: cardIsTomorrow,
+          outfitItems: resolved.displayItems,
+          loadingMode:
+              resolved.renderHeroSource == 'loading' && resolved.displayItems.isEmpty,
+          editMode: false,
+          focusedType: null,
+          onItemTap: null,
+          onRemoveTap: null,
+          outfitSpotlightTargetKey: _editSpotlightTargetKey,
+          outfitSpotlightLink: _editSpotlightLink,
+        ),
+        const SizedBox(height: 22),
+        _HeroOutfitActionBar(
+          onNewOutfit: () {
+            if (_newOutfitGenerating && !_isOutfitEditMode) return;
+            if (_isOutfitEditMode) {
+              _exitOutfitEditMode();
+            } else {
+              unawaited(_handleNewOutfitPressed());
+            }
+          },
+          newOutfitLoading: _newOutfitGenerating && !_isOutfitEditMode,
+          onSwapPiece: () async {
+            if (_isOutfitEditMode) {
+              _exitOutfitEditMode();
+              return;
+            }
+            await _handleSwapPieceTap(context, resolved.effectiveItems);
+          },
+          onLike: () => _handleLikeTap(resolved.effectiveItems),
+          likeActive: _isCurrentOutfitLiked(resolved.effectiveItems),
+          likePulseTick: _likePulseTick,
         ),
       ],
     );
@@ -2693,11 +4302,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _swapLastSuggestedItemIdByTypeByDay.putIfAbsent(_dayIndex, () => {})[type] =
           newId;
     }
+    final replaced = current[idx];
     current[idx] = replacement;
-    _setEditedItems(current);
+    _commitHomeOutfitItemReplacement(
+      wearType: type,
+      newItem: replacement,
+      updatedOutfit: current,
+      replacedItem: replaced,
+    );
     debugPrint('[HOME_SWAP] accept replacement oldId=$oldId newId=$newId');
-    debugPrint('[HOME_SWAP] updated_edited_outfit=true');
-    debugPrint('[HOME_SWAP] persisted_to_home=true dayIndex=$_dayIndex');
     debugPrint('[HOME_SWAP] marked_manual_edit=true');
     debugPrint('[HOME_SWAP] prevented_ai_restore=true');
   }
@@ -2971,23 +4584,26 @@ class _HomeScreenState extends State<HomeScreen> {
                                     final oldId = idx >= 0
                                         ? (current[idx].wardrobeItemId ?? '').trim()
                                         : '';
+                                    final replaced =
+                                        idx >= 0 ? current[idx] : null;
                                     if (idx >= 0) {
                                       current[idx] = item;
                                     } else {
                                       current.add(item);
                                     }
                                     final newId = (item.wardrobeItemId ?? '').trim();
-                                    _setEditedItems(current);
+                                    _commitHomeOutfitItemReplacement(
+                                      wearType: type,
+                                      newItem: item,
+                                      updatedOutfit: current,
+                                      replacedItem: replaced,
+                                    );
                                     if (newId.isNotEmpty) {
                                       _swapLastSuggestedItemIdByTypeByDay
                                           .putIfAbsent(_dayIndex, () => {})[type] = newId;
                                     }
                                     debugPrint(
                                       '[HOME_SWAP] accept replacement oldId=$oldId newId=$newId',
-                                    );
-                                    debugPrint('[HOME_SWAP] updated_edited_outfit=true');
-                                    debugPrint(
-                                      '[HOME_SWAP] persisted_to_home=true dayIndex=$_dayIndex',
                                     );
                                     debugPrint('[HOME_SWAP] marked_manual_edit=true');
                                     debugPrint('[HOME_SWAP] prevented_ai_restore=true');
@@ -3021,6 +4637,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                             child: ColoredBox(
                                               color: HomeLuxuryPalette.bgMid.withOpacity(0.34),
                                               child: _HeroOutfitImageView(
+                                                heroDayKey: 'manual_picker',
                                                 imageUrl: item.imageUrl,
                                                 fallbackIcon: item.icon,
                                                 wearType: item.type,
@@ -3083,6 +4700,7 @@ class _HomeScreenState extends State<HomeScreen> {
         height: size.height,
         child: _UnifiedHeroSurface(
           dayIndex: _dayIndex,
+          heroDayKey: _editSpotlightIsTomorrow ? 'tomorrow' : 'today',
           onChangeDay: _setDayIndex,
           vm: vm,
           weather: weather,
@@ -3219,59 +4837,67 @@ class _HomeScreenState extends State<HomeScreen> {
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _wardrobeStream(user.uid),
             builder: (context, snap) {
-              final docs = snap.data?.docs ?? const [];
-              final wardrobe = docs.map((d) {
-                final m = Map<String, dynamic>.from(d.data());
-                m['id'] = d.id;
-                return m;
-              }).toList();
-              _lastWardrobeForCache = wardrobe;
-              final w = _weatherForDate(activeDate);
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                unawaited(() async {
-                  if (!mounted) return;
-                  await _ensurePersistedDailyOutfitsHydrated(wardrobe: wardrobe);
-                  if (!mounted) return;
-                  if (_persistedDailyHydrationDone) {
-                    setState(() {});
-                  }
-                  _maybeTriggerHomeAiRecommendation(
-                    date: activeDate,
-                    wardrobe: wardrobe,
-                    weather: w,
-                    isPremiumUser: isPremiumUser,
-                  );
-                }());
-              });
-              final dataReady = _weatherLoaded &&
-                  userSnap.connectionState != ConnectionState.waiting &&
-                  snap.connectionState != ConnectionState.waiting;
-              final hero = _buildTodayHero(
-                date: activeDate,
+              _syncWardrobeSnapshotIfChanged(
+                snap: snap,
+                isPremiumUser: isPremiumUser,
+              );
+              final wardrobe = _lastWardrobeForCache;
+              final todayDateKey = _dateKey(todayDate);
+              final tomorrowDateKey = _dateKey(tomorrowDate);
+              final hasCachedOutfitToday =
+                  (_homeDayHeroCacheByDateKey[todayDateKey] != null &&
+                      _heroStateHasValidOutfit(
+                        _homeDayHeroCacheByDateKey[todayDateKey]!.state,
+                      )) ||
+                  ((_homeHydratedOutfitItemsByDateKey[todayDateKey]?.length ??
+                          0) >=
+                      3);
+              final hasCachedOutfitTomorrow =
+                  (_homeDayHeroCacheByDateKey[tomorrowDateKey] != null &&
+                      _heroStateHasValidOutfit(
+                        _homeDayHeroCacheByDateKey[tomorrowDateKey]!.state,
+                      )) ||
+                  ((_homeHydratedOutfitItemsByDateKey[tomorrowDateKey]
+                              ?.length ??
+                          0) >=
+                      3);
+              final wardrobeReady = wardrobe.isNotEmpty || snap.hasData;
+              final dataReadyToday = _weatherLoaded &&
+                  (wardrobeReady || hasCachedOutfitToday);
+              final dataReadyTomorrow = _weatherLoaded &&
+                  (wardrobeReady || hasCachedOutfitTomorrow);
+              _debugHomeBootState();
+              final todayHero = _resolveHomeHero(
+                activeDate: todayDate,
                 wardrobe: wardrobe,
                 isPremiumUser: isPremiumUser,
-                dataReady: dataReady,
+                dataReady: dataReadyToday,
               );
-              final vm = _HeroBannerVM(description: hero.vm.description);
+              final tomorrowHero = _resolveHomeHero(
+                activeDate: tomorrowDate,
+                wardrobe: wardrobe,
+                isPremiumUser: isPremiumUser,
+                dataReady: dataReadyTomorrow,
+              );
+              final activeHero =
+                  _dayIndex == 0 ? todayHero : tomorrowHero;
+              final vm = _HeroBannerVM(description: activeHero.vm.description);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   greetingHeader(),
                   const SizedBox(height: 26),
-                  _heroRowExperiment(
+                  _buildDualHeroRow(
                     context: context,
-                    vm: vm,
-                    activeDate: activeDate,
-                    cardIsTomorrow: _isTomorrow,
-                    outfitItems: hero.outfitItems,
-                    w: w,
-                    heroSource: hero.source,
-                    heroLoadingReason: hero.loadingReason,
+                    todayHero: todayHero,
+                    tomorrowHero: tomorrowHero,
+                    todayDate: todayDate,
+                    tomorrowDate: tomorrowDate,
                   ),
                   _homeSectionsAfterHero(
                     context: context,
                     vm: vm,
-                    outfitItems: hero.outfitItems,
+                    outfitItems: activeHero.outfitItems,
                   ),
                 ],
               );
@@ -3945,9 +5571,59 @@ double _heroSharedBodyHeight(BuildContext context) {
 /// =======================
 /// UNIFIED HERO (outfit + briefing)
 /// =======================
+/// Mounted hero panel for one day — keeps [IndexedStack] child stable.
+class _HomeHeroDayPanel extends StatelessWidget {
+  const _HomeHeroDayPanel({
+    required this.panelDayIndex,
+    required this.selectedDayIndex,
+    required this.heroPanelId,
+    required this.onChangeDay,
+    required this.vm,
+    required this.weather,
+    required this.isTomorrow,
+    required this.displayItems,
+    required this.loadingMode,
+    this.outfitSpotlightTargetKey,
+    this.outfitSpotlightLink,
+  });
+
+  final int panelDayIndex;
+  final int selectedDayIndex;
+  final String heroPanelId;
+  final ValueChanged<int> onChangeDay;
+  final _HeroBannerVM vm;
+  final _LocalWeather weather;
+  final bool isTomorrow;
+  final List<_HeroOutfitItem> displayItems;
+  final bool loadingMode;
+  final GlobalKey? outfitSpotlightTargetKey;
+  final LayerLink? outfitSpotlightLink;
+
+  @override
+  Widget build(BuildContext context) {
+    return _UnifiedHeroSurface(
+      dayIndex: selectedDayIndex,
+      heroDayKey: heroPanelId,
+      onChangeDay: onChangeDay,
+      vm: vm,
+      weather: weather,
+      isTomorrow: isTomorrow,
+      outfitItems: displayItems,
+      loadingMode: loadingMode,
+      editMode: false,
+      focusedType: null,
+      onItemTap: null,
+      onRemoveTap: null,
+      outfitSpotlightTargetKey: outfitSpotlightTargetKey,
+      outfitSpotlightLink: outfitSpotlightLink,
+    );
+  }
+}
+
 class _UnifiedHeroSurface extends StatelessWidget {
   const _UnifiedHeroSurface({
     required this.dayIndex,
+    required this.heroDayKey,
     required this.onChangeDay,
     required this.vm,
     required this.weather,
@@ -3963,6 +5639,7 @@ class _UnifiedHeroSurface extends StatelessWidget {
   });
 
   final int dayIndex;
+  final String heroDayKey;
   final ValueChanged<int> onChangeDay;
   final _HeroBannerVM vm;
   final _LocalWeather weather;
@@ -3984,52 +5661,39 @@ class _UnifiedHeroSurface extends StatelessWidget {
     final radius = BorderRadius.circular(20);
     final sharedBodyH = _heroSharedBodyHeight(context);
 
-    final outfitSwitcher = AnimatedSwitcher(
-      duration: const Duration(milliseconds: 0),
-      switchInCurve: Curves.easeOutCubic,
-      switchOutCurve: Curves.easeInCubic,
-      transitionBuilder: (child, anim) {
-        final slide = Tween<Offset>(
-          begin: const Offset(0.02, 0),
-          end: Offset.zero,
-        ).animate(anim);
-        return FadeTransition(
-          opacity: anim,
-          child: SlideTransition(position: slide, child: child),
-        );
-      },
-      child: KeyedSubtree(
-        key: ValueKey(isTomorrow ? 'tomorrow' : 'today'),
-        child: loadingMode
-            ? const SizedBox.expand()
-            : !hasOutfitTiles
-                ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text(
-                    vm.description,
-                    maxLines: 6,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color:
-                          HomeLuxuryPalette.textSecondary.withOpacity(0.92),
-                      fontSize: 11.5,
-                      height: 1.35,
-                    ),
-                  ),
-                ),
-              )
-            : _HeroOutfitTilesGrid(
-                items: outfitItems,
-                compact: compact,
-                editMode: editMode,
-                focusedType: focusedType,
-                onItemTap: onItemTap,
-                onRemoveTap: onRemoveTap,
-              ),
-      ),
-    );
+    final Widget outfitBody;
+    if (hasOutfitTiles) {
+      outfitBody = _HeroOutfitTilesGrid(
+        key: ValueKey('home_hero_grid_$heroDayKey'),
+        heroDayKey: heroDayKey,
+        items: outfitItems,
+        compact: compact,
+        editMode: editMode,
+        focusedType: focusedType,
+        onItemTap: onItemTap,
+        onRemoveTap: onRemoveTap,
+      );
+    } else if (loadingMode) {
+      outfitBody = const SizedBox.expand();
+    } else {
+      outfitBody = Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
+            vm.description,
+            maxLines: 6,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: HomeLuxuryPalette.textSecondary.withOpacity(0.92),
+              fontSize: 11.5,
+              height: 1.35,
+            ),
+          ),
+        ),
+      );
+    }
+    final outfitSwitcher = outfitBody;
 
     /// Matches [_HeroSegmentedDay] `compact` height — keep synced with briefing `_kEmbeddedToggleBand`.
     const segmentedToggleBandHeight = 42.0;
@@ -4681,6 +6345,7 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                                       child: ColoredBox(
                                         color: HomeLuxuryPalette.bgMid.withOpacity(0.34),
                                         child: _HeroOutfitImageView(
+                                          heroDayKey: 'manual_picker',
                                           imageUrl: item.imageUrl,
                                           fallbackIcon: item.icon,
                                           wearType: item.type,
@@ -5136,6 +6801,7 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 430, maxHeight: 420),
                 child: _HeroOutfitTilesGrid(
+                  heroDayKey: 'composer_preview',
                   items: _items,
                   compact: true,
                   imageScaleMultiplier: imageScale,
@@ -5179,6 +6845,7 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
             child: ConstrainedBox(
               constraints: const BoxConstraints(maxWidth: 430, maxHeight: 420),
               child: _HeroOutfitTilesGrid(
+                heroDayKey: 'composer_preview',
                 items: _items,
                 compact: true,
                 imageScaleMultiplier: imageScale,
@@ -6373,7 +8040,21 @@ List<_HeroOutfitItem> _orderedHeroOutfitItems(List<_HeroOutfitItem> items) {
   return orderedItems;
 }
 
+String _heroOutfitVisualSlotKey(String dayPrefix, _HeroWearType type) {
+  switch (type) {
+    case _HeroWearType.top:
+      return '${dayPrefix}_top_0';
+    case _HeroWearType.bottom:
+      return '${dayPrefix}_bottom_0';
+    case _HeroWearType.shoes:
+      return '${dayPrefix}_shoes_0';
+    case _HeroWearType.outerwear:
+      return '${dayPrefix}_outerwear_0';
+  }
+}
+
 class _HeroOutfitTilesGrid extends StatelessWidget {
+  final String heroDayKey;
   final List<_HeroOutfitItem> items;
   final bool compact;
   final double imageScaleMultiplier;
@@ -6389,6 +8070,8 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
   final ValueChanged<_HeroOutfitItem>? onRemoveTap;
 
   const _HeroOutfitTilesGrid({
+    super.key,
+    required this.heroDayKey,
     required this.items,
     this.compact = false,
     this.imageScaleMultiplier = 1.0,
@@ -6508,19 +8191,30 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
         final heightBounded =
             maxH.isFinite && maxH < double.infinity && maxH > 1;
 
-        Widget tile(int i) => _HeroOutfitTileCard(
-              item: display[i],
+        Widget tile(int i) {
+          final item = display[i];
+          final slotKey = _heroOutfitVisualSlotKey(heroDayKey, item.type);
+          return _HeroOutfitTileCard(
+              heroDayKey: heroDayKey,
+              visualSlotKey: slotKey,
+              item: item,
               compact: compact,
               imageScaleMultiplier: imageScaleMultiplier,
               recreatedShoeScaleBoost: recreatedShoeScaleBoost,
               editMode: editMode,
               selected: focusedType == null || focusedType == display[i].type,
               onTap: onItemTap == null ? null : () => onItemTap!(display[i]),
-              onRemoveTap: onRemoveTap == null ? null : () => onRemoveTap!(display[i]),
+              onRemoveTap: onRemoveTap == null ? null : () => onRemoveTap!(item),
             );
+        }
 
-        Widget tileFill(int i) => _HeroOutfitTileCard(
-              item: display[i],
+        Widget tileFill(int i) {
+          final item = display[i];
+          final slotKey = _heroOutfitVisualSlotKey(heroDayKey, item.type);
+          return _HeroOutfitTileCard(
+              heroDayKey: heroDayKey,
+              visualSlotKey: slotKey,
+              item: item,
               compact: compact,
               imageScaleMultiplier: imageScaleMultiplier,
               recreatedShoeScaleBoost: recreatedShoeScaleBoost,
@@ -6528,8 +8222,9 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
               editMode: editMode,
               selected: focusedType == null || focusedType == display[i].type,
               onTap: onItemTap == null ? null : () => onItemTap!(display[i]),
-              onRemoveTap: onRemoveTap == null ? null : () => onRemoveTap!(display[i]),
+              onRemoveTap: onRemoveTap == null ? null : () => onRemoveTap!(item),
             );
+        }
 
         if (n == 0) {
           return const SizedBox.shrink();
@@ -6539,61 +8234,53 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
         // Keeps the outfit compact and fully visible in shared hero body.
         if (n == 3 && heightBounded && !disableBoundedScroll) {
           final rowGap = (vGap * 0.92).clamp(4.0, 12.0);
-          return AnimatedSize(
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeOutCubic,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: tileFill(0)),
-                      SizedBox(width: hGap),
-                      Expanded(child: tileFill(1)),
-                    ],
-                  ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileFill(0)),
+                    SizedBox(width: hGap),
+                    Expanded(child: tileFill(1)),
+                  ],
                 ),
-                SizedBox(height: rowGap),
-                Expanded(child: tileFill(2)),
-              ],
-            ),
+              ),
+              SizedBox(height: rowGap),
+              Expanded(child: tileFill(2)),
+            ],
           );
         }
 
         // 2×2 fills the shared hero body; equal row heights; no shrink-wrap grid height.
         if (n == 4 && heightBounded && !disableBoundedScroll) {
           final rowGap = vGap + 4;
-          return AnimatedSize(
-            duration: const Duration(milliseconds: 260),
-            curve: Curves.easeOutCubic,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: tileFill(0)),
-                      SizedBox(width: hGap),
-                      Expanded(child: tileFill(1)),
-                    ],
-                  ),
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileFill(0)),
+                    SizedBox(width: hGap),
+                    Expanded(child: tileFill(1)),
+                  ],
                 ),
-                SizedBox(height: rowGap),
-                Expanded(
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Expanded(child: tileFill(2)),
-                      SizedBox(width: hGap),
-                      Expanded(child: tileFill(3)),
-                    ],
-                  ),
+              ),
+              SizedBox(height: rowGap),
+              Expanded(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(child: tileFill(2)),
+                    SizedBox(width: hGap),
+                    Expanded(child: tileFill(3)),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         }
 
@@ -6757,6 +8444,9 @@ String _normalizedScaleToken(String raw) {
 
 class _HeroOutfitTileCard extends StatelessWidget {
   const _HeroOutfitTileCard({
+    super.key,
+    required this.heroDayKey,
+    required this.visualSlotKey,
     required this.item,
     this.compact = false,
     this.imageScaleMultiplier = 1.0,
@@ -6768,6 +8458,8 @@ class _HeroOutfitTileCard extends StatelessWidget {
     this.onRemoveTap,
   });
 
+  final String heroDayKey;
+  final String visualSlotKey;
   final _HeroOutfitItem item;
   final bool compact;
   final double imageScaleMultiplier;
@@ -6786,56 +8478,74 @@ class _HeroOutfitTileCard extends StatelessWidget {
     final innerR = compact ? 14.0 : 14.0;
     final pad = compact ? 5.0 : 5.0;
 
-    final core = AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      padding: EdgeInsets.all(pad),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(outerR),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            HomeLuxuryPalette.surface.withOpacity(0.34),
-            HomeLuxuryPalette.surfaceSoft.withOpacity(0.14),
-          ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.14),
-            blurRadius: 12,
-            offset: const Offset(0, 6),
-          ),
-          if (editMode)
-            BoxShadow(
-              color: HomeLuxuryPalette.accent.withOpacity(selected ? 0.24 : 0.12),
-              blurRadius: selected ? 20 : 14,
-              spreadRadius: 0,
-            ),
+    Widget heroTileImage() {
+      return _HeroOutfitImageView(
+        heroDayKey: heroDayKey,
+        imageUrl: item.imageUrl,
+        wardrobeItemId: item.wardrobeItemId,
+        visualSlotKey: visualSlotKey,
+        fallbackIcon: item.icon,
+        wearType: item.type,
+        categoryKey: item.categoryKey,
+        subCategoryKey: item.subCategoryKey,
+        itemLabel: item.label,
+        compact: compact,
+        imageScaleMultiplier: imageScaleMultiplier,
+        recreatedShoeScaleBoost: recreatedShoeScaleBoost,
+        showProcessingBadge: item.imageProcessing,
+      );
+    }
+
+    final tileDecoration = BoxDecoration(
+      borderRadius: BorderRadius.circular(outerR),
+      gradient: LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [
+          HomeLuxuryPalette.surface.withOpacity(0.34),
+          HomeLuxuryPalette.surfaceSoft.withOpacity(0.14),
         ],
-        border: Border.all(
-          color: editMode
-              ? HomeLuxuryPalette.accent.withOpacity(selected ? 0.34 : 0.12)
-              : Colors.transparent,
-          width: editMode ? 1.1 : 0,
-        ),
       ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(innerR),
-        child: _HeroOutfitImageView(
-          imageUrl: item.imageUrl,
-          fallbackIcon: item.icon,
-          wearType: item.type,
-          categoryKey: item.categoryKey,
-          subCategoryKey: item.subCategoryKey,
-          itemLabel: item.label,
-          compact: compact,
-          imageScaleMultiplier: imageScaleMultiplier,
-          recreatedShoeScaleBoost: recreatedShoeScaleBoost,
-          showProcessingBadge: item.imageProcessing,
+      boxShadow: [
+        BoxShadow(
+          color: Colors.black.withOpacity(0.14),
+          blurRadius: 12,
+          offset: const Offset(0, 6),
         ),
+        if (editMode)
+          BoxShadow(
+            color: HomeLuxuryPalette.accent.withOpacity(selected ? 0.24 : 0.12),
+            blurRadius: selected ? 20 : 14,
+            spreadRadius: 0,
+          ),
+      ],
+      border: Border.all(
+        color: editMode
+            ? HomeLuxuryPalette.accent.withOpacity(selected ? 0.34 : 0.12)
+            : Colors.transparent,
+        width: editMode ? 1.1 : 0,
       ),
     );
+
+    final core = editMode
+        ? AnimatedContainer(
+            duration: const Duration(milliseconds: 220),
+            curve: Curves.easeOutCubic,
+            padding: EdgeInsets.all(pad),
+            decoration: tileDecoration,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(innerR),
+              child: heroTileImage(),
+            ),
+          )
+        : Container(
+            padding: EdgeInsets.all(pad),
+            decoration: tileDecoration,
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(innerR),
+              child: heroTileImage(),
+            ),
+          );
 
     final body = editMode
         ? Stack(
@@ -6903,7 +8613,10 @@ class _HeroRemoveChip extends StatelessWidget {
 }
 
 class _HeroOutfitImageView extends StatelessWidget {
+  final String heroDayKey;
   final String? imageUrl;
+  final String? wardrobeItemId;
+  final String? visualSlotKey;
   final IconData fallbackIcon;
   final _HeroWearType wearType;
   final String? categoryKey;
@@ -6915,7 +8628,10 @@ class _HeroOutfitImageView extends StatelessWidget {
   final bool showProcessingBadge;
 
   const _HeroOutfitImageView({
+    required this.heroDayKey,
     required this.imageUrl,
+    this.wardrobeItemId,
+    this.visualSlotKey,
     required this.fallbackIcon,
     required this.wearType,
     this.categoryKey,
@@ -6989,18 +8705,17 @@ class _HeroOutfitImageView extends StatelessWidget {
       );
     }
 
+    final slotKey = visualSlotKey?.trim();
     final imageChild = Image.network(
-      normalizedImageUrl,
+      normalizedImageUrl!,
+      key: slotKey != null && slotKey.isNotEmpty
+          ? ValueKey(slotKey)
+          : null,
       fit: BoxFit.contain,
       filterQuality: FilterQuality.high,
       gaplessPlayback: true,
       alignment: Alignment.center,
-      loadingBuilder: (context, child, loadingProgress) {
-        if (loadingProgress == null) return child;
-        return _OutfitPreviewPlaceholder(icon: fallbackIcon, size: ph);
-      },
-      errorBuilder: (context, error, stackTrace) =>
-          _OutfitPreviewPlaceholder(icon: fallbackIcon, size: ph),
+      errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),
     );
 
     if (!showProcessingBadge) {

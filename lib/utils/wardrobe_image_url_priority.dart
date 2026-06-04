@@ -105,10 +105,16 @@ WardrobeImagePick pickBestWardrobeImageUrl(Map<String, dynamic> item) {
 }
 
 final Set<String> _wardrobeCardImageLogKeys = <String>{};
+bool _wardrobeCardImageLoggingEnabled = false;
+
+/// Wardrobe tab only — avoids logging every card while Home is visible (IndexedStack).
+void setWardrobeCardImageLoggingEnabled(bool enabled) {
+  _wardrobeCardImageLoggingEnabled = enabled;
+}
 
 /// Debug: log once per item+pick (cards). Same pick as detail screen.
 void debugLogWardrobeCardImage(Map<String, dynamic> item) {
-  if (!kDebugMode) return;
+  if (!kDebugMode || !_wardrobeCardImageLoggingEnabled) return;
 
   final pick = pickBestWardrobeImageUrl(item);
   final id = (_getStr(item, '__id') ?? _getStr(item, 'id') ?? '').trim();

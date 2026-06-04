@@ -5,6 +5,7 @@ import 'wardrobe_screen.dart';
 import 'add_clothing_screen.dart';
 import 'stylist_chat_screen.dart';
 import '../Services/share_intent_service.dart';
+import '../utils/wardrobe_image_url_priority.dart';
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({Key? key}) : super(key: key);
@@ -33,6 +34,8 @@ class _MainNavigationState extends State<MainNavigation> {
       const StylistChatScreen(),
     ];
 
+    setWardrobeCardImageLoggingEnabled(false);
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ShareIntentService.start(context);
     });
@@ -45,6 +48,7 @@ class _MainNavigationState extends State<MainNavigation> {
     }
 
     final screenIndex = index == 3 ? 2 : index;
+    setWardrobeCardImageLoggingEnabled(screenIndex == 1);
     setState(() {
       _currentIndex = screenIndex;
     });

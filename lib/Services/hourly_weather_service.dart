@@ -70,6 +70,39 @@ class OutfitWeatherDaySnapshot {
 
 class HourlyWeatherService {
   static const String _defaultCity = 'Martin, Slovakia';
+  static const Duration _snapshotCacheTtl = Duration(minutes: 15);
+  static final Map<String, _WeatherSnapshotCacheEntry> _snapshotCache =
+      <String, _WeatherSnapshotCacheEntry>{};
+  static final Map<String, Future<OutfitWeatherDaySnapshot>> _inFlightByCacheKey =
+      <String, Future<OutfitWeatherDaySnapshot>>{};
+
+  static String _snapshotCacheKey(String cityKey, DateTime date) {
+    return '$cityKey|${_dateLabelStatic(date)}';
+  }
+
+  static String _dateLabelStatic(DateTime date) {
+    final y = date.year.toString().padLeft(4, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final d = date.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  static OutfitWeatherDaySnapshot? _readSnapshotCache(String key) {
+    final entry = _snapshotCache[key];
+    if (entry == null) return null;
+    if (DateTime.now().difference(entry.fetchedAt) >= _snapshotCacheTtl) {
+      _snapshotCache.remove(key);
+      return null;
+    }
+    return entry.snapshot;
+  }
+
+  static void _storeSnapshotCache(String key, OutfitWeatherDaySnapshot snapshot) {
+    _snapshotCache[key] = _WeatherSnapshotCacheEntry(
+      snapshot: snapshot,
+      fetchedAt: DateTime.now(),
+    );
+  }
 
   /// Krátke označenie miesta zodpovedajúce [_defaultCity] (fallback GPS / trip prefill).
   static String get defaultWeatherCityShortLabel {
@@ -92,6 +125,36 @@ class HourlyWeatherService {
     final normalizedDate = DateTime(date.year, date.month, date.day);
     final resolvedCity = city.trim().isEmpty ? _defaultCity : city.trim();
     final normalizedCityKey = resolvedCity.toLowerCase().trim();
+    final cacheKey = _snapshotCacheKey(normalizedCityKey, normalizedDate);
+    final cached = _readSnapshotCache(cacheKey);
+    if (cached != null) {
+      return cached;
+    }
+    final inFlight = _inFlightByCacheKey[cacheKey];
+    if (inFlight != null) {
+      return inFlight;
+    }
+    final future = _fetchWeatherForCityAndDateImpl(
+      cacheKey: cacheKey,
+      normalizedDate: normalizedDate,
+      resolvedCity: resolvedCity,
+      normalizedCityKey: normalizedCityKey,
+    );
+    _inFlightByCacheKey[cacheKey] = future;
+    future.whenComplete(() => _inFlightByCacheKey.remove(cacheKey));
+    return future;
+  }
+
+  Future<OutfitWeatherDaySnapshot> _fetchWeatherForCityAndDateImpl({
+    required String cacheKey,
+    required DateTime normalizedDate,
+    required String resolvedCity,
+    required String normalizedCityKey,
+  }) async {
+    OutfitWeatherDaySnapshot rememberSnapshot(OutfitWeatherDaySnapshot snapshot) {
+      _storeSnapshotCache(cacheKey, snapshot);
+      return snapshot;
+    }
     final isFixedMartin =
         normalizedCityKey == 'martin' ||
         normalizedCityKey == 'martin, slovakia' ||
@@ -111,11 +174,11 @@ class HourlyWeatherService {
       }
       if (geo == null) {
         debugPrint('WEATHER FALLBACK reason=geocode_null city=$resolvedCity');
-        return _fallbackSnapshot(
+        return rememberSnapshot(_fallbackSnapshot(
           cityName: resolvedCity,
           date: normalizedDate,
           failureNote: 'geocode_null city=$resolvedCity',
-        );
+        ));
       }
 
       final weather = await _fetchHourlyWeatherForDate(
@@ -125,22 +188,22 @@ class HourlyWeatherService {
       );
       if (weather == null) {
         debugPrint('WEATHER FALLBACK reason=fetch_null day=${_dateLabel(normalizedDate)}');
-        return _fallbackSnapshot(
+        return rememberSnapshot(_fallbackSnapshot(
           cityName: geo.displayName,
           date: normalizedDate,
           failureNote: 'hourly_fetch_failed_http_or_json day=${_dateLabel(normalizedDate)}',
-        );
+        ));
       }
       if (weather.points.isEmpty) {
         debugPrint(
           'WEATHER FALLBACK reason=hourly_empty_after_parse day=${_dateLabel(normalizedDate)}',
         );
-        return _fallbackSnapshot(
+        return rememberSnapshot(_fallbackSnapshot(
           cityName: geo.displayName,
           date: normalizedDate,
           failureNote:
               'hourly_empty_after_parse day=${_dateLabel(normalizedDate)} (check API params / time format)',
-        );
+        ));
       }
 
       final now = DateTime.now();
@@ -361,7 +424,7 @@ class HourlyWeatherService {
         'rainSegMorningB=$morningRainSeg rainSegAfternoonB=$afternoonRainSeg rainSegEveningB=$eveningRainSeg',
       );
 
-      return OutfitWeatherDaySnapshot(
+      final snapshot = OutfitWeatherDaySnapshot(
         cityName: geo.displayName,
         date: normalizedDate,
         morningTempC: morning ?? afternoonBlock ?? mainChipTempC,
@@ -386,13 +449,15 @@ class HourlyWeatherService {
         briefingAfternoonCondition: briefingAfternoonCondition,
         briefingEveningCondition: briefingEveningCondition,
       );
+      _storeSnapshotCache(cacheKey, snapshot);
+      return snapshot;
     } catch (e) {
       debugPrint('WEATHER FALLBACK reason=exception $e');
-      return _fallbackSnapshot(
+      return rememberSnapshot(_fallbackSnapshot(
         cityName: resolvedCity,
         date: normalizedDate,
         failureNote: 'exception ${e.toString()}',
-      );
+      ));
     }
   }
 
@@ -817,6 +882,16 @@ class HourlyWeatherService {
     }
     return sentence.trim();
   }
+}
+
+class _WeatherSnapshotCacheEntry {
+  const _WeatherSnapshotCacheEntry({
+    required this.snapshot,
+    required this.fetchedAt,
+  });
+
+  final OutfitWeatherDaySnapshot snapshot;
+  final DateTime fetchedAt;
 }
 
 class _GeoResult {
