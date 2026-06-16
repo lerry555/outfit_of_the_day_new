@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../utils/briefing_weather_condition.dart';
+import '../utils/home_debug_logging.dart';
 
 import 'date_weather_service.dart';
 import 'stylist_day_brief.dart';
@@ -163,7 +164,7 @@ class HourlyWeatherService {
     try {
       _GeoResult? geo;
       if (isFixedMartin) {
-        debugPrint('WEATHER USING FIXED MARTIN SK COORDINATES');
+        logVerboseHome('WEATHER USING FIXED MARTIN SK COORDINATES');
         geo = const _GeoResult(
           latitude: _martinSkLat,
           longitude: _martinSkLon,
@@ -212,7 +213,7 @@ class HourlyWeatherService {
       final isTomorrow = normalizedDate == today.add(const Duration(days: 1));
 
       final currentTempC = weather.currentTemperatureC?.round();
-      debugPrint('WEATHER CURRENT TEMP: $currentTempC isToday=$isToday');
+      logVerboseHome('WEATHER CURRENT TEMP: $currentTempC isToday=$isToday');
 
       // Briefing windows: morning 7–9, afternoon 12–15, evening 18–21 (local hours).
       final morning = _meanTempInHourRange(weather.points, 7, 9) ??
@@ -275,7 +276,7 @@ class HourlyWeatherService {
       }
       final rainTimeText = rainTimeParts.isEmpty ? null : rainTimeParts.join(', ');
 
-      debugPrint(
+      logVerboseHome(
         'WEATHER rain_segment morning=${rainMorning?.time} afternoon=${rainAfternoon?.time} '
         'evening=${rainEvening?.time}',
       );
@@ -397,25 +398,25 @@ class HourlyWeatherService {
         windEvening: windEvening,
       );
 
-      debugPrint(
+      logVerboseHome(
         'WEATHER briefing_segments mt=$mt at=$at et=$et '
         'rainSegMorning=$morningRainSeg rainSegAfternoon=$afternoonRainSeg rainSegEvening=$eveningRainSeg '
         'windSegMorning=$windMorning windSegAfternoon=$windAfternoon windSegEvening=$windEvening',
       );
-      debugPrint(
+      logVerboseHome(
         'WEATHER stylist_ux outfitWhy="${ux.outfitWhyWeatherNote}"',
       );
 
-      debugPrint(
+      logVerboseHome(
         'WEATHER dayparts: morning=$morning afternoonBlock=$afternoonBlock evening=$evening '
         'mainChip=$mainChipTempC ($mainChipBasis h=$mainChipHour) rainTime=$rainTimeText windy=$isWindy',
       );
-      debugPrint(
+      logVerboseHome(
         'WEATHER FINAL SNAPSHOT: city=${geo.displayName} isToday=$isToday morning=$morning afternoon=$afternoonBlock evening=$evening '
         'min=$minTempC max=$maxTempC rain=$willRain rainTime=$rainTimeText windy=$isWindy summary="$summaryText"',
       );
 
-      debugPrint(
+      logVerboseHome(
         'WEATHER OPEN_METEO_OK day=${_dateLabel(normalizedDate)} isToday=$isToday '
         'hourlyCount=${weather.points.length} mainChipTempC=$mainChipTempC '
         'mainChipBasis=$mainChipBasis mainChipHour=$mainChipHour '
@@ -536,7 +537,7 @@ class HourlyWeatherService {
       'start_date': day,
       'end_date': day,
     });
-    debugPrint('WEATHER API URL: $uri');
+    logVerboseHome('WEATHER API URL: $uri');
     final response = await http.get(uri);
     if (response.statusCode != 200) {
       debugPrint(
@@ -609,7 +610,7 @@ class HourlyWeatherService {
     }
 
     if (points.isEmpty) {
-      debugPrint(
+      logVerboseHome(
         'WEATHER hourly_parse: prefix_match_empty wantedDay=$wantedDay rawLen=$len — trying legacy local-date filter',
       );
       final selectedLocalDate = DateTime(date.year, date.month, date.day);
@@ -622,7 +623,7 @@ class HourlyWeatherService {
       }
     }
 
-    debugPrint(
+    logVerboseHome(
       'WEATHER API_OK day=$wantedDay rawHourly=$len pointsParsed=${points.length} '
       'currentTemp=${currentTemperatureC?.toStringAsFixed(1)}',
     );
@@ -666,8 +667,7 @@ class HourlyWeatherService {
                 final db = (b.time?.hour ?? 0) - hour;
                 return da.abs() <= db.abs() ? a : b;
               }));
-    final t = selected?.temperatureC;
-    return t == null ? null : t.round();
+    return selected?.temperatureC?.round();
   }
 
   List<_HourlyPoint> _pointsLocalHourBetween(List<_HourlyPoint> hours, int minH, int maxH) {
@@ -763,11 +763,11 @@ class HourlyWeatherService {
       windAfternoon: w,
       windEvening: w,
     );
-    debugPrint(
+    logVerboseHome(
       'WEATHER briefing_segments mt=$mt at=$at et=$et '
       'rainSegMorning=$morningRainSeg rainSegAfternoon=$afternoonRainSeg rainSegEvening=$eveningRainSeg (fallback)',
     );
-    debugPrint(
+    logVerboseHome(
       'WEATHER stylist_ux fallback outfitWhy="${ux.outfitWhyWeatherNote}"',
     );
     final summaryText = fallback.isRainy
@@ -851,19 +851,19 @@ class HourlyWeatherService {
   }) {
     final parts = <String>[];
     if (currentTempC != null) {
-      parts.add('Teraz je približne ${currentTempC}°C');
+      parts.add('Teraz je približne $currentTempC°C');
     }
     if (morningTempC != null) {
-      parts.add('Ráno okolo ${morningTempC}°C');
+      parts.add('Ráno okolo $morningTempC°C');
     }
     if (noonTempC != null) {
-      parts.add('cez obed približne ${noonTempC}°C');
+      parts.add('cez obed približne $noonTempC°C');
     }
     if (eveningTempC != null && rainEvening == null) {
-      parts.add('večer okolo ${eveningTempC}°C');
+      parts.add('večer okolo $eveningTempC°C');
     }
     if (minTempC != null && maxTempC != null) {
-      parts.add('v rozmedzí ${minTempC}–${maxTempC}°C');
+      parts.add('v rozmedzí $minTempC–$maxTempC°C');
     }
 
     var sentence = parts.isEmpty ? 'Počasie sa môže meniť.' : '${parts.join(', ')}.';

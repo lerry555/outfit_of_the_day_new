@@ -1,5 +1,3 @@
-import 'package:flutter/material.dart';
-
 import '../Services/color_naming_service.dart';
 
 /// ---------------------------------------------------------------------------
@@ -532,11 +530,14 @@ const Map<String, String> subCategoryLayerRoles = {
   'sport_tricko': 'main_top',
   'sport_podprsenka': 'main_top',
 
+  // mid layer
+  'mikina_klasicka': 'mid_layer',
+  'mikina_na_zips': 'mid_layer',
+  'mikina_s_kapucnou': 'mid_layer',
+  'mikina_oversize': 'mid_layer',
+  'sport_mikina': 'mid_layer',
+
   // outer layer
-  'mikina_klasicka': 'outer_layer',
-  'mikina_na_zips': 'outer_layer',
-  'mikina_s_kapucnou': 'outer_layer',
-  'mikina_oversize': 'outer_layer',
   'bunda_riflova': 'outer_layer',
   'bunda_kozena': 'outer_layer',
   'bunda_bomber': 'outer_layer',
@@ -548,7 +549,6 @@ const Map<String, String> subCategoryLayerRoles = {
   'vesta': 'outer_layer',
   'prsiplast': 'outer_layer',
   'flisova_bunda': 'outer_layer',
-  'sport_mikina': 'outer_layer',
   'softshell_bunda': 'outer_layer',
 
   // base bottom

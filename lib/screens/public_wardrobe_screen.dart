@@ -3,8 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:outfitofTheDay/constants/app_constants.dart';
-import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
 import 'package:outfitofTheDay/screens/user_wardrobe_detail_screen.dart'; // TENTO IMPORT MUSÍ BYŤ PRÍTOMNÝ
 
 class PublicWardrobeScreen extends StatefulWidget {

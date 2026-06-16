@@ -42,7 +42,7 @@ class _UserPreferencesScreenState extends State<UserPreferencesScreen> {
     }
 
     try {
-      final DocumentSnapshot userDoc = await _firestore.collection('users').doc(_user!.uid).get();
+      final DocumentSnapshot userDoc = await _firestore.collection('users').doc(_user.uid).get();
       if (userDoc.exists) {
         final userData = userDoc.data() as Map<String, dynamic>;
         setState(() {
@@ -107,7 +107,7 @@ class _UserPreferencesScreenState extends State<UserPreferencesScreen> {
     });
 
     try {
-      await _firestore.collection('users').doc(_user!.uid).set(
+      await _firestore.collection('users').doc(_user.uid).set(
         {
           'favoriteColors': _selectedFavoriteColors,
           'preferredStyles': _selectedPreferredStyles,
@@ -155,7 +155,7 @@ class _UserPreferencesScreenState extends State<UserPreferencesScreen> {
           ),
         ],
       ),
-      body: _isLoading && _user != null
+      body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),

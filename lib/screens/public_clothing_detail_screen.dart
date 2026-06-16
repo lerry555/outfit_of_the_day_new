@@ -3,7 +3,6 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:outfitofTheDay/constants/app_constants.dart';
 
 class PublicClothingDetailScreen extends StatelessWidget {
   final Map<String, dynamic> clothingItemData;

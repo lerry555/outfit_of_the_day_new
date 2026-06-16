@@ -4,8 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:ui';
-import 'dart:ui' show Rect;
+import 'dart:ui' show ImageFilter;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
@@ -27,7 +26,6 @@ import '../Services/product_link_image_cleanup.dart';
 import '../Services/product_link_url_fallback.dart';
 import '../utils/product_link_image_resolve.dart';
 import '../utils/product_link_url_sanitize.dart';
-import '../utils/wardrobe_image_processing.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/ai_clothing_parser.dart';
 import '../data/clothing_knowledge_base.dart';
@@ -483,15 +481,16 @@ class AddClothingScreen extends StatefulWidget {
 
     if (choice == 'camera') {
       pickedFile = await storeAddClothingImageInternally(
-        pickedFile!,
+        pickedFile,
         stage: 'picked',
       );
     }
+    final selectedFile = pickedFile;
 
     // ignore: use_build_context_synchronously
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => _PhotoPreflightScreen(localFile: pickedFile!),
+        builder: (_) => _PhotoPreflightScreen(localFile: selectedFile),
       ),
     );
   }
@@ -530,62 +529,6 @@ class _TipRow extends StatelessWidget {
   }
 }
 
-Widget _pickerCard({
-  required IconData icon,
-  required String title,
-  required String subtitle,
-  required VoidCallback onTap,
-}) {
-  return InkWell(
-    borderRadius: BorderRadius.circular(20),
-    onTap: onTap,
-    child: Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: Colors.white.withOpacity(0.06),
-        border: Border.all(color: Colors.white12),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: Colors.white),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                    fontSize: 13,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-}
-
 /// =======================================================
 /// ✅ PRE-FLIGHT (otáčanie + crop v appke)
 /// - Rotate = okamžitý (len vizuálne, bez sekania)
@@ -605,7 +548,6 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
 
   Uint8List? _imageBytes;
   Uint8List? _rawBytes;
-  bool _prepped = false;
 
   int _quarterTurns = 0;
 
@@ -628,7 +570,6 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
     setState(() {
       _rawBytes = Uint8List.fromList(b);
       _imageBytes = Uint8List.fromList(b);
-      _prepped = false;
     });
 
     _prepareBaseBytesInBackground();
@@ -646,11 +587,9 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
       if (!mounted) return;
       setState(() {
         _imageBytes = prepared;
-        _prepped = true;
       });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _prepped = true);
     }
   }
 
@@ -1099,6 +1038,27 @@ class _AddClothingScreenHostState extends State<AddClothingScreenHost> {
 }
 
 class _AddClothingScreenState extends State<AddClothingScreen> {
+  bool _isUnknownBrandValue(String value) {
+    final normalized = _norm(value);
+    return normalized == 'unknown' ||
+        normalized == 'unknown brand' ||
+        normalized == 'unknown_brand' ||
+        normalized == 'unknownbrand' ||
+        normalized == 'no brand' ||
+        normalized == 'n/a' ||
+        normalized == 'none' ||
+        normalized == 'null' ||
+        normalized == 'nezname' ||
+        normalized == 'neznama' ||
+        normalized == 'neznama znacka';
+  }
+
+  String _recognizedBrandOrEmpty(dynamic value) {
+    final brand = (value ?? '').toString().trim();
+    if (brand.isEmpty || _isUnknownBrandValue(brand)) return '';
+    return brand;
+  }
+
   List<String> _sanitizeSeasons(List<String> input) {
     final set = input.toSet();
     const four = {'jar', 'leto', 'jeseň', 'zima'};
@@ -1107,40 +1067,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     if (set.containsAll(four)) return ['celoročne'];
 
     return allowedSeasons.where((s) => set.contains(s)).toList();
-  }
-
-  String _normalizeForSearch(String input) {
-    var s = input.toLowerCase().trim();
-
-    const map = {
-      'á': 'a',
-      'ä': 'a',
-      'č': 'c',
-      'ď': 'd',
-      'é': 'e',
-      'ě': 'e',
-      'í': 'i',
-      'ĺ': 'l',
-      'ľ': 'l',
-      'ň': 'n',
-      'ó': 'o',
-      'ô': 'o',
-      'ŕ': 'r',
-      'ř': 'r',
-      'š': 's',
-      'ť': 't',
-      'ú': 'u',
-      'ů': 'u',
-      'ü': 'u',
-      'ý': 'y',
-      'ž': 'z',
-    };
-
-    final buffer = StringBuffer();
-    for (final ch in s.split('')) {
-      buffer.write(map[ch] ?? ch);
-    }
-    return buffer.toString();
   }
 
   String? _findCategoryForSubKeyLocal(String subKey) {
@@ -1172,7 +1098,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   String? _sourceUrl;
   bool _fromProductLink = false;
   bool _linkAnalysisPartial = false;
-  bool _linkLoadFailed = false;
 
   String? _selectedMainGroupKey;
   String? _selectedCategoryKey;
@@ -1215,7 +1140,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   bool _isAiLoading = false;
   bool _aiCompleted = false;
   bool _aiFailed = false;
-  String? _aiError;
   String? _productLinkOriginalImageUrl;
   String? _productLinkCleanImageUrl;
   bool _productLinkPersonDetected = false;
@@ -1327,8 +1251,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         _uploadedImageUrl = prefetchedImage;
       }
 
-      final prefetchedBrand =
-          (widget.initialData?['brand'] ?? '').toString().trim();
+      final prefetchedBrand = _recognizedBrandOrEmpty(
+        widget.initialData?['brand'],
+      );
       if (prefetchedBrand.isNotEmpty) {
         _brandController.text = prefetchedBrand;
       }
@@ -1384,7 +1309,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (editKb != null) {
         _kbTypeDisplayName = editKb.skName;
       }
-      _brandController.text = (d['brand'] ?? '').toString();
+      _brandController.text = _recognizedBrandOrEmpty(d['brand']);
 
       _selectedMainGroupKey =
       (d['mainGroupKey'] ?? d['mainGroup'] ?? '').toString().isEmpty
@@ -1549,13 +1474,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }) {
     _fromProductLink = true;
     _linkAnalysisPartial = d['_linkPartial'] == true;
-    _linkLoadFailed = d['_linkLoadFailed'] == true;
     _productLinkPersonDetected = d['personDetected'] == true;
 
     final sourceUrl = (d['sourceUrl'] ?? '').toString().trim();
     if (sourceUrl.isNotEmpty) _sourceUrl = sourceUrl;
 
-    final brand = (d['brand'] ?? '').toString().trim();
+    final brand = _recognizedBrandOrEmpty(d['brand']);
     if (brand.isNotEmpty) _brandController.text = brand;
 
     var main = (d['mainGroupKey'] ?? d['mainGroup'] ?? '').toString().trim();
@@ -1633,97 +1557,12 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
-  String _shortSubtypeNounForProductLinkName(String? subKey) {
-    if (subKey == null || subKey.isEmpty) return '';
-    const shortByKey = <String, String>{
-      'tricko': 'tričko',
-      'tricko_dlhy_rukav': 'tričko',
-      'polo_tricko': 'polo tričko',
-      'mikina_klasicka': 'mikina',
-      'mikina_s_kapucnou': 'mikina s kapucňou',
-      'mikina_na_zips': 'mikina',
-      'mikina_oversize': 'mikina',
-      'bunda_prechodna': 'prechodná bunda',
-      'bunda_zimna': 'zimná bunda',
-      'bunda_bomber': 'bomber bunda',
-      'bunda_riflova': 'rifľová bunda',
-      'bunda_kozena': 'kožená bunda',
-      'kabat': 'kabát',
-      'rifle': 'džínsy',
-      'rifle_skinny': 'džínsy',
-      'rifle_wide_leg': 'džínsy',
-      'rifle_mom': 'džínsy',
-      'nohavice_klasicke': 'nohavice',
-      'tenisky_fashion': 'tenisky',
-      'tenisky_sportove': 'tenisky',
-      'tenisky_bezecke': 'tenisky',
-      'zabky': 'žabky',
-      'sandale': 'sandále',
-      'kosela_klasicka': 'košeľa',
-      'sveter_klasicky': 'sveter',
-      'plavecke_sortky': 'plavecké šortky',
-      'plavky_jednodielne': 'plavky',
-      'bikiny': 'bikiny',
-    };
-    final mapped = shortByKey[subKey];
-    if (mapped != null) return mapped;
-
-    final label = (subCategoryLabels[subKey] ?? '').trim();
-    if (label.isEmpty) return '';
-    return label[0].toLowerCase() + label.substring(1);
-  }
-
-  String _computeProductLinkAutoName() {
-    final subKey = _selectedSubCategoryKey ?? '';
-    final typePhrase = _shortSubtypeNounForProductLinkName(subKey);
-    final colorRaw =
-        _selectedColors.isNotEmpty ? _selectedColors.first.trim() : '';
-
-    String colorAdj = '';
-    if (colorRaw.isNotEmpty && typePhrase.isNotEmpty) {
-      colorAdj = _colorToAdjectiveForSubcategory(
-        colorRaw,
-        subKey,
-        subCategoryLabels[subKey] ?? typePhrase,
-      );
-      // Neuter garment nouns: biela -> biele (e.g. biele tričko).
-      if (typePhrase == 'tričko' ||
-          typePhrase == 'tielko' ||
-          subKey == 'tricko' ||
-          subKey == 'tricko_dlhy_rukav' ||
-          subKey == 'tielko') {
-        if (colorAdj.endsWith('a') && !colorAdj.endsWith('ia')) {
-          colorAdj = '${colorAdj.substring(0, colorAdj.length - 1)}e';
-        }
-      }
-    }
-
-    String upperFirst(String s) =>
-        s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-
-    final parts = <String>[
-      if (colorAdj.isNotEmpty) colorAdj,
-      if (typePhrase.isNotEmpty) typePhrase,
-    ];
-    return upperFirst(parts.join(' ').trim());
-  }
-
-  void _applyProductLinkDerivedName() {
-    _refreshAutoName();
-  }
-
   Future<void> _ensureMinLinkAnalyzingDuration(DateTime started) async {
     const minMs = 3200;
     final elapsed = DateTime.now().difference(started).inMilliseconds;
     if (elapsed < minMs) {
       await Future.delayed(Duration(milliseconds: minMs - elapsed));
     }
-  }
-
-  void _applySourceImageToPreview(String? imageUrl) {
-    if (imageUrl == null || !isValidProductLinkImageUrl(imageUrl)) return;
-    _uploadedImageUrl = imageUrl;
-    _productLinkOriginalImageUrl = imageUrl;
   }
 
   void _applyProductLinkImageFields(Map<String, dynamic> d) {
@@ -1788,7 +1627,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       sourcePage = await fetchProductLinkSourcePage(url);
       final previewImage = sourcePage == null
           ? null
-          : resolveProductLinkImageUrl(sourcePage!);
+          : resolveProductLinkImageUrl(sourcePage);
       if (previewImage != null &&
           previewImage.isNotEmpty &&
           isValidProductLinkImageUrl(previewImage) &&
@@ -1825,7 +1664,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final resolvedPreview = resolveProductLinkImageUrl(outcome.analysis) ??
           (sourcePage == null
               ? null
-              : resolveProductLinkImageUrl(sourcePage!));
+              : resolveProductLinkImageUrl(sourcePage));
       if (resolvedPreview != null &&
           resolvedPreview.isNotEmpty &&
           isValidProductLinkImageUrl(resolvedPreview) &&
@@ -1848,7 +1687,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         debugPrint('[ADD_LINK_FLOW][source_page_retry]');
         final retry = await fetchProductLinkSourcePage(url);
         final retryImg =
-            retry == null ? null : resolveProductLinkImageUrl(retry!);
+            retry == null ? null : resolveProductLinkImageUrl(retry);
         if (retryImg != null &&
             retryImg.isNotEmpty &&
             isValidProductLinkImageUrl(retryImg) &&
@@ -1867,7 +1706,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final formImage = resolveProductLinkImageUrl(outcome.analysis) ??
           (sourcePage == null
               ? null
-              : resolveProductLinkImageUrl(sourcePage!)) ??
+              : resolveProductLinkImageUrl(sourcePage)) ??
           _uploadedImageUrl;
       if (formImage != null &&
           formImage.isNotEmpty &&
@@ -2003,6 +1842,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final user = _auth.currentUser;
     final brand = brandRaw.trim();
     if (brand.isEmpty) return;
+    if (_isUnknownBrandValue(brand)) return;
 
     if (!_brandOptions.map((e) => e.toLowerCase()).contains(brand.toLowerCase())) {
       setState(() {
@@ -2132,9 +1972,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     return out.trim();
   }
-
-  String? _normalizeColor(String raw) =>
-      ColorNamingService.instance.normalizeDisplayColor(raw);
 
   List<String> _normalizeColorsList(List<String> input) =>
       ColorNamingService.instance.normalizeDisplayColors(input);
@@ -2482,59 +2319,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return null;
   }
 
-  List<String> _normalizePatternsList(List<String> input) {
-    final out = <String>[];
-    for (final x in input) {
-      final mapped = _normalizePattern(x);
-      if (mapped != null) out.add(mapped);
-    }
-    final seen = <String>{};
-    return out.where((e) => seen.add(e)).toList();
-  }
-
-  List<String> _fixStylesAfterAi({
-    required List<String> styles,
-    required List<String> patterns,
-    required String brand,
-    required String canonicalType,
-    required String rawType,
-    required String prettyType,
-  }) {
-    final out = [...styles];
-
-    bool hasSport = out.any((s) => s.toLowerCase().contains('šport'));
-    if (!hasSport) return out;
-
-    final b = brand.trim().toLowerCase();
-    final isLogoBrand =
-        b.contains('jordan') || b.contains('nike') || b.contains('adidas');
-
-    final p = patterns.map((e) => e.toLowerCase()).toList();
-    final hasGraphic =
-        p.any((x) => x.contains('graf')) ||
-            p.any((x) => x.contains('potlač')) ||
-            p.any((x) => x.contains('text'));
-
-    final t = (canonicalType + ' ' + rawType + ' ' + prettyType).toLowerCase();
-
-    final isActiveWearType =
-        t.contains('dres') ||
-            t.contains('funkčné') ||
-            t.contains('running') ||
-            canonicalType == 'jersey';
-
-    if (!isActiveWearType &&
-        canonicalType == 't_shirt' &&
-        (isLogoBrand || hasGraphic)) {
-      out.removeWhere((s) => s.toLowerCase().contains('šport'));
-      if (!out.contains('casual')) out.add('casual');
-      if (!out.contains('streetwear')) out.add('streetwear');
-    }
-
-    final seen = <String>{};
-    return out.where((e) => seen.add(e)).toList();
-  }
-
   bool _isPluralSubcategory(String subKey, String subLabelRaw) {
     final k = subKey.toLowerCase();
     final l = subLabelRaw.toLowerCase();
@@ -2680,7 +2464,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _isAiLoading = true;
       _aiCompleted = false;
       _aiFailed = false;
-      _aiError = null;
     });
 
     _resetProgress();
@@ -2720,7 +2503,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
       final String rawType = (m['type'] ?? '').toString().trim();
       String canonical = (m['canonical_type'] ?? '').toString().trim();
-      final String brandFromAi = (m['brand'] ?? '').toString().trim();
+      final String brandFromAi = _recognizedBrandOrEmpty(m['brand']);
       final String typeEvidence = '$rawType $prettyType'.toLowerCase();
       final String canonicalLower = canonical.toLowerCase();
 
@@ -2914,7 +2697,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         formalityFromAi = kbItem.formalityDefault;
       } else if (nextSub != null) {
         nextLayerRole = AiClothingParser.resolveLayerRole(
-          subCategoryKey: nextSub!,
+          subCategoryKey: nextSub,
           aiLayerRole: aiLayerForMapping,
         );
       }
@@ -3102,7 +2885,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         _aiFailed = true;
         _aiCompleted = false;
         _isAiLoading = false;
-        _aiError = 'Sieťový timeout. Skontroluj internet a skús znova.';
       });
     } catch (e) {
       _stopProgressTimers();
@@ -3111,7 +2893,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         _aiFailed = true;
         _aiCompleted = false;
         _isAiLoading = false;
-        _aiError = e.toString();
       });
     }
   }
@@ -3264,10 +3045,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         if (safeSeasons.isEmpty && !hiddenAi.containsKey('seasons'))
           'seasons': ['celoročne'],
         if (hasImage) ...{
-          'imageUrl': displayImageUrl!,
-          'originalImageUrl': (originalImageUrl ?? displayImageUrl)!,
-          'productImageUrl': displayImageUrl!,
-          'productLinkSeedImageUrl': seed.isNotEmpty ? seed : displayImageUrl!,
+          'imageUrl': displayImageUrl,
+          'originalImageUrl': originalImageUrl ?? displayImageUrl,
+          'productImageUrl': displayImageUrl,
+          'productLinkSeedImageUrl': seed.isNotEmpty ? seed : displayImageUrl,
         },
         'imageVersion': 1,
         if (src.isNotEmpty) 'sourceUrl': src,
@@ -3630,6 +3411,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             labelText: 'Značka',
+            hintText: 'Doplň, ak ju poznáš',
+            hintStyle: const TextStyle(color: Colors.white38),
             labelStyle: _addClothingLabelStyle,
             floatingLabelStyle: _addClothingLabelStyle,
             filled: true,
@@ -3670,265 +3453,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         );
       },
     );
-  }
-
-  Widget _buildMultiSelectField({
-    required String label,
-    required List<String> options,
-    required List<String> selected,
-    required ValueChanged<List<String>> onChanged,
-  }) {
-    final text = selected.isEmpty
-        ? 'Vyber...'
-        : () {
-      const maxVisible = 3;
-      if (selected.length <= maxVisible) return selected.join(', ');
-      final visible = selected.take(maxVisible).join(', ');
-      final rest = selected.length - maxVisible;
-      return '$visible +$rest';
-    }();
-
-    return InkWell(
-      borderRadius: BorderRadius.circular(16),
-      onTap: () async {
-        final result = await _openMultiSelectBottomSheet(
-          title: label,
-          options: options,
-          initialSelected: selected,
-          enforceSeasonRules: false,
-        );
-        if (result != null) onChanged(result);
-      },
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: label,
-          labelStyle: _addClothingLabelStyle,
-          floatingLabelStyle: _addClothingLabelStyle,
-          filled: true,
-          fillColor: Colors.white.withOpacity(0.05),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-            borderSide: BorderSide(
-              color: _kAddClothingAccent.withOpacity(0.55),
-              width: 1.2,
-            ),
-          ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-        ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Text(
-                text,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: selected.isEmpty ? Colors.white54 : Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            const Icon(
-              Icons.keyboard_arrow_down_rounded,
-              color: Colors.white70,
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Future<List<String>?> _openMultiSelectBottomSheet({
-    required String title,
-    required List<String> options,
-    required List<String> initialSelected,
-    bool enforceSeasonRules = false,
-  }) async {
-    final result = await showModalBottomSheet<List<String>>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: const Color(0xFF121212),
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      builder: (ctx) {
-        final tempSelected = <String>{...initialSelected};
-        String query = '';
-
-        List<String> filtered() {
-          final q = query.trim().toLowerCase();
-          if (q.isEmpty) return options;
-          return options.where((o) => o.toLowerCase().contains(q)).toList();
-        }
-
-        final height = MediaQuery.of(ctx).size.height * 0.75;
-
-        return StatefulBuilder(
-          builder: (ctx, setSheetState) {
-            void toggle(String value, bool v) {
-              setSheetState(() {
-                if (!enforceSeasonRules) {
-                  if (v) {
-                    tempSelected.add(value);
-                  } else {
-                    tempSelected.remove(value);
-                  }
-                  return;
-                }
-
-                const four = {'jar', 'leto', 'jeseň', 'zima'};
-
-                if (value == 'celoročne') {
-                  if (v) {
-                    tempSelected
-                      ..clear()
-                      ..add('celoročne');
-                  } else {
-                    tempSelected.remove('celoročne');
-                  }
-                  return;
-                }
-
-                if (tempSelected.contains('celoročne')) {
-                  tempSelected.remove('celoročne');
-                }
-
-                if (v) {
-                  tempSelected.add(value);
-                } else {
-                  tempSelected.remove(value);
-                }
-
-                if (tempSelected.containsAll(four)) {
-                  tempSelected
-                    ..clear()
-                    ..add('celoročne');
-                }
-              });
-            }
-
-            final items = filtered();
-
-            return SafeArea(
-              child: SizedBox(
-                height: height,
-                child: Padding(
-                  padding: EdgeInsets.only(
-                    left: 16,
-                    right: 16,
-                    bottom: 12 + MediaQuery.of(ctx).viewInsets.bottom,
-                    top: 4,
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        title,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 18,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        style: const TextStyle(color: Colors.white),
-                        decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search, color: Colors.white70),
-                          hintText: 'Hľadať...',
-                          hintStyle: const TextStyle(color: Colors.white38),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.05),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
-                          ),
-                          enabledBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(
-                              color: _kAddClothingAccent.withOpacity(0.45),
-                            ),
-                          ),
-                        ),
-                        onChanged: (v) => setSheetState(() => query = v),
-                      ),
-                      const SizedBox(height: 10),
-                      Expanded(
-                        child: ListView.builder(
-                          itemCount: items.length,
-                          itemBuilder: (ctx, i) {
-                            final o = items[i];
-                            final checked = tempSelected.contains(o);
-
-                            return ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              title: Text(
-                                o,
-                                style: const TextStyle(color: Colors.white),
-                              ),
-                              trailing: checked
-                                  ? const Icon(
-                                Icons.check_circle_rounded,
-                                color: Color(0xFFC8A36A),
-                              )
-                                  : const SizedBox(width: 24, height: 24),
-                              onTap: () => toggle(o, !checked),
-                            );
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          OotdSecondaryTextButton(
-                            label: 'Zrušiť',
-                            onPressed: () => Navigator.of(ctx).pop(null),
-                          ),
-                          const Spacer(),
-                          OotdSecondaryTextButton(
-                            label: 'Vymazať',
-                            onPressed: () => setSheetState(() => tempSelected.clear()),
-                          ),
-                          const SizedBox(width: 8),
-                          OotdPrimaryButton(
-                            text: 'Hotovo',
-                            onPressed: () =>
-                                Navigator.of(ctx).pop(tempSelected.toList()),
-                            showTrailingArrow: false,
-                            borderRadius: 14,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 18,
-                              vertical: 12,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    if (result == null) return null;
-    final ordered = options.where((o) => result.contains(o)).toList();
-    if (enforceSeasonRules) return _sanitizeSeasons(ordered);
-    return ordered;
   }
 
   Widget _buildSingleSelectField({
@@ -4161,42 +3685,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         fontSize: 12.5,
         fontWeight: FontWeight.w600,
         height: 1.35,
-      ),
-    );
-  }
-
-  Widget _buildProductLinkSourceBanner() {
-    final url = _sourceUrl ?? '';
-    if (url.isEmpty) return const SizedBox.shrink();
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(18),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(18),
-          color: const Color(0xFFC8A36A).withOpacity(0.08),
-          border: Border.all(color: const Color(0xFFC8A36A).withOpacity(0.16)),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Icon(Icons.link_rounded, color: Color(0xFFC8A36A), size: 18),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                url,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: Colors.white60,
-                  fontSize: 12.5,
-                  height: 1.35,
-                ),
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

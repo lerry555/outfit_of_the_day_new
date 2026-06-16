@@ -327,24 +327,38 @@ abstract final class AirportSearchService {
 
     if (iata != null) {
       final iq = DestinationSearchService.normalizeQuery(iata);
-      if (iq == q) score += 620;
-      else if (iq.startsWith(q)) score += 560;
+      if (iq == q) {
+        score += 620;
+      } else if (iq.startsWith(q)) {
+        score += 560;
+      }
       else if (q.length >= 2 && iq.startsWith(q.substring(0, math.min(q.length, iq.length)))) {
         score += 240;
       }
-      if (_majorHubIata.contains(iata)) score += 72;
+      if (_majorHubIata.contains(iata)) {
+        score += 72;
+      }
     }
 
     if (nCity.isNotEmpty) {
-      if (nCity.startsWith(q)) score += 410;
-      else if (nCity.contains(q)) score += 140;
+      if (nCity.startsWith(q)) {
+        score += 410;
+      } else if (nCity.contains(q)) {
+        score += 140;
+      }
     }
 
-    if (nName.startsWith(q)) score += 200;
-    else if (_wordPrefix(nName, q)) score += 165;
-    else if (nName.contains(q)) score += 88;
+    if (nName.startsWith(q)) {
+      score += 200;
+    } else if (_wordPrefix(nName, q)) {
+      score += 165;
+    } else if (nName.contains(q)) {
+      score += 88;
+    }
 
-    if (nCountry.startsWith(q) || nCountry.contains(q)) score += 28;
+    if (nCountry.startsWith(q) || nCountry.contains(q)) {
+      score += 28;
+    }
 
     final pop = a.population ?? 0;
     if (pop > 0) {

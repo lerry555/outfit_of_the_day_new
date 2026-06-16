@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../constants/app_constants.dart';
+import 'home_debug_logging.dart';
 
 /// Weather context for layer-aware wardrobe filtering (primary over season tags).
 class StylistWeatherContext {
@@ -81,12 +82,67 @@ class StylistLayerFilter {
     return n.round().clamp(1, 10);
   }
 
+  /// Sleeveless tank top (tielko) — not undershirt / spodné tielko.
+  static bool isTankTopItem(Map<String, dynamic> item) {
+    final sub = _subKey(item);
+    if (sub == 'undershirt') return false;
+    if (sub == 'tielko') return true;
+
+    final canonical = _normToken(
+      (item['canonical_type'] ?? item['canonicalType'] ?? '').toString(),
+    );
+    if (canonical == 'tank_top' || canonical == 'tanktop') return true;
+
+    final name = (item['name'] ?? item['typePretty'] ?? item['type_pretty'] ?? '')
+        .toString()
+        .toLowerCase();
+    if (name.contains('spodné tielko') || name.contains('spodne tielko')) {
+      return false;
+    }
+    if (name.contains('tielko')) return true;
+    if (name.contains('tank top') || name.contains('tanktop')) return true;
+    if (name.contains('sleeveless') &&
+        (name.contains('top') || name.contains('shirt') || name.contains('tee'))) {
+      return true;
+    }
+    return false;
+  }
+
+  static bool isSportOrBeachOccasionItem(Map<String, dynamic> item) {
+    final tokens = <String>[];
+    for (final key in ['occasion_fit', 'occasionFit', 'styles', 'vibe']) {
+      final v = item[key];
+      if (v is List) {
+        tokens.addAll(v.map((e) => e.toString().trim().toLowerCase()));
+      } else if (v is String && v.trim().isNotEmpty) {
+        tokens.add(v.trim().toLowerCase());
+      }
+    }
+    final blob = tokens.join(' ');
+    final catBlob = [
+      item['categoryKey'],
+      item['category'],
+      item['subCategoryKey'],
+      item['subCategory'],
+    ].map((e) => (e ?? '').toString().toLowerCase()).join(' ');
+
+    return blob.contains('sport') ||
+        blob.contains('beach') ||
+        blob.contains('plaz') ||
+        blob.contains('pláž') ||
+        blob.contains('gym') ||
+        blob.contains('pool') ||
+        catBlob.contains('sport');
+  }
+
   static int inferWarmthLevel(Map<String, dynamic> item) {
+    if (isTankTopItem(item)) return 1;
+
     final stored = parseWarmthLevel(item);
     if (stored != null) return stored;
 
     final sub = _subKey(item);
-    if (sub == 'tielko' || sub == 'undershirt') return 1;
+    if (sub == 'undershirt') return 1;
     if (_baseLayerSubKeys.contains(sub) || sub == 'tricko_dlhy_rukav') return 3;
     if (_midLayerSubKeys.contains(sub)) return 5;
     if (sub == 'bunda_zimna' || sub == 'kabat') return 9;
@@ -97,10 +153,29 @@ class StylistLayerFilter {
   }
 
   static String resolveEffectiveLayerRole(Map<String, dynamic> item) {
+    if (item['home_kb_applied'] == true ||
+        item['home_legacy_fallback'] == true) {
+      final normalizedLayer =
+          _normToken((item['layer_role'] ?? '').toString());
+      if (normalizedLayer == 'base_layer' ||
+          normalizedLayer == 'mid_layer' ||
+          normalizedLayer == 'outer_layer' ||
+          normalizedLayer == 'bottom' ||
+          normalizedLayer == 'footwear' ||
+          normalizedLayer == 'accessory') {
+        return normalizedLayer;
+      }
+    }
+
     final v2 = _normToken(
       (item['layer_role'] ?? item['stylingLayerRole'] ?? '').toString(),
     );
-    if (v2 == 'base_layer' || v2 == 'mid_layer' || v2 == 'outer_layer') {
+    if (v2 == 'base_layer' ||
+        v2 == 'mid_layer' ||
+        v2 == 'outer_layer' ||
+        v2 == 'bottom' ||
+        v2 == 'footwear' ||
+        v2 == 'accessory') {
       return v2;
     }
 
@@ -143,6 +218,24 @@ class StylistLayerFilter {
     final warmthLevel = inferWarmthLevel(item);
     final sub = _subKey(item);
     final name = (item['name'] ?? item['typePretty'] ?? '').toString();
+
+    if (isTankTopItem(item) &&
+        (layerRole == 'base_layer' || layerRole == 'main_top') &&
+        weather.tempC < 18 &&
+        !isSportOrBeachOccasionItem(item)) {
+      if (log || kDebugMode) {
+        debugPrint(
+          '[TANK_TOP_REJECTED] '
+          'item=${name.isEmpty ? sub : name} '
+          'reason=too_cold_for_tank_top '
+          'temp=${weather.tempC}',
+        );
+      }
+      return const StylistLayerFilterResult(
+        allowed: false,
+        reason: 'too_cold_for_tank_top',
+      );
+    }
 
     final StylistLayerFilterResult result;
     if (layerRole == 'base_layer' || layerRole == 'mid_layer') {
@@ -266,6 +359,7 @@ class StylistLayerFilter {
     required bool allowed,
     required String reason,
   }) {
+    if (!kVerboseHomeLogs) return;
     debugPrint(
       '[STYLIST_LAYER_FILTER] item=$name layer_role=$layerRole '
       'warmth_level=$warmthLevel temp=${weather.tempC}C '

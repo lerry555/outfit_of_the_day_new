@@ -34,10 +34,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   static const _bgTop = Color(0xFF111111);
   static const _bgMid = Color(0xFF0C0C0D);
   static const _bgBottom = Color(0xFF080809);
-  static const _surfaceSoft = Color(0xFF1B1B1F);
   static const _textPrimary = Color(0xFFF1F0EC);
   static const _textSecondary = Color(0xFFAAA59B);
-  static const _border = Color(0x26FFFFFF);
   static const int _freeMessageLimit = 3;
   static const int _historyLimit = 8;
 

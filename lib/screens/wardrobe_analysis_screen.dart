@@ -1,6 +1,5 @@
 import 'dart:ui';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -14,7 +13,6 @@ class WardrobeAnalysisScreen extends StatefulWidget {
 
 class _WardrobeAnalysisScreenState extends State<WardrobeAnalysisScreen> {
   final _auth = FirebaseAuth.instance;
-  final _firestore = FirebaseFirestore.instance;
 
   bool _loading = true;
   String? _error;
@@ -38,18 +36,6 @@ class _WardrobeAnalysisScreenState extends State<WardrobeAnalysisScreen> {
       if (user == null) {
         throw Exception('Musíš byť prihlásený.');
       }
-
-      final snap = await _firestore
-          .collection('users')
-          .doc(user.uid)
-          .collection('wardrobe')
-          .limit(250)
-          .get();
-
-      final items = snap.docs.map((d) {
-        final data = (d.data());
-        return _compactWardrobeItem(data);
-      }).where((m) => m.isNotEmpty).toList();
 
       final functions = FirebaseFunctions.instanceFor(region: 'us-east1');
       final callable = functions.httpsCallable('analyzeWardrobeSmart');
@@ -75,42 +61,6 @@ class _WardrobeAnalysisScreenState extends State<WardrobeAnalysisScreen> {
         _loading = false;
       });
     }
-  }
-
-  Map<String, dynamic> _compactWardrobeItem(Map<String, dynamic> d) {
-    List<String> _list(dynamic v) {
-      if (v == null) return [];
-      if (v is List) return v.map((e) => e.toString().trim()).where((x) => x.isNotEmpty).toList();
-      final s = v.toString().trim();
-      return s.isEmpty ? [] : [s];
-    }
-
-    final mainGroup = (d['mainGroupLabel'] ?? d['mainGroup'])?.toString().trim();
-    final category = (d['categoryLabel'] ?? d['categoryKey'] ?? d['category'])?.toString().trim();
-    final sub = (d['subCategoryLabel'] ?? d['subCategoryKey'])?.toString().trim();
-    final brand = (d['brand'])?.toString().trim();
-    final name = (d['name'])?.toString().trim();
-
-    final colors = _list(d['color']);
-    final styles = _list(d['style']);
-    final patterns = _list(d['pattern']);
-    final seasons = _list(d['season']);
-
-    final out = <String, dynamic>{};
-    if (mainGroup != null && mainGroup.isNotEmpty) out['g'] = mainGroup;
-    if (category != null && category.isNotEmpty) out['c'] = category;
-    if (sub != null && sub.isNotEmpty) out['s'] = sub;
-    if (brand != null && brand.isNotEmpty) out['b'] = brand;
-    if (name != null && name.isNotEmpty) out['n'] = name;
-    if (colors.isNotEmpty) out['col'] = colors.take(3).toList();
-    if (styles.isNotEmpty) out['sty'] = styles.take(3).toList();
-    if (patterns.isNotEmpty) out['pat'] = patterns.take(1).toList();
-    if (seasons.isNotEmpty) out['sea'] = seasons.take(3).toList();
-
-    final wearCount = d['wearCount'];
-    if (wearCount is int && wearCount > 0) out['w'] = wearCount;
-
-    return out;
   }
 
   @override

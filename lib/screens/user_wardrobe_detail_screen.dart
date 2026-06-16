@@ -3,9 +3,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
 import 'package:outfitofTheDay/screens/public_clothing_detail_screen.dart';
-import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/utils/wardrobe_image_url_priority.dart';
 
 class UserWardrobeDetailScreen extends StatelessWidget {

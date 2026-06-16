@@ -86,7 +86,7 @@ class _Tile extends StatelessWidget {
               height: 78,
               child: hasImage
                   ? Image.network(
-                      resolvedUrl!,
+                      resolvedUrl,
                       fit: BoxFit.cover,
                       errorBuilder: (context, error, stackTrace) {
                         return Container(

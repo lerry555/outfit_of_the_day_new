@@ -2468,6 +2468,215 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
     });
 
+  // ---------------------------------------------------------------------------
+  // finalReviewHomeOutfitCandidates – local client candidates → OpenAI pick
+  // ---------------------------------------------------------------------------
+  exports.finalReviewHomeOutfitCandidates = functions
+    .region("us-east1")
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid || null;
+      if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+      }
+
+      const weatherContext =
+        data?.weatherContext && typeof data.weatherContext === "object" ?
+          data.weatherContext :
+          {};
+
+      const rawCandidates = Array.isArray(data?.candidates) ? data.candidates : [];
+      const candidates = rawCandidates.slice(0, 8).map((c, idx) => {
+        const candidateIndex = c?.candidateIndex ?? idx;
+        const items = Array.isArray(c?.items) ? c.items : [];
+        return {
+          candidateIndex: Number(candidateIndex),
+          ruleScore: typeof c?.ruleScore === "number" ? c.ruleScore : null,
+          consistencyPenalty: typeof c?.consistencyPenalty === "number" ? c.consistencyPenalty : null,
+          footwearFamily: c?.footwearFamily ?? null,
+          footwearName: c?.footwearName ?? null,
+          familyAllowed: c?.familyAllowed === true,
+          familyPreferred: c?.familyPreferred === true,
+          bottomFamily: c?.bottomFamily ?? null,
+          bottomName: c?.bottomName ?? null,
+          bottomAllowed: c?.bottomAllowed === true,
+          bottomPreferred: c?.bottomPreferred === true,
+          items,
+        };
+      }).filter((c) => Array.isArray(c.items) && c.items.length > 0);
+
+      if (!candidates.length) {
+        return {
+          fallback: true,
+          selectedCandidateIndex: 0,
+          reason: "empty_candidates",
+          warnings: ["No candidates provided."],
+        };
+      }
+
+      const availableItemIds = new Set();
+      for (const cand of candidates) {
+        for (const it of cand.items) {
+          const id = String(it?.id || it?.itemId || "").trim();
+          if (id) availableItemIds.add(id);
+        }
+      }
+
+      const footwearGuidance =
+        data?.footwearGuidance && typeof data.footwearGuidance === "object" ?
+          data.footwearGuidance :
+          null;
+
+      const bottomGuidance =
+        data?.bottomGuidance && typeof data.bottomGuidance === "object" ?
+          data.bottomGuidance :
+          null;
+
+      const systemPrompt =
+        `Si osobný módny stylista pre domácu obrazovku appky.\n` +
+        `Vyhodnocuješ LEN kandidátske outfity poskytnuté v JSON.\n` +
+        `Tvoj cieľ: vybrať najlepší full outfit (nie len jednotlivé kúsky) pre dané počasie a štýl.\n` +
+        `MUSÍŠ rešpektovať:\n` +
+        `- počasie (teplota, dážď, vietor) a sezónnosť\n` +
+        `- footwearGuidance (preferredFamilies / allowedFamilies / discouragedFamilies) — vysoká priorita\n` +
+        `- bottomGuidance (preferredFamilies / allowedFamilies / discouragedFamilies) — vysoká priorita\n` +
+        `- vizuálnu harmóniu farieb (farebné rodiny spolu)\n` +
+        `- štýlovú konzistenciu medzi kusmi\n` +
+        `- nepoužiť cudzie kúsky: vybrať iba jeden z kandidátov podľa selectedCandidateIndex\n` +
+        `- NEvymýšľaj mená ani ID.\n` +
+        `\n` +
+        `FOOTWEAR FAMILY RULES (ak je footwearGuidance v JSON):\n` +
+        `1) Najprv rešpektuj preferredFamilies a allowedFamilies.\n` +
+        `2) NIKDY nevyber kandidáta s discouragedFamilies obuvou, ak existuje iný kandidát s preferred/allowed obuvou.\n` +
+        `3) Pri miernom daždi a teple (napr. 18–22°C) preferuj sneakers, nie boots — aj keď prší.\n` +
+        `4) V rámci preferred/allowed rodiny vyber konkrétny pár podľa farebnej harmónie celého outfitu (biela/červená/čierna teniska podľa zvyšku).\n` +
+        `5) Každý kandidát má footwearFamily, familyAllowed, familyPreferred — použi ich.\n` +
+        `\n` +
+        `BOTTOM FAMILY RULES (ak je bottomGuidance v JSON):\n` +
+        `1) Teplotný komfort má prioritu pred dažďom — dážď sám o sebe NENÚTI dlhé nohavice.\n` +
+        `2) Pri teple (napr. ≥26°C) preferuj shorts; jeans/joggers/heavy pants sú príliš teplé.\n` +
+        `3) Pri 18–21°C sú shorts aj pants oboje prijateľné aj pri ľahkom daždi.\n` +
+        `4) NIKDY nevyber kandidáta s discouraged bottom family, ak existuje iný s preferred/allowed spodným dielom.\n` +
+        `5) Každý kandidát má bottomFamily, bottomAllowed, bottomPreferred — použi ich.\n` +
+        `\n` +
+        `Vráť striktne STRICT JSON iba s týmto tvarom:\n` +
+        `{\n` +
+        `  "selectedCandidateIndex": <int>,\n` +
+        `  "reason": "<krátke vysvetlenie v slovenčine>",\n` +
+        `  "warnings": ["..."],\n` +
+        `  "suggestedSwap": {\n` +
+        `     "swapOutItemIds": ["id1"],\n` +
+        `     "swapInItemIds": ["id2"]\n` +
+        `  }\n` +
+        `}\n` +
+        `Ak suggestedSwap nie je potrebný, daj "suggestedSwap": null.\n` +
+        `Bez markdownu, bez ďalšieho textu.\n`;
+
+      const userPrompt = JSON.stringify({
+        weatherContext,
+        footwearGuidance,
+        bottomGuidance,
+        candidates: candidates.map((cand) => ({
+          candidateIndex: cand.candidateIndex,
+          ruleScore: cand.ruleScore,
+          consistencyPenalty: cand.consistencyPenalty,
+          footwearFamily: cand.footwearFamily ?? null,
+          footwearName: cand.footwearName ?? null,
+          familyAllowed: cand.familyAllowed ?? null,
+          familyPreferred: cand.familyPreferred ?? null,
+          bottomFamily: cand.bottomFamily ?? null,
+          bottomName: cand.bottomName ?? null,
+          bottomAllowed: cand.bottomAllowed ?? null,
+          bottomPreferred: cand.bottomPreferred ?? null,
+          items: cand.items,
+        })),
+        availableItemIds: Array.from(availableItemIds).slice(0, 120),
+      });
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ];
+
+      try {
+        const rawText = await callOpenAiChatMessages(messages);
+        const parsed = extractFirstJsonObject(rawText);
+        if (!parsed || typeof parsed !== "object") {
+          return {
+            fallback: true,
+            selectedCandidateIndex: 0,
+            reason: "invalid_json_shape",
+            warnings: ["AI returned invalid JSON."],
+          };
+        }
+
+        const selectedCandidateIndexRaw = parsed.selectedCandidateIndex;
+        const selectedCandidateIndex = Number(selectedCandidateIndexRaw);
+        const validIndex = Number.isFinite(selectedCandidateIndex) &&
+          candidates.some((c) => c.candidateIndex === selectedCandidateIndex);
+
+        if (!validIndex) {
+          return {
+            fallback: true,
+            selectedCandidateIndex: 0,
+            reason: "invalid_selected_index",
+            warnings: ["AI selected an invalid candidate index."],
+          };
+        }
+
+        const reason = String(parsed.reason || "").trim();
+        const warnings = Array.isArray(parsed.warnings) ?
+          parsed.warnings.map((w) => String(w).trim()).filter(Boolean).slice(0, 6) :
+          [];
+
+        const suggestedSwap = parsed.suggestedSwap;
+        let suggestedSwapSafe = null;
+        if (suggestedSwap && typeof suggestedSwap === "object") {
+          const swapOutItemIds = Array.isArray(suggestedSwap.swapOutItemIds) ?
+            suggestedSwap.swapOutItemIds.map((id) => String(id).trim()).filter(Boolean) : [];
+          const swapInItemIds = Array.isArray(suggestedSwap.swapInItemIds) ?
+            suggestedSwap.swapInItemIds.map((id) => String(id).trim()).filter(Boolean) : [];
+
+          const allIds = new Set();
+          for (const id of swapOutItemIds) allIds.add(id);
+          for (const id of swapInItemIds) allIds.add(id);
+
+          let ok = true;
+          for (const id of allIds) {
+            if (!availableItemIds.has(id)) {
+              ok = false;
+              break;
+            }
+          }
+
+          if (ok && (swapOutItemIds.length || swapInItemIds.length)) {
+            suggestedSwapSafe = {
+              swapOutItemIds: swapOutItemIds.slice(0, 6),
+              swapInItemIds: swapInItemIds.slice(0, 6),
+            };
+          }
+        }
+
+        return {
+          fallback: false,
+          selectedCandidateIndex,
+          reason: reason || "OK",
+          warnings,
+          suggestedSwap: suggestedSwapSafe,
+        };
+      } catch (err) {
+        logger.error("finalReviewHomeOutfitCandidates error:", {
+          uid,
+          message: err?.message || String(err),
+        });
+        return {
+          fallback: true,
+          selectedCandidateIndex: 0,
+          reason: "openai_error",
+          warnings: ["AI failed. Falling back to rule-based outfit."],
+        };
+      }
+    });
+
   exports.stylistChat = functions
     .region("us-east1")
     .https.onCall(async (data, context) => {

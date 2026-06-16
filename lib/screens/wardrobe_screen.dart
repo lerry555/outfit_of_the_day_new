@@ -18,17 +18,8 @@ class _WardrobeLuxuryPalette {
   static const Color bgMid = Color(0xFF0C0C0D);
   static const Color bgBottom = Color(0xFF080809);
 
-  static const Color surface = Color(0xFF151517);
-  static const Color surfaceSoft = Color(0xFF1B1B1F);
-  static const Color surfaceElevated = Color(0xFF242329);
-
-  static const Color textPrimary = Color(0xFFF1F0EC);
-  static const Color textSecondary = Color(0xFFAAA59B);
-
   static const Color accent = Color(0xFFC8A36A);
-  static const Color accentSoft = Color(0xFF9D7C4C);
   static const Color accentGlow = Color(0x66C8A36A);
-  static const Color border = Color(0x26FFFFFF);
 }
 
 String _wardrobeNormalizeText(String input) {
@@ -314,7 +305,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       // 1) Delete Firestore document
       await _firestore
           .collection('users')
-          .doc(_authUser!.uid)
+          .doc(_authUser.uid)
           .collection('wardrobe')
           .doc(id)
           .delete();
@@ -354,16 +345,6 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     } catch (_) {
       // ticho ignorujeme: nie je Storage URL, alebo už neexistuje, alebo nemáme práva
     }
-  }
-
-  // -----------------------------
-  // Helpers – normalizácia listov
-  // -----------------------------
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
   }
 
   // -----------------------------
@@ -513,7 +494,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                       children: mainGroupKeys.map((mainGroupKey) {
                         return _WardrobeTabBody(
                           firestore: _firestore,
-                          authUid: _authUser!.uid,
+                          authUid: _authUser.uid,
                           mainGroupKey: mainGroupKey,
                           sortOption: _sortOption,
                           sortOptions: _sortOptions,
@@ -945,13 +926,6 @@ class _CategorySectionGlass extends StatelessWidget {
     required this.onDeleteItem,
   });
 
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
-  }
-
   String _statusFromProcessing(Map<String, dynamic> data, String key) {
     final p = data['processing'];
     if (p is Map) {
@@ -1356,7 +1330,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     try {
       await _firestore
           .collection('users')
-          .doc(_authUser!.uid)
+          .doc(_authUser.uid)
           .collection('wardrobe')
           .doc(id)
           .delete();
@@ -1392,13 +1366,6 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       final ref = FirebaseStorage.instance.refFromURL(u);
       await ref.delete();
     } catch (_) {}
-  }
-
-  List<String> _normalizeList(dynamic value) {
-    if (value == null) return [];
-    if (value is List) return value.map((e) => e.toString()).toList();
-    if (value is String && value.isNotEmpty) return [value];
-    return [];
   }
 
   String _normalizeText(String input) => _wardrobeNormalizeText(input);
@@ -1572,7 +1539,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                   child: StreamBuilder<QuerySnapshot>(
                     stream: _firestore
                         .collection('users')
-                        .doc(_authUser!.uid)
+                        .doc(_authUser.uid)
                         .collection('wardrobe')
                         .where('mainGroup', isEqualTo: widget.mainGroupKey)
                         .snapshots(),

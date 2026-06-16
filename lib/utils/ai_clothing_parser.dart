@@ -319,7 +319,6 @@ class AiClothingParser {
 
     'plavecke sortky': 'plavecke_sortky',
     'plavecké šortky': 'plavecke_sortky',
-    'plavecke sortky': 'plavecke_sortky',
     'swim shorts': 'plavecke_sortky',
     'swimming shorts': 'plavecke_sortky',
     'board shorts': 'plavecke_sortky',
@@ -1171,7 +1170,7 @@ class AiClothingParser {
       return subKey == 'undershirt' ? 'base_layer' : 'main_top';
     }
     if (subCategoryTree['kosele']?.contains(subKey) == true) return 'main_top';
-    if (subCategoryTree['mikiny']?.contains(subKey) == true) return 'outer_layer';
+    if (subCategoryTree['mikiny']?.contains(subKey) == true) return 'mid_layer';
     if (subCategoryTree['svetre']?.contains(subKey) == true) return 'main_top';
     if (subCategoryTree['bundy_kabaty']?.contains(subKey) == true) return 'outer_layer';
     if (subCategoryTree['nohavice_rifle']?.contains(subKey) == true) {
@@ -1195,7 +1194,8 @@ class AiClothingParser {
       if (subKey == 'sport_leginy') return 'base_bottom';
       if (subKey == 'sport_sortky') return 'main_bottom';
       if (subKey == 'sport_suprava') return 'one_piece';
-      if (subKey == 'sport_mikina' || subKey == 'softshell_bunda') return 'outer_layer';
+      if (subKey == 'sport_mikina') return 'mid_layer';
+      if (subKey == 'softshell_bunda') return 'outer_layer';
       return 'main_top';
     }
 

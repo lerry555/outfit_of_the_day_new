@@ -1142,7 +1142,7 @@ class _DemoItem {
   final String subCategoryId;
 
   final List<String> sizes;
-  List<String> selectedSizes;
+  List<String> selectedSizes = const [];
   double? targetPrice;
 
   _DemoItem({
@@ -1155,7 +1155,5 @@ class _DemoItem {
     required this.categoryId,
     required this.subCategoryId,
     required this.sizes,
-    this.selectedSizes = const [],
-    this.targetPrice,
   });
 }

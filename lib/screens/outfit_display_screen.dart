@@ -5,8 +5,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:math';
 
-import 'package:outfitofTheDay/constants/app_constants.dart';
-
 class OutfitDisplayScreen extends StatefulWidget {
   final Map<String, dynamic>? initialOutfitData;
   final double currentTemperature;
@@ -282,7 +280,7 @@ class _OutfitDisplayScreenState extends State<OutfitDisplayScreen> {
     }
 
     try {
-      await _firestore.collection('users').doc(_user!.uid).collection('outfitFeedback').add({
+      await _firestore.collection('users').doc(_user.uid).collection('outfitFeedback').add({
         'outfitItems': outfitItemsDetails,
         'liked': liked,
         'timestamp': FieldValue.serverTimestamp(),
@@ -295,7 +293,7 @@ class _OutfitDisplayScreenState extends State<OutfitDisplayScreen> {
 
       for (var item in outfitItemsDetails) {
         if (item['itemId'] != null) {
-          final itemRef = _firestore.collection('users').doc(_user!.uid).collection('wardrobe').doc(item['itemId']);
+          final itemRef = _firestore.collection('users').doc(_user.uid).collection('wardrobe').doc(item['itemId']);
           final doc = await itemRef.get();
           if (doc.exists) {
             final int currentWearCount = doc.data()?['wearCount'] ?? 0;

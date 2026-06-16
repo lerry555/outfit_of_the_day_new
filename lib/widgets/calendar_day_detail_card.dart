@@ -259,7 +259,7 @@ class CalendarDayDetailCard extends StatelessWidget {
 }
 
 class _SkeletonTile extends StatelessWidget {
-  const _SkeletonTile({super.key});
+  const _SkeletonTile();
 
   @override
   Widget build(BuildContext context) {

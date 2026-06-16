@@ -10,8 +10,6 @@
 ///
 /// Note: If you later plug in a real weather API, this file is the only place
 /// you should need to update.
-library date_weather_service;
-
 class DateWeatherSnapshot {
   final int tempC;
   final bool isRainy;

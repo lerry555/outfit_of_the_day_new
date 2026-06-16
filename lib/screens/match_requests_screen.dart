@@ -97,7 +97,6 @@ class _MatchRequestsList extends StatelessWidget {
             final doc = docs[index];
             final data = doc.data() as Map<String, dynamic>? ?? {};
 
-            final fromUid = data['fromUid'] as String? ?? '';
             final toUid = data['toUid'] as String? ?? '';
             final fromName = data['fromName'] as String? ?? 'Niekto';
             final toName = data['toName'] as String? ?? 'Niekto';

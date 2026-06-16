@@ -293,10 +293,6 @@ class _SelectOutfitScreenState extends State<SelectOutfitScreen> {
     final hasTodayEvents = _todayEvents.isNotEmpty;
     final hasTomorrowEvents = _tomorrowEvents.isNotEmpty;
 
-    final now = DateTime.now();
-    final todayDate = DateTime(now.year, now.month, now.day);
-    final tomorrowDate = todayDate.add(const Duration(days: 1));
-
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vybrať outfit'),

@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class PendingExternalItem {
-  final String target; // "outfit_builder" | "stylist_chat" | "wishlist"
+  final String target; // "stylist_chat" | "wishlist"
   final String bodyPart; // "torso" | "legs" | "feet" | "head" ...
   final String layerGroup; // "underwear" | "base" | "mid" | "outer" | "accessory"
   final String expectedType; // "tshirt" | "jacket" | "jeans" | "shoes" ...

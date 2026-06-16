@@ -7,6 +7,8 @@ library wardrobe_image_url_priority;
 
 import 'package:flutter/foundation.dart';
 
+import 'home_debug_logging.dart';
+
 bool _isHttpUrl(String? s) {
   final u = (s ?? '').trim();
   return u.startsWith('http://') || u.startsWith('https://');
@@ -114,7 +116,9 @@ void setWardrobeCardImageLoggingEnabled(bool enabled) {
 
 /// Debug: log once per item+pick (cards). Same pick as detail screen.
 void debugLogWardrobeCardImage(Map<String, dynamic> item) {
-  if (!kDebugMode || !_wardrobeCardImageLoggingEnabled) return;
+  if (!kDebugMode || !kVerboseHomeLogs || !_wardrobeCardImageLoggingEnabled) {
+    return;
+  }
 
   final pick = pickBestWardrobeImageUrl(item);
   final id = (_getStr(item, '__id') ?? _getStr(item, 'id') ?? '').trim();

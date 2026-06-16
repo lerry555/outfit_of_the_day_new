@@ -13,6 +13,9 @@ class HomeDailyOutfitCacheDocument {
   final bool userModified;
   final String? likedOutfitKey;
   final DateTime? updatedAt;
+  final int? clientUpdatedAtMs;
+  final List<String>? lastNewOutfitItemIds;
+  final int? lastNewOutfitSavedAtMs;
 
   const HomeDailyOutfitCacheDocument({
     required this.dateKey,
@@ -25,6 +28,9 @@ class HomeDailyOutfitCacheDocument {
     required this.userModified,
     this.likedOutfitKey,
     this.updatedAt,
+    this.clientUpdatedAtMs,
+    this.lastNewOutfitItemIds,
+    this.lastNewOutfitSavedAtMs,
   });
 }
 
@@ -47,9 +53,17 @@ class HomeDailyOutfitCacheService {
         .doc(dateKey);
   }
 
-  Future<HomeDailyOutfitCacheDocument?> load(String uid, String dateKey) async {
+  Future<HomeDailyOutfitCacheDocument?> load(
+    String uid,
+    String dateKey, {
+    bool preferServer = false,
+  }) async {
     try {
-      final snap = await _docRef(uid, dateKey).get();
+      final snap = await _docRef(uid, dateKey).get(
+        preferServer
+            ? const GetOptions(source: Source.server)
+            : const GetOptions(),
+      );
       if (!snap.exists) return null;
       final data = snap.data();
       if (data == null) return null;
@@ -63,12 +77,17 @@ class HomeDailyOutfitCacheService {
   Future<void> save({
     required String uid,
     required HomeDailyOutfitCacheDocument document,
+    bool merge = true,
+    bool waitForPendingWrites = false,
   }) async {
     try {
       await _docRef(uid, document.dateKey).set(
         _toFirestore(document),
-        SetOptions(merge: true),
+        merge ? SetOptions(merge: true) : SetOptions(merge: false),
       );
+      if (waitForPendingWrites) {
+        await _firestore.waitForPendingWrites();
+      }
     } catch (e) {
       debugPrint(
         '[HOME_DAY_CACHE] save_error date=${document.dateKey} error=$e',
@@ -115,6 +134,18 @@ class HomeDailyOutfitCacheService {
       updated = updatedAt;
     }
 
+    final rawLastNewOutfitIds = data['lastNewOutfitItemIds'];
+    final lastNewOutfitItemIds = <String>[];
+    if (rawLastNewOutfitIds is List) {
+      for (final id in rawLastNewOutfitIds) {
+        final s = id?.toString().trim() ?? '';
+        if (s.isNotEmpty) lastNewOutfitItemIds.add(s);
+      }
+    }
+
+    final clientUpdatedAtMs = _readInt(data['clientUpdatedAtMs']);
+    final lastNewOutfitSavedAtMs = _readInt(data['lastNewOutfitSavedAtMs']);
+
     return HomeDailyOutfitCacheDocument(
       dateKey: dateKey,
       itemIds: itemIds,
@@ -128,10 +159,24 @@ class HomeDailyOutfitCacheService {
           ? (data['likedOutfitKey'] as String).trim()
           : null,
       updatedAt: updated,
+      clientUpdatedAtMs: clientUpdatedAtMs,
+      lastNewOutfitItemIds:
+          lastNewOutfitItemIds.isEmpty ? null : lastNewOutfitItemIds,
+      lastNewOutfitSavedAtMs: lastNewOutfitSavedAtMs,
     );
   }
 
+  int? _readInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    final parsed = int.tryParse(value?.toString() ?? '');
+    return parsed;
+  }
+
   Map<String, dynamic> _toFirestore(HomeDailyOutfitCacheDocument doc) {
+    final clientMs = doc.clientUpdatedAtMs ??
+        doc.updatedAt?.millisecondsSinceEpoch ??
+        DateTime.now().millisecondsSinceEpoch;
     return <String, dynamic>{
       'dateKey': doc.dateKey,
       'itemIds': doc.itemIds,
@@ -141,8 +186,15 @@ class HomeDailyOutfitCacheService {
       'wardrobeSignature': doc.wardrobeSignature,
       'source': doc.source,
       'userModified': doc.userModified,
+      'clientUpdatedAtMs': clientMs,
       if (doc.likedOutfitKey != null && doc.likedOutfitKey!.isNotEmpty)
         'likedOutfitKey': doc.likedOutfitKey,
+      if (doc.lastNewOutfitItemIds != null &&
+          doc.lastNewOutfitItemIds!.isNotEmpty) ...<String, dynamic>{
+        'lastNewOutfitItemIds': doc.lastNewOutfitItemIds,
+        'lastNewOutfitSavedAtMs':
+            doc.lastNewOutfitSavedAtMs ?? clientMs,
+      },
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
