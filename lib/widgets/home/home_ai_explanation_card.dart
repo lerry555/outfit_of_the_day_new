@@ -21,9 +21,10 @@ class HomeAiExplanationCard extends StatelessWidget {
     if (isPlaceholder) {
       return 'Po vygenerovaní outfitu uvidíte prehľad rozhodnutí...';
     }
+    final body = supplementalBody?.trim() ?? '';
+    if (body.isNotEmpty) return HomeAiExplanationCard.readableExcerpt(body);
     final fromItems = explanations.teaser;
     if (fromItems.isNotEmpty) return fromItems;
-    final body = supplementalBody?.trim() ?? '';
     if (body.isEmpty) return 'Klepnutím zobrazíte detail rozhodnutí stylistu.';
     return HomeAiExplanationCard.readableExcerpt(body);
   }
@@ -48,10 +49,10 @@ class HomeAiExplanationCard extends StatelessWidget {
         onTap: isPlaceholder
             ? null
             : () => HomeOutfitExplanationSheet.show(
-                  context,
-                  narrative: explanations.narrative,
-                  supplementalBody: supplementalBody,
-                ),
+                context,
+                narrative: explanations.narrative,
+                supplementalBody: supplementalBody,
+              ),
         borderRadius: BorderRadius.circular(20),
         splashColor: HomeLuxuryPalette.accent.withOpacity(0.06),
         highlightColor: HomeLuxuryPalette.accent.withOpacity(0.03),

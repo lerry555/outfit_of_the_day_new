@@ -74,11 +74,11 @@ class OutfitPreview {
   });
 
   List<OutfitPreviewItem> get orderedTiles => [
-        if (outerwear != null) outerwear!,
-        top,
-        bottom,
-        shoes,
-      ];
+    if (outerwear != null) outerwear!,
+    top,
+    bottom,
+    shoes,
+  ];
 }
 
 /// Wardrobe pools used by [OutfitGenerationService.generatePreview] (audit / introspection).
@@ -122,12 +122,14 @@ class OutfitGenerationService {
       wardrobeItemId(bottom),
       wardrobeItemId(shoes),
       if (outer != null) wardrobeItemId(outer),
-    ].where((e) => e.isNotEmpty).toList()
-      ..sort();
+    ].where((e) => e.isNotEmpty).toList()..sort();
     return parts.join('|');
   }
 
-  static int overlapCount(Set<String> previousIds, List<Map<String, dynamic>> picks) {
+  static int overlapCount(
+    Set<String> previousIds,
+    List<Map<String, dynamic>> picks,
+  ) {
     if (previousIds.isEmpty) return 0;
     var n = 0;
     for (final m in picks) {
@@ -181,7 +183,7 @@ class OutfitGenerationService {
     OutfitPreviewBonusScorer? comfortBonusScorer,
     OutfitPreviewPredicate? preferNoOuterWhenComfortable,
     void Function(int candidateIndex, OutfitPreview preview)?
-        logOptionalOuterCandidate,
+    logOptionalOuterCandidate,
     OutfitPreviewEowReader? outerMatrixEowReader,
     double? outerMatrixCt,
     OuterVariantComfortBands? outerVariantComfortBands,
@@ -235,7 +237,7 @@ class OutfitGenerationService {
     OutfitPreviewBonusScorer? comfortBonusScorer,
     OutfitPreviewPredicate? preferNoOuterWhenComfortable,
     void Function(int candidateIndex, OutfitPreview preview)?
-        logOptionalOuterCandidate,
+    logOptionalOuterCandidate,
     OutfitPreviewEowReader? outerMatrixEowReader,
     double? outerMatrixCt,
     OuterVariantComfortBands? outerVariantComfortBands,
@@ -275,7 +277,8 @@ class OutfitGenerationService {
     OutfitPreview? preview,
     List<OutfitPreview> previews,
     OutfitGenerationPools? pools,
-  }) _generatePreviewInternal({
+  })
+  _generatePreviewInternal({
     required List<Map<String, dynamic>> wardrobeItems,
     required OutfitWeatherSnapshot weather,
     Set<String> excludedItemIds = const {},
@@ -299,7 +302,7 @@ class OutfitGenerationService {
     OutfitPreviewBonusScorer? comfortBonusScorer,
     OutfitPreviewPredicate? preferNoOuterWhenComfortable,
     void Function(int candidateIndex, OutfitPreview preview)?
-        logOptionalOuterCandidate,
+    logOptionalOuterCandidate,
     OutfitPreviewEowReader? outerMatrixEowReader,
     double? outerMatrixCt,
     OuterVariantComfortBands? outerVariantComfortBands,
@@ -310,10 +313,9 @@ class OutfitGenerationService {
       final m = Map<String, dynamic>.from(raw);
       m['name'] = (m['name'] ?? '').toString();
       m['category'] = (m['categoryKey'] ?? m['category'] ?? '').toString();
-      m['subCategory'] =
-          (m['subCategoryKey'] ?? m['subCategory'] ?? '').toString();
-      m['mainGroup'] =
-          (m['mainGroupKey'] ?? m['mainGroup'] ?? '').toString();
+      m['subCategory'] = (m['subCategoryKey'] ?? m['subCategory'] ?? '')
+          .toString();
+      m['mainGroup'] = (m['mainGroupKey'] ?? m['mainGroup'] ?? '').toString();
       m['colors'] = m['colors'] ?? m['color'] ?? const [];
       m['seasons'] = m['seasons'] ?? m['season'] ?? const [];
       return m;
@@ -410,17 +412,28 @@ class OutfitGenerationService {
     }
 
     bool isOuterwear(Map<String, dynamic> it) {
+      final layer = StylistLayerFilter.resolveEffectiveLayerRole(it);
+      if (layer == 'outer_layer') return true;
+      if (layer == 'mid_layer' ||
+          layer == 'main_top' ||
+          layer == 'base_layer' ||
+          layer == 'bottom' ||
+          layer == 'main_bottom' ||
+          layer == 'base_bottom' ||
+          layer == 'one_piece' ||
+          layer == 'footwear' ||
+          layer == 'accessory') {
+        return false;
+      }
       final b = blob(it);
       return containsAny(b, [
         'bunda',
         'kabát',
         'kabat',
-        'mikina',
         'sako',
         'blazer',
         'coat',
         'jacket',
-        'hoodie',
       ]);
     }
 
@@ -430,15 +443,37 @@ class OutfitGenerationService {
     }
 
     bool isLightOuterwear(Map<String, dynamic> it) {
+      final layer = StylistLayerFilter.resolveEffectiveLayerRole(it);
+      if (layer != 'outer_layer') return false;
+      final b = blob(it);
+      return containsAny(b, ['sako', 'blazer', 'bunda', 'jacket']);
+    }
+
+    bool isRainShellOuterwear(Map<String, dynamic> it) {
       final b = blob(it);
       return containsAny(b, [
-        'mikina',
-        'hoodie',
-        'sako',
-        'blazer',
-        'bunda',
-        'jacket',
+        'pršiplášť',
+        'prsiplast',
+        'raincoat',
+        'rain jacket',
+        'nepremok',
+        'waterproof',
       ]);
+    }
+
+    bool isWeatherAppropriateOuterwear(Map<String, dynamic> it) {
+      final warmth = StylistLayerFilter.inferWarmthLevel(it);
+      if (weather.tempC >= 24) {
+        if (weather.isRainy) {
+          return warmth <= 3 && isRainShellOuterwear(it);
+        }
+        if (weather.isWindy) {
+          return warmth <= 3 && isLightOuterwear(it);
+        }
+        return false;
+      }
+      if (weather.tempC >= 20 && warmth >= 6) return false;
+      return true;
     }
 
     bool isNeutral(Map<String, dynamic> it) {
@@ -446,19 +481,13 @@ class OutfitGenerationService {
       final baseColors = <String>[
         if (baseDyn is List) ...baseDyn.map((e) => e.toString()),
         if (baseDyn is String && baseDyn.trim().isNotEmpty) baseDyn,
-      ]
-          .map((s) => s.trim().toLowerCase())
-          .where((s) => s.isNotEmpty)
-          .toList();
+      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
 
       final colorsDyn = it['colors'];
       final colors = <String>[
         if (colorsDyn is List) ...colorsDyn.map((e) => e.toString()),
         if (colorsDyn is String && colorsDyn.trim().isNotEmpty) colorsDyn,
-      ]
-          .map((s) => s.trim().toLowerCase())
-          .where((s) => s.isNotEmpty)
-          .toList();
+      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
 
       final check = baseColors.isNotEmpty ? baseColors : colors;
       if (check.isEmpty) return false;
@@ -480,11 +509,31 @@ class OutfitGenerationService {
       });
     }
 
+    bool isDarkItem(Map<String, dynamic> it) {
+      final values = <String>[
+        if (it['baseColors'] is List)
+          ...(it['baseColors'] as List).map((e) => e.toString()),
+        if (it['baseColors'] is String) it['baseColors'].toString(),
+        if (it['colors'] is List)
+          ...(it['colors'] as List).map((e) => e.toString()),
+        if (it['colors'] is String) it['colors'].toString(),
+        blob(it),
+      ].map((s) => s.toLowerCase()).toList(growable: false);
+      return values.any(
+        (c) =>
+            c.contains('čier') ||
+            c.contains('cier') ||
+            c.contains('black') ||
+            c.contains('tmav') ||
+            c.contains('dark'),
+      );
+    }
+
     double baseScore(Map<String, dynamic> it) {
       final b = blob(it);
       var s = 0.0;
-      if (isNeutral(it)) s += 2.0;
-      if (b.contains('basic')) s += 1.0;
+      if (isNeutral(it)) s += 0.35;
+      if (b.contains('basic')) s += 0.25;
       final brand = (it['brand'] ?? '').toString().trim();
       if (brand.isNotEmpty) s += 0.2;
       return s;
@@ -537,29 +586,87 @@ class OutfitGenerationService {
     var tops = pool.where(isTop).toList();
     var bottoms = pool.where(isBottom).toList();
     if (allowedBottomItemIds.isNotEmpty) {
-      final restrictedBottoms = bottoms
-          .where((it) {
-            final id = wardrobeItemId(it);
-            return id.isNotEmpty && allowedBottomItemIds.contains(id);
-          })
-          .toList();
+      final restrictedBottoms = bottoms.where((it) {
+        final id = wardrobeItemId(it);
+        return id.isNotEmpty && allowedBottomItemIds.contains(id);
+      }).toList();
       if (restrictedBottoms.isNotEmpty) {
         bottoms = restrictedBottoms;
       }
     }
-    var shoes = pool.where(isShoes).toList();
+    bool isRainRiskSportSneaker(Map<String, dynamic> it) {
+      final b = blob(it);
+      final canonical = (it['canonical_type'] ?? it['canonicalType'] ?? '')
+          .toString()
+          .toLowerCase();
+      return b.contains('sieť') ||
+          b.contains('siet') ||
+          b.contains('mesh') ||
+          b.contains('bežeck') ||
+          b.contains('bezeck') ||
+          b.contains('running') ||
+          b.contains('športové tenisky') ||
+          b.contains('sportove tenisky') ||
+          b.contains('sport shoe') ||
+          b.contains('sport shoes') ||
+          b.contains('training shoe') ||
+          b.contains('training shoes') ||
+          b.contains('athletic shoe') ||
+          b.contains('athletic shoes') ||
+          canonical.contains('running') ||
+          canonical.contains('training') ||
+          canonical.contains('athletic') ||
+          canonical.contains('sportshoe');
+    }
+
+    bool isOpenFootwear(Map<String, dynamic> it) {
+      final b = blob(it);
+      return b.contains('sandál') ||
+          b.contains('sandal') ||
+          b.contains('šľapk') ||
+          b.contains('slapk') ||
+          b.contains('flip flop') ||
+          b.contains('slipper_open');
+    }
+
+    bool isRainSaferFootwear(Map<String, dynamic> it) {
+      return !isRainRiskSportSneaker(it) && !isOpenFootwear(it);
+    }
+
+    final allShoes = pool.where(isShoes).toList();
+    var shoes = allShoes;
     if (allowedShoeItemIds.isNotEmpty) {
-      final restricted = shoes
-          .where((it) {
-            final id = wardrobeItemId(it);
-            return id.isNotEmpty && allowedShoeItemIds.contains(id);
-          })
-          .toList();
+      final restricted = shoes.where((it) {
+        final id = wardrobeItemId(it);
+        return id.isNotEmpty && allowedShoeItemIds.contains(id);
+      }).toList();
       if (restricted.isNotEmpty) {
         shoes = restricted;
       }
     }
-    final outerwear = pool.where(isOuterwear).toList();
+    if (weather.isRainy && weather.tempC > 12) {
+      final saferRestricted = shoes
+          .where(isRainSaferFootwear)
+          .toList(growable: false);
+      final saferAll = allShoes
+          .where(isRainSaferFootwear)
+          .toList(growable: false);
+      if (saferRestricted.isNotEmpty) {
+        shoes = saferRestricted;
+      } else if (saferAll.isNotEmpty) {
+        shoes = saferAll;
+        if (kDebugMode) {
+          debugPrint(
+            '[RAIN_FOOTWEAR_POOL_EXPANDED] reason=restricted_pool_only_sport_sneakers '
+            'expanded=${saferAll.length}',
+          );
+        }
+      }
+    }
+    final outerwear = pool
+        .where(isOuterwear)
+        .where(isWeatherAppropriateOuterwear)
+        .toList();
 
     if (tops.isEmpty || bottoms.isEmpty || shoes.isEmpty) {
       return (preview: null, previews: const [], pools: null);
@@ -574,14 +681,19 @@ class OutfitGenerationService {
     String seasonsLabel(Map<String, dynamic> it) {
       final raw = it['seasons'] ?? it['season'];
       if (raw is List) {
-        return raw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).join(',');
+        return raw
+            .map((e) => e.toString().trim())
+            .where((s) => s.isNotEmpty)
+            .join(',');
       }
       if (raw is String && raw.trim().isNotEmpty) return raw.trim();
       return '';
     }
 
     String canonicalLabel(Map<String, dynamic> it) {
-      return (it['canonical_type'] ?? it['canonicalType'] ?? '').toString().trim();
+      return (it['canonical_type'] ?? it['canonicalType'] ?? '')
+          .toString()
+          .trim();
     }
 
     String labelFor(Map<String, dynamic> it, {required String fallback}) {
@@ -646,7 +758,8 @@ class OutfitGenerationService {
     );
 
     final auditEnabled =
-        !auditPoolsOnly && (auditCandidateGeneration || kCandidateGenerationAudit);
+        !auditPoolsOnly &&
+        (auditCandidateGeneration || kCandidateGenerationAudit);
 
     if (auditPoolsOnly) {
       return (preview: null, previews: const [], pools: poolsSnapshot);
@@ -702,6 +815,28 @@ class OutfitGenerationService {
           c == 'sneakers';
     }
 
+    bool isBreathableSportSneaker(String b, String canonical) {
+      final c = canonical.toLowerCase();
+      return b.contains('sieť') ||
+          b.contains('siet') ||
+          b.contains('mesh') ||
+          b.contains('bežeck') ||
+          b.contains('bezeck') ||
+          b.contains('running') ||
+          b.contains('športové tenisky') ||
+          b.contains('sportove tenisky') ||
+          b.contains('sport shoe') ||
+          b.contains('sport shoes') ||
+          b.contains('training shoe') ||
+          b.contains('training shoes') ||
+          b.contains('athletic shoe') ||
+          b.contains('athletic shoes') ||
+          c.contains('training') ||
+          c.contains('athletic') ||
+          c.contains('sportshoe') ||
+          c.contains('running');
+    }
+
     bool isWhiteOrLightFootwear(Map<String, dynamic> it, String b) {
       final colorSources = <String>[
         if (it['colors'] is List)
@@ -729,9 +864,8 @@ class OutfitGenerationService {
     }
 
     /// Footwear score components (logging mirrors actual [scoreShoes] math).
-    ({double base, double warmth, double season, double rain}) footwearScoreParts(
-      Map<String, dynamic> it,
-    ) {
+    ({double base, double warmth, double season, double rain})
+    footwearScoreParts(Map<String, dynamic> it) {
       final b = blob(it);
       final canonical = canonicalLabel(it);
       final scoreBase = baseScore(it);
@@ -772,10 +906,12 @@ class OutfitGenerationService {
         }
 
         if (sneakerLike && temp > 12) {
-          if (isWhiteOrLightFootwear(it, b)) {
+          if (isBreathableSportSneaker(b, canonical)) {
+            scoreRain -= 3.0;
+          } else if (isWhiteOrLightFootwear(it, b)) {
             scoreRain -= 1.0;
           } else {
-            scoreRain += 0.5;
+            scoreRain -= 0.25;
           }
         }
       }
@@ -819,18 +955,22 @@ class OutfitGenerationService {
       required int attempt,
     }) {
       if (!kDebugMode) return;
-      final ranked = candidatePool
-          .map((c) => (item: c, total: footwearScoreTotal(c)))
-          .toList()
-        ..sort((a, b) {
-          final cmp = b.total.compareTo(a.total);
-          if (cmp != 0) return cmp;
-          return wardrobeItemId(a.item).compareTo(wardrobeItemId(b.item));
-        });
+      final ranked =
+          candidatePool
+              .map((c) => (item: c, total: footwearScoreTotal(c)))
+              .toList()
+            ..sort((a, b) {
+              final cmp = b.total.compareTo(a.total);
+              if (cmp != 0) return cmp;
+              return wardrobeItemId(a.item).compareTo(wardrobeItemId(b.item));
+            });
 
       final winnerParts = footwearScoreParts(selected);
       final winnerTotal =
-          winnerParts.base + winnerParts.warmth + winnerParts.season + winnerParts.rain;
+          winnerParts.base +
+          winnerParts.warmth +
+          winnerParts.season +
+          winnerParts.rain;
       final reasons = <String>[];
 
       if (attempt > 0) {
@@ -902,6 +1042,28 @@ class OutfitGenerationService {
     }
 
     double scoreShoes(Map<String, dynamic> it) => footwearScoreTotal(it);
+
+    bool isBreathableSportSneakerItem(Map<String, dynamic> it) {
+      return isBreathableSportSneaker(blob(it), canonicalLabel(it));
+    }
+
+    List<Map<String, dynamic>> applyRainFootwearRules(
+      List<Map<String, dynamic>> candidates,
+    ) {
+      if (!weather.isRainy || temp <= 12) return candidates;
+      final betterRainOptions = candidates
+          .where((it) => !isBreathableSportSneakerItem(it))
+          .toList(growable: false);
+      if (betterRainOptions.isEmpty) return candidates;
+      final removed = candidates.length - betterRainOptions.length;
+      if (removed > 0 && kDebugMode) {
+        debugPrint(
+          '[RAIN_FOOTWEAR_FILTER] removed_breathable_sport_sneakers=$removed '
+          'remaining=${betterRainOptions.length}',
+        );
+      }
+      return betterRainOptions;
+    }
 
     double scoreOuter(Map<String, dynamic> it) {
       final b = blob(it);
@@ -1003,9 +1165,7 @@ class OutfitGenerationService {
           isWinterJacketOuter(outerItem) &&
           isShortsBottom(bottomItem)) {
         penaltyTotal -= winterJacketShortsPenalty;
-        issues.add(
-          'winter_jacket_with_shorts(-$winterJacketShortsPenalty)',
-        );
+        issues.add('winter_jacket_with_shorts(-$winterJacketShortsPenalty)');
       }
 
       if (outerItem != null &&
@@ -1078,14 +1238,20 @@ class OutfitGenerationService {
 
     final ftops = filterExcluded(tops, 'top');
     final fbottoms = filterExcluded(bottoms, 'bottom');
-    final fshoes = filterExcluded(shoes, 'shoes');
+    final fshoes = applyRainFootwearRules(filterExcluded(shoes, 'shoes'));
 
-    final topCandidates =
-        rankPool(ftops, scoreTop).take(matrixTopN).toList(growable: false);
-    final bottomCandidates =
-        rankPool(fbottoms, scoreBottom).take(matrixBottomN).toList(growable: false);
-    final footwearCandidates =
-        rankPool(fshoes, scoreShoes).take(matrixFootwearN).toList(growable: false);
+    final topCandidates = rankPool(
+      ftops,
+      scoreTop,
+    ).take(matrixTopN).toList(growable: false);
+    final bottomCandidates = rankPool(
+      fbottoms,
+      scoreBottom,
+    ).take(matrixBottomN).toList(growable: false);
+    final footwearCandidates = rankPool(
+      fshoes,
+      scoreShoes,
+    ).take(matrixFootwearN).toList(growable: false);
 
     final outerPolicy = resolveOuterwearPolicy(
       tempC: temp,
@@ -1130,10 +1296,7 @@ class OutfitGenerationService {
                 filterExcluded(outerwear, 'outerwear'),
                 scoreOuter,
               ).take(matrixOuterN).toList(growable: false);
-        outerCandidates = <Map<String, dynamic>?>[
-          null,
-          ...rankedOuter,
-        ];
+        outerCandidates = <Map<String, dynamic>?>[null, ...rankedOuter];
     }
 
     String matrixCandidateLabel(OutfitPreview preview) {
@@ -1191,6 +1354,28 @@ class OutfitGenerationService {
       );
       total += consistencyPenaltyForPreview(preview: preview);
 
+      if (prevIdSet.isNotEmpty) {
+        final topId = wardrobeItemId(preview.top.item);
+        final bottomId = wardrobeItemId(preview.bottom.item);
+        final shoesId = wardrobeItemId(preview.shoes.item);
+        var repeatedCore = 0;
+        if (topId.isNotEmpty && prevIdSet.contains(topId)) {
+          total -= 1.6;
+          repeatedCore++;
+        }
+        if (bottomId.isNotEmpty && prevIdSet.contains(bottomId)) {
+          total -= 2.4;
+          repeatedCore++;
+        }
+        if (shoesId.isNotEmpty && prevIdSet.contains(shoesId)) {
+          total -= weather.isRainy ? 0.4 : 1.0;
+          repeatedCore++;
+        }
+        if (repeatedCore >= 2) {
+          total -= 1.8;
+        }
+      }
+
       if (isPreferredBottom != null && isPreferredBottom(preview)) {
         total += 1.5;
       }
@@ -1216,14 +1401,22 @@ class OutfitGenerationService {
           shouldPreferNoOuter(preview)) {
         total += 0.4;
       }
+      if (weather.tempC >= 20 &&
+          isDarkItem(preview.top.item) &&
+          isDarkItem(preview.bottom.item)) {
+        total -= 2.25;
+      }
       return total;
     }
 
-    final nullOuterSlotCount =
-        outerCandidates.where((outerItem) => outerItem == null).length;
-    final outerWearSlotCount =
-        outerCandidates.where((outerItem) => outerItem != null).length;
-    final matrixCellCount = topCandidates.length *
+    final nullOuterSlotCount = outerCandidates
+        .where((outerItem) => outerItem == null)
+        .length;
+    final outerWearSlotCount = outerCandidates
+        .where((outerItem) => outerItem != null)
+        .length;
+    final matrixCellCount =
+        topCandidates.length *
         bottomCandidates.length *
         footwearCandidates.length;
     final nullOuterCombinations = matrixCellCount * nullOuterSlotCount;
@@ -1282,11 +1475,7 @@ class OutfitGenerationService {
               continue;
             }
             final score = combinationScore(preview);
-            scored.add((
-              preview: preview,
-              score: score,
-              sig: sig,
-            ));
+            scored.add((preview: preview, score: score, sig: sig));
             if (outerItem == null) {
               nullOuterScored++;
               if (auditOuterMatrix) {
@@ -1330,7 +1519,7 @@ class OutfitGenerationService {
     }
 
     List<({OutfitPreview preview, double score, String sig})>
-        collapseOptionalOuterScored(
+    collapseOptionalOuterScored(
       List<({OutfitPreview preview, double score, String sig})> source,
     ) {
       final grouped =
@@ -1340,8 +1529,7 @@ class OutfitGenerationService {
         grouped.putIfAbsent(key, () => []).add(entry);
       }
 
-      final collapsed =
-          <({OutfitPreview preview, double score, String sig})>[];
+      final collapsed = <({OutfitPreview preview, double score, String sig})>[];
       for (final groupEntry in grouped.entries) {
         final baseKey = groupEntry.key;
         final group = groupEntry.value;
@@ -1450,9 +1638,9 @@ class OutfitGenerationService {
               .where((entry) => entry.sig == removedSig)
               .map((entry) => entry.score)
               .fold<double?>(null, (best, score) {
-            if (best == null || score > best) return score;
-            return best;
-          });
+                if (best == null || score > best) return score;
+                return best;
+              });
           logOuterMatrixRejection(
             candidate: matrixCandidateLabel(removed),
             reason: 'forced_preview_displaced',
@@ -1488,9 +1676,7 @@ class OutfitGenerationService {
 
     bool hasPreferredPairIn(List<OutfitPreview> list) {
       if (isPreferredBottom == null || isPreferredFootwear == null) return true;
-      return list.any(
-        (p) => isPreferredBottom(p) && isPreferredFootwear(p),
-      );
+      return list.any((p) => isPreferredBottom(p) && isPreferredFootwear(p));
     }
 
     OutfitPreview? bestScoredWhere(bool Function(OutfitPreview) test) {
@@ -1605,9 +1791,7 @@ class OutfitGenerationService {
               ? entry.preview.outerwear != null
               : alternate.preview.outerwear != null,
           winnerWholeScore: entryWins ? entry.score : alternate.score,
-          winnerEow: matrixEow(
-            entryWins ? entry.preview : alternate.preview,
-          ),
+          winnerEow: matrixEow(entryWins ? entry.preview : alternate.preview),
           winnerScoredRank: entryWins ? entryScoredRank : alternateRank,
           loserCandidate: matrixCandidateLabel(
             entryWins ? alternate.preview : entry.preview,
@@ -1616,9 +1800,7 @@ class OutfitGenerationService {
               ? alternate.preview.outerwear != null
               : entry.preview.outerwear != null,
           loserWholeScore: entryWins ? alternate.score : entry.score,
-          loserEow: matrixEow(
-            entryWins ? alternate.preview : entry.preview,
-          ),
+          loserEow: matrixEow(entryWins ? alternate.preview : entry.preview),
           loserScoredRank: entryWins ? alternateRank : entryScoredRank,
           ct: ct,
           winReason: winReason,
@@ -1645,8 +1827,9 @@ class OutfitGenerationService {
     }
 
     void fillKeptFromScored({required bool requireUniqueBottom}) {
-      final pass =
-          requireUniqueBottom ? 'unique_bottom_pass' : 'diversity_fill_pass';
+      final pass = requireUniqueBottom
+          ? 'unique_bottom_pass'
+          : 'diversity_fill_pass';
       final ct = outerMatrixCt ?? double.nan;
 
       if (auditOuterMatrix) {
@@ -1668,10 +1851,9 @@ class OutfitGenerationService {
                 ct: ct,
                 eowDeltaFromCt:
                     matrixEow(scoredForKept[i].preview).isNaN || ct.isNaN
-                        ? double.nan
-                        : (matrixEow(scoredForKept[i].preview) - ct).abs(),
-                bottomId:
-                    wardrobeItemId(scoredForKept[i].preview.bottom.item),
+                    ? double.nan
+                    : (matrixEow(scoredForKept[i].preview) - ct).abs(),
+                bottomId: wardrobeItemId(scoredForKept[i].preview.bottom.item),
               ),
           ],
         );
@@ -1726,12 +1908,13 @@ class OutfitGenerationService {
                   ? null
                   : matrixCandidateLabel(incumbent),
               incumbentWithOuter: incumbent?.outerwear != null,
-              incumbentWholeScore:
-                  incumbent == null ? null : scoreForPreview(incumbent),
-              incumbentScoredRank:
-                  incumbent == null ? null : scoredRankForPreview(incumbent),
-              incumbentEow:
-                  incumbent == null ? null : matrixEow(incumbent),
+              incumbentWholeScore: incumbent == null
+                  ? null
+                  : scoreForPreview(incumbent),
+              incumbentScoredRank: incumbent == null
+                  ? null
+                  : scoredRankForPreview(incumbent),
+              incumbentEow: incumbent == null ? null : matrixEow(incumbent),
               incumbentCt: ct,
             );
             logHeadToHeadForBaseCombo(
@@ -1808,17 +1991,21 @@ class OutfitGenerationService {
       for (var i = 0; i < kept.length; i++) {
         final p = kept[i];
         final keptScore = scoredForKept
-            .where((entry) => entry.sig == combinationSignature(
-                  p.top.item,
-                  p.bottom.item,
-                  p.shoes.item,
-                  p.outerwear?.item,
-                ))
+            .where(
+              (entry) =>
+                  entry.sig ==
+                  combinationSignature(
+                    p.top.item,
+                    p.bottom.item,
+                    p.shoes.item,
+                    p.outerwear?.item,
+                  ),
+            )
             .map((entry) => entry.score)
             .fold<double?>(null, (best, score) {
-          if (best == null || score > best) return score;
-          return best;
-        });
+              if (best == null || score > best) return score;
+              return best;
+            });
         logOuterMatrixAudit(
           candidate: matrixCandidateLabel(p),
           withOuter: p.outerwear != null,
@@ -1902,46 +2089,62 @@ class OutfitGenerationService {
       final baseColors = <String>[
         if (baseDyn is List) ...baseDyn.map((e) => e.toString()),
         if (baseDyn is String && baseDyn.trim().isNotEmpty) baseDyn,
-      ]
-          .map((s) => s.trim().toLowerCase())
-          .where((s) => s.isNotEmpty)
-          .toList();
+      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
 
       final colorsDyn = it['colors'];
       final colors = <String>[
         if (colorsDyn is List) ...colorsDyn.map((e) => e.toString()),
         if (colorsDyn is String && colorsDyn.trim().isNotEmpty) colorsDyn,
-      ]
-          .map((s) => s.trim().toLowerCase())
-          .where((s) => s.isNotEmpty)
-          .toList();
+      ].map((s) => s.trim().toLowerCase()).where((s) => s.isNotEmpty).toList();
 
       final check = baseColors.isNotEmpty ? baseColors : colors;
-      final isNeutral = check.isNotEmpty && check.any((c) {
-        return c.contains('čier') ||
-            c.contains('cier') ||
-            c.contains('black') ||
-            c.contains('biel') ||
-            c.contains('white') ||
-            c.contains('siv') ||
-            c.contains('gray') ||
-            c.contains('grey') ||
-            c.contains('béž') ||
-            c.contains('bez') ||
-            c.contains('beige') ||
-            c.contains('navy') ||
-            c.contains('tmavomod');
-      });
+      final isNeutral =
+          check.isNotEmpty &&
+          check.any((c) {
+            return c.contains('čier') ||
+                c.contains('cier') ||
+                c.contains('black') ||
+                c.contains('biel') ||
+                c.contains('white') ||
+                c.contains('siv') ||
+                c.contains('gray') ||
+                c.contains('grey') ||
+                c.contains('béž') ||
+                c.contains('bez') ||
+                c.contains('beige') ||
+                c.contains('navy') ||
+                c.contains('tmavomod');
+          });
 
       double s = 0.0;
-      if (isNeutral) s += 2.0;
+      if (isNeutral) s += 0.35;
 
       final b = blob(it);
-      if (b.contains('basic')) s += 1.0;
+      if (b.contains('basic')) s += 0.25;
 
       final brand = (it['brand'] ?? '').toString().trim();
       if (brand.isNotEmpty) s += 0.2;
       return s;
+    }
+
+    bool isDarkItem(Map<String, dynamic> it) {
+      final values = <String>[
+        if (it['baseColors'] is List)
+          ...(it['baseColors'] as List).map((e) => e.toString()),
+        if (it['baseColors'] is String) it['baseColors'].toString(),
+        if (it['colors'] is List)
+          ...(it['colors'] as List).map((e) => e.toString()),
+        if (it['colors'] is String) it['colors'].toString(),
+        blob(it),
+      ].map((s) => s.toLowerCase()).toList(growable: false);
+      return values.any(
+        (c) =>
+            c.contains('čier') ||
+            c.contains('cier') ||
+            c.contains('black') ||
+            c.contains('tmav') ||
+            c.contains('dark'),
+      );
     }
 
     final temp = weather.tempC;
@@ -1986,18 +2189,31 @@ class OutfitGenerationService {
     }
 
     bool seasonMentionsWinter(List<String> tokens) {
-      return tokens.any((t) =>
-          t.contains('zim') || t.contains('winter') || t == 'zim' || t == 'zima');
+      return tokens.any(
+        (t) =>
+            t.contains('zim') ||
+            t.contains('winter') ||
+            t == 'zim' ||
+            t == 'zima',
+      );
     }
 
     bool seasonMentionsSummer(List<String> tokens) {
-      return tokens.any((t) =>
-          t.contains('let') || t.contains('summer') || t == 'leto' || t == 'let');
+      return tokens.any(
+        (t) =>
+            t.contains('let') ||
+            t.contains('summer') ||
+            t == 'leto' ||
+            t == 'let',
+      );
     }
 
     bool isBootFootwear(String b, String canonical) {
       final c = canonical.toLowerCase();
-      return b.contains('čiž') || b.contains('ciz') || b.contains('boot') || c.contains('boot');
+      return b.contains('čiž') ||
+          b.contains('ciz') ||
+          b.contains('boot') ||
+          c.contains('boot');
     }
 
     bool isSneakerFootwear(String b, String canonical) {
@@ -2008,9 +2224,32 @@ class OutfitGenerationService {
           c == 'sneakers';
     }
 
+    bool isBreathableSportSneaker(String b, String canonical) {
+      final c = canonical.toLowerCase();
+      return b.contains('sieť') ||
+          b.contains('siet') ||
+          b.contains('mesh') ||
+          b.contains('bežeck') ||
+          b.contains('bezeck') ||
+          b.contains('running') ||
+          b.contains('športové tenisky') ||
+          b.contains('sportove tenisky') ||
+          b.contains('sport shoe') ||
+          b.contains('sport shoes') ||
+          b.contains('training shoe') ||
+          b.contains('training shoes') ||
+          b.contains('athletic shoe') ||
+          b.contains('athletic shoes') ||
+          c.contains('training') ||
+          c.contains('athletic') ||
+          c.contains('sportshoe') ||
+          c.contains('running');
+    }
+
     bool isWhiteOrLightFootwear(Map<String, dynamic> it, String b) {
       final colorSources = <String>[
-        if (it['colors'] is List) ...(it['colors'] as List).map((e) => e.toString()),
+        if (it['colors'] is List)
+          ...(it['colors'] as List).map((e) => e.toString()),
         if (it['colors'] is String) it['colors'].toString(),
         if (it['baseColors'] is List)
           ...(it['baseColors'] as List).map((e) => e.toString()),
@@ -2034,9 +2273,8 @@ class OutfitGenerationService {
       return false;
     }
 
-    ({double base, double warmth, double season, double rain}) footwearScoreParts(
-      Map<String, dynamic> it,
-    ) {
+    ({double base, double warmth, double season, double rain})
+    footwearScoreParts(Map<String, dynamic> it) {
       final b = blob(it);
       final canonical = (it['canonical_type'] ?? it['canonicalType'] ?? '')
           .toString()
@@ -2080,10 +2318,12 @@ class OutfitGenerationService {
         }
 
         if (sneakerLike && temp > 12) {
-          if (isWhiteOrLightFootwear(it, b)) {
+          if (isBreathableSportSneaker(b, canonical)) {
+            scoreRain -= 3.0;
+          } else if (isWhiteOrLightFootwear(it, b)) {
             scoreRain -= 1.0;
           } else {
-            scoreRain += 0.5;
+            scoreRain -= 0.25;
           }
         }
       }
@@ -2132,13 +2372,17 @@ class OutfitGenerationService {
         ? 0.0
         : scoreOuter(preview.outerwear!.item);
 
-    return topScore + bottomScore + shoesScore + outerScore;
+    var total = topScore + bottomScore + shoesScore + outerScore;
+    if (weather.tempC >= 20 &&
+        isDarkItem(preview.top.item) &&
+        isDarkItem(preview.bottom.item)) {
+      total -= 2.25;
+    }
+    return total;
   }
 
   /// Consistency penalty used for logging (NOT used by generator).
-  static double consistencyPenaltyForPreview({
-    required OutfitPreview preview,
-  }) {
+  static double consistencyPenaltyForPreview({required OutfitPreview preview}) {
     int warmthOf(Map<String, dynamic> it) {
       return StylistLayerFilter.inferWarmthLevel(it);
     }
@@ -2173,7 +2417,9 @@ class OutfitGenerationService {
     }
 
     bool seasonMentionsSummer(List<String> tokens) {
-      return tokens.any((t) => t.contains('let') || t == 'leto' || t.contains('summer'));
+      return tokens.any(
+        (t) => t.contains('let') || t == 'leto' || t.contains('summer'),
+      );
     }
 
     bool isHeavyOuterwear(Map<String, dynamic> it) {
@@ -2218,7 +2464,9 @@ class OutfitGenerationService {
     final topWarmth = warmthOf(preview.top.item);
     final bottomWarmth = warmthOf(preview.bottom.item);
     final footwearWarmth = warmthOf(preview.shoes.item);
-    final outerWarmth = preview.outerwear == null ? null : warmthOf(preview.outerwear!.item);
+    final outerWarmth = preview.outerwear == null
+        ? null
+        : warmthOf(preview.outerwear!.item);
 
     final warmths = <int>[topWarmth, bottomWarmth, footwearWarmth];
     if (outerWarmth != null) warmths.add(outerWarmth);
@@ -2235,11 +2483,14 @@ class OutfitGenerationService {
     var penaltyTotal = 0.0;
 
     final outerItem = preview.outerwear?.item;
-    if (outerItem != null && isWinterJacketOuter(outerItem) && isShortsBottom(preview.bottom.item)) {
+    if (outerItem != null &&
+        isWinterJacketOuter(outerItem) &&
+        isShortsBottom(preview.bottom.item)) {
       penaltyTotal += winterJacketShortsPenalty;
     }
 
-    if (outerItem != null && isSummerShortsBottom(preview.bottom.item) &&
+    if (outerItem != null &&
+        isSummerShortsBottom(preview.bottom.item) &&
         (isHeavyOuterwear(outerItem) || warmthOf(outerItem) >= 7)) {
       penaltyTotal += heavyOuterSummerShortsPenalty;
     }
@@ -2251,4 +2502,3 @@ class OutfitGenerationService {
     return penaltyTotal;
   }
 }
-

@@ -2677,6 +2677,200 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
     });
 
+  // ---------------------------------------------------------------------------
+  // generateHomeOutfitExplanation – selected outfit metadata → stylist reason
+  // ---------------------------------------------------------------------------
+  exports.generateHomeOutfitExplanation = functions
+    .region("us-east1")
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid || null;
+      if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "Musíš byť prihlásený.");
+      }
+
+      const weatherContext =
+        data?.weatherContext && typeof data.weatherContext === "object" ?
+          data.weatherContext :
+          {};
+      const selectedReason = String(data?.selectedReason || "").trim();
+      const rawItems = Array.isArray(data?.outfitItems) ? data.outfitItems : [];
+
+      const cleanText = (value, max = 160) =>
+        String(value || "")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, max);
+      const cleanList = (value, maxItems = 8) => {
+        if (Array.isArray(value)) {
+          return value
+            .map((v) => cleanText(v, 48))
+            .filter(Boolean)
+            .slice(0, maxItems);
+        }
+        const single = cleanText(value, 48);
+        return single ? [single] : [];
+      };
+
+      const items = rawItems.slice(0, 5).map((it) => ({
+        slot: cleanText(it?.slot, 24),
+        id: cleanText(it?.id, 80),
+        displayName: cleanText(it?.displayName || it?.name, 120),
+        name: cleanText(it?.name || it?.displayName, 120),
+        category: cleanText(it?.category, 80),
+        subCategory: cleanText(it?.subCategory, 80),
+        colors: cleanList(it?.colors),
+        baseColors: cleanList(it?.baseColors),
+        patterns: cleanList(it?.patterns),
+        visualDescription: cleanText(it?.visualDescription, 260),
+        materialFeel: cleanText(it?.materialFeel, 120),
+        vibe: cleanText(it?.vibe, 120),
+        fit: cleanText(it?.fit, 120),
+        brand: cleanText(it?.brand, 80),
+      })).filter((it) => it.slot && (it.displayName || it.name));
+
+      if (items.length < 3) {
+        return {
+          fallback: true,
+          explanation: "",
+          warnings: ["insufficient_outfit_items"],
+        };
+      }
+
+      const rainExpected = weatherContext?.isRainy === true ||
+        weatherContext?.willRain === true ||
+        weatherContext?.morningRainSegment === true ||
+        weatherContext?.afternoonRainSegment === true ||
+        weatherContext?.eveningRainSegment === true;
+      const rainTimeText = cleanText(weatherContext?.rainTimeText, 80);
+      const rainInstruction = rainExpected ?
+        `DÁŽĎ: V počasí je dážď alebo prehánky. Do poslednej vety prirodzene doplň praktickú poznámku o daždi` +
+          `${rainTimeText ? ` v čase ${rainTimeText}` : ""} a odporuč dáždnik. ` +
+          `Ak rainTimeText obsahuje interval (napr. 13:00-18:00), použi presne interval. ` +
+          `Nepíš nejasné "po 13:00 a 18:00"; používateľ musí vedieť odkedy dokedy môže pršať. ` +
+          `Nehovor, že iné topánky by boli lepšie.\n` :
+        `Ak dážď nie je v JSON, nespomínaj dáždnik.\n`;
+
+      const systemPrompt =
+        `Si profesionálny osobný stylista v slovenskej módnej appke.\n` +
+        `Tvoj výstup je text do sekcie "Prečo tento outfit?".\n` +
+        `Nepôsob ako generátor podľa počasia. Píš ako človek, ktorý vidí vybrané kúsky cez uložené metadata.\n` +
+        `Musíš vysvetliť konkrétnu kombináciu: prečo tento vrch, prečo tento spodok, prečo tieto topánky.\n` +
+        `Používaj konkrétne vizuálne detaily z JSON: farby, vzory, materiál, fit, vibe, visualDescription.\n` +
+        `Ak metadata nemajú detail, prizemni text v tom, čo vieš: farba, kontrast, svetlý/tmavý pomer, jednoduchosť, športový/casual charakter.\n` +
+        `Počasie spomeň iba ako praktický dodatok, nie ako hlavný dôvod výberu.\n` +
+        rainInstruction +
+        `Nepíš frázy: "farebná harmónia", "všetky kusy sú v súlade", "outfit je vhodný", "zvolený outfit pozostáva", "nezbytočne ťažký".\n` +
+        `Nepíš všeobecne "tmavšie farby pôsobia čisto", ak nevysvetlíš aj vzťah ku konkrétnemu spodku alebo topánkam.\n` +
+        `Pri značkách nepíš "z Nike", "z Adidas" ani podobné doslovné väzby. Použi "od Nike", "tenisky Nike" alebo značku vynechaj.\n` +
+        `Nepíš zoznam. Píš 2 až 4 prirodzené vety, maximálne 620 znakov.\n` +
+        `Použi slovenčinu, tykanie, prirodzené skloňovanie. Nezačínaj každú vetu názvom oblečenia.\n` +
+        `Vráť STRICT JSON iba v tvare {"explanation":"...","warnings":["..."]}.`;
+
+      const userPrompt = JSON.stringify({
+        weatherContext,
+        selectedReason,
+        outfitItems: items,
+        requiredContent: {
+          mustMention: ["top-bottom relationship", "footwear role"],
+          weatherAsSecondaryOnly: true,
+          rainExpected,
+          rainTimeText,
+          language: "sk-SK",
+        },
+      });
+
+      try {
+        const rawText = await callOpenAiChatMessages([
+          {role: "system", content: systemPrompt},
+          {role: "user", content: userPrompt},
+        ]);
+        const parsed = extractFirstJsonObject(rawText);
+        const explanation = cleanText(parsed?.explanation, 620);
+        const warnings = Array.isArray(parsed?.warnings) ?
+          parsed.warnings.map((w) => cleanText(w, 100)).filter(Boolean).slice(0, 6) :
+          [];
+
+        const normalized = explanation
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "");
+        const banned = [
+          "farebna harmonia",
+          "vsetky kusy su v sulade",
+          "outfit je vhodny",
+          "zvoleny outfit pozostava",
+          "nezbytocne tazky",
+        ];
+        const hasBanned = banned.some((phrase) => normalized.includes(phrase));
+        const hasSpecificRelationship =
+          normalized.includes("trick") ||
+          normalized.includes("top") ||
+          normalized.includes("vrch") ||
+          normalized.includes("sort") ||
+          normalized.includes("spod") ||
+          normalized.includes("tenisk") ||
+          normalized.includes("topan");
+        const hasVisualCue =
+          normalized.includes("farb") ||
+          normalized.includes("vzor") ||
+          normalized.includes("kontrast") ||
+          normalized.includes("akcent") ||
+          normalized.includes("svetl") ||
+          normalized.includes("tmav") ||
+          normalized.includes("modr") ||
+          normalized.includes("cerven") ||
+          normalized.includes("biel") ||
+          normalized.includes("cier");
+        const mentionsRain =
+          normalized.includes("dazd") ||
+          normalized.includes("dazdnik") ||
+          normalized.includes("prehank") ||
+          normalized.includes("prsat") ||
+          normalized.includes("mokro");
+
+        if (
+          !explanation ||
+          explanation.length < 90 ||
+          hasBanned ||
+          !hasSpecificRelationship ||
+          !hasVisualCue ||
+          (rainExpected && !mentionsRain)
+        ) {
+          logger.warn("generateHomeOutfitExplanation: weak explanation", {
+            uid,
+            length: explanation.length,
+            hasBanned,
+            hasSpecificRelationship,
+            hasVisualCue,
+            rainExpected,
+            mentionsRain,
+            raw: String(rawText || "").slice(0, 600),
+          });
+          return {
+            fallback: true,
+            explanation: "",
+            warnings: ["weak_explanation"],
+          };
+        }
+
+        return {
+          fallback: false,
+          explanation,
+          warnings,
+        };
+      } catch (err) {
+        logger.error("generateHomeOutfitExplanation error:", {
+          uid,
+          message: err?.message || String(err),
+        });
+        return {
+          fallback: true,
+          explanation: "",
+          warnings: ["openai_error"],
+        };
+      }
+    });
+
   exports.stylistChat = functions
     .region("us-east1")
     .https.onCall(async (data, context) => {

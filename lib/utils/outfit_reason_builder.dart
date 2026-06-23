@@ -29,6 +29,8 @@ class _Plan {
     required this.windy,
     required this.rainy,
     required this.rainProfile,
+    required this.rainTimeText,
+    required this.weatherToneText,
     required this.wantUmbrella,
     required this.wantLayerNearby,
     required this.carryOuterInHand,
@@ -55,6 +57,8 @@ class _Plan {
 
   final bool rainy;
   final _RainProfile rainProfile;
+  final String? rainTimeText;
+  final String weatherToneText;
 
   final bool wantUmbrella;
   final bool wantLayerNearby;
@@ -90,6 +94,11 @@ class OutfitReasonBuilder {
     bool morningRainSegment = false,
     bool afternoonRainSegment = false,
     bool eveningRainSegment = false,
+    String? rainTimeText,
+    String? morningCondition,
+    String? afternoonCondition,
+    String? eveningCondition,
+
     /// Voliteľný odsek druhého dňa (napr. keď UI pozná oba naraz) — silnejšia ochrana pred opakovaním.
     String? peerReasonBlurb,
   }) {
@@ -119,6 +128,13 @@ class OutfitReasonBuilder {
       morningRain: morningRainSegment,
       afternoonRain: afternoonRainSegment,
       eveningRain: eveningRainSegment,
+      rainTimeText: rainTimeText,
+      weatherToneText: _weatherToneText(
+        isTomorrow ? 'Zajtra' : 'Dnes',
+        morningCondition,
+        afternoonCondition,
+        eveningCondition,
+      ),
       hasOuterwear: hasOuterwear,
       top: top,
       bottom: bottom,
@@ -129,7 +145,12 @@ class OutfitReasonBuilder {
     final outerNoun = _outerLayerWord(outer);
     final outerAcc = _outerAccusative(outer);
 
-    final vSalt = _styleVariationSalt(plan, top: top, shoes: shoes, outer: outer);
+    final vSalt = _styleVariationSalt(
+      plan,
+      top: top,
+      shoes: shoes,
+      outer: outer,
+    );
 
     final peerFromSession = isTomorrow ? _sessionLastDnes : _sessionLastZajtra;
     final peerExact = <String>{};
@@ -189,30 +210,7 @@ class OutfitReasonBuilder {
       vSalt: effectiveSalt,
     );
     final outfit = _renderOutfitReasoning(plan, effectiveSalt);
-    final footwear = _renderFootwear(plan, effectiveSalt);
-
-    final swap =
-        _shouldLeadWithOutfitBlock(plan, effectiveSalt, weather, outfit);
-    if (swap) {
-      return _joinNonEmpty([outfit, weather, footwear]);
-    }
-    return _joinNonEmpty([weather, outfit, footwear]);
-  }
-
-  /// Iný vstup do odstavca: niekedy štýl pred počasím (nie pri „rannom“ príbehu).
-  static bool _shouldLeadWithOutfitBlock(
-    _Plan plan,
-    int salt,
-    String weatherBlock,
-    String outfitBlock,
-  ) {
-    if (weatherBlock.isEmpty || outfitBlock.isEmpty) return false;
-    final weatherLedMorning = weatherBlock.contains('Ráno bude okolo') ||
-        weatherBlock.contains('Ráno bude len okolo') ||
-        weatherBlock.contains('Ráno to bude okolo');
-    if (weatherLedMorning) return false;
-    final h = (salt ~/ 7 + plan.dayWord.hashCode).abs();
-    return h % 2 == 1;
+    return _joinNonEmpty([outfit, weather]);
   }
 
   static List<String> _splitIntoSentences(String text) {
@@ -294,12 +292,6 @@ class OutfitReasonBuilder {
     return options[i];
   }
 
-  static String _capitalizeFirst(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return t;
-    return t[0].toUpperCase() + t.substring(1);
-  }
-
   // ---------------------------------------------------------------------------
   // Plán: čísla + booleany z počasia a šatníka
   // ---------------------------------------------------------------------------
@@ -315,6 +307,8 @@ class OutfitReasonBuilder {
     required bool morningRain,
     required bool afternoonRain,
     required bool eveningRain,
+    required String? rainTimeText,
+    required String weatherToneText,
     required bool hasOuterwear,
     required Map<String, dynamic> top,
     required Map<String, dynamic> bottom,
@@ -349,30 +343,32 @@ class OutfitReasonBuilder {
 
     final wantUmbrella = isRainy && rp != _RainProfile.dry;
 
-    final wantLayerNearby = hasOuterwear &&
+    final wantLayerNearby =
+        hasOuterwear &&
         (eveningCools ||
             isRainy ||
             morningMuchColder ||
             anchor < 14 ||
             (morningTempC != null && morningTempC < 12));
 
-    final carryOuterInHand = hasOuterwear &&
-        warmsMidday &&
-        noonTempC != null &&
-        noonTempC >= 12;
+    final carryOuterInHand =
+        hasOuterwear && warmsMidday && noonTempC != null && noonTempC >= 12;
 
     final fam = _colorFamilies(_allColors([top, bottom, outer, shoes]));
     final topBlob = _blob(top);
     final bottomBlob = _blob(bottom);
     final outerBlob = _blob(outer);
 
-    final topDark = topBlob.contains('čier') ||
+    final topDark =
+        topBlob.contains('čier') ||
         topBlob.contains('cier') ||
         topBlob.contains('black') ||
         fam.contains('black');
-    final darkTopLightOuter = hasOuterwear && topDark && _outerLooksLight(outer);
+    final darkTopLightOuter =
+        hasOuterwear && topDark && _outerLooksLight(outer);
 
-    final topLooksLikeTee = topBlob.contains('trič') ||
+    final topLooksLikeTee =
+        topBlob.contains('trič') ||
         topBlob.contains('tric') ||
         topBlob.contains('tee') ||
         topBlob.contains('shirt');
@@ -380,13 +376,15 @@ class OutfitReasonBuilder {
     final label = _shortLabel(top, '');
     final topDisplayLabel = label.isNotEmpty ? label : 'Horný diel';
 
-    final outerIsHoodieLike = outerBlob.contains('mikina') ||
+    final outerIsHoodieLike =
+        outerBlob.contains('mikina') ||
         outerBlob.contains('hoodie') ||
         outerBlob.contains('sveter');
 
     final darkDominant = fam.contains('black') || fam.contains('navy');
 
-    final jeansBottom = bottomBlob.contains('jeans') ||
+    final jeansBottom =
+        bottomBlob.contains('jeans') ||
         bottomBlob.contains('rifl') ||
         bottomBlob.contains('dzin') ||
         bottomBlob.contains('džín');
@@ -395,7 +393,9 @@ class OutfitReasonBuilder {
     final sneakers =
         shoesBlob.contains('tenis') || shoesBlob.contains('sneaker');
     final boots =
-        shoesBlob.contains('čiž') || shoesBlob.contains('ciz') || shoesBlob.contains('boot');
+        shoesBlob.contains('čiž') ||
+        shoesBlob.contains('ciz') ||
+        shoesBlob.contains('boot');
 
     return _Plan(
       dayWord: dayWord,
@@ -408,6 +408,8 @@ class OutfitReasonBuilder {
       windy: isWindy,
       rainy: isRainy,
       rainProfile: rp,
+      rainTimeText: rainTimeText,
+      weatherToneText: weatherToneText,
       wantUmbrella: wantUmbrella,
       wantLayerNearby: wantLayerNearby,
       carryOuterInHand: carryOuterInHand,
@@ -447,18 +449,6 @@ class OutfitReasonBuilder {
   // Šablóny (text len podľa plánu)
   // ---------------------------------------------------------------------------
 
-  static String _openingHourly(_Plan p, int vSalt) {
-    final dw = p.dayWord;
-    final t = p.anchorTempC;
-    return _v(OutfitReasonLibrary.weatherOpeningsHourly(dw, t), vSalt, 0);
-  }
-
-  static String _openingNoHourly(_Plan p, int vSalt) {
-    final dw = p.dayWord;
-    final t = p.anchorTempC;
-    return _v(OutfitReasonLibrary.weatherOpeningsNoHourly(dw, t), vSalt, 0);
-  }
-
   /// Jedna súdržná myšlienka namiesto „meteo výstupu“. Max. dva krátke kontextové bloky pred „preto“.
   static String _renderWeatherAndPlan(
     _Plan p, {
@@ -466,227 +456,29 @@ class OutfitReasonBuilder {
     required String outerAcc,
     required int vSalt,
   }) {
-    final opening = p.hasHourly ? _openingHourly(p, vSalt) : _openingNoHourly(p, vSalt);
-    final sentence1 = '$opening.';
-
-    final therefore = _thereforeClauseVariant(
-      p,
-      outerNoun: outerNoun,
-      vSalt: vSalt,
-    );
-
-    String? carryLine;
-    if (p.carryOuterInHand &&
-        p.hasOuterwear &&
-        p.warmsMidday &&
-        !(therefore?.contains(outerNoun) ?? false)) {
-      carryLine = _carryLineVariant(outerNoun, outerAcc, vSalt);
+    final parts = <String>[];
+    if (p.weatherToneText.isNotEmpty) {
+      parts.add(p.weatherToneText);
+    } else if (p.rainy) {
+      parts.add('${p.dayWord} bude počasie skôr premenlivé.');
+    } else if (p.windy) {
+      parts.add('${p.dayWord} počítaj s výraznejším vetrom.');
+    } else {
+      parts.add('${p.dayWord} vyzerá počasie pokojne.');
     }
-
-    final rainEveningAlreadySaid =
-        p.rainy &&
-            (p.rainProfile == _RainProfile.eveningOnly ||
-                p.rainProfile == _RainProfile.afternoonEvening);
-
-    // Chladné ráno + vrstva (bez dažďa): jeden prirodzený blok ako od kamaráta.
-    final coldMorningStory = p.hasHourly &&
-        p.morningMuchColder &&
-        p.morningTempC != null &&
-        !p.rainy &&
-        p.wantLayerNearby &&
-        p.hasOuterwear &&
-        therefore != null &&
-        _thereforeAboutLayer(therefore, outerNoun);
-
-    if (coldMorningStory) {
-      final mt = p.morningTempC!;
-      final tc = therefore;
-      final coldStandalone = _v(
-        OutfitReasonLibrary.coldMorningStandalone(mt),
-        vSalt,
-        50,
-      );
-      final adviceLine = '${_capitalizeFirst(tc)}.';
-      final eveningExtra = p.eveningCools
-          ? ' ${_eveningChillyExtraSentence(vSalt)}'
-          : '';
-      return _joinNonEmpty([
-        sentence1,
-        coldStandalone,
-        adviceLine,
-        eveningExtra.trim(),
-        carryLine ?? '',
-      ]);
-    }
-
-    final snippets = <String>[];
-
     if (p.rainy) {
-      if (p.hasHourly && p.eveningCools && !rainEveningAlreadySaid) {
-        snippets.add(
-          _lowerFirst(
-            _v(OutfitReasonLibrary.trendEveningCoolBeforeRain(), vSalt, 1),
-          ),
+      final rainTimes = humanRainTimes(p.rainTimeText);
+      if (rainTimes.isNotEmpty) {
+        parts.add(
+          'Predpoveď hlási dážď v čase $rainTimes, preto odporúčam zobrať si dáždnik.',
         );
-      }
-      snippets.add(_rainClauseConversational(p.rainProfile, vSalt));
-    } else if (p.hasHourly) {
-      if (p.warmsMidday && p.eveningCools) {
-        snippets.add(
-          _lowerFirst(
-            _v(OutfitReasonLibrary.trendEveningCoolerThanDay(), vSalt, 1),
-          ),
-        );
-      } else if (p.eveningCools) {
-        snippets.add(
-          _lowerFirst(
-            _v(OutfitReasonLibrary.trendEveningCool(), vSalt, 1),
-          ),
-        );
-      } else if (p.warmsMidday) {
-        snippets.add(
-          _lowerFirst(
-            _v(OutfitReasonLibrary.trendWarmDay(), vSalt, 1),
-          ),
-        );
-      } else if (p.morningMuchColder && p.morningTempC != null) {
-        snippets.add(
-          _lowerFirst(
-            _v(
-              OutfitReasonLibrary.trendMorningCold(p.morningTempC!),
-              vSalt,
-              1,
-            ),
-          ),
+      } else {
+        parts.add(
+          'Počas dňa sa môžu objaviť prehánky, preto odporúčam zobrať si dáždnik.',
         );
       }
     }
-
-    if (!p.rainy &&
-        p.windy &&
-        snippets.length < 2) {
-      snippets.add(
-        _lowerFirst(
-          _v(OutfitReasonLibrary.windSnippets(), vSalt, 2),
-        ),
-      );
-    }
-
-    while (snippets.length > 2) {
-      snippets.removeLast();
-    }
-    snippets.removeWhere((s) => s.trim().isEmpty);
-
-    String? sentence2;
-    if (snippets.isNotEmpty || therefore != null) {
-      var body = '';
-      if (snippets.isNotEmpty) {
-        body = _capitalizeFirst(snippets[0]);
-        for (var i = 1; i < snippets.length; i++) {
-          body += ' a ${snippets[i]}';
-        }
-      }
-      if (therefore != null) {
-        if (body.isEmpty) {
-          body = _capitalizeFirst(therefore);
-        } else {
-          body += ', $therefore';
-        }
-      }
-      sentence2 = '$body.';
-    }
-
-    return _joinNonEmpty([sentence1, sentence2 ?? '', carryLine ?? '']);
-  }
-
-  static bool _thereforeAboutLayer(String therefore, String outerNoun) {
-    if (therefore.contains('dáždnik')) return false;
-    return therefore.contains('poruke') &&
-        (therefore.contains(outerNoun) ||
-            therefore.contains('mikin') ||
-            therefore.contains('bund') ||
-            therefore.contains('kabát') ||
-            therefore.contains('sako') ||
-            therefore.contains('vrstv'));
-  }
-
-  static String _eveningChillyExtraSentence(int vSalt) {
-    return _v(OutfitReasonLibrary.eveningAfterColdMorning(), vSalt, 12);
-  }
-
-  static String _rainClauseConversational(_RainProfile r, int vSalt) {
-    switch (r) {
-      case _RainProfile.dry:
-        return '';
-      case _RainProfile.unknown:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainUnknown(), vSalt, 3));
-      case _RainProfile.morningOnly:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainMorningOnly(), vSalt, 3));
-      case _RainProfile.afternoonOnly:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainAfternoonOnly(), vSalt, 3));
-      case _RainProfile.eveningOnly:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainEveningOnly(), vSalt, 3));
-      case _RainProfile.morningAfternoon:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainMorningAfternoon(), vSalt, 3));
-      case _RainProfile.morningEvening:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainMorningEvening(), vSalt, 3));
-      case _RainProfile.afternoonEvening:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainAfternoonEvening(), vSalt, 3));
-      case _RainProfile.allDay:
-        return _lowerFirst(_v(OutfitReasonLibrary.rainAllDay(), vSalt, 3));
-    }
-  }
-
-  static String? _thereforeClauseVariant(
-    _Plan p, {
-    required String outerNoun,
-    required int vSalt,
-  }) {
-    final u = p.wantUmbrella;
-    final l = p.wantLayerNearby && p.hasOuterwear;
-
-    if (l && u) {
-      return _v(
-        OutfitReasonLibrary.thereforeLayerAndUmbrella(outerNoun),
-        vSalt,
-        4,
-      );
-    }
-    if (l && !u) {
-      return _v(
-        OutfitReasonLibrary.thereforeLayerOnly(outerNoun),
-        vSalt,
-        4,
-      );
-    }
-    if (!l && u) {
-      return _v(
-        OutfitReasonLibrary.thereforeUmbrellaOnly(),
-        vSalt,
-        4,
-      );
-    }
-    if (p.eveningCools && p.hasOuterwear && !p.rainy) {
-      return _v(
-        OutfitReasonLibrary.thereforeEveningLayer(outerNoun),
-        vSalt,
-        4,
-      );
-    }
-    return null;
-  }
-
-  static String _carryLineVariant(
-    String outerNoun,
-    String outerAcc,
-    int vSalt,
-  ) {
-    final kind = OutfitReasonLibrary.comfortKindForOuterNoun(outerNoun);
-    return _v(
-      OutfitReasonLibrary.carryWhenWarmMidday(kind, outerNoun, outerAcc),
-      vSalt,
-      11,
-    );
+    return _joinNonEmpty(parts);
   }
 
   static String _renderOutfitReasoning(_Plan p, int vSalt) {
@@ -726,22 +518,6 @@ class OutfitReasonBuilder {
     return _v(OutfitReasonLibrary.stylingDefaultVibe(), vSalt, 9);
   }
 
-  static String _renderFootwear(_Plan p, int vSalt) {
-    if (p.sneakers) {
-      return _v(OutfitReasonLibrary.shoesSneakers(), vSalt, 10);
-    }
-    if (p.boots) {
-      return _v(OutfitReasonLibrary.shoesBoots(), vSalt, 10);
-    }
-    return '';
-  }
-
-  static String _lowerFirst(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return t;
-    return t[0].toLowerCase() + t.substring(1);
-  }
-
   static String _joinNonEmpty(List<String> parts) {
     return parts
         .map((s) => s.trim())
@@ -749,6 +525,125 @@ class OutfitReasonBuilder {
         .join(' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
+  }
+
+  static String _weatherToneText(
+    String dayWord,
+    String? morning,
+    String? afternoon,
+    String? evening,
+  ) {
+    final conditions = [morning, afternoon, evening]
+        .map((e) => (e ?? '').trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
+    if (conditions.isEmpty) return '';
+
+    final normalized = conditions.map(_normalizeToken).toList();
+    final rainyCount = normalized
+        .where((c) => c.contains('dazd') || c.contains('prehank'))
+        .length;
+    final cloudyCount = normalized
+        .where(
+          (c) =>
+              c.contains('oblac') || c.contains('zamrac') || c.contains('prem'),
+        )
+        .length;
+    final sunnyCount = normalized
+        .where((c) => c.contains('slnec') || c.contains('jasn'))
+        .length;
+
+    if (rainyCount >= 2) {
+      return '$dayWord bude skôr premenlivo a mokrejšie, takže je dobré rátať s praktickejším oblečením.';
+    }
+    if (cloudyCount >= 2) {
+      return '$dayWord bude väčšinu dňa oblačno, takže kombinácia môže zostať jednoduchá a praktická.';
+    }
+    if (sunnyCount >= 2) {
+      return '$dayWord vyzerá väčšinu dňa slnečne, preto dávajú ľahšie kúsky väčší zmysel.';
+    }
+    return '';
+  }
+
+  static String _normalizeToken(String value) {
+    return value
+        .toLowerCase()
+        .replaceAll('á', 'a')
+        .replaceAll('ä', 'a')
+        .replaceAll('č', 'c')
+        .replaceAll('ď', 'd')
+        .replaceAll('é', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ľ', 'l')
+        .replaceAll('ĺ', 'l')
+        .replaceAll('ň', 'n')
+        .replaceAll('ó', 'o')
+        .replaceAll('ô', 'o')
+        .replaceAll('\u0154', 'r')
+        .replaceAll('\u0155', 'r')
+        .replaceAll('š', 's')
+        .replaceAll('ť', 't')
+        .replaceAll('ú', 'u')
+        .replaceAll('ý', 'y')
+        .replaceAll('ž', 'z');
+  }
+
+  static String humanRainTimes(String? raw) {
+    final text = (raw ?? '').trim();
+    if (text.isEmpty) return '';
+    final matches = RegExp(
+      r'\b\d{1,2}:\d{2}(?:-\d{1,2}:\d{2})?\b',
+    ).allMatches(text).toList();
+    if (matches.isEmpty) return '';
+
+    final windows = <List<int>>[];
+    for (final m in matches) {
+      final t = m.group(0);
+      if (t == null) continue;
+      final parts = t.split('-');
+      final start = _minutesFromClock(parts.first);
+      if (start == null) continue;
+      final end = parts.length > 1
+          ? _minutesFromClock(parts.last)
+          : start + Duration.minutesPerHour;
+      if (end == null) continue;
+      windows.add([start, end]);
+    }
+    if (windows.isEmpty) return '';
+
+    windows.sort((a, b) => a.first.compareTo(b.first));
+    final merged = <List<int>>[];
+    for (final w in windows) {
+      if (merged.isEmpty || w.first > merged.last.last) {
+        merged.add([w.first, w.last]);
+      } else if (w.last > merged.last.last) {
+        merged.last[1] = w.last;
+      }
+    }
+
+    final times = merged
+        .map(
+          (w) => '${_clockFromMinutes(w.first)}-${_clockFromMinutes(w.last)}',
+        )
+        .toList(growable: false);
+    if (times.length == 1) return times.first;
+    if (times.length == 2) return '${times[0]} a ${times[1]}';
+    return '${times.take(times.length - 1).join(', ')} a ${times.last}';
+  }
+
+  static int? _minutesFromClock(String raw) {
+    final parts = raw.split(':');
+    if (parts.length != 2) return null;
+    final hour = int.tryParse(parts[0]);
+    final minute = int.tryParse(parts[1]);
+    if (hour == null || minute == null) return null;
+    return hour * Duration.minutesPerHour + minute;
+  }
+
+  static String _clockFromMinutes(int minutes) {
+    final hour = minutes ~/ Duration.minutesPerHour;
+    final minute = minutes % Duration.minutesPerHour;
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
   }
 
   // ---------------------------------------------------------------------------
@@ -840,9 +735,10 @@ class OutfitReasonBuilder {
     final map = Map<String, dynamic>.from(raw);
     map['name'] = (map['name'] ?? map['label'] ?? '').toString();
     map['category'] = (map['categoryKey'] ?? map['category'] ?? '').toString();
-    map['subCategory'] =
-        (map['subCategoryKey'] ?? map['subCategory'] ?? '').toString();
-    map['mainGroup'] = (map['mainGroupKey'] ?? map['mainGroup'] ?? '').toString();
+    map['subCategory'] = (map['subCategoryKey'] ?? map['subCategory'] ?? '')
+        .toString();
+    map['mainGroup'] = (map['mainGroupKey'] ?? map['mainGroup'] ?? '')
+        .toString();
     map['typeKey'] = (map['typeKey'] ?? map['type'] ?? '').toString().trim();
     map['colors'] = map['colors'] ?? map['color'] ?? const [];
     return map;

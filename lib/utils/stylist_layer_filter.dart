@@ -31,10 +31,7 @@ class StylistLayerFilterResult {
   final bool allowed;
   final String reason;
 
-  const StylistLayerFilterResult({
-    required this.allowed,
-    required this.reason,
-  });
+  const StylistLayerFilterResult({required this.allowed, required this.reason});
 }
 
 /// Layer-first wardrobe usability (V2 layer_role + warmth_level + weather).
@@ -93,16 +90,19 @@ class StylistLayerFilter {
     );
     if (canonical == 'tank_top' || canonical == 'tanktop') return true;
 
-    final name = (item['name'] ?? item['typePretty'] ?? item['type_pretty'] ?? '')
-        .toString()
-        .toLowerCase();
+    final name =
+        (item['name'] ?? item['typePretty'] ?? item['type_pretty'] ?? '')
+            .toString()
+            .toLowerCase();
     if (name.contains('spodné tielko') || name.contains('spodne tielko')) {
       return false;
     }
     if (name.contains('tielko')) return true;
     if (name.contains('tank top') || name.contains('tanktop')) return true;
     if (name.contains('sleeveless') &&
-        (name.contains('top') || name.contains('shirt') || name.contains('tee'))) {
+        (name.contains('top') ||
+            name.contains('shirt') ||
+            name.contains('tee'))) {
       return true;
     }
     return false;
@@ -155,8 +155,7 @@ class StylistLayerFilter {
   static String resolveEffectiveLayerRole(Map<String, dynamic> item) {
     if (item['home_kb_applied'] == true ||
         item['home_legacy_fallback'] == true) {
-      final normalizedLayer =
-          _normToken((item['layer_role'] ?? '').toString());
+      final normalizedLayer = _normToken((item['layer_role'] ?? '').toString());
       if (normalizedLayer == 'base_layer' ||
           normalizedLayer == 'mid_layer' ||
           normalizedLayer == 'outer_layer' ||
@@ -194,7 +193,8 @@ class StylistLayerFilter {
     if (_midLayerSubKeys.contains(sub)) return 'mid_layer';
 
     final warmth = inferWarmthLevel(item);
-    if (appRole == 'outer_layer' || subCategoryLayerRoles[sub] == 'outer_layer') {
+    if (appRole == 'outer_layer' ||
+        subCategoryLayerRoles[sub] == 'outer_layer') {
       if (warmth <= 6 && !_heavyOuterSubKeys.contains(sub)) {
         return 'mid_layer';
       }
@@ -276,6 +276,12 @@ class StylistLayerFilter {
     StylistWeatherContext weather,
     int warmth,
   ) {
+    if (weather.tempC >= 24 && warmth >= 5) {
+      return const StylistLayerFilterResult(
+        allowed: false,
+        reason: 'too_warm_for_mid_layer',
+      );
+    }
     if (weather.isWarm && warmth >= 9) {
       return const StylistLayerFilterResult(
         allowed: false,
@@ -292,6 +298,12 @@ class StylistLayerFilter {
     StylistWeatherContext weather,
     int warmth,
   ) {
+    if (weather.tempC >= 24 && warmth >= 5) {
+      return const StylistLayerFilterResult(
+        allowed: false,
+        reason: 'too_warm_outer_for_hot_day',
+      );
+    }
     if (weather.isWarm && warmth >= 7) {
       return const StylistLayerFilterResult(
         allowed: false,
@@ -328,7 +340,10 @@ class StylistLayerFilter {
         reason: 'light_outer_default',
       );
     }
-    return const StylistLayerFilterResult(allowed: true, reason: 'outer_default');
+    return const StylistLayerFilterResult(
+      allowed: true,
+      reason: 'outer_default',
+    );
   }
 
   static StylistLayerFilterResult _allowSlot(
@@ -342,13 +357,18 @@ class StylistLayerFilter {
         reason: 'heavy_slot_in_hot_weather',
       );
     }
-    if ((weather.isCold || weather.isRainy) && warmth <= 2 && layerRole == 'footwear') {
+    if ((weather.isCold || weather.isRainy) &&
+        warmth <= 2 &&
+        layerRole == 'footwear') {
       return const StylistLayerFilterResult(
         allowed: false,
         reason: 'too_light_shoes_for_cold_rain',
       );
     }
-    return const StylistLayerFilterResult(allowed: true, reason: 'slot_weather_ok');
+    return const StylistLayerFilterResult(
+      allowed: true,
+      reason: 'slot_weather_ok',
+    );
   }
 
   static void _logFilter({

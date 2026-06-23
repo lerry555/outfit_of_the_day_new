@@ -205,6 +205,7 @@ class _HomeDayCacheSnapshot {
   final List<Map<String, dynamic>>? slotMaps;
   final List<_HeroOutfitItem>? heroItems;
   final String reasonText;
+  final List<String>? reasonItemIds;
   final bool userModified;
   final String persistSource;
   final DateTime updatedAt;
@@ -218,6 +219,7 @@ class _HomeDayCacheSnapshot {
     this.slotMaps,
     this.heroItems,
     this.reasonText = '',
+    this.reasonItemIds,
     this.userModified = false,
     this.persistSource = 'unknown',
     required this.updatedAt,

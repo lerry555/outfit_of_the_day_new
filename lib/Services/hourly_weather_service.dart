@@ -264,21 +264,11 @@ class HourlyWeatherService {
       final willRain =
           rainMorning != null || rainAfternoon != null || rainEvening != null;
 
-      final rainTimeParts = <String>[];
-      if (rainMorning?.time != null) {
-        rainTimeParts.add('ráno ${_hourLabel(rainMorning!.time!)}');
-      }
-      if (rainAfternoon?.time != null) {
-        rainTimeParts.add('poobedie ${_hourLabel(rainAfternoon!.time!)}');
-      }
-      if (rainEvening?.time != null) {
-        rainTimeParts.add('večer ${_hourLabel(rainEvening!.time!)}');
-      }
-      final rainTimeText = rainTimeParts.isEmpty ? null : rainTimeParts.join(', ');
+      final rainTimeText = _rainWindowsText(precipSource);
 
       logVerboseHome(
         'WEATHER rain_segment morning=${rainMorning?.time} afternoon=${rainAfternoon?.time} '
-        'evening=${rainEvening?.time}',
+        'evening=${rainEvening?.time} windows=$rainTimeText',
       );
 
       final isWindy = windSource.any((h) => (h.windSpeedKmh ?? 0) >= 25);
@@ -694,6 +684,44 @@ class HourlyWeatherService {
 
   bool _pointLooksRainy(_HourlyPoint p) {
     return (p.precipitationProbability ?? 0) >= 50 || (p.precipitationMm ?? 0) > 0.2;
+  }
+
+  String? _rainWindowsText(List<_HourlyPoint> pts) {
+    final rainyHours = pts
+        .where((p) => p.time != null && _pointLooksRainy(p))
+        .map((p) => DateTime(
+              p.time!.year,
+              p.time!.month,
+              p.time!.day,
+              p.time!.hour,
+            ))
+        .toList()
+      ..sort();
+    if (rainyHours.isEmpty) return null;
+
+    final windows = <({DateTime start, DateTime end})>[];
+    var start = rainyHours.first;
+    var end = start.add(const Duration(hours: 1));
+    for (final hour in rainyHours.skip(1)) {
+      final gap = hour.difference(end).inMinutes;
+      // Merge adjacent rain and one-hour gaps so 13:00 + 15:00 reads as 13:00-16:00.
+      if (gap <= 60) {
+        final candidateEnd = hour.add(const Duration(hours: 1));
+        if (candidateEnd.isAfter(end)) end = candidateEnd;
+      } else {
+        windows.add((start: start, end: end));
+        start = hour;
+        end = hour.add(const Duration(hours: 1));
+      }
+    }
+    windows.add((start: start, end: end));
+
+    final labels = windows
+        .map((w) => '${_hourLabel(w.start)}-${_hourLabel(w.end)}')
+        .toList(growable: false);
+    if (labels.length == 1) return labels.single;
+    if (labels.length == 2) return '${labels[0]} a ${labels[1]}';
+    return '${labels.take(labels.length - 1).join(', ')} a ${labels.last}';
   }
 
   /// First chronologically rainy hour inside [minHInclusive, maxHInclusive] (local wall hour).

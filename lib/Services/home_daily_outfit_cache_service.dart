@@ -16,6 +16,8 @@ class HomeDailyOutfitCacheDocument {
   final int? clientUpdatedAtMs;
   final List<String>? lastNewOutfitItemIds;
   final int? lastNewOutfitSavedAtMs;
+  final int cacheSchemaVersion;
+  final List<String>? reasonItemIds;
 
   const HomeDailyOutfitCacheDocument({
     required this.dateKey,
@@ -31,6 +33,8 @@ class HomeDailyOutfitCacheDocument {
     this.clientUpdatedAtMs,
     this.lastNewOutfitItemIds,
     this.lastNewOutfitSavedAtMs,
+    this.cacheSchemaVersion = 1,
+    this.reasonItemIds,
   });
 }
 
@@ -145,6 +149,8 @@ class HomeDailyOutfitCacheService {
 
     final clientUpdatedAtMs = _readInt(data['clientUpdatedAtMs']);
     final lastNewOutfitSavedAtMs = _readInt(data['lastNewOutfitSavedAtMs']);
+    final cacheSchemaVersion = _readInt(data['cacheSchemaVersion']) ?? 1;
+    final reasonItemIds = _readStringList(data['reasonItemIds']);
 
     return HomeDailyOutfitCacheDocument(
       dateKey: dateKey,
@@ -163,7 +169,20 @@ class HomeDailyOutfitCacheService {
       lastNewOutfitItemIds:
           lastNewOutfitItemIds.isEmpty ? null : lastNewOutfitItemIds,
       lastNewOutfitSavedAtMs: lastNewOutfitSavedAtMs,
+      cacheSchemaVersion: cacheSchemaVersion,
+      reasonItemIds: reasonItemIds.isEmpty ? null : reasonItemIds,
     );
+  }
+
+  List<String> _readStringList(dynamic raw) {
+    final out = <String>[];
+    if (raw is List) {
+      for (final value in raw) {
+        final s = value?.toString().trim() ?? '';
+        if (s.isNotEmpty) out.add(s);
+      }
+    }
+    return out;
   }
 
   int? _readInt(dynamic value) {
@@ -182,11 +201,14 @@ class HomeDailyOutfitCacheService {
       'itemIds': doc.itemIds,
       'items': doc.items,
       'reasonText': doc.reasonText,
+      if (doc.reasonItemIds != null && doc.reasonItemIds!.isNotEmpty)
+        'reasonItemIds': doc.reasonItemIds,
       'weatherSignature': doc.weatherSignature,
       'wardrobeSignature': doc.wardrobeSignature,
       'source': doc.source,
       'userModified': doc.userModified,
       'clientUpdatedAtMs': clientMs,
+      'cacheSchemaVersion': doc.cacheSchemaVersion,
       if (doc.likedOutfitKey != null && doc.likedOutfitKey!.isNotEmpty)
         'likedOutfitKey': doc.likedOutfitKey,
       if (doc.lastNewOutfitItemIds != null &&

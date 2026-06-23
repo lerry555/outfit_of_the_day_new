@@ -39,8 +39,11 @@ class HomeOutfitExplanationSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final maxHeight = MediaQuery.sizeOf(context).height * 0.82;
-    final story = narrative.trim();
-    final extra = supplementalBody?.trim() ?? '';
+    final primary =
+        (supplementalBody?.trim().isNotEmpty == true
+                ? supplementalBody!.trim()
+                : narrative.trim())
+            .trim();
 
     return Padding(
       padding: EdgeInsets.fromLTRB(14, 0, 14, 14 + bottomInset),
@@ -99,8 +102,8 @@ class HomeOutfitExplanationSheet extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (story.isNotEmpty)
-                        ...story.split('\n\n').map((paragraph) {
+                      if (primary.isNotEmpty)
+                        ...primary.split('\n\n').map((paragraph) {
                           final text = paragraph.trim();
                           if (text.isEmpty) return const SizedBox.shrink();
                           return Padding(
@@ -118,18 +121,6 @@ class HomeOutfitExplanationSheet extends StatelessWidget {
                             ),
                           );
                         }),
-                      if (extra.isNotEmpty) ...[
-                        if (story.isNotEmpty) const SizedBox(height: 16),
-                        Text(
-                          extra,
-                          style: TextStyle(
-                            color: HomeLuxuryPalette.textSecondary.withOpacity(0.9),
-                            fontSize: 13.5,
-                            height: 1.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
                     ],
                   ),
                 ),

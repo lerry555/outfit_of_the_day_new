@@ -4,13 +4,7 @@ import '../Services/outfit_generation_service.dart';
 import 'home_debug_logging.dart';
 
 /// Footwear family for stylist final review (not item-level scoring).
-enum FootwearFamily {
-  sneakers,
-  boots,
-  sandals,
-  formalShoes,
-  other,
-}
+enum FootwearFamily { sneakers, boots, sandals, formalShoes, other }
 
 extension FootwearFamilyWire on FootwearFamily {
   String get wireName {
@@ -43,11 +37,11 @@ class FootwearFamilyGuidance {
   final String reason;
 
   Map<String, dynamic> toPayload() => <String, dynamic>{
-        'preferredFamilies': preferredFamilies,
-        'allowedFamilies': allowedFamilies,
-        'discouragedFamilies': discouragedFamilies,
-        'reason': reason,
-      };
+    'preferredFamilies': preferredFamilies,
+    'allowedFamilies': allowedFamilies,
+    'discouragedFamilies': discouragedFamilies,
+    'reason': reason,
+  };
 
   bool isPreferred(FootwearFamily family) =>
       preferredFamilies.contains(family.wireName);
@@ -150,12 +144,65 @@ bool _isFormalFamilyBlob(String blob) {
   ]);
 }
 
+String _footwearBlob(Map<String, dynamic> item) {
+  return [
+    item['name'],
+    item['label'],
+    item['canonical_type'],
+    item['canonicalType'],
+    item['category'],
+    item['categoryKey'],
+    item['subCategory'],
+    item['subCategoryKey'],
+    item['mainGroup'],
+    item['mainGroupKey'],
+    item['material'],
+    item['materialFeel'],
+    item['visual_description'],
+    item['visualDescription'],
+  ].map((e) => (e ?? '').toString()).join(' ');
+}
+
+bool isRainRiskSportSneakerItem(Map<String, dynamic> item) {
+  final blob = _normToken(_footwearBlob(item));
+  final canonical = _normCanonicalKey(
+    (item['canonical_type'] ?? item['canonicalType'] ?? '').toString(),
+  );
+  return blob.contains('siet') ||
+      blob.contains('mesh') ||
+      blob.contains('bezeck') ||
+      blob.contains('running') ||
+      blob.contains('sportove tenisky') ||
+      blob.contains('sport shoe') ||
+      blob.contains('sport shoes') ||
+      blob.contains('training shoe') ||
+      blob.contains('training shoes') ||
+      blob.contains('athletic shoe') ||
+      blob.contains('athletic shoes') ||
+      canonical.contains('running') ||
+      canonical.contains('training') ||
+      canonical.contains('athletic') ||
+      canonical.contains('sportshoe');
+}
+
+bool isRainDiscouragedFootwearItem({
+  required Map<String, dynamic> item,
+  required OutfitWeatherSnapshot weather,
+}) {
+  return weather.isRainy &&
+      weather.tempC > 12 &&
+      classifyFootwearFamily(item) == FootwearFamily.sneakers &&
+      isRainRiskSportSneakerItem(item);
+}
+
 /// Classify footwear item into a family using canonical type, keys, and name.
 FootwearFamily classifyFootwearFamily(Map<String, dynamic> item) {
-  final canonical =
-      (item['canonical_type'] ?? item['canonicalType'] ?? '').toString().trim();
-  final sub =
-      (item['subCategoryKey'] ?? item['subCategory'] ?? '').toString().trim();
+  final canonical = (item['canonical_type'] ?? item['canonicalType'] ?? '')
+      .toString()
+      .trim();
+  final sub = (item['subCategoryKey'] ?? item['subCategory'] ?? '')
+      .toString()
+      .trim();
   final cat = (item['categoryKey'] ?? item['category'] ?? '').toString().trim();
   final name = (item['name'] ?? '').toString().trim();
   final blob = '$canonical $sub $cat $name';
@@ -312,8 +359,9 @@ void logFootwearFamilyGuidance({
 }
 
 bool isFootwearWardrobeItem(Map<String, dynamic> item) {
-  final layer =
-      (item['layer_role'] ?? item['layerRole'] ?? '').toString().trim();
+  final layer = (item['layer_role'] ?? item['layerRole'] ?? '')
+      .toString()
+      .trim();
   if (layer == 'footwear') return true;
 
   final cat = (item['categoryKey'] ?? item['category'] ?? '').toString();
@@ -376,7 +424,8 @@ class FootwearFamilyInventory {
   bool hasPreferred(FootwearFamilyGuidance guidance) =>
       preferredCount(guidance) > 0;
 
-  bool hasAllowed(FootwearFamilyGuidance guidance) => allowedCount(guidance) > 0;
+  bool hasAllowed(FootwearFamilyGuidance guidance) =>
+      allowedCount(guidance) > 0;
 
   List<String> idsForWireFamilies(List<String> wireFamilies) {
     final ids = <String>[];
@@ -516,12 +565,19 @@ int applyFootwearFamilyGuard({
   required List<OutfitPreview> candidates,
   required FootwearFamilyGuidance guidance,
   required List<double> ruleScores,
+  required OutfitWeatherSnapshot weather,
 }) {
   if (selectedIndex < 0 || selectedIndex >= candidates.length) return 0;
 
-  final selectedFamily =
-      classifyFootwearFamily(candidates[selectedIndex].shoes.item);
-  if (!guidance.isDiscouraged(selectedFamily)) return selectedIndex;
+  final selectedShoes = candidates[selectedIndex].shoes.item;
+  final selectedFamily = classifyFootwearFamily(selectedShoes);
+  final selectedRainRisk = isRainDiscouragedFootwearItem(
+    item: selectedShoes,
+    weather: weather,
+  );
+  if (!guidance.isDiscouraged(selectedFamily) && !selectedRainRisk) {
+    return selectedIndex;
+  }
 
   int? bestPreferredIdx;
   double bestPreferredScore = -1e9;
@@ -529,7 +585,11 @@ int applyFootwearFamilyGuard({
   double bestAllowedScore = -1e9;
 
   for (var i = 0; i < candidates.length; i++) {
-    final family = classifyFootwearFamily(candidates[i].shoes.item);
+    final shoes = candidates[i].shoes.item;
+    final family = classifyFootwearFamily(shoes);
+    if (isRainDiscouragedFootwearItem(item: shoes, weather: weather)) {
+      continue;
+    }
     final score = i < ruleScores.length ? ruleScores[i] : 0.0;
 
     if (guidance.isPreferred(family) && score > bestPreferredScore) {
@@ -551,7 +611,7 @@ int applyFootwearFamilyGuard({
 
   final toFamily = classifyFootwearFamily(candidates[overrideIdx].shoes.item);
   logVerboseHome(
-    '[STYLIST_FINAL_REVIEW_GUARD_OVERRIDE] reason=discouraged_footwear_family '
+    '[STYLIST_FINAL_REVIEW_GUARD_OVERRIDE] reason=${selectedRainRisk ? 'rain_risk_sport_sneaker' : 'discouraged_footwear_family'} '
     'fromIndex=$selectedIndex toIndex=$overrideIdx '
     'fromFamily=${selectedFamily.wireName} toFamily=${toFamily.wireName}',
   );
