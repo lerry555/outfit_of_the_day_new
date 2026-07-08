@@ -325,7 +325,7 @@ BottomFamily classifyBottomFamily(Map<String, dynamic> item) {
 
   final layer =
       (item['layer_role'] ?? item['layerRole'] ?? '').toString().trim();
-  if (_bottomLayerRoles.contains(layer)) return BottomFamily.other;
+  if (_bottomLayerRoles.contains(layer)) return BottomFamily.pants;
 
   return BottomFamily.other;
 }
@@ -335,6 +335,8 @@ bool isBottomDiscouragedForGuidance(
   BottomFamilyGuidance guidance,
 ) {
   final family = classifyBottomFamily(item);
+  if (guidance.isPreferred(family)) return false;
+
   final heavy = isHeavyBottomItem(item);
 
   for (final wire in guidance.discouragedFamilies) {
@@ -386,11 +388,12 @@ BottomFamilyGuidance computeBottomFamilyGuidance({
   required OutfitWeatherSnapshot weather,
 }) {
   final temp = weather.tempC;
+  final isSummer = weather.seasonKey == 'let';
 
   final preferred = <String>[];
   final allowed = <String>[];
   final discouraged = <String>[];
-  late final String reason;
+  late String reason;
 
   if (temp >= 26) {
     preferred.add(BottomFamily.shorts.wireName);
@@ -446,6 +449,27 @@ BottomFamilyGuidance computeBottomFamilyGuidance({
     reason = 'Cold (≤14°C): long bottoms preferred.';
   }
 
+  // V LETE pri miernom počasí (17–21 °C) ľudia bežne nosia kraťasy, nie dlhé
+  // nohavice. Preto kraťasy spravíme jedinou preferovanou rodinou; dlhé nohavice
+  // ostávajú len ako záloha (keď kraťasy v šatníku nie sú). Dážď to nemení.
+  if (isSummer && temp >= 17 && temp < 22) {
+    preferred
+      ..clear()
+      ..add(BottomFamily.shorts.wireName);
+    allowed
+      ..clear()
+      ..addAll([
+        BottomFamily.shorts.wireName,
+        'light_pants',
+        BottomFamily.jeans.wireName,
+      ]);
+    discouraged
+      ..clear()
+      ..addAll(['heavy_jeans', 'heavy_pants']);
+    reason =
+        'Leto, mierne (17–21°C): kraťasy preferované; dlhé nohavice len ako záloha.';
+  }
+
   for (final p in preferred) {
     if (!allowed.contains(p)) allowed.add(p);
   }
@@ -455,6 +479,31 @@ BottomFamilyGuidance computeBottomFamilyGuidance({
     allowedFamilies: allowed,
     discouragedFamilies: discouraged,
     reason: reason,
+  );
+}
+
+/// Keď si používateľ VÝSLOVNE vyžiada konkrétny typ spodku (napr. šortky),
+/// jeho voľba má prednosť pred počasím: daná rodina sa stane jedinou
+/// preferovanou a ostatné spodné rodiny potlačíme, takže outfit naozaj
+/// dostane to, čo si pýtal (ak to má v šatníku).
+BottomFamilyGuidance forceBottomFamilyGuidance({
+  required BottomFamily family,
+  required BottomFamilyGuidance base,
+}) {
+  final others = <String>[
+    BottomFamily.shorts.wireName,
+    BottomFamily.jeans.wireName,
+    BottomFamily.pants.wireName,
+    BottomFamily.joggers.wireName,
+  ]..remove(family.wireName);
+
+  return BottomFamilyGuidance(
+    preferredFamilies: <String>[family.wireName],
+    allowedFamilies: <String>[family.wireName],
+    discouragedFamilies: others,
+    reason:
+        'Používateľ si výslovne vyžiadal: ${family.wireName}. Ostatné spodné '
+        'kúsky potlačené. (${base.reason})',
   );
 }
 
@@ -492,6 +541,21 @@ bool isBottomWardrobeItem(Map<String, dynamic> item) {
   if (_bottomCategoryKeys.contains(catNorm)) return true;
   if (_bottomSubCategoryKeys.contains(subNorm)) return true;
 
+  return false;
+}
+
+/// Preferovaný spodok reálne použiteľný v matrix bottom poole (M6).
+bool hasUsablePreferredBottom({
+  required List<Map<String, dynamic>> wardrobe,
+  required BottomFamilyGuidance guidance,
+  Set<String> excludedItemIds = const {},
+}) {
+  for (final item in wardrobe) {
+    if (!isBottomWardrobeItem(item)) continue;
+    final id = OutfitGenerationService.wardrobeItemId(item);
+    if (id.isEmpty || excludedItemIds.contains(id)) continue;
+    if (guidance.isPreferred(classifyBottomFamily(item))) return true;
+  }
   return false;
 }
 
@@ -682,6 +746,32 @@ List<Map<String, dynamic>> filterSwapBottomCandidates({
         return !isBottomDiscouragedForGuidance(raw, guidance);
       })
       .toList(growable: false);
+}
+
+int applyPreferredBottomGuard({
+  required int selectedIndex,
+  required List<OutfitPreview> candidates,
+  required BottomFamilyGuidance guidance,
+  required List<double> ruleScores,
+}) {
+  if (guidance.preferredFamilies.isEmpty) return selectedIndex;
+  if (selectedIndex < 0 || selectedIndex >= candidates.length) return selectedIndex;
+
+  final selected = candidates[selectedIndex].bottom.item;
+  if (isBottomPreferredForGuidance(selected, guidance)) return selectedIndex;
+
+  int? bestPreferredIdx;
+  var bestPreferredScore = -1e9;
+  for (var i = 0; i < candidates.length; i++) {
+    final bottom = candidates[i].bottom.item;
+    if (!isBottomPreferredForGuidance(bottom, guidance)) continue;
+    final score = i < ruleScores.length ? ruleScores[i] : 0.0;
+    if (score > bestPreferredScore) {
+      bestPreferredScore = score;
+      bestPreferredIdx = i;
+    }
+  }
+  return bestPreferredIdx ?? selectedIndex;
 }
 
 int applyBottomFamilyGuard({

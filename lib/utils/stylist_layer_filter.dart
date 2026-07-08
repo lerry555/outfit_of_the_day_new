@@ -149,6 +149,23 @@ class StylistLayerFilter {
     if (sub == 'prsiplast' || sub == 'softshell_bunda') return 6;
     if (subCategoryLayerRoles[sub] == 'outer_layer') return 7;
     if (subCategoryLayerRoles[sub] == 'main_top') return 3;
+
+    final layer =
+        (item['layer_role'] ?? item['layerRole'] ?? '').toString().trim();
+    if (layer == 'main_top') return 2;
+
+    final canonical = _normToken(
+      (item['canonical_type'] ?? item['canonicalType'] ?? '').toString(),
+    );
+    if (canonical.contains('tshirt') ||
+        canonical.contains('t_shirt') ||
+        canonical.contains('polo') ||
+        canonical.contains('shirt') ||
+        canonical.contains('tank')) {
+      return 2;
+    }
+    if (canonical.contains('short')) return 1;
+
     return 5;
   }
 

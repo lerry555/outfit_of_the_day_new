@@ -1,10 +1,14 @@
 import 'package:flutter/foundation.dart';
 
+import '../data/outfit_intent.dart';
 import '../utils/candidate_generation_audit.dart';
 import '../utils/home_debug_logging.dart';
 import '../utils/kept_selection_audit.dart';
 import '../utils/outer_variant_selection.dart';
 import '../utils/outerwear_policy.dart';
+import '../utils/bottom_family_guidance.dart';
+import '../utils/footwear_family_guidance.dart';
+import '../utils/outfit_intent_scorer.dart';
 import '../utils/stylist_layer_filter.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 
@@ -126,6 +130,35 @@ class OutfitGenerationService {
     return parts.join('|');
   }
 
+  /// Core outfit bez outerwear — dedup identických outfitov (M6).
+  static String coreCombinationSignature(
+    Map<String, dynamic> top,
+    Map<String, dynamic> bottom,
+    Map<String, dynamic> shoes,
+  ) {
+    return [
+      wardrobeItemId(top),
+      wardrobeItemId(bottom),
+      wardrobeItemId(shoes),
+    ].where((e) => e.isNotEmpty).join('|');
+  }
+
+  static List<OutfitPreview> dedupePreviewsByCore(List<OutfitPreview> previews) {
+    final seen = <String>{};
+    final kept = <OutfitPreview>[];
+    for (final preview in previews) {
+      final core = coreCombinationSignature(
+        preview.top.item,
+        preview.bottom.item,
+        preview.shoes.item,
+      );
+      if (core.isEmpty || seen.add(core)) {
+        kept.add(preview);
+      }
+    }
+    return kept;
+  }
+
   static int overlapCount(
     Set<String> previousIds,
     List<Map<String, dynamic>> picks,
@@ -145,6 +178,8 @@ class OutfitGenerationService {
     Set<String> excludedItemIds = const {},
     Set<String> allowedShoeItemIds = const {},
     Set<String> allowedBottomItemIds = const {},
+    String? topPreference,
+    String? activityType,
   }) {
     final preview = _generatePreviewInternal(
       wardrobeItems: wardrobeItems,
@@ -155,6 +190,8 @@ class OutfitGenerationService {
       forceDifferentOutfit: false,
       allowedShoeItemIds: allowedShoeItemIds,
       allowedBottomItemIds: allowedBottomItemIds,
+      topPreference: topPreference,
+      activityType: activityType,
       auditPoolsOnly: true,
     );
     return preview.pools;
@@ -226,9 +263,21 @@ class OutfitGenerationService {
     Set<String> rejectedCombinationSignatures = const {},
     Set<String> previousItemIds = const {},
     bool forceDifferentOutfit = false,
+    Set<String> allowedShoeItemIds = const {},
+    Set<String> allowedBottomItemIds = const {},
     int limit = 4,
     bool preferredBottomExists = false,
     bool preferredFootwearExists = false,
+    BottomFamilyGuidance? bottomGuidance,
+    FootwearFamilyGuidance? footwearGuidance,
+    String? topPreference,
+    String? activityType,
+    OutfitIntent? outfitIntent,
+    List<String> bottomPreferredFamilies = const [],
+    List<String> bottomForbiddenFamilies = const [],
+    List<String> footwearPreferredFamilies = const [],
+    List<String> footwearForbiddenFamilies = const [],
+    bool logMatrixPoolDebug = false,
     OutfitPreviewPredicate? isPreferredBottom,
     OutfitPreviewPredicate? isPreferredFootwear,
     OutfitPreviewPredicate? isDiscouragedBottom,
@@ -252,11 +301,23 @@ class OutfitGenerationService {
       rejectedCombinationSignatures: rejectedCombinationSignatures,
       previousItemIds: previousItemIds,
       forceDifferentOutfit: forceDifferentOutfit,
+      allowedShoeItemIds: allowedShoeItemIds,
+      allowedBottomItemIds: allowedBottomItemIds,
       auditCandidateGeneration: auditCandidateGeneration,
       auditPassIndex: auditPassIndex,
       auditPassLabel: auditPassLabel,
       preferredBottomExists: preferredBottomExists,
       preferredFootwearExists: preferredFootwearExists,
+      bottomGuidance: bottomGuidance,
+      footwearGuidance: footwearGuidance,
+      topPreference: topPreference,
+      activityType: activityType,
+      outfitIntent: outfitIntent,
+      bottomPreferredFamilies: bottomPreferredFamilies,
+      bottomForbiddenFamilies: bottomForbiddenFamilies,
+      footwearPreferredFamilies: footwearPreferredFamilies,
+      footwearForbiddenFamilies: footwearForbiddenFamilies,
+      logMatrixPoolDebug: logMatrixPoolDebug,
       isPreferredBottom: isPreferredBottom,
       isPreferredFootwear: isPreferredFootwear,
       isDiscouragedBottom: isDiscouragedBottom,
@@ -294,6 +355,16 @@ class OutfitGenerationService {
     bool auditPoolsOnly = false,
     bool preferredBottomExists = false,
     bool preferredFootwearExists = false,
+    BottomFamilyGuidance? bottomGuidance,
+    FootwearFamilyGuidance? footwearGuidance,
+    String? topPreference,
+    String? activityType,
+    OutfitIntent? outfitIntent,
+    List<String> bottomPreferredFamilies = const [],
+    List<String> bottomForbiddenFamilies = const [],
+    List<String> footwearPreferredFamilies = const [],
+    List<String> footwearForbiddenFamilies = const [],
+    bool logMatrixPoolDebug = false,
     OutfitPreviewPredicate? isPreferredBottom,
     OutfitPreviewPredicate? isPreferredFootwear,
     OutfitPreviewPredicate? isDiscouragedBottom,
@@ -343,6 +414,23 @@ class OutfitGenerationService {
       seasonKey: weather.seasonKey,
     );
 
+    OutfitIntent matrixOutfitIntent() {
+      if (outfitIntent != null) return outfitIntent!;
+      return OutfitIntent(
+        activityType: activityType ?? '',
+        idealSummarySk: '',
+        bottomPreferred: bottomPreferredFamilies,
+        bottomForbidden: bottomForbiddenFamilies,
+        footwearPreferred: footwearPreferredFamilies,
+        footwearForbidden: footwearForbiddenFamilies,
+        topPreference: topPreference != null && topPreference!.isNotEmpty
+            ? topPreference!
+            : 'casual_top',
+      );
+    }
+
+    final intentForTopEligibility = matrixOutfitIntent();
+
     bool containsAny(String haystack, List<String> needles) {
       final h = haystack.toLowerCase();
       return needles.any((n) => h.contains(n));
@@ -358,6 +446,9 @@ class OutfitGenerationService {
     }
 
     bool isTop(Map<String, dynamic> it) {
+      if (isFootwearWardrobeItem(it) || isBottomWardrobeItem(it)) {
+        return false;
+      }
       if (StylistLayerFilter.isTankTopItem(it)) return true;
       final b = blob(it);
       return containsAny(b, [
@@ -366,7 +457,6 @@ class OutfitGenerationService {
         't-shirt',
         'tielko',
         'tank',
-        'top',
         'koše',
         'kosel',
         'blúz',
@@ -374,42 +464,17 @@ class OutfitGenerationService {
         'sveter',
         'shirt',
         'blouse',
-      ]);
+        'polo',
+        'hoodie',
+        'mikina',
+        'sweater',
+      ]) ||
+          RegExp(r'\btop\b').hasMatch(b);
     }
 
-    bool isBottom(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'nohav',
-        'rifl',
-        'džín',
-        'dzín',
-        'jeans',
-        'pants',
-        'sukn',
-        'skirt',
-        'krať',
-        'krat',
-        'short',
-      ]);
-    }
+    bool isBottom(Map<String, dynamic> it) => isBottomWardrobeItem(it);
 
-    bool isShoes(Map<String, dynamic> it) {
-      final b = blob(it);
-      return containsAny(b, [
-        'topán',
-        'topan',
-        'tenis',
-        'sneaker',
-        'boots',
-        'čiž',
-        'ciz',
-        'sandál',
-        'sandal',
-        'obuv',
-        'shoes',
-      ]);
-    }
+    bool isShoes(Map<String, dynamic> it) => isFootwearWardrobeItem(it);
 
     bool isOuterwear(Map<String, dynamic> it) {
       final layer = StylistLayerFilter.resolveEffectiveLayerRole(it);
@@ -747,9 +812,80 @@ class OutfitGenerationService {
       return (preview: null, previews: const [], pools: null);
     }
 
+    const matrixTopN = 4;
+
+    double scoreTopBase(Map<String, dynamic> it) {
+      var s = baseScore(it);
+      if (!StylistLayerFilter.isTankTopItem(it)) return s;
+
+      if (temp >= 24 || StylistLayerFilter.isSportOrBeachOccasionItem(it)) {
+        return s + 0.5;
+      }
+      return s - 6.0;
+    }
+
+    List<Map<String, dynamic>> selectTopCandidatesForMatrix(
+      List<Map<String, dynamic>> candidates,
+    ) {
+      if (candidates.isEmpty) return const [];
+
+      final preferred = <Map<String, dynamic>>[];
+      final acceptable = <Map<String, dynamic>>[];
+      final compromise = <Map<String, dynamic>>[];
+
+      for (final item in candidates) {
+        final eligibility = OutfitIntentScorer.classifyTopEligibility(
+          item: item,
+          intent: intentForTopEligibility,
+        );
+        if (logMatrixPoolDebug) {
+          OutfitIntentScorer.logTopEligibility(
+            item: item,
+            result: eligibility,
+          );
+        }
+        switch (eligibility.eligibility) {
+          case ItemEligibility.preferred:
+            preferred.add(item);
+          case ItemEligibility.acceptable:
+            acceptable.add(item);
+          case ItemEligibility.compromise:
+            compromise.add(item);
+          case ItemEligibility.forbidden:
+            break;
+        }
+      }
+
+      final pool = <Map<String, dynamic>>[
+        ...rankPool(preferred, scoreTopBase),
+        ...rankPool(acceptable, scoreTopBase),
+      ];
+      // Compromise len keď v šatníku chýba ideálny vrch — nie paralelne s košeľou/polom.
+      if (preferred.isEmpty &&
+          acceptable.isEmpty &&
+          pool.length < matrixTopN) {
+        pool.addAll(
+          rankPool(compromise, scoreTopBase)
+              .take(matrixTopN - pool.length),
+        );
+      }
+      if (pool.isEmpty && candidates.isNotEmpty) {
+        pool.addAll(
+          rankPool(candidates, scoreTopBase)
+              .take(matrixTopN)
+              .toList(growable: false),
+        );
+      }
+      return pool.take(matrixTopN).toList(growable: false);
+    }
+
+    final matrixTopPool = selectTopCandidatesForMatrix(
+      filterExcluded(tops, 'top'),
+    );
+
     final midLayers = midLayersFromPool(pool);
     final poolsSnapshot = OutfitGenerationPools(
-      tops: tops,
+      tops: matrixTopPool,
       bottoms: bottoms,
       shoes: shoes,
       outerwear: outerwear,
@@ -1024,20 +1160,35 @@ class OutfitGenerationService {
       }
     }
 
-    double scoreTop(Map<String, dynamic> it) {
-      var s = baseScore(it);
-      if (!StylistLayerFilter.isTankTopItem(it)) return s;
+    const matrixBottomN = 4;
+    const matrixFootwearN = 3;
+    const matrixOuterN = 3;
 
-      if (temp >= 24 || StylistLayerFilter.isSportOrBeachOccasionItem(it)) {
-        return s + 0.5;
-      }
-      return s - 6.0;
+    bool wardrobeHasHikeLongBottoms() {
+      return wardrobeItems.any((item) {
+        if (!isBottomWardrobeItem(item)) return false;
+        final family = classifyBottomFamily(item);
+        return family == BottomFamily.jeans ||
+            family == BottomFamily.pants ||
+            family == BottomFamily.joggers;
+      });
     }
 
     double scoreBottom(Map<String, dynamic> it) {
       final b = blob(it);
       var s = baseScore(it);
       if (isWarm && (b.contains('krať') || b.contains('short'))) s += 1.0;
+      final guidance = bottomGuidance;
+      if (guidance != null) {
+        final family = classifyBottomFamily(it);
+        if (guidance.isPreferred(family)) s += 1.5;
+        if (guidance.isDiscouraged(family)) s -= 2.5;
+        if ((activityType ?? '') == 'hike' &&
+            family == BottomFamily.shorts &&
+            wardrobeHasHikeLongBottoms()) {
+          s -= 4.0;
+        }
+      }
       return s;
     }
 
@@ -1231,19 +1382,12 @@ class OutfitGenerationService {
     }
 
     final prevIdSet = previousItemIds.toSet();
-    const matrixTopN = 4;
-    const matrixBottomN = 4;
-    const matrixFootwearN = 3;
-    const matrixOuterN = 3;
 
     final ftops = filterExcluded(tops, 'top');
     final fbottoms = filterExcluded(bottoms, 'bottom');
     final fshoes = applyRainFootwearRules(filterExcluded(shoes, 'shoes'));
 
-    final topCandidates = rankPool(
-      ftops,
-      scoreTop,
-    ).take(matrixTopN).toList(growable: false);
+    final topCandidates = selectTopCandidatesForMatrix(ftops);
     final bottomCandidates = rankPool(
       fbottoms,
       scoreBottom,
@@ -1252,6 +1396,129 @@ class OutfitGenerationService {
       fshoes,
       scoreShoes,
     ).take(matrixFootwearN).toList(growable: false);
+
+    final useIntentBottomFilter = bottomPreferredFamilies.isNotEmpty;
+    final useIntentFootwearFilter = footwearPreferredFamilies.isNotEmpty;
+    final bottomPreferredSet = bottomPreferredFamilies.toSet();
+    final bottomForbiddenSet = bottomForbiddenFamilies.toSet();
+    final footwearPreferredSet = footwearPreferredFamilies.toSet();
+    final footwearForbiddenSet = footwearForbiddenFamilies.toSet();
+
+    // Discouraged filter len keď preferovaná rodina je reálne v matrix poole.
+    final rejectDiscouragedFootwear = useIntentFootwearFilter
+        ? footwearCandidates.any(
+            (it) => footwearPreferredSet.contains(
+              classifyFootwearFamily(it).wireName,
+            ),
+          )
+        : preferredFootwearExists &&
+            isDiscouragedFootwear != null &&
+            footwearGuidance != null &&
+            footwearCandidates.any(
+              (it) => footwearGuidance.isPreferred(classifyFootwearFamily(it)),
+            );
+    final rejectDiscouragedBottom = useIntentBottomFilter
+        ? bottomCandidates.any(
+            (it) =>
+                bottomPreferredSet.contains(classifyBottomFamily(it).wireName),
+          )
+        : preferredBottomExists &&
+            isDiscouragedBottom != null &&
+            bottomGuidance != null &&
+            bottomCandidates.any(
+              (it) => bottomGuidance.isPreferred(classifyBottomFamily(it)),
+            );
+
+    if (logMatrixPoolDebug) {
+      final wardrobeTops = cleanItems.where(isTop).toList(growable: false);
+      var shirts = 0;
+      var polos = 0;
+      var tshirts = 0;
+      var tankTops = 0;
+      var sweaters = 0;
+      var hoodies = 0;
+      var otherTops = 0;
+      for (final it in wardrobeTops) {
+        if (StylistLayerFilter.isTankTopItem(it)) {
+          tankTops++;
+          continue;
+        }
+        final b = blob(it);
+        if (containsAny(b, ['polo'])) {
+          polos++;
+          continue;
+        }
+        final style = OutfitIntentScorer.classifyTopIntentStyle(it);
+        if (style == TopIntentStyle.shirtOrBlouse) {
+          shirts++;
+          continue;
+        }
+        if (containsAny(b, ['hoodie', 'mikina'])) {
+          hoodies++;
+          continue;
+        }
+        if (containsAny(b, ['sweater', 'sveter', 'cardigan', 'rolak'])) {
+          sweaters++;
+          continue;
+        }
+        if (style == TopIntentStyle.casualTee ||
+            style == TopIntentStyle.graphicTee) {
+          tshirts++;
+          continue;
+        }
+        otherTops++;
+      }
+      final act = activityType ?? '';
+      final shirtOrBlouseAvailable = wardrobeTops.any(
+        (it) =>
+            OutfitIntentScorer.classifyTopEligibility(
+              item: it,
+              intent: intentForTopEligibility,
+            ).eligibility ==
+            ItemEligibility.preferred,
+      );
+      final poloOrShirtAvailable = wardrobeTops.any((it) {
+        final result = OutfitIntentScorer.classifyTopEligibility(
+          item: it,
+          intent: OutfitIntent(
+            activityType: act,
+            idealSummarySk: '',
+            bottomPreferred: const [],
+            bottomForbidden: const [],
+            footwearPreferred: const [],
+            footwearForbidden: const [],
+            topPreference: 'polo_or_shirt',
+          ),
+        );
+        return result.eligibility == ItemEligibility.preferred ||
+            result.eligibility == ItemEligibility.acceptable;
+      });
+      debugPrint(
+        'STYLIST CHAT wardrobe_top_inventory { '
+        'totalTops=${wardrobeTops.length}, '
+        'shirts=$shirts, '
+        'polos=$polos, '
+        'tshirts=$tshirts, '
+        'tankTops=$tankTops, '
+        'sweaters=$sweaters, '
+        'hoodies=$hoodies, '
+        'otherTops=$otherTops, '
+        'shirtOrBlouseAvailable=$shirtOrBlouseAvailable, '
+        'poloOrShirtAvailable=$poloOrShirtAvailable '
+        '}',
+      );
+      debugPrint(
+        'STYLIST CHAT matrix_pool_debug { '
+        'topCount=${topCandidates.length}, '
+        'bottomCount=${bottomCandidates.length}, '
+        'shoeCount=${footwearCandidates.length}, '
+        'allowedBottomIds=${allowedBottomItemIds.join("|")}, '
+        'allowedShoeIds=${allowedShoeItemIds.join("|")}, '
+        'rejectDiscouragedFootwear=$rejectDiscouragedFootwear, '
+        'rejectDiscouragedBottom=$rejectDiscouragedBottom '
+        '}',
+      );
+    }
 
     final outerPolicy = resolveOuterwearPolicy(
       tempC: temp,
@@ -1326,15 +1593,29 @@ class OutfitGenerationService {
       if (rejectedCombinationSignatures.contains(sig)) {
         return 'rejected_signature';
       }
-      if (preferredFootwearExists &&
-          isDiscouragedFootwear != null &&
-          isDiscouragedFootwear(preview)) {
-        return 'discouraged_footwear';
+      if (rejectDiscouragedFootwear) {
+        final footwearFamily =
+            classifyFootwearFamily(preview.shoes.item).wireName;
+        if (useIntentFootwearFilter) {
+          if (footwearForbiddenSet.contains(footwearFamily)) {
+            return 'discouraged_footwear';
+          }
+        } else if (isDiscouragedFootwear != null &&
+            isDiscouragedFootwear(preview)) {
+          return 'discouraged_footwear';
+        }
       }
-      if (preferredBottomExists &&
-          isDiscouragedBottom != null &&
-          isDiscouragedBottom(preview)) {
-        return 'discouraged_bottom';
+      if (rejectDiscouragedBottom) {
+        final bottomFamily =
+            classifyBottomFamily(preview.bottom.item).wireName;
+        if (useIntentBottomFilter) {
+          if (bottomForbiddenSet.contains(bottomFamily)) {
+            return 'discouraged_bottom';
+          }
+        } else if (isDiscouragedBottom != null &&
+            isDiscouragedBottom(preview)) {
+          return 'discouraged_bottom';
+        }
       }
       if (passesLayerHarmony != null && !passesLayerHarmony(preview)) {
         return 'layer_harmony';
@@ -1434,6 +1715,25 @@ class OutfitGenerationService {
     var nullOuterScored = 0;
     var outerScored = 0;
     final scored = <({OutfitPreview preview, double score, String sig})>[];
+    final rejectionCounts = <String, int>{};
+
+    void recordCombinationRejection({
+      required String reason,
+      required OutfitPreview preview,
+    }) {
+      rejectionCounts[reason] = (rejectionCounts[reason] ?? 0) + 1;
+      if (logMatrixPoolDebug) {
+        debugPrint(
+          'STYLIST CHAT combination_rejected { '
+          'reason=$reason, '
+          'top=${preview.top.label}, '
+          'bottom=${preview.bottom.label}, '
+          'shoes=${preview.shoes.label}, '
+          'outer=${preview.outerwear?.label ?? "none"} '
+          '}',
+        );
+      }
+    }
 
     for (final topItem in topCandidates) {
       for (final bottomItem in bottomCandidates) {
@@ -1464,6 +1764,10 @@ class OutfitGenerationService {
               picks: picks,
             );
             if (filterRejection != null) {
+              recordCombinationRejection(
+                reason: filterRejection,
+                preview: preview,
+              );
               if (auditOuterMatrix && outerItem == null) {
                 logOuterMatrixRejection(
                   candidate: matrixCandidateLabel(preview),
@@ -1504,7 +1808,37 @@ class OutfitGenerationService {
       );
     }
 
+    if (logMatrixPoolDebug) {
+      final rejectedTotal =
+          rejectionCounts.values.fold<int>(0, (sum, count) => sum + count);
+      debugPrint(
+        'STYLIST CHAT matrix_combination_audit { '
+        'combinations=$combinationCount, '
+        'scored=${scored.length}, '
+        'rejected=$rejectedTotal, '
+        'rejectionCounts=${rejectionCounts.entries.map((e) => '${e.key}:${e.value}').join("|")} '
+        '}',
+      );
+    }
+
+    int topCandidateRank(OutfitPreview preview) {
+      final topId = wardrobeItemId(preview.top.item);
+      for (var i = 0; i < topCandidates.length; i++) {
+        if (wardrobeItemId(topCandidates[i]) == topId) return i;
+      }
+      return topCandidates.length;
+    }
+
+    final useTopPreferenceOrdering =
+        topPreference != null && topPreference!.isNotEmpty;
+
     scored.sort((a, b) {
+      if (useTopPreferenceOrdering) {
+        final rankCmp = topCandidateRank(
+          a.preview,
+        ).compareTo(topCandidateRank(b.preview));
+        if (rankCmp != 0) return rankCmp;
+      }
       final cmp = b.score.compareTo(a.score);
       if (cmp != 0) return cmp;
       return a.sig.compareTo(b.sig);
@@ -1516,6 +1850,33 @@ class OutfitGenerationService {
         wardrobeItemId(preview.bottom.item),
         wardrobeItemId(preview.shoes.item),
       ].join('|');
+    }
+
+    List<({OutfitPreview preview, double score, String sig})>
+    collapseByCoreCombo(
+      List<({OutfitPreview preview, double score, String sig})> source,
+    ) {
+      final grouped =
+          <String, List<({OutfitPreview preview, double score, String sig})>>{};
+      for (final entry in source) {
+        final key = coreCombinationSignature(
+          entry.preview.top.item,
+          entry.preview.bottom.item,
+          entry.preview.shoes.item,
+        );
+        grouped.putIfAbsent(key, () => []).add(entry);
+      }
+
+      final collapsed = <({OutfitPreview preview, double score, String sig})>[];
+      for (final group in grouped.values) {
+        group.sort((a, b) {
+          final cmp = b.score.compareTo(a.score);
+          if (cmp != 0) return cmp;
+          return a.sig.compareTo(b.sig);
+        });
+        collapsed.add(group.first);
+      }
+      return collapsed;
     }
 
     List<({OutfitPreview preview, double score, String sig})>
@@ -1601,10 +1962,18 @@ class OutfitGenerationService {
         if (cmp != 0) return cmp;
         return a.sig.compareTo(b.sig);
       });
+    } else if (multiCandidate && outerPolicy == OuterwearPolicy.optional) {
+      scoredForKept = collapseByCoreCombo(scored);
+      scoredForKept.sort((a, b) {
+        final cmp = b.score.compareTo(a.score);
+        if (cmp != 0) return cmp;
+        return a.sig.compareTo(b.sig);
+      });
     }
 
     final kept = <OutfitPreview>[];
     final keptSigs = <String>{};
+    final keptCoreSigs = <String>{};
 
     void insertForcedPreview({
       required OutfitPreview? preview,
@@ -1617,7 +1986,16 @@ class OutfitGenerationService {
         preview.shoes.item,
         preview.outerwear?.item,
       );
-      if (sig.isEmpty || keptSigs.contains(sig)) return;
+      final coreSig = coreCombinationSignature(
+        preview.top.item,
+        preview.bottom.item,
+        preview.shoes.item,
+      );
+      if (sig.isEmpty ||
+          keptSigs.contains(sig) ||
+          (coreSig.isNotEmpty && keptCoreSigs.contains(coreSig))) {
+        return;
+      }
       logCandidateForcedCombo(
         reason: reason,
         bottom: preview.bottom.label,
@@ -1662,6 +2040,7 @@ class OutfitGenerationService {
       }
       kept.insert(0, preview);
       keptSigs.add(sig);
+      if (coreSig.isNotEmpty) keptCoreSigs.add(coreSig);
     }
 
     bool hasPreferredBottomIn(List<OutfitPreview> list) {
@@ -1888,6 +2267,26 @@ class OutfitGenerationService {
         }
         if (keptSigs.contains(entry.sig)) continue;
 
+        final coreSig = coreCombinationSignature(
+          preview.top.item,
+          preview.bottom.item,
+          preview.shoes.item,
+        );
+        if (coreSig.isNotEmpty && keptCoreSigs.contains(coreSig)) {
+          if (logMatrixPoolDebug) {
+            debugPrint(
+              'STYLIST CHAT combination_rejected { '
+              'reason=duplicate_core_outfit, '
+              'top=${preview.top.label}, '
+              'bottom=${preview.bottom.label}, '
+              'shoes=${preview.shoes.label}, '
+              'outer=${preview.outerwear?.label ?? "none"} '
+              '}',
+            );
+          }
+          continue;
+        }
+
         final shoeId = wardrobeItemId(preview.shoes.item);
         if (requireUniqueBottom &&
             bottomId.isNotEmpty &&
@@ -1929,6 +2328,7 @@ class OutfitGenerationService {
 
         kept.add(preview);
         keptSigs.add(entry.sig);
+        if (coreSig.isNotEmpty) keptCoreSigs.add(coreSig);
         if (bottomId.isNotEmpty) usedBottomIds.add(bottomId);
         if (shoeId.isNotEmpty) usedShoeIds.add(shoeId);
 
@@ -2064,7 +2464,7 @@ class OutfitGenerationService {
 
     return (
       preview: kept.isEmpty ? null : kept.first,
-      previews: kept,
+      previews: multiCandidate ? dedupePreviewsByCore(kept) : kept,
       pools: poolsSnapshot,
     );
   }

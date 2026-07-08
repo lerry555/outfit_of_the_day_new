@@ -34,12 +34,14 @@ import '../utils/outfit_reason_builder.dart';
 import '../utils/briefing_weather_condition.dart';
 import '../utils/luxury_weather_emoji.dart';
 import '../Services/hourly_weather_service.dart';
+import '../Services/user_location_service.dart';
 import '../Services/home_ai_outfit_service.dart';
 import '../Services/home_stylist_final_review_service.dart';
 import '../Services/home_outfit_stylist_explanation_service.dart';
 import '../Services/home_daily_outfit_cache_service.dart';
 import '../Services/outfit_generation_service.dart';
 import '../Services/wardrobe_metadata_migration_service.dart';
+import '../Services/wardrobe_reanalyze_apply_service.dart';
 import '../Services/wardrobe_name_grammar_fix_service.dart';
 import '../Services/stylist_day_brief.dart';
 import '../utils/bottom_family_guidance.dart';
@@ -164,6 +166,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Set<String> _homeAiRequestInFlight = <String>{};
   final Set<String> _stylistFinalReviewInFlight = <String>{};
   final Set<String> _stylistFinalReviewDone = <String>{};
+  final Set<String> _stylistReasonRefreshInFlight = <String>{};
   final Map<String, String> _homeAiLatestSignatureByDateKey = {};
   final Map<String, String> _homeAiLastWeatherSignatureByDateKey = {};
   final Map<String, String> _homeAiLastWardrobeSignatureByDateKey = {};
@@ -239,8 +242,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    UserLocationService.instance.addListener(_onUserLocationCityChanged);
+    unawaited(_bootstrapHomeWithGps());
+  }
+
+  void _onUserLocationCityChanged(String cityLabel) {
+    if (!mounted) return;
+    debugPrint('[HOME_WEATHER] reload reason=gps_city_changed city=$cityLabel');
+    unawaited(_loadWeather(force: true));
+  }
+
+  Future<void> _bootstrapHomeWithGps() async {
     _syncWeatherFromSharedCache();
-    _loadWeather();
+    await UserLocationService.instance.ensureResolved();
+    if (!mounted) return;
+    final gpsCity = UserLocationService.instance.cityShortLabel;
+    final cachedCity = _weatherSnapToday?.cityName.split(',').first.trim();
+    final cityMismatch = cachedCity != null &&
+        cachedCity.toLowerCase() != gpsCity.toLowerCase();
+    await _loadWeather(force: cityMismatch || !_weatherLoaded);
   }
 
   bool _syncWeatherFromSharedCache({bool triggerRebuild = false}) {
@@ -324,6 +344,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    UserLocationService.instance.removeListener(_onUserLocationCityChanged);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -403,14 +424,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _loadWeatherOnce() async {
+    await UserLocationService.instance.ensureResolved();
+    final city = UserLocationService.instance.cityLabel;
     final svc = HourlyWeatherService();
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
     try {
       final results = await Future.wait([
-        svc.getWeatherForCityAndDate(city: 'Martin', date: today),
-        svc.getWeatherForCityAndDate(city: 'Martin', date: tomorrow),
+        svc.getWeatherForCityAndDate(city: city, date: today),
+        svc.getWeatherForCityAndDate(city: city, date: tomorrow),
       ]);
       _commitHomeWeatherSnapshots(
         todaySnapshot: results[0],
@@ -520,7 +543,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String contextTag,
     required DateTime selectedDate,
   }) {
-    const city = 'Martin';
+    final city = UserLocationService.instance.cityShortLabel;
     final norm = DateTime(selectedDate.year, selectedDate.month, selectedDate.day);
     final snap = _weatherSnapForNormalizedDate(norm);
     final w = _weatherForDate(selectedDate);
@@ -609,6 +632,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             isPremiumUser: _lastIsPremiumUser,
           ),
         );
+        _maybeRefreshPendingReasonForDate(date);
       }
     });
   }
@@ -1719,6 +1743,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       date: date,
       outfitItems: items,
       source: 'swap',
+      wardrobe: wardrobe,
     );
     final heroState = _HeroTodayState(
       vm: _HeroBannerVM(
@@ -1964,14 +1989,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final dayLabel = _dayIndex == 0 ? 'today' : 'tomorrow';
     final weather = _weatherForDate(date);
     final weatherSig = _homeWeatherSignature(weather);
+    final effectiveWardrobe = wardrobe ?? _lastWardrobeForCache;
     final reason = (reasonOverride ?? '').trim().isNotEmpty
         ? reasonOverride!.trim()
         : _regenerateStylistReason(
             date: date,
             outfitItems: normalized,
             source: reasonSource,
+            wardrobe: effectiveWardrobe,
           );
-    final effectiveWardrobe = wardrobe ?? _lastWardrobeForCache;
     final wardrobeSig = _wardrobeSignature(effectiveWardrobe);
     final persistSource = _persistSourceForReason(reasonSource);
     final existing = _homeDayHeroCacheByDateKey[dateKey];
@@ -2489,6 +2515,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               date: date,
               outfitItems: items,
               source: effectiveUserModified ? 'swap' : 'ai',
+              wardrobe: wardrobe,
+              scheduleRefresh: false,
             );
           }
           debugPrint(
@@ -2549,7 +2577,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (wardrobe.isNotEmpty) {
           _hydratedDailyOutfitWithWardrobeDateKeys.add(dateKey);
         }
-        if (restoredFromLastNewOutfit || cachedReasonWasStale) {
+        if (restoredFromLastNewOutfit ||
+            (cachedReasonWasStale && !_isPendingAiStylistReason(reason))) {
           unawaited(
             _persistDailyOutfitCache(
               date: date,
@@ -2568,6 +2597,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
         }
+        if (_isPendingAiStylistReason(reason)) {
+          unawaited(
+            _refreshStylistReasonInBackground(
+              date: date,
+              outfitItems: items,
+              source: 'restore_pending',
+              wardrobe: wardrobe,
+            ),
+          );
+        }
         _logHomeRestoreFromDailyCache(dayLabel);
         anyRestored = true;
       }
@@ -2579,6 +2618,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _invalidateHomeHeroBuildCache();
       if (mounted) setState(() {});
     }
+    _refreshPendingStylistReasons(wardrobe: wardrobe);
     _debugHomeBootState(force: true);
   }
 
@@ -2586,10 +2626,186 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return 'Pripravujem stylistické vysvetlenie k tomuto outfitu.';
   }
 
+  bool _isPendingAiStylistReason(String text) {
+    final normalized = _normalizedScaleToken(text);
+    return normalized.contains('pripravujem stylisticke vysvetlenie');
+  }
+
+  void _refreshPendingStylistReasons({
+    required List<Map<String, dynamic>> wardrobe,
+  }) {
+    if (wardrobe.isEmpty) return;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    for (final date in [today, today.add(const Duration(days: 1))]) {
+      final dateKey = _dateKey(date);
+      final cache = _homeDayHeroCacheByDateKey[dateKey];
+      if (cache == null || !_heroStateHasValidOutfit(cache.state)) continue;
+      if (!_isPendingAiStylistReason(cache.state.vm.description)) continue;
+      unawaited(
+        _refreshStylistReasonInBackground(
+          date: date,
+          outfitItems: cache.state.outfitItems,
+          source: 'boot_pending',
+          wardrobe: wardrobe,
+        ),
+      );
+    }
+  }
+
+  Future<void> _refreshStylistReasonInBackground({
+    required DateTime date,
+    required List<_HeroOutfitItem> outfitItems,
+    required String source,
+    List<Map<String, dynamic>>? wardrobe,
+    String? selectedReason,
+    int maxAttempts = 3,
+  }) async {
+    final effectiveWardrobe = wardrobe ?? _lastWardrobeForCache;
+    if (effectiveWardrobe.isEmpty) {
+      debugPrint('[HOME_STYLIST_REASON_AI] skip refresh reason=empty_wardrobe');
+      return;
+    }
+
+    final dateKey = _dateKey(date);
+    final dayIdx = _dayIndexForDate(date);
+    final dayLabel = dayIdx == 0 ? 'today' : 'tomorrow';
+    final outfitIds = outfitItems
+        .map((e) => e.wardrobeItemId)
+        .whereType<String>()
+        .where((e) => e.isNotEmpty)
+        .join(',');
+    final refreshKey = '$dateKey|$outfitIds';
+    if (!_stylistReasonRefreshInFlight.add(refreshKey)) return;
+
+    try {
+      final preview = _outfitPreviewForFootwearScoring(
+        items: outfitItems,
+        wardrobe: _wardrobeForOutfitGeneration(
+          effectiveWardrobe,
+          logNormalization: false,
+        ),
+      );
+      if (preview == null) {
+        debugPrint('[HOME_STYLIST_REASON_AI] skip refresh reason=no_preview');
+        return;
+      }
+
+      String? reason;
+      for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+        reason = await _generateAiStylistReasonForPreview(
+          preview: preview,
+          weather: _weatherForDate(date),
+          selectedReason: selectedReason ??
+              'Napíš stylistické vysvetlenie podľa vizuálnych metadata vybraného outfitu.',
+          timeout: Duration(seconds: 12 + (attempt * 4)),
+        );
+        if (reason != null && reason.trim().isNotEmpty) break;
+        if (attempt < maxAttempts) {
+          debugPrint(
+            '[HOME_STYLIST_REASON_AI] retry day=$dayLabel attempt=${attempt + 1}/$maxAttempts',
+          );
+          await Future<void>.delayed(Duration(seconds: attempt));
+        }
+      }
+      if (reason == null || reason.trim().isEmpty || !mounted) return;
+
+      final cache = _homeDayHeroCacheByDateKey[dateKey];
+      final currentItems = _editedOutfitByDay[dayIdx] ??
+          cache?.state.outfitItems ??
+          const <_HeroOutfitItem>[];
+      if (!_sameHeroItemsById(currentItems, outfitItems)) {
+        debugPrint('[HOME_STYLIST_REASON_AI] skip apply reason=outfit_changed');
+        return;
+      }
+
+      debugPrint(
+        '[HOME_STYLIST_REASON_AI] applied source=$source day=$dayLabel '
+        'length=${reason.length}',
+      );
+      _applyStylistReasonUpdate(
+        date: date,
+        dateKey: dateKey,
+        dayIdx: dayIdx,
+        dayLabel: dayLabel,
+        outfitItems: outfitItems,
+        reason: reason,
+        wardrobe: effectiveWardrobe,
+      );
+    } finally {
+      _stylistReasonRefreshInFlight.remove(refreshKey);
+    }
+  }
+
+  void _maybeRefreshPendingReasonForDate(DateTime date) {
+    final dateKey = _dateKey(date);
+    final cache = _homeDayHeroCacheByDateKey[dateKey];
+    if (cache == null || !_heroStateHasValidOutfit(cache.state)) return;
+    if (!_isPendingAiStylistReason(cache.state.vm.description)) return;
+    unawaited(
+      _refreshStylistReasonInBackground(
+        date: date,
+        outfitItems: cache.state.outfitItems,
+        source: 'pending_day',
+        wardrobe: _lastWardrobeForCache,
+      ),
+    );
+  }
+
+  void _applyStylistReasonUpdate({
+    required DateTime date,
+    required String dateKey,
+    required int dayIdx,
+    required String dayLabel,
+    required List<_HeroOutfitItem> outfitItems,
+    required String reason,
+    required List<Map<String, dynamic>> wardrobe,
+  }) {
+    final cache = _homeDayHeroCacheByDateKey[dateKey];
+    if (cache == null) return;
+
+    final heroState = _HeroTodayState(
+      vm: _HeroBannerVM(description: reason),
+      outfitItems: List<_HeroOutfitItem>.from(outfitItems),
+      source: cache.state.source,
+    );
+    _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
+      state: heroState,
+      weatherSignature: cache.weatherSignature,
+      wardrobeSignature: cache.wardrobeSignature,
+      userModified: cache.userModified,
+      persistSource: cache.persistSource,
+      updatedAt: DateTime.now(),
+    );
+    _syncHomeOutfitStateToAllCaches(
+      dayIndex: dayIdx,
+      dateKey: dateKey,
+      dayLabel: dayLabel,
+      normalized: outfitItems,
+      heroState: heroState,
+    );
+    _invalidateHomeHeroBuildCache(dateKey: dateKey);
+    if (mounted) setState(() {});
+
+    unawaited(
+      _persistDailyOutfitCache(
+        date: date,
+        items: outfitItems,
+        reasonText: reason,
+        persistSource: cache.persistSource ?? 'ai_generated',
+        userModified: cache.userModified,
+        wardrobe: wardrobe,
+        likedOutfitKey: _likedOutfitKeyByDay[dayIdx],
+      ),
+    );
+  }
+
   String _regenerateStylistReason({
     required DateTime date,
     required List<_HeroOutfitItem> outfitItems,
     required String source,
+    List<Map<String, dynamic>>? wardrobe,
+    bool scheduleRefresh = true,
   }) {
     final ids = outfitItems
         .map((e) => e.wardrobeItemId)
@@ -2600,6 +2816,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     debugPrint('[HOME_STYLIST_REASON] pending_ai_only=true');
     debugPrint('[HOME_STYLIST_REASON] source=$source');
     debugPrint('[HOME_STYLIST_REASON] currentOutfitIds=$ids');
+    if (scheduleRefresh) {
+      unawaited(
+        _refreshStylistReasonInBackground(
+          date: date,
+          outfitItems: outfitItems,
+          source: source,
+          wardrobe: wardrobe,
+        ),
+      );
+    }
     return text;
   }
 
@@ -2666,6 +2892,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           date: date,
           outfitItems: items,
           source: 'swap',
+          wardrobe: _lastWardrobeForCache,
         );
     unawaited(
       _persistDailyOutfitCache(
@@ -4328,6 +4555,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         date: date,
         outfitItems: manualItems,
         source: 'swap',
+        wardrobe: wardrobe,
       );
       final state = _HeroTodayState(
         vm: _HeroBannerVM(
@@ -4492,6 +4720,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       wardrobeSignature: wardrobeSignature,
       persistSource: 'fallback',
     );
+    if (_isPendingAiStylistReason(rec.reason)) {
+      unawaited(
+        _refreshStylistReasonInBackground(
+          date: date,
+          outfitItems: rec.items,
+          source: 'local_fallback',
+          wardrobe: wardrobe,
+        ),
+      );
+    }
     unawaited(
       _maybeRunStylistFinalReviewForDateKey(
         dateKey: dateKey,
@@ -5390,6 +5628,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ),
         )
         .toList(growable: false);
+    // Keď je nejaká rodina spodku PREFEROVANÁ pre dané počasie/sezónu (napr.
+    // v lete kraťasy), nech ju ponúkneme namiesto dlhých nohavíc – rovnako ako
+    // v Stylist chate. Bez tohto by pri 19 °C v lete vyhrali nohavice cez comfort.
+    if (preferredBottomExists) {
+      final preferredOnly = filtered
+          .where(
+            (p) => previewHasPreferredBottom(
+              preview: p,
+              guidance: bottomGuidance,
+            ),
+          )
+          .toList(growable: false);
+      if (preferredOnly.isNotEmpty) filtered = preferredOnly;
+    }
     final result = filtered.take(limit).toList(growable: false);
     if (kCandidateGenerationAudit) {
       logFinalCandidateAbsence(
@@ -6026,6 +6278,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required OutfitPreview preview,
     required _LocalWeather weather,
     required String selectedReason,
+    Duration timeout = const Duration(seconds: 7),
   }) async {
     try {
       final result = await _stylistExplanationService
@@ -6035,7 +6288,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             outfitItems: _stylistExplanationPayloadFromPreview(preview),
             selectedReason: selectedReason,
           )
-          .timeout(const Duration(seconds: 7));
+          .timeout(timeout);
       final explanation = _sanitizeStylistExplanationText(result.explanation);
       if (!result.fallback && _looksLikeUsefulStylistExplanation(explanation)) {
         debugPrint(
@@ -6056,6 +6309,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required OutfitPreview finalSelectedCandidate,
     required _LocalWeather weather,
     required bool isPremiumUser,
+    required List<Map<String, dynamic>> wardrobe,
     String selectedReason = '',
   }) async {
     final finalSelectedItemIds =
@@ -6069,10 +6323,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (rec == null || rec.items.length < 3) return null;
     final fallbackReason = rec.reason;
-    final aiReason = await _generateAiStylistReasonForPreview(
-      preview: finalSelectedCandidate,
-      weather: weather,
-      selectedReason: selectedReason,
+    unawaited(
+      _refreshStylistReasonInBackground(
+        date: weather.calendarDate,
+        outfitItems: rec.items,
+        source: 'final_review',
+        wardrobe: wardrobe,
+        selectedReason: selectedReason.isNotEmpty
+            ? selectedReason
+            : 'Napíš stylistické vysvetlenie pre vybraný outfit.',
+      ),
     );
     final selection = _StylistFinalReviewSelection(
       finalSelectedIndex: finalSelectedIndex,
@@ -6080,7 +6340,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       finalSelectedSignature: finalSelectedSignature,
       finalSelectedItemIds: finalSelectedItemIds,
       heroItems: rec.items,
-      reason: aiReason ?? fallbackReason,
+      reason: fallbackReason,
     );
     debugPrint(
       '[STYLIST_FINAL_REVIEW_SELECTION] index=$finalSelectedIndex '
@@ -6207,6 +6467,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         finalSelectedCandidate: fallback,
         weather: weather,
         isPremiumUser: isPremiumUser,
+        wardrobe: wardrobe,
       );
     }
 
@@ -6237,6 +6498,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         finalSelectedCandidate: fallback,
         weather: weather,
         isPremiumUser: isPremiumUser,
+        wardrobe: wardrobe,
       );
     }
 
@@ -6336,6 +6598,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       finalSelectedCandidate: chosen,
       weather: weather,
       isPremiumUser: isPremiumUser,
+      wardrobe: wardrobe,
       selectedReason: review.reason,
     );
   }
@@ -6599,6 +6862,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _cachedHeroBuildStateByDateKey.remove(dateKey);
       _finalizeHeroState(dateKey: dateKey, state: state);
       if (mounted) setState(() {});
+
+      if (_isPendingAiStylistReason(selection.reason)) {
+        unawaited(
+          _refreshStylistReasonInBackground(
+            date: w.calendarDate,
+            outfitItems: hydratedItems,
+            source: 'final_review_apply',
+            wardrobe: wardrobe,
+          ),
+        );
+      }
 
       _stylistFinalReviewDone.add(signatureKey);
     } catch (_) {
@@ -7158,6 +7432,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           explanations: explanations,
           supplementalBody: vm.description,
           isPlaceholder: outfitItems.isEmpty,
+          isLoadingReason: _isPendingAiStylistReason(vm.description),
         ),
         const SizedBox(height: 26),
         HomeRecommendedSection(onOpenRecommended: _openRecommended),
@@ -8358,6 +8633,92 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                       builder: (_) => const WardrobeReanalyzeReviewScreen(),
                     ),
                   );
+                },
+              ),
+            if (kDebugMode)
+              ListTile(
+                iconColor: HomeLuxuryPalette.accent,
+                textColor: HomeLuxuryPalette.accent,
+                leading: Icon(Icons.cloud_upload_outlined, color: HomeLuxuryPalette.accent),
+                title: Text(
+                  'Reanalyze wardrobe metadata',
+                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
+                ),
+                subtitle: Text(
+                  'Re-run AI on photos → save patterns/logo to Firestore',
+                  style: TextStyle(
+                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
+                    fontSize: 11,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Reanalýza metadát beží…'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    final summary =
+                        await WardrobeReanalyzeApplyService.applyMetadataRefresh();
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Hotovo: ${summary.updated} aktualizovaných, '
+                          '${summary.skipped} bez zmeny, ${summary.failed} chýb',
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Chyba: $e')),
+                    );
+                  }
+                },
+              ),
+            if (kDebugMode)
+              ListTile(
+                iconColor: HomeLuxuryPalette.accent,
+                textColor: HomeLuxuryPalette.accent,
+                leading: Icon(Icons.refresh, color: HomeLuxuryPalette.accent),
+                title: Text(
+                  'Reanalyze only missing',
+                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
+                ),
+                subtitle: Text(
+                  'Dokonči kúsky, ktoré ešte nemajú metadáta (po rate limite)',
+                  style: TextStyle(
+                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
+                    fontSize: 11,
+                  ),
+                ),
+                onTap: () async {
+                  Navigator.of(context).pop();
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('Dopĺňam chýbajúce metadáta…'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    final summary = await WardrobeReanalyzeApplyService
+                        .applyMetadataRefresh(onlyMissing: true);
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Hotovo: ${summary.updated} aktualizovaných, '
+                          '${summary.skipped} bez zmeny, ${summary.failed} chýb',
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('Chyba: $e')),
+                    );
+                  }
                 },
               ),
             if (kDebugMode)

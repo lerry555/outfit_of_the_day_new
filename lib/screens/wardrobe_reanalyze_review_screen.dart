@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../Services/wardrobe_reanalyze_apply_service.dart';
 import '../Services/wardrobe_reanalyze_dry_run_service.dart';
 
 /// Developer-only visual review for wardrobe reanalyze dry-run.
@@ -15,6 +16,7 @@ class WardrobeReanalyzeReviewScreen extends StatefulWidget {
 class _WardrobeReanalyzeReviewScreenState
     extends State<WardrobeReanalyzeReviewScreen> {
   bool _loading = true;
+  bool _applying = false;
   String? _error;
   WardrobeReanalyzeRunResult? _result;
   String? _filter;
@@ -68,6 +70,66 @@ class _WardrobeReanalyzeReviewScreenState
     }
   }
 
+  Future<void> _applyMetadata() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1C),
+        title: const Text(
+          'Zapísať metadáta do šatníka?',
+          style: TextStyle(color: Color(0xFFF1F0EC)),
+        ),
+        content: const Text(
+          'Pre každý kúsok znova spustí analýzu fotky a uloží '
+          'patterns, logo_prominence a visual_description do Firestore. '
+          'Názvy a kategórie sa nemenia.',
+          style: TextStyle(color: Colors.white70, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Zrušiť'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Spustiť'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _applying = true);
+    try {
+      final summary = await WardrobeReanalyzeApplyService.applyMetadataRefresh(
+        onProgress: (done, total) {
+          if (!mounted) return;
+          setState(() {
+            _progressDone = done;
+            _progressTotal = total;
+          });
+        },
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Hotovo: ${summary.updated} aktualizovaných, '
+            '${summary.skipped} bez zmeny, ${summary.failed} chýb',
+          ),
+        ),
+      );
+      await _run();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Chyba: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _applying = false);
+    }
+  }
+
   List<WardrobeReanalyzeReviewItem> get _visibleItems {
     final all = _result?.items ?? const [];
     switch (_filter) {
@@ -107,7 +169,14 @@ class _WardrobeReanalyzeReviewScreenState
           style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
         actions: [
-          if (!_loading)
+          if (!_loading && !_applying)
+            TextButton.icon(
+              onPressed: _applyMetadata,
+              icon: const Icon(Icons.cloud_upload_outlined, size: 18),
+              label: const Text('Apply metadata'),
+              style: TextButton.styleFrom(foregroundColor: const Color(0xFFC8A36A)),
+            ),
+          if (!_loading && !_applying)
             IconButton(
               icon: const Icon(Icons.refresh),
               onPressed: _run,
@@ -120,28 +189,18 @@ class _WardrobeReanalyzeReviewScreenState
   }
 
   Widget _buildBody() {
-    if (_loading) {
+    if (_loading || _applying) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             const CircularProgressIndicator(color: Color(0xFFC8A36A)),
             const SizedBox(height: 16),
-            const Text(
-              'Analyzing wardrobe (dry run)…',
-              style: TextStyle(color: Colors.white70),
-            ),
-            if (_progressTotal > 0) ...[
-              const SizedBox(height: 8),
-              Text(
-                '$_progressDone / $_progressTotal',
-                style: const TextStyle(color: Colors.white54, fontSize: 12),
-              ),
-            ],
-            const SizedBox(height: 8),
-            const Text(
-              'No Firestore writes',
-              style: TextStyle(color: Colors.white38, fontSize: 12),
+            Text(
+              _applying
+                  ? 'Zapisujem metadáta… $_progressDone / $_progressTotal'
+                  : 'Analyzujem šatník… $_progressDone / $_progressTotal',
+              style: const TextStyle(color: Colors.white54, fontSize: 13),
             ),
           ],
         ),
@@ -470,6 +529,13 @@ class _ReviewCard extends StatelessWidget {
         _fieldLine('Layer', fields.layerRole),
         _fieldLine('categoryKey', fields.categoryKey),
         _fieldLine('subCategoryKey', fields.subCategoryKey),
+        _fieldLine(
+          'patterns',
+          fields.patterns.isEmpty ? '' : fields.patterns.join(', '),
+        ),
+        _fieldLine('logo', fields.logoProminence),
+        if (fields.visualDescription.isNotEmpty)
+          _fieldLine('visual', fields.visualDescription),
       ],
     );
   }

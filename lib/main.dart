@@ -1,17 +1,21 @@
 // lib/main.dart
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 
 import 'Services/color_naming_service.dart';
+import 'Services/fcm_service.dart';
 import 'screens/auth_gate.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await ColorNamingService.instance.load();
   await Firebase.initializeApp();
+  // Push notifikácie stylistu (odpoveď aj keď je appka na pozadí).
+  FirebaseMessaging.onBackgroundMessage(stylistFcmBackgroundHandler);
   await initializeDateFormatting('sk_SK', null);
   tz_data.initializeTimeZones();
   runApp(const MyApp());

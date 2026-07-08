@@ -41,6 +41,8 @@ class OutfitWeatherDaySnapshot {
   final String briefingMorningCondition;
   final String briefingAfternoonCondition;
   final String briefingEveningCondition;
+  /// Teploty z Open-Meteo po hodinách (index = lokálna hodina 0–23).
+  final List<int?>? hourlyTempCByLocalHour;
 
   const OutfitWeatherDaySnapshot({
     required this.cityName,
@@ -66,7 +68,29 @@ class OutfitWeatherDaySnapshot {
     required this.briefingMorningCondition,
     required this.briefingAfternoonCondition,
     required this.briefingEveningCondition,
+    this.hourlyTempCByLocalHour,
   });
+
+  /// Presná (alebo najbližšia) teplota v danej lokálnej hodine.
+  int? tempAtLocalHour(int hour) {
+    if (hour < 0 || hour > 23) return null;
+    final map = hourlyTempCByLocalHour;
+    if (map == null || map.length != 24) return null;
+    final exact = map[hour];
+    if (exact != null) return exact;
+    int? nearest;
+    var bestDist = 999;
+    for (var h = 0; h < 24; h++) {
+      final t = map[h];
+      if (t == null) continue;
+      final d = (h - hour).abs();
+      if (d < bestDist) {
+        bestDist = d;
+        nearest = t;
+      }
+    }
+    return nearest;
+  }
 }
 
 class HourlyWeatherService {
@@ -415,6 +439,8 @@ class HourlyWeatherService {
         'rainSegMorningB=$morningRainSeg rainSegAfternoonB=$afternoonRainSeg rainSegEveningB=$eveningRainSeg',
       );
 
+      final hourlyTempMap = _hourlyTempMap(weather.points);
+
       final snapshot = OutfitWeatherDaySnapshot(
         cityName: geo.displayName,
         date: normalizedDate,
@@ -439,6 +465,7 @@ class HourlyWeatherService {
         briefingMorningCondition: briefingMorningCondition,
         briefingAfternoonCondition: briefingAfternoonCondition,
         briefingEveningCondition: briefingEveningCondition,
+        hourlyTempCByLocalHour: hourlyTempMap,
       );
       _storeSnapshotCache(cacheKey, snapshot);
       return snapshot;
@@ -454,16 +481,162 @@ class HourlyWeatherService {
 
   Future<_GeoResult?> _geocodeCity(String city) async {
     final normalizedCity = city.trim();
+    if (normalizedCity.isEmpty) return null;
     final lower = normalizedCity.toLowerCase();
-    final hasCountryHint = lower.contains(',') || lower.contains('slovak') || lower.contains('slovensk');
-    final queryName = (lower == 'martin' || !hasCountryHint)
-        ? 'Martin, Slovakia'
-        : normalizedCity;
 
+    for (final query in _geocodeQueriesFor(normalizedCity, lower)) {
+      final hit = await _geocodeSearch(query, lower);
+      if (hit != null) return hit;
+    }
+    return null;
+  }
+
+  /// Slovenské/české exonymá → názvy, ktoré pozná open-meteo geokóder.
+  static const Map<String, List<String>> _exonyms = {
+    'mníchov': ['Munich, Germany', 'München'],
+    'mnichov': ['Munich, Germany', 'München'],
+    'viedeň': ['Vienna, Austria', 'Wien'],
+    'vieden': ['Vienna, Austria', 'Wien'],
+    'norimberg': ['Nuremberg, Germany', 'Nürnberg'],
+    'drážďany': ['Dresden, Germany'],
+    'drazdany': ['Dresden, Germany'],
+    'benátky': ['Venice, Italy', 'Venezia'],
+    'benatky': ['Venice, Italy', 'Venezia'],
+    'rím': ['Rome, Italy', 'Roma'],
+    'rim': ['Rome, Italy', 'Roma'],
+    'miláno': ['Milan, Italy', 'Milano'],
+    'milano': ['Milan, Italy', 'Milano'],
+    'paríž': ['Paris, France'],
+    'pariz': ['Paris, France'],
+    'londýn': ['London, United Kingdom'],
+    'londyn': ['London, United Kingdom'],
+    'varšava': ['Warsaw, Poland', 'Warszawa'],
+    'varsava': ['Warsaw, Poland', 'Warszawa'],
+    'krakov': ['Krakow, Poland', 'Kraków'],
+    'budapešť': ['Budapest, Hungary'],
+    'budapest': ['Budapest, Hungary'],
+    'paríža': ['Paris, France'],
+    'praha': ['Prague, Czechia', 'Praha'],
+    'berlín': ['Berlin, Germany'],
+    'atény': ['Athens, Greece'],
+    'ateny': ['Athens, Greece'],
+    'lisabon': ['Lisbon, Portugal'],
+    'kodaň': ['Copenhagen, Denmark'],
+    'kodan': ['Copenhagen, Denmark'],
+  };
+
+  List<String> _geocodeQueriesFor(String city, String lower) {
+    if (lower == 'martin' ||
+        lower == 'martin, slovensko' ||
+        lower == 'martin, slovakia') {
+      return const ['Martin, Slovakia'];
+    }
+    // Exonymá (Mníchov → Munich…). Skontrolujeme aj základný tvar bez koncovky.
+    for (final entry in _exonyms.entries) {
+      if (lower == entry.key || lower.startsWith('${entry.key},')) {
+        return entry.value;
+      }
+    }
+    if (lower.contains('galway')) {
+      return const ['Galway, Ireland', 'Galway'];
+    }
+    if (lower.contains('dublin')) {
+      return const ['Dublin, Ireland', 'Dublin'];
+    }
+    if (lower.contains('london')) {
+      return const ['London, United Kingdom', 'London'];
+    }
+    if (lower.contains('žilin') || lower.contains('zilina')) {
+      return const ['Žilina, Slovakia', 'Žilina'];
+    }
+
+    // Všeobecná snaha nájsť aj menšie obce: skúsime viac tvarov.
+    final queries = <String>[];
+    void add(String q) {
+      final t = q.trim();
+      if (t.isEmpty) return;
+      if (!queries.map((e) => e.toLowerCase()).contains(t.toLowerCase())) {
+        queries.add(t);
+      }
+    }
+
+    add(city);
+    add('$city, Slovakia');
+
+    // Lokál → nominatív (napr. „Dolných Honoch“ → „Dolné Hony“,
+    // „Vyšných Ružbachoch“ → „Vyšné Ružbachy“, „Žiline“ → „Žilina“).
+    final nominative = _slovakLocativeToNominative(city);
+    if (nominative.toLowerCase() != city.toLowerCase()) {
+      add(nominative);
+      add('$nominative, Slovakia');
+    }
+
+    // Bez diakritiky (geokóder niekedy lepšie matchuje ASCII).
+    final ascii = _stripDiacritics(nominative);
+    if (ascii.toLowerCase() != nominative.toLowerCase()) {
+      add('$ascii, Slovakia');
+      add(ascii);
+    }
+
+    return queries;
+  }
+
+  /// Veľmi jednoduchý prevod častých slovenských lokálových koncoviek na
+  /// nominatív, aby sa dali geokódovať aj obce zadané v skloňovanom tvare.
+  String _slovakLocativeToNominative(String city) {
+    final words = city.trim().split(RegExp(r'\s+'));
+    final out = words.map(_wordLocativeToNominative).toList();
+    return out.join(' ');
+  }
+
+  String _wordLocativeToNominative(String word) {
+    final lower = word.toLowerCase();
+    String? base;
+    // Prídavné mená v množnom lokáli: „dolných“ → „dolné“, „vyšných“ → „vyšné“.
+    if (lower.endsWith('ných')) {
+      base = '${word.substring(0, word.length - 4)}né';
+    } else if (lower.endsWith('ých')) {
+      base = '${word.substring(0, word.length - 3)}é';
+    } else if (lower.endsWith('ích')) {
+      base = '${word.substring(0, word.length - 3)}ie';
+    }
+    // Podstatné mená v množnom lokáli: „honoch“ → „hony“,
+    // „ružbachoch“ → „ružbachy“, „tatrách“ → „tatry“.
+    else if (lower.endsWith('och')) {
+      base = '${word.substring(0, word.length - 3)}y';
+    } else if (lower.endsWith('ách')) {
+      base = '${word.substring(0, word.length - 3)}y';
+    } else if (lower.endsWith('iach')) {
+      base = '${word.substring(0, word.length - 4)}e';
+    }
+    // Jednotné číslo lokál: „Martine“ → „Martin“, „Trenčíne“ → „Trenčín“.
+    else if (lower.endsWith('e') && word.length > 4) {
+      base = word.substring(0, word.length - 1);
+    }
+    return base ?? word;
+  }
+
+  String _stripDiacritics(String input) {
+    const map = {
+      'á': 'a', 'ä': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'í': 'i', 'ĺ': 'l',
+      'ľ': 'l', 'ň': 'n', 'ó': 'o', 'ô': 'o', 'ŕ': 'r', 'š': 's', 'ť': 't',
+      'ú': 'u', 'ý': 'y', 'ž': 'z',
+      'Á': 'A', 'Ä': 'A', 'Č': 'C', 'Ď': 'D', 'É': 'E', 'Í': 'I', 'Ĺ': 'L',
+      'Ľ': 'L', 'Ň': 'N', 'Ó': 'O', 'Ô': 'O', 'Ŕ': 'R', 'Š': 'S', 'Ť': 'T',
+      'Ú': 'U', 'Ý': 'Y', 'Ž': 'Z',
+    };
+    final sb = StringBuffer();
+    for (final ch in input.split('')) {
+      sb.write(map[ch] ?? ch);
+    }
+    return sb.toString();
+  }
+
+  Future<_GeoResult?> _geocodeSearch(String queryName, String originalLower) async {
     final uri = Uri.https('geocoding-api.open-meteo.com', '/v1/search', {
       'name': queryName,
       'count': '10',
-      'language': 'sk',
+      'language': 'en',
       'format': 'json',
     });
     final response = await http.get(uri);
@@ -475,16 +648,51 @@ class HourlyWeatherService {
     if (results is! List || results.isEmpty) return null;
     final maps = results.whereType<Map>().toList(growable: false);
     if (maps.isEmpty) return null;
+
+    bool isCountryCode(Map item, String code) {
+      return item['country_code']?.toString().toUpperCase().trim() == code;
+    }
+
     bool isSlovakResult(Map item) {
       final code = item['country_code']?.toString().toUpperCase().trim();
       final country = item['country']?.toString().toLowerCase().trim() ?? '';
       return code == 'SK' || country == 'slovakia' || country == 'slovensko';
     }
 
-    final selected = maps.firstWhere(
-      isSlovakResult,
-      orElse: () => maps.first,
-    );
+    final preferIe = originalLower.contains('galway') ||
+        originalLower.contains('dublin') ||
+        originalLower.contains('irsko') ||
+        originalLower.contains('irsku') ||
+        originalLower.contains('ireland');
+    final preferGb = originalLower.contains('london') ||
+        originalLower.contains('uk') ||
+        originalLower.contains('anglick') ||
+        originalLower.contains('britain');
+    final preferSk = originalLower.contains('slovens') ||
+        originalLower.contains('žilin') ||
+        originalLower.contains('zilina') ||
+        originalLower == 'martin' ||
+        queryName.toLowerCase().contains('slovakia');
+
+    Map selected;
+    if (preferGb) {
+      selected = maps.firstWhere(
+        (m) => isCountryCode(m, 'GB'),
+        orElse: () => maps.first,
+      );
+    } else if (preferIe) {
+      selected = maps.firstWhere(
+        (m) => isCountryCode(m, 'IE'),
+        orElse: () => maps.first,
+      );
+    } else if (preferSk) {
+      selected = maps.firstWhere(
+        isSlovakResult,
+        orElse: () => maps.first,
+      );
+    } else {
+      selected = maps.first;
+    }
 
     final latitude = (selected['latitude'] as num?)?.toDouble();
     final longitude = (selected['longitude'] as num?)?.toDouble();
@@ -506,7 +714,7 @@ class HourlyWeatherService {
     return _GeoResult(
       latitude: latitude,
       longitude: longitude,
-      displayName: displayName.isEmpty ? _defaultCity : displayName,
+      displayName: displayName.isEmpty ? queryName : displayName,
     );
   }
 
@@ -523,7 +731,7 @@ class HourlyWeatherService {
       'current': 'temperature_2m',
       'hourly':
           'temperature_2m,precipitation_probability,precipitation,wind_speed_10m,weather_code',
-      'timezone': 'Europe/Bratislava',
+      'timezone': 'auto',
       'start_date': day,
       'end_date': day,
     });
@@ -658,6 +866,17 @@ class HourlyWeatherService {
                 return da.abs() <= db.abs() ? a : b;
               }));
     return selected?.temperatureC?.round();
+  }
+
+  List<int?> _hourlyTempMap(List<_HourlyPoint> points) {
+    final out = List<int?>.filled(24, null);
+    for (final p in points) {
+      final h = p.time?.hour;
+      if (h != null && h >= 0 && h <= 23) {
+        out[h] = p.temperatureC?.round();
+      }
+    }
+    return out;
   }
 
   List<_HourlyPoint> _pointsLocalHourBetween(List<_HourlyPoint> hours, int minH, int maxH) {

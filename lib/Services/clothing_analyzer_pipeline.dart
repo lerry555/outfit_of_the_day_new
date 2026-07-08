@@ -18,6 +18,11 @@ class ClothingAnalyzerPipelineResult {
     this.analyzerConfidence,
     this.detectedColors = const [],
     this.kbMatched = false,
+    this.patterns = const [],
+    this.logoProminence = '',
+    this.visualDescription = '',
+    this.visualIdentity = '',
+    this.identityConfidence,
   });
 
   final String suggestedName;
@@ -28,6 +33,11 @@ class ClothingAnalyzerPipelineResult {
   final int? analyzerConfidence;
   final List<String> detectedColors;
   final bool kbMatched;
+  final List<String> patterns;
+  final String logoProminence;
+  final String visualDescription;
+  final String visualIdentity;
+  final int? identityConfidence;
 
   static const ClothingAnalyzerPipelineResult empty = ClothingAnalyzerPipelineResult(
     suggestedName: '',
@@ -217,6 +227,20 @@ abstract final class ClothingAnalyzerPipeline {
       }
     }
 
+    final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
+    final logoProminence =
+        (m['logo_prominence'] ?? m['logoProminence'] ?? '').toString().trim();
+    final visualIdentity =
+        (m['visual_identity'] ?? m['visualIdentity'] ?? '').toString().trim();
+    int? identityConfidence;
+    final idConfRaw = m['identity_confidence'] ?? m['identityConfidence'];
+    if (idConfRaw != null) {
+      final n = num.tryParse(idConfRaw.toString());
+      if (n != null && n.isFinite) {
+        identityConfidence = n.round().clamp(0, 100);
+      }
+    }
+
     return ClothingAnalyzerPipelineResult(
       suggestedName: suggestedName,
       canonicalType: canonical,
@@ -226,6 +250,11 @@ abstract final class ClothingAnalyzerPipeline {
       analyzerConfidence: analyzerConfidence,
       detectedColors: colorsFromAi,
       kbMatched: kbItem != null,
+      patterns: patternsFromAi,
+      logoProminence: logoProminence,
+      visualDescription: visualDescFromAi,
+      visualIdentity: visualIdentity,
+      identityConfidence: identityConfidence,
     );
   }
 

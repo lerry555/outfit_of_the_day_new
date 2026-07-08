@@ -235,6 +235,16 @@ FootwearFamily classifyFootwearFamily(Map<String, dynamic> item) {
   }
 
   final canonicalNorm = _normCanonicalKey(canonical);
+  if (canonicalNorm.contains('hiking') ||
+      _blobContainsAny(blob, [
+        'hiking_shoe',
+        'hiking shoe',
+        'turistick',
+        'treking',
+        'trekking',
+      ])) {
+    return FootwearFamily.sneakers;
+  }
   if (_sneakerCanonicalKeys.contains(canonicalNorm) ||
       canonicalNorm.contains('sneaker') ||
       _isSneakerFamilyBlob(blob)) {
@@ -262,6 +272,7 @@ FootwearFamily classifyFootwearFamily(Map<String, dynamic> item) {
 
 FootwearFamilyGuidance computeFootwearFamilyGuidance({
   required OutfitWeatherSnapshot weather,
+  bool wetGroundMuddy = false,
 }) {
   final temp = weather.tempC;
   final rainy = weather.isRainy;
@@ -271,7 +282,7 @@ FootwearFamilyGuidance computeFootwearFamilyGuidance({
   final preferred = <String>[];
   final allowed = <String>[];
   final discouraged = <String>[];
-  late final String reason;
+  var reason = '';
 
   if (temp <= 10 || heavyRain) {
     preferred.add(FootwearFamily.boots.wireName);
@@ -330,6 +341,19 @@ FootwearFamilyGuidance computeFootwearFamilyGuidance({
         : 'Prechodné počasie: tenisky alebo ľahšia obuv; sandále nie.';
   }
 
+  // Po daždi na tráve/hline (hory, lúka): radšej uzavretá obuv než sandále.
+  if (wetGroundMuddy) {
+    discouraged.add(FootwearFamily.sandals.wireName);
+    if (!preferred.contains(FootwearFamily.sneakers.wireName)) {
+      preferred.insert(0, FootwearFamily.sneakers.wireName);
+    }
+    if (!allowed.contains(FootwearFamily.sneakers.wireName)) {
+      allowed.add(FootwearFamily.sneakers.wireName);
+    }
+    reason =
+        'Po daždi na tráve alebo hline: radšej uzavretú obuv (tenisky), nie sandále.';
+  }
+
   // Ensure preferred ⊆ allowed
   for (final p in preferred) {
     if (!allowed.contains(p)) allowed.add(p);
@@ -362,7 +386,9 @@ bool isFootwearWardrobeItem(Map<String, dynamic> item) {
   final layer = (item['layer_role'] ?? item['layerRole'] ?? '')
       .toString()
       .trim();
-  if (layer == 'footwear') return true;
+  if (layer == 'footwear' || layer == 'shoes') return true;
+
+  if (classifyFootwearFamily(item) != FootwearFamily.other) return true;
 
   final cat = (item['categoryKey'] ?? item['category'] ?? '').toString();
   final sub = (item['subCategoryKey'] ?? item['subCategory'] ?? '').toString();
@@ -382,6 +408,21 @@ bool isFootwearWardrobeItem(Map<String, dynamic> item) {
     'shoes',
     'footwear',
   ]);
+}
+
+/// Preferovaná obuv reálne použiteľná v matrix shoes poole (M6).
+bool hasUsablePreferredFootwear({
+  required List<Map<String, dynamic>> wardrobe,
+  required FootwearFamilyGuidance guidance,
+  Set<String> excludedItemIds = const {},
+}) {
+  for (final item in wardrobe) {
+    if (!isFootwearWardrobeItem(item)) continue;
+    final id = OutfitGenerationService.wardrobeItemId(item);
+    if (id.isEmpty || excludedItemIds.contains(id)) continue;
+    if (guidance.isPreferred(classifyFootwearFamily(item))) return true;
+  }
+  return false;
 }
 
 /// Footwear items in wardrobe grouped by family.

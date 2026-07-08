@@ -25,6 +25,7 @@ class HomeStylistFinalReviewService {
     required List<Map<String, dynamic>> candidates,
     Map<String, dynamic>? footwearGuidance,
     Map<String, dynamic>? bottomGuidance,
+    Map<String, dynamic>? occasionContext,
   }) async {
     final callable = FirebaseFunctions.instanceFor(region: 'us-east1')
         .httpsCallable('finalReviewHomeOutfitCandidates');
@@ -34,6 +35,7 @@ class HomeStylistFinalReviewService {
       'candidates': candidates,
       if (footwearGuidance != null) 'footwearGuidance': footwearGuidance,
       if (bottomGuidance != null) 'bottomGuidance': bottomGuidance,
+      if (occasionContext != null) 'occasionContext': occasionContext,
     });
 
     final data = result.data;

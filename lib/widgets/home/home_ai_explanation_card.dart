@@ -11,15 +11,23 @@ class HomeAiExplanationCard extends StatelessWidget {
     required this.explanations,
     this.supplementalBody,
     this.isPlaceholder = false,
+    this.isLoadingReason = false,
   });
 
   final OutfitExplanationResult explanations;
   final String? supplementalBody;
   final bool isPlaceholder;
+  final bool isLoadingReason;
 
   String get _teaser {
     if (isPlaceholder) {
       return 'Po vygenerovaní outfitu uvidíte prehľad rozhodnutí...';
+    }
+    if (isLoadingReason) {
+      final body = supplementalBody?.trim() ?? '';
+      return body.isNotEmpty
+          ? body
+          : 'Pripravujem stylistické vysvetlenie k tomuto outfitu.';
     }
     final body = supplementalBody?.trim() ?? '';
     if (body.isNotEmpty) return HomeAiExplanationCard.readableExcerpt(body);
@@ -46,7 +54,7 @@ class HomeAiExplanationCard extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        onTap: isPlaceholder
+        onTap: isPlaceholder || isLoadingReason
             ? null
             : () => HomeOutfitExplanationSheet.show(
                 context,

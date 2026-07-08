@@ -204,6 +204,10 @@ abstract final class WardrobeReanalyzeDryRunService {
       'newCategory=${row.newFields.categoryKey}\n'
       'oldSubCategory=${row.old.subCategoryKey}\n'
       'newSubCategory=${row.newFields.subCategoryKey}\n'
+      'oldPatterns=${row.old.patterns}\n'
+      'newPatterns=${row.newFields.patterns}\n'
+      'oldLogo=${row.old.logoProminence}\n'
+      'newLogo=${row.newFields.logoProminence}\n'
       'suspiciousReasons=${row.suspiciousReasons.join('; ')}',
     );
   }
@@ -253,6 +257,9 @@ class WardrobeReanalyzeFields {
     required this.layerRole,
     required this.categoryKey,
     required this.subCategoryKey,
+    this.patterns = const [],
+    this.logoProminence = '',
+    this.visualDescription = '',
   });
 
   final String name;
@@ -260,6 +267,9 @@ class WardrobeReanalyzeFields {
   final String layerRole;
   final String categoryKey;
   final String subCategoryKey;
+  final List<String> patterns;
+  final String logoProminence;
+  final String visualDescription;
 
   factory WardrobeReanalyzeFields.fromStored(Map<String, dynamic> item) {
     return WardrobeReanalyzeFields(
@@ -272,6 +282,14 @@ class WardrobeReanalyzeFields {
       subCategoryKey: (item['subCategoryKey'] ?? item['subCategory'] ?? '')
           .toString()
           .trim(),
+      patterns: _storedStringList(item['patterns'] ?? item['pattern']),
+      logoProminence: (item['logo_prominence'] ?? item['logoProminence'] ?? '')
+          .toString()
+          .trim(),
+      visualDescription:
+          (item['visual_description'] ?? item['visualDescription'] ?? '')
+              .toString()
+              .trim(),
     );
   }
 
@@ -284,7 +302,18 @@ class WardrobeReanalyzeFields {
       layerRole: pipeline.layerRole,
       categoryKey: pipeline.categoryKey,
       subCategoryKey: pipeline.subCategoryKey,
+      patterns: pipeline.patterns,
+      logoProminence: pipeline.logoProminence,
+      visualDescription: pipeline.visualDescription,
     );
+  }
+
+  static List<String> _storedStringList(dynamic raw) {
+    if (raw is List) {
+      return raw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList();
+    }
+    if (raw is String && raw.trim().isNotEmpty) return [raw.trim()];
+    return const [];
   }
 
   static String _storedCanonical(Map<String, dynamic> item) {
@@ -300,7 +329,24 @@ class WardrobeReanalyzeFields {
         _norm(canonicalType) != _norm(other.canonicalType) ||
         _norm(layerRole) != _norm(other.layerRole) ||
         _norm(categoryKey) != _norm(other.categoryKey) ||
-        _norm(subCategoryKey) != _norm(other.subCategoryKey);
+        _norm(subCategoryKey) != _norm(other.subCategoryKey) ||
+        !_listEq(patterns, other.patterns) ||
+        _norm(logoProminence) != _norm(other.logoProminence) ||
+        _norm(visualDescription) != _norm(other.visualDescription);
+  }
+
+  bool metadataDiffersFrom(WardrobeReanalyzeFields other) {
+    return !_listEq(patterns, other.patterns) ||
+        _norm(logoProminence) != _norm(other.logoProminence) ||
+        _norm(visualDescription) != _norm(other.visualDescription);
+  }
+
+  static bool _listEq(List<String> a, List<String> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (_norm(a[i]) != _norm(b[i])) return false;
+    }
+    return true;
   }
 
   static String _norm(String s) => s.trim().toLowerCase();
