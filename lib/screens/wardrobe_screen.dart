@@ -1,9 +1,11 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
+import '../domain/wardrobe_v2/wardrobe_item_v2.dart';
+import '../domain/wardrobe_v2/wardrobe_v2_adapters.dart';
+import '../domain/wardrobe_v2/wardrobe_set_v2.dart';
+import '../Services/wardrobe_set_repository.dart';
 
 import 'package:outfitofTheDay/constants/app_constants.dart';
 import 'package:outfitofTheDay/screens/clothing_detail_screen.dart';
@@ -13,6 +15,32 @@ import 'package:outfitofTheDay/utils/wardrobe_image_url_priority.dart';
 import 'package:outfitofTheDay/utils/wardrobe_list_utils.dart';
 import 'package:outfitofTheDay/widgets/wardrobe_processing_banner.dart';
 import 'package:outfitofTheDay/widgets/wardrobe_processing_spinner.dart';
+
+bool _wardrobeV2MatchesSearch(
+  Map<String, dynamic> data,
+  String query,
+  String Function(String) normalize,
+) {
+  final q = normalize(query);
+  if (q.isEmpty) return true;
+  try {
+    final item = WardrobeItemV2.fromMap(data);
+    final humanLabels = <String>[
+      (data['name'] ?? '').toString(),
+      (data['brand'] ?? '').toString(),
+      (data['categoryLabel'] ?? '').toString(),
+      (data['subCategoryLabel'] ?? '').toString(),
+    ];
+    final searchable = <String>{
+      ...WardrobeSearchProjectionV2.tokens(item),
+      ...humanLabels,
+    }.join(' ');
+    return normalize(searchable).contains(q);
+  } catch (_) {
+    return false;
+  }
+}
+
 class _WardrobeLuxuryPalette {
   static const Color bgTop = Color(0xFF111111);
   static const Color bgMid = Color(0xFF0C0C0D);
@@ -20,6 +48,21 @@ class _WardrobeLuxuryPalette {
 
   static const Color accent = Color(0xFFC8A36A);
   static const Color accentGlow = Color(0x66C8A36A);
+}
+
+bool _wardrobeItemBelongsToMainGroup(
+  Map<String, dynamic> data,
+  String mainGroupKey,
+) {
+  final direct = (data['mainGroup'] ?? data['mainGroupKey'] ?? '').toString();
+  if (direct == mainGroupKey) return true;
+  final projected = data['uiProjection'];
+  if (projected is Map &&
+      (projected['mainCategory'] ?? '').toString() == mainGroupKey) {
+    return true;
+  }
+  final categoryKey = ClothingKnowledgeBase.wardrobeDisplayCategoryKey(data);
+  return (categoryTree[mainGroupKey] ?? const <String>[]).contains(categoryKey);
 }
 
 String _wardrobeNormalizeText(String input) {
@@ -37,7 +80,8 @@ String _wardrobeNormalizeText(String input) {
 
 String? _legacyMainToNewMainGroup(String legacyMain) {
   final lm = _wardrobeNormalizeText(legacyMain);
-  if (lm == _wardrobeNormalizeText('Vrch') || lm == _wardrobeNormalizeText('Spodok')) {
+  if (lm == _wardrobeNormalizeText('Vrch') ||
+      lm == _wardrobeNormalizeText('Spodok')) {
     return 'oblecenie';
   }
   if (lm == _wardrobeNormalizeText('Obuv')) return 'obuv';
@@ -45,7 +89,10 @@ String? _legacyMainToNewMainGroup(String legacyMain) {
   return null;
 }
 
-Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String mainGroup) {
+Map<String, String?> _legacyCategoryToNewKeys(
+  String legacyCategory,
+  String mainGroup,
+) {
   final lc = _wardrobeNormalizeText(legacyCategory);
 
   if (mainGroup == 'oblecenie') {
@@ -75,7 +122,10 @@ Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String main
         lc.contains(_wardrobeNormalizeText('kabat')) ||
         lc.contains('jacket') ||
         lc.contains('coat')) {
-      return {'categoryKey': 'bundy_kabaty', 'subCategoryKey': 'bunda_prechodna'};
+      return {
+        'categoryKey': 'bundy_kabaty',
+        'subCategoryKey': 'bunda_prechodna',
+      };
     }
     if (lc.contains(_wardrobeNormalizeText('nohavice')) ||
         lc.contains(_wardrobeNormalizeText('rifle')) ||
@@ -101,7 +151,8 @@ Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String main
   }
 
   if (mainGroup == 'obuv') {
-    if (lc.contains(_wardrobeNormalizeText('tenisky')) || lc.contains('sneaker')) {
+    if (lc.contains(_wardrobeNormalizeText('tenisky')) ||
+        lc.contains('sneaker')) {
       return {'categoryKey': 'tenisky', 'subCategoryKey': 'tenisky_fashion'};
     }
     if (lc.contains(_wardrobeNormalizeText('čižmy')) ||
@@ -128,14 +179,22 @@ Map<String, String?> _legacyCategoryToNewKeys(String legacyCategory, String main
         lc.contains('scarf')) {
       return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'sal'};
     }
-    if (lc.contains(_wardrobeNormalizeText('rukavice')) || lc.contains('gloves')) {
-      return {'categoryKey': 'dopl_saly_rukavice', 'subCategoryKey': 'rukavice'};
+    if (lc.contains(_wardrobeNormalizeText('rukavice')) ||
+        lc.contains('gloves')) {
+      return {
+        'categoryKey': 'dopl_saly_rukavice',
+        'subCategoryKey': 'rukavice',
+      };
     }
     if (lc.contains(_wardrobeNormalizeText('opasok')) || lc.contains('belt')) {
       return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'opasok'};
     }
-    if (lc.contains(_wardrobeNormalizeText('okuliare')) || lc.contains('glasses')) {
-      return {'categoryKey': 'dopl_ostatne', 'subCategoryKey': 'slnecne_okuliare'};
+    if (lc.contains(_wardrobeNormalizeText('okuliare')) ||
+        lc.contains('glasses')) {
+      return {
+        'categoryKey': 'dopl_ostatne',
+        'subCategoryKey': 'slnecne_okuliare',
+      };
     }
     return {'categoryKey': null, 'subCategoryKey': null};
   }
@@ -159,10 +218,13 @@ Map<String, dynamic> normalizeKeysForDisplay(Map<String, dynamic> input) {
       subCategoryKey != null &&
       mainCategoryGroups.containsKey(mainGroup)) {
     data['mainGroupLabel'] =
-        (data['mainGroupLabel'] as String?) ?? (mainCategoryGroups[mainGroup] ?? mainGroup);
+        (data['mainGroupLabel'] as String?) ??
+        (mainCategoryGroups[mainGroup] ?? mainGroup);
     data['categoryLabel'] =
-        (data['categoryLabel'] as String?) ?? (categoryLabels[categoryKey] ?? categoryKey);
-    data['subCategoryLabel'] = (data['subCategoryLabel'] as String?) ??
+        (data['categoryLabel'] as String?) ??
+        (categoryLabels[categoryKey] ?? categoryKey);
+    data['subCategoryLabel'] =
+        (data['subCategoryLabel'] as String?) ??
         (subCategoryLabels[subCategoryKey] ?? subCategoryKey);
     return data;
   }
@@ -175,7 +237,9 @@ Map<String, dynamic> normalizeKeysForDisplay(Map<String, dynamic> input) {
   if (mainLabel != null && mainLabel.isNotEmpty) {
     mgKey = mainCategoryGroups.entries
         .firstWhere(
-          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(mainLabel),
+          (e) =>
+              _wardrobeNormalizeText(e.value) ==
+              _wardrobeNormalizeText(mainLabel),
           orElse: () => const MapEntry('', ''),
         )
         .key;
@@ -186,7 +250,9 @@ Map<String, dynamic> normalizeKeysForDisplay(Map<String, dynamic> input) {
   if (categoryLabel != null && categoryLabel.isNotEmpty) {
     ck = categoryLabels.entries
         .firstWhere(
-          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(categoryLabel),
+          (e) =>
+              _wardrobeNormalizeText(e.value) ==
+              _wardrobeNormalizeText(categoryLabel),
           orElse: () => const MapEntry('', ''),
         )
         .key;
@@ -197,7 +263,9 @@ Map<String, dynamic> normalizeKeysForDisplay(Map<String, dynamic> input) {
   if (subLabel != null && subLabel.isNotEmpty) {
     sk = subCategoryLabels.entries
         .firstWhere(
-          (e) => _wardrobeNormalizeText(e.value) == _wardrobeNormalizeText(subLabel),
+          (e) =>
+              _wardrobeNormalizeText(e.value) ==
+              _wardrobeNormalizeText(subLabel),
           orElse: () => const MapEntry('', ''),
         )
         .key;
@@ -270,7 +338,10 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   // ---------------------------------------------------------------------------
   // ✅ DELETE helpers
   // ---------------------------------------------------------------------------
-  Future<void> _confirmAndDelete(BuildContext context, Map<String, dynamic> data) async {
+  Future<void> _confirmAndDelete(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) async {
     if (_authUser == null) return;
 
     final id = data['__id'] as String?;
@@ -284,7 +355,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Vymazať oblečenie?'),
-        content: Text('Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.'),
+        content: Text(
+          'Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -302,6 +375,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
     if (ok != true) return;
 
     try {
+      final membership = data['setMembership'];
+      final setId = membership is Map
+          ? (membership['setId'] ?? '').toString()
+          : '';
+      if (setId.isNotEmpty) {
+        await WardrobeSetRepository().removeMember(setId, id);
+      }
       // 1) Delete Firestore document
       await _firestore
           .collection('users')
@@ -324,9 +404,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kúsok bol vymazaný.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Kúsok bol vymazaný.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -351,41 +431,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   // Helpers – vyhľadávanie (bez diakritiky)
   // -----------------------------
   bool _matchesSearch(Map<String, dynamic> data, String query) {
-    final q = _normalizeText(query);
-    if (q.isEmpty) return true;
-
-    final buffer = StringBuffer();
-
-    void addField(dynamic v) {
-      if (v == null) return;
-      if (v is List) {
-        buffer.write(' ');
-        buffer.write(v.join(' '));
-      } else {
-        buffer.write(' ');
-        buffer.write(v.toString());
-      }
-    }
-
-    addField(data['name']);
-    addField(data['brand']);
-
-    addField(data['mainGroupLabel']);
-    addField(data['categoryLabel']);
-    addField(data['subCategoryLabel']);
-    addField(data['mainGroup']);
-    addField(data['categoryKey']);
-    addField(data['subCategoryKey']);
-
-    addField(data['mainCategory']);
-    addField(data['category']);
-
-    addField(data['color']);
-    addField(data['style']);
-    addField(data['pattern']);
-
-    final text = _normalizeText(buffer.toString());
-    return text.contains(q);
+    return _wardrobeV2MatchesSearch(data, query, _normalizeText);
   }
 
   String _normalizeText(String input) => _wardrobeNormalizeText(input);
@@ -404,7 +450,9 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
   Widget build(BuildContext context) {
     if (_authUser == null) {
       return const Scaffold(
-        body: Center(child: Text('Pre zobrazenie šatníka sa musíte prihlásiť.')),
+        body: Center(
+          child: Text('Pre zobrazenie šatníka sa musíte prihlásiť.'),
+        ),
       );
     }
 
@@ -481,11 +529,13 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     ),
                   ),
 
-// ✅ tabs in glass pill
+                  // ✅ tabs in glass pill
                   Padding(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
                     child: _GlassTabs(
-                      tabs: mainGroupKeys.map((k) => mainCategoryGroups[k] ?? k).toList(),
+                      tabs: mainGroupKeys
+                          .map((k) => mainCategoryGroups[k] ?? k)
+                          .toList(),
                     ),
                   ),
 
@@ -500,13 +550,15 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                           sortOptions: _sortOptions,
                           searchController: _searchController,
                           searchQuery: _searchQuery,
-                          onSearchChanged: (v) => setState(() => _searchQuery = v),
+                          onSearchChanged: (v) =>
+                              setState(() => _searchQuery = v),
                           onSortChanged: (v) => setState(() => _sortOption = v),
                           normalizeKeysForDisplay: normalizeKeysForDisplay,
                           matchesSearch: _matchesSearch,
                           compareDocs: _compareDocs,
                           hasActiveProcessing: wardrobeItemHasActiveProcessing,
-                          onDeleteItem: (item) => _confirmAndDelete(context, item),
+                          onDeleteItem: (item) =>
+                              _confirmAndDelete(context, item),
                         );
                       }).toList(),
                     ),
@@ -538,9 +590,11 @@ class _WardrobeTabBody extends StatelessWidget {
   final ValueChanged<String> onSearchChanged;
   final ValueChanged<String> onSortChanged;
 
-  final Map<String, dynamic> Function(Map<String, dynamic> raw) normalizeKeysForDisplay;
+  final Map<String, dynamic> Function(Map<String, dynamic> raw)
+  normalizeKeysForDisplay;
   final bool Function(Map<String, dynamic> data, String query) matchesSearch;
-  final int Function(Map<String, dynamic> a, Map<String, dynamic> b) compareDocs;
+  final int Function(Map<String, dynamic> a, Map<String, dynamic> b)
+  compareDocs;
   final bool Function(Map<String, dynamic> item) hasActiveProcessing;
 
   final void Function(Map<String, dynamic> item) onDeleteItem;
@@ -569,7 +623,6 @@ class _WardrobeTabBody extends StatelessWidget {
           .collection('users')
           .doc(authUid)
           .collection('wardrobe')
-          .where('mainGroup', isEqualTo: mainGroupKey)
           .snapshots(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
@@ -598,6 +651,9 @@ class _WardrobeTabBody extends StatelessWidget {
           final raw = Map<String, dynamic>.from(d.data() as Map);
           final data = normalizeKeysForDisplay(raw);
           data['__id'] = d.id;
+          if (!_wardrobeItemBelongsToMainGroup(data, mainGroupKey)) {
+            continue;
+          }
 
           if (searchQuery.trim().isNotEmpty &&
               !matchesSearch(data, searchQuery.trim())) {
@@ -612,7 +668,13 @@ class _WardrobeTabBody extends StatelessWidget {
 
         final Map<String, List<Map<String, dynamic>>> byCategory = {};
         for (final item in normalized) {
-          final ck = ClothingKnowledgeBase.wardrobeDisplayCategoryKey(item);
+          var ck = ClothingKnowledgeBase.wardrobeDisplayCategoryKey(item);
+          if (ck.isEmpty) {
+            final projected = item['uiProjection'];
+            if (projected is Map) {
+              ck = (projected['category'] ?? '').toString();
+            }
+          }
           if (ck.isEmpty) continue;
           byCategory.putIfAbsent(ck, () => []);
           byCategory[ck]!.add(item);
@@ -622,28 +684,40 @@ class _WardrobeTabBody extends StatelessWidget {
         }
 
         final categoryKeysInOrder = categoryTree[mainGroupKey] ?? [];
-        final totalCount =
-        byCategory.values.fold<int>(0, (p, e) => p + e.length);
+        final totalCount = byCategory.values.fold<int>(
+          0,
+          (p, e) => p + e.length,
+        );
+        final visibleCategories = [
+          for (final ck in categoryKeysInOrder)
+            if ((byCategory[ck] ?? []).isNotEmpty) ck,
+        ];
+        final headerCount = hasAnyProcessing ? 2 : 1;
+        final bodyCount = totalCount == 0 ? 1 : visibleCategories.length;
 
-        return ListView(
+        return ListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
-          children: [
-            _WardrobeCompactControls(
-              searchQuery: searchQuery,
-              sortValue: sortOption,
-              sortOptions: sortOptions,
-              searchController: searchController,
-              onSearchChanged: onSearchChanged,
-              onSortChanged: onSortChanged,
-            ),
-            const SizedBox(height: 12),
-            if (hasAnyProcessing) ...[
-              const WardrobeProcessingBanner(),
-              const SizedBox(height: 12),
-            ],
-
-            if (totalCount == 0)
-              const Padding(
+          itemCount: headerCount + bodyCount,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return _WardrobeCompactControls(
+                searchQuery: searchQuery,
+                sortValue: sortOption,
+                sortOptions: sortOptions,
+                searchController: searchController,
+                onSearchChanged: onSearchChanged,
+                onSortChanged: onSortChanged,
+              );
+            }
+            if (hasAnyProcessing && index == 1) {
+              return const Padding(
+                padding: EdgeInsets.only(top: 12),
+                child: WardrobeProcessingBanner(),
+              );
+            }
+            final bodyIndex = index - headerCount;
+            if (totalCount == 0) {
+              return const Padding(
                 padding: EdgeInsets.only(top: 40),
                 child: Center(
                   child: Text(
@@ -651,27 +725,29 @@ class _WardrobeTabBody extends StatelessWidget {
                     style: TextStyle(color: Colors.white70),
                   ),
                 ),
-              )
-            else
-              for (final ck in categoryKeysInOrder)
-                if ((byCategory[ck] ?? []).isNotEmpty)
-                  _CategorySectionGlass(
-                    title: categoryLabels[ck] ?? ck,
-                    items: byCategory[ck]!,
-                    onOpenAll: () {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => WardrobeCategoryScreen(
-                            mainGroupKey: mainGroupKey,
-                            categoryKey: ck,
-                          ),
-                        ),
-                      );
-                    },
-                    onDeleteItem: onDeleteItem,
-                  ),
-          ],
+              );
+            }
+            final ck = visibleCategories[bodyIndex];
+            return Padding(
+              padding: EdgeInsets.only(top: bodyIndex == 0 ? 12 : 0),
+              child: _CategorySectionGlass(
+                title: categoryLabels[ck] ?? ck,
+                items: byCategory[ck]!,
+                onOpenAll: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => WardrobeCategoryScreen(
+                        mainGroupKey: mainGroupKey,
+                        categoryKey: ck,
+                      ),
+                    ),
+                  );
+                },
+                onDeleteItem: onDeleteItem,
+              ),
+            );
+          },
         );
       },
     );
@@ -691,12 +767,10 @@ class _GlassAppBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
+      child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            color: Colors.transparent,
+            color: Colors.white.withOpacity(0.06),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
             borderRadius: BorderRadius.circular(18),
           ),
@@ -749,7 +823,6 @@ class _GlassAppBar extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -763,9 +836,7 @@ class _GlassTabs extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
+      child: Container(
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.25),
             borderRadius: BorderRadius.circular(999),
@@ -774,10 +845,7 @@ class _GlassTabs extends StatelessWidget {
           child: TabBar(
             isScrollable: true,
             indicator: const UnderlineTabIndicator(
-              borderSide: BorderSide(
-                color: Colors.transparent,
-                width: 0,
-              ),
+              borderSide: BorderSide(color: Colors.transparent, width: 0),
             ),
             labelColor: _WardrobeLuxuryPalette.accent,
             unselectedLabelColor: Colors.white70,
@@ -793,10 +861,10 @@ class _GlassTabs extends StatelessWidget {
             overlayColor: const WidgetStatePropertyAll(Colors.transparent),
             tabs: tabs.map((t) => Tab(text: t)).toList(),
           ),
-        ),
       ),
     );
-  }}
+  }
+}
 
 class _GlassSearchAndSort extends StatelessWidget {
   final TextEditingController controller;
@@ -820,12 +888,10 @@ class _GlassSearchAndSort extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(18),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
+      child: Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
-            color: Colors.transparent,
+            color: Colors.white.withOpacity(0.06),
             borderRadius: BorderRadius.circular(18),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
           ),
@@ -841,7 +907,10 @@ class _GlassSearchAndSort extends StatelessWidget {
                   hintStyle: const TextStyle(color: Colors.white54),
                   filled: true,
                   fillColor: Colors.black.withOpacity(0.28),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(999),
                     borderSide: BorderSide.none,
@@ -854,7 +923,13 @@ class _GlassSearchAndSort extends StatelessWidget {
                 children: [
                   const Icon(Icons.sort, color: Colors.white60, size: 18),
                   const SizedBox(width: 8),
-                  const Text('Triediť:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                  const Text(
+                    'Triediť:',
+                    style: TextStyle(
+                      color: Colors.white70,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                   const Spacer(),
                   _GlassDropdown(
                     value: sortValue,
@@ -865,7 +940,6 @@ class _GlassSearchAndSort extends StatelessWidget {
               ),
             ],
           ),
-        ),
       ),
     );
   }
@@ -896,7 +970,10 @@ class _GlassDropdown extends StatelessWidget {
           value: value,
           dropdownColor: const Color(0xFF1A1A1A),
           iconEnabledColor: Colors.white70,
-          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w700,
+          ),
           items: items.map((opt) {
             return DropdownMenuItem<String>(value: opt, child: Text(opt));
           }).toList(),
@@ -946,35 +1023,33 @@ class _CategorySectionGlass extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // koľko zobrazíme v preview (scroll do strany)
-    final preview = items.take(12).toList();
+    final preview = items.take(kWardrobeCategoryPreviewTileCount).toList();
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(22),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(22),
-              border: Border.all(color: Colors.white10),
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  Colors.white.withOpacity(0.07),
-                  Colors.white.withOpacity(0.03),
-                ],
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withOpacity(0.40),
-                  blurRadius: 20,
-                  offset: const Offset(0, 10),
-                ),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(color: Colors.white10),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Colors.white.withOpacity(0.07),
+                Colors.white.withOpacity(0.03),
               ],
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.40),
+                blurRadius: 20,
+                offset: const Offset(0, 10),
+              ),
+            ],
+          ),
 
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -996,7 +1071,9 @@ class _CategorySectionGlass extends StatelessWidget {
                       child: Text(
                         'Zobraziť všetko (${items.length})',
                         style: TextStyle(
-                          color: _WardrobeLuxuryPalette.accent.withOpacity(0.88),
+                          color: _WardrobeLuxuryPalette.accent.withOpacity(
+                            0.88,
+                          ),
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -1011,8 +1088,10 @@ class _CategorySectionGlass extends StatelessWidget {
                     // aby vyšli 3 tiles vedľa seba s medzerami
                     const gap = 12.0;
                     final available = c.maxWidth;
-                    final tileWidth = (available - gap * 2) / 3; // 3 tiles => 2 medzery
-                    final tileHeight = tileWidth / 0.92; // približne rovnaký pomer ako v gride
+                    final tileWidth =
+                        (available - gap * 2) / 3; // 3 tiles => 2 medzery
+                    final tileHeight =
+                        tileWidth / 0.92; // približne rovnaký pomer ako v gride
 
                     return SizedBox(
                       height: tileHeight,
@@ -1024,33 +1103,58 @@ class _CategorySectionGlass extends StatelessWidget {
                           final data = preview[index];
 
                           // Spinner logic
-                          final cutoutStatus = _statusFromProcessing(data, 'cutout');
-                          final productStatus = _statusFromProcessing(data, 'product');
+                          final cutoutStatus = _statusFromProcessing(
+                            data,
+                            'cutout',
+                          );
+                          final productStatus = _statusFromProcessing(
+                            data,
+                            'product',
+                          );
 
-                          final String? cleanImage = data['cleanImageUrl'] as String?;
-                          final String? cutoutImage = data['cutoutImageUrl'] as String?;
-                          final String? productImage = data['productImageUrl'] as String?;
+                          final String? cleanImage =
+                              data['cleanImageUrl'] as String?;
+                          final String? cutoutImage =
+                              data['cutoutImageUrl'] as String?;
+                          final String? productImage =
+                              data['productImageUrl'] as String?;
 
-                          final bool hasCutoutOrClean = _isUrlFilled(cleanImage) || _isUrlFilled(cutoutImage);
+                          final bool hasCutoutOrClean =
+                              _isUrlFilled(cleanImage) ||
+                              _isUrlFilled(cutoutImage);
                           final bool hasProduct = _isUrlFilled(productImage);
 
                           final bool cutoutInProgress =
-                              !hasCutoutOrClean && (cutoutStatus == 'queued' || cutoutStatus == 'running');
+                              !hasCutoutOrClean &&
+                              (cutoutStatus == 'queued' ||
+                                  cutoutStatus == 'running');
 
                           final bool productInProgress =
-                              hasCutoutOrClean && !hasProduct && (productStatus == 'queued' || productStatus == 'running');
+                              hasCutoutOrClean &&
+                              !hasProduct &&
+                              (productStatus == 'queued' ||
+                                  productStatus == 'running');
 
-                          final bool showSpinner = cutoutInProgress ||
+                          final bool showSpinner =
+                              cutoutInProgress ||
                               productInProgress ||
                               wardrobeItemShowsImageProcessingBadge(data);
-                          final bool showError = (!showSpinner) && (cutoutStatus == 'error' || productStatus == 'error');
+                          final bool showError =
+                              (!showSpinner) &&
+                              (cutoutStatus == 'error' ||
+                                  productStatus == 'error');
 
-                          final name = (data['name'] as String?)?.trim().isNotEmpty == true
+                          final name =
+                              (data['name'] as String?)?.trim().isNotEmpty ==
+                                  true
                               ? data['name'] as String
-                              : (data['subCategoryLabel'] as String?) ?? 'Neznámy kúsok';
+                              : (data['subCategoryLabel'] as String?) ??
+                                    'Neznámy kúsok';
 
                           final subline =
-                              ClothingKnowledgeBase.wardrobeDisplayCategoryLabel(data);
+                              ClothingKnowledgeBase.wardrobeDisplayCategoryLabel(
+                                data,
+                              );
 
                           return SizedBox(
                             width: tileWidth,
@@ -1086,8 +1190,7 @@ class _CategorySectionGlass extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -1149,33 +1252,44 @@ class _WardrobeTileGlass extends StatelessWidget {
   Widget build(BuildContext context) {
     debugLogWardrobeCardImage(data);
     final imageUrl = getBestWardrobeImageUrl(data);
+    final membership = data['setMembership'];
+    final setId = membership is Map
+        ? (membership['setId'] ?? '').toString()
+        : '';
+    final pendingSet = data['pendingSetDraft'] is Map;
+    final setColor = setId.isEmpty
+        ? null
+        : WardrobeSetPresentationV2.borderColor(setId);
 
     return InkWell(
       onTap: onOpenDetail,
       borderRadius: BorderRadius.circular(18),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(18),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.white.withOpacity(0.12),
-                  Colors.white.withOpacity(0.04),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: Colors.white10),
+        child: Container(
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Colors.white.withOpacity(0.12),
+                Colors.white.withOpacity(0.04),
+              ],
             ),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: setColor ?? Colors.white10,
+              width: setColor == null ? 1 : 3,
+            ),
+          ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Expanded(
                   child: ClipRRect(
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(18),
+                    ),
                     child: Stack(
                       children: [
                         Positioned.fill(
@@ -1183,15 +1297,49 @@ class _WardrobeTileGlass extends StatelessWidget {
                             data: data,
                             imageUrl: imageUrl,
                             showSpinner: showSpinner,
+                            cacheWidth: kWardrobeTileImageCacheWidth,
                           ),
                         ),
                         if (showSpinner) _topLeftSpinner(),
                         _topRightDeleteButton(),
+                        if (setId.isNotEmpty)
+                          Positioned(
+                            left: 8,
+                            bottom: 8,
+                            child: Tooltip(
+                              message: 'Súčasť setu',
+                              child: CircleAvatar(
+                                radius: 14,
+                                backgroundColor: setColor,
+                                child: Icon(
+                                  WardrobeSetPresentationV2.icon(setId),
+                                  size: 16,
+                                  color: Colors.black,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (pendingSet)
+                          const Positioned(
+                            left: 8,
+                            top: 8,
+                            child: Tooltip(
+                              message: 'Nedokončený set',
+                              child: Icon(
+                                Icons.help_outline,
+                                color: Colors.amber,
+                              ),
+                            ),
+                          ),
                         if (showError)
                           const Positioned(
                             bottom: 8,
                             right: 8,
-                            child: Icon(Icons.error_outline, size: 16, color: Colors.redAccent),
+                            child: Icon(
+                              Icons.error_outline,
+                              size: 16,
+                              color: Colors.redAccent,
+                            ),
                           ),
                         Positioned(
                           left: 0,
@@ -1250,8 +1398,7 @@ class _WardrobeTileGlass extends StatelessWidget {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }
 
@@ -1296,7 +1443,10 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     super.dispose();
   }
 
-  Future<void> _confirmAndDelete(BuildContext context, Map<String, dynamic> data) async {
+  Future<void> _confirmAndDelete(
+    BuildContext context,
+    Map<String, dynamic> data,
+  ) async {
     if (_authUser == null) return;
 
     final id = data['__id'] as String?;
@@ -1310,7 +1460,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Vymazať oblečenie?'),
-        content: Text('Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.'),
+        content: Text(
+          'Naozaj chceš vymazať „$name“ zo šatníka?\n\nToto sa nedá vrátiť späť.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -1328,6 +1480,13 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
     if (ok != true) return;
 
     try {
+      final membership = data['setMembership'];
+      final setId = membership is Map
+          ? (membership['setId'] ?? '').toString()
+          : '';
+      if (setId.isNotEmpty) {
+        await WardrobeSetRepository().removeMember(setId, id);
+      }
       await _firestore
           .collection('users')
           .doc(_authUser.uid)
@@ -1347,9 +1506,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
       }
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Kúsok bol vymazaný.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Kúsok bol vymazaný.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1371,30 +1530,7 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
   String _normalizeText(String input) => _wardrobeNormalizeText(input);
 
   bool _matchesSearch(Map<String, dynamic> data, String query) {
-    final q = _normalizeText(query);
-    if (q.isEmpty) return true;
-
-    final buffer = StringBuffer();
-    void addField(dynamic v) {
-      if (v == null) return;
-      if (v is List) {
-        buffer.write(' ');
-        buffer.write(v.join(' '));
-      } else {
-        buffer.write(' ');
-        buffer.write(v.toString());
-      }
-    }
-
-    addField(data['name']);
-    addField(data['brand']);
-    addField(data['categoryLabel']);
-    addField(data['subCategoryLabel']);
-    addField(data['color']);
-    addField(data['style']);
-    addField(data['pattern']);
-
-    return _normalizeText(buffer.toString()).contains(q);
+    return _wardrobeV2MatchesSearch(data, query, _normalizeText);
   }
 
   int _compareDocs(Map<String, dynamic> a, Map<String, dynamic> b) {
@@ -1425,7 +1561,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
 
     if (_authUser == null) {
       return const Scaffold(
-        body: Center(child: Text('Pre zobrazenie šatníka sa musíte prihlásiť.')),
+        body: Center(
+          child: Text('Pre zobrazenie šatníka sa musíte prihlásiť.'),
+        ),
       );
     }
 
@@ -1496,7 +1634,11 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                       Expanded(
                         child: Text(
                           title,
-                          style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                          ),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -1541,17 +1683,23 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         .collection('users')
                         .doc(_authUser.uid)
                         .collection('wardrobe')
-                        .where('mainGroup', isEqualTo: widget.mainGroupKey)
                         .snapshots(),
                     builder: (context, snapshot) {
                       if (snapshot.connectionState == ConnectionState.waiting) {
                         return const Center(
-                          child: SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                          child: SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
                         );
                       }
                       if (snapshot.hasError) {
                         return const Center(
-                          child: Text('Chyba pri načítaní položiek.', style: TextStyle(color: Colors.white70)),
+                          child: Text(
+                            'Chyba pri načítaní položiek.',
+                            style: TextStyle(color: Colors.white70),
+                          ),
                         );
                       }
 
@@ -1560,10 +1708,14 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         final data = normalizeKeysForDisplay(raw);
                         data['__id'] = d.id;
                         return data;
-                      }).toList();
+                      }).where((data) => _wardrobeItemBelongsToMainGroup(
+                        data,
+                        widget.mainGroupKey,
+                      )).toList();
 
-                      final hasAnyProcessing =
-                          wardrobeListHasActiveProcessing(allItems);
+                      final hasAnyProcessing = wardrobeListHasActiveProcessing(
+                        allItems,
+                      );
 
                       var items = allItems
                           .where(
@@ -1579,8 +1731,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                         items = items
                             .where(
                               (m) =>
-                                  ClothingKnowledgeBase
-                                      .wardrobeDisplaySubCategoryKey(m) ==
+                                  ClothingKnowledgeBase.wardrobeDisplaySubCategoryKey(
+                                    m,
+                                  ) ==
                                   _selectedSubKey,
                             )
                             .toList();
@@ -1588,7 +1741,9 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
 
                       if (_searchQuery.trim().isNotEmpty) {
                         items = items
-                            .where((m) => _matchesSearch(m, _searchQuery.trim()))
+                            .where(
+                              (m) => _matchesSearch(m, _searchQuery.trim()),
+                            )
                             .toList();
                       }
 
@@ -1617,19 +1772,23 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                               padding: const EdgeInsets.fromLTRB(12, 0, 12, 18),
                               gridDelegate:
                                   const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 12,
-                                mainAxisSpacing: 12,
-                                childAspectRatio: 0.78,
-                              ),
+                                    crossAxisCount: 2,
+                                    crossAxisSpacing: 12,
+                                    mainAxisSpacing: 12,
+                                    childAspectRatio: 0.78,
+                                  ),
                               itemCount: items.length,
                               itemBuilder: (context, index) {
                                 final data = items[index];
 
-                                final cutoutStatus =
-                                    _statusFromProcessing(data, 'cutout');
-                                final productStatus =
-                                    _statusFromProcessing(data, 'product');
+                                final cutoutStatus = _statusFromProcessing(
+                                  data,
+                                  'cutout',
+                                );
+                                final productStatus = _statusFromProcessing(
+                                  data,
+                                  'product',
+                                );
 
                                 final String? cleanImage =
                                     data['cleanImageUrl'] as String?;
@@ -1638,40 +1797,46 @@ class _WardrobeCategoryScreenState extends State<WardrobeCategoryScreen> {
                                 final String? productImage =
                                     data['productImageUrl'] as String?;
 
-                                final bool hasCutoutOrClean = _isUrlFilled(
-                                        cleanImage) ||
+                                final bool hasCutoutOrClean =
+                                    _isUrlFilled(cleanImage) ||
                                     _isUrlFilled(cutoutImage);
-                                final bool hasProduct =
-                                    _isUrlFilled(productImage);
+                                final bool hasProduct = _isUrlFilled(
+                                  productImage,
+                                );
 
-                                final bool cutoutInProgress = !hasCutoutOrClean &&
+                                final bool cutoutInProgress =
+                                    !hasCutoutOrClean &&
                                     (cutoutStatus == 'queued' ||
                                         cutoutStatus == 'running');
 
                                 final bool productInProgress =
                                     hasCutoutOrClean &&
-                                        !hasProduct &&
-                                        (productStatus == 'queued' ||
-                                            productStatus == 'running');
+                                    !hasProduct &&
+                                    (productStatus == 'queued' ||
+                                        productStatus == 'running');
 
-                                final bool showSpinner = cutoutInProgress ||
+                                final bool showSpinner =
+                                    cutoutInProgress ||
                                     productInProgress ||
-                                    wardrobeItemShowsImageProcessingBadge(
-                                        data);
-                                final bool showError = (!showSpinner) &&
+                                    wardrobeItemShowsImageProcessingBadge(data);
+                                final bool showError =
+                                    (!showSpinner) &&
                                     (cutoutStatus == 'error' ||
                                         productStatus == 'error');
 
                                 final name =
-                                    (data['name'] as String?)?.trim().isNotEmpty ==
-                                            true
-                                        ? data['name'] as String
-                                        : (data['subCategoryLabel']
-                                                as String?) ??
-                                            'Neznámy kúsok';
+                                    (data['name'] as String?)
+                                            ?.trim()
+                                            .isNotEmpty ==
+                                        true
+                                    ? data['name'] as String
+                                    : (data['subCategoryLabel'] as String?) ??
+                                          'Neznámy kúsok';
 
-                                final subline = ClothingKnowledgeBase
-                                    .wardrobeDisplayCategoryLabel(data);
+                                final subline =
+                                    ClothingKnowledgeBase.wardrobeDisplayCategoryLabel(
+                                      data,
+                                    );
 
                                 return _WardrobeTileGlass(
                                   data: data,
@@ -1732,12 +1897,10 @@ class _GlassChipsRow extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
+      child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
           decoration: BoxDecoration(
-            color: Colors.transparent,
+            color: Colors.white.withOpacity(0.06),
             border: Border.all(color: Colors.white.withOpacity(0.10)),
             borderRadius: BorderRadius.circular(999),
           ),
@@ -1745,7 +1908,6 @@ class _GlassChipsRow extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: Row(children: spaced),
           ),
-        ),
       ),
     );
   }
@@ -1772,7 +1934,9 @@ class _GlassChoiceChip extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(999),
-          color: selected ? Colors.white.withOpacity(0.92) : Colors.white.withOpacity(0.06),
+          color: selected
+              ? Colors.white.withOpacity(0.92)
+              : Colors.white.withOpacity(0.06),
           border: Border.all(color: selected ? Colors.white24 : Colors.white10),
         ),
         child: Text(
@@ -1787,6 +1951,7 @@ class _GlassChoiceChip extends StatelessWidget {
     );
   }
 }
+
 class _WardrobeCompactControls extends StatelessWidget {
   final String searchQuery;
   final String sortValue;
@@ -1920,8 +2085,9 @@ class _WardrobeCompactControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label =
-    searchQuery.trim().isEmpty ? 'Hľadať v šatníku...' : searchQuery.trim();
+    final label = searchQuery.trim().isEmpty
+        ? 'Hľadať v šatníku...'
+        : searchQuery.trim();
 
     return Row(
       children: [

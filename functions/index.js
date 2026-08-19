@@ -5,7 +5,7 @@
 // - Firestore trigger: attachCleanImageOnMapWrite
 // - Firestore trigger: attachProductImageOnMapWrite
 // - Firestore trigger: processWardrobeProductLinkImage (users/{uid}/wardrobe/{itemId})
-// - HTTPS: analyzeClothingImage (OpenAI Vision)
+// - HTTPS: analyzeClothingImage (Gemini primary / OpenAI legacy kill-switch)
 // - Callable: analyzeClothingProductUrl (product link metadata + OpenAI)
 // - HTTPS: chatWithStylist (OpenAI text)
 // - Callable: requestTryOn
@@ -18,11 +18,60 @@ const crypto = require("crypto");
 const sharp = require("sharp");
 const {routeStylistRequest} = require("./stylist/ai_router");
 const {buildChatSystemPrompt} = require("./stylist/chat_prompts");
+const {wardrobeDocToSummaryLine} = require("./stylist/wardrobe_doc_summary");
 const {OUTFIT_FIELD_CATALOG} = require("./stylist/field_catalog");
 const {
   parseOutfitDecisionFields,
   resolveOutfitAction,
 } = require("./stylist/outfit_decision");
+const {
+  appendStylePreferencesSection,
+  sanitizeUserStylePreferences,
+} = require("./stylist/style_preferences_context");
+const {
+  attachHomeFinalReviewPreferences,
+} = require("./stylist/home_final_review_preferences");
+const {
+  createFirestoreCatalogSearchRepository,
+} = require("./shopping/catalog_search_repository");
+const {
+  createShoppingOrchestrator,
+  ShoppingOrchestrationError,
+} = require("./shopping/shopping_orchestration_service");
+const {
+  createFirestoreShoppingSessionStore,
+} = require("./shopping/shopping_session_store");
+const {
+  handleStylistShoppingTurn,
+  validateShoppingAiActionInRuntime,
+} = require("./shopping/stylist_shopping_runtime");
+const {
+  WishlistV2Error,
+  createFirestoreWishlistV2Repository,
+  createWishlistV2Service,
+} = require("./shopping/wishlist_v2_service");
+const {
+  createWishlistMonitoringService,
+} = require("./shopping/monitoring/wishlist_monitoring_service");
+const {
+  createWishlistNotificationService,
+} = require("./shopping/notifications/wishlist_notification_service");
+const {
+  createFirestoreWishlistEventStore,
+  createFirestoreWishlistTokenStore,
+} = require("./shopping/notifications/firestore_notification_stores");
+const {
+  createVisionV2ShadowHandler,
+} = require("./vision_v2_shadow");
+const {
+  createAnalyzeClothingImageHandler,
+} = require("./clothing_vision/analyze_clothing_image_handler");
+const {
+  GEMINI_API_KEY_SECRET,
+} = require("./clothing_vision/gemini_secret_binding");
+const {
+  createClaimFcmTokenHandler,
+} = require("./claim_fcm_token");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -30,6 +79,113 @@ if (!admin.apps.length) {
 
 const db = admin.firestore();
 const storage = admin.storage();
+// Production-capable server-only durable session state. The memory
+// implementation remains injectable for isolated unit tests.
+const stylistShoppingOrchestrator = createShoppingOrchestrator({
+  repository: createFirestoreCatalogSearchRepository(db),
+  sessionStore: createFirestoreShoppingSessionStore(db),
+});
+const shoppingCatalogRepository = createFirestoreCatalogSearchRepository(db);
+const shoppingWishlistV2Repository = createFirestoreWishlistV2Repository(db);
+const shoppingWishlistEventStore = createFirestoreWishlistEventStore(db);
+const shoppingWishlistNotificationService = createWishlistNotificationService({
+  messaging: admin.messaging(),
+  tokenStore: createFirestoreWishlistTokenStore(db),
+  eventStore: shoppingWishlistEventStore,
+});
+const shoppingWishlistMonitoringService = createWishlistMonitoringService({
+  repository: shoppingWishlistV2Repository,
+  catalogRepository: shoppingCatalogRepository,
+  notificationService: shoppingWishlistNotificationService,
+});
+const shoppingWishlistV2Service = createWishlistV2Service({
+  repository: shoppingWishlistV2Repository,
+  catalogRepository: shoppingCatalogRepository,
+  monitoringService: shoppingWishlistMonitoringService,
+});
+
+exports.shoppingWishlistV2 = functions
+  .region("us-east1")
+  .runWith({timeoutSeconds: 120, memory: "512MB"})
+  .https.onCall(async (data, context) => {
+    try {
+      return await shoppingWishlistV2Service.dispatch(context.auth, data);
+    } catch (error) {
+      if (!(error instanceof WishlistV2Error)) throw error;
+      const code = error.code === "UNAUTHENTICATED" ? "unauthenticated" :
+        (error.code === "WISHLIST_NOT_FOUND" ? "not-found" :
+          (error.code === "SESSION_CONFLICT" ? "aborted" : "invalid-argument"));
+      throw new functions.https.HttpsError(code, error.code);
+    }
+  });
+
+// Idle-safe until a production catalog sync writes COMPLETED runs.
+// PARTNER_POLLING_COUNT remains 0 — no retailer polling scheduler.
+exports.shoppingCatalogSyncWishlistFanout = functions
+  .region("us-east1")
+  .runWith({timeoutSeconds: 300, memory: "512MB"})
+  .firestore.document("catalogSyncRuns/{runId}")
+  .onUpdate(async (change, context) => {
+    const before = change.before.data() || {};
+    const after = change.after.data() || {};
+    if (before.status === "COMPLETED" || after.status !== "COMPLETED") {
+      return null;
+    }
+    const changedVariantIds = Array.isArray(after.changedVariantIds) ?
+      after.changedVariantIds : [];
+    if (!changedVariantIds.length) return null;
+    try {
+      return await shoppingWishlistMonitoringService.processCatalogChangeSet({
+        source: "CATALOG_SYNC",
+        syncRunId: context.params.runId,
+        catalogRevision: after.catalogRevision ||
+          `sync_${context.params.runId}`,
+        successfulVerificationAt: after.completedAt ||
+          after.successfulVerificationAt || null,
+        changedVariantIds,
+        changedOfferIds: after.changedOfferIds || [],
+        changedSizeIds: after.changedSizeIds || [],
+      });
+    } catch (error) {
+      logger.error("shopping_catalog_sync_wishlist_fanout_failed", {
+        runId: context.params.runId,
+        message: error?.message || String(error),
+      });
+      return null;
+    }
+  });
+
+exports.claimFcmToken = functions
+  .region("us-east1")
+  .runWith({timeoutSeconds: 15, memory: "256MB"})
+  .https.onCall(createClaimFcmTokenHandler({
+    db,
+    FieldValue: admin.firestore.FieldValue,
+    logger,
+    httpsError: (code, message) =>
+      new functions.https.HttpsError(code, message),
+  }));
+
+exports.shoppingCandidateDetails = functions
+  .region("us-east1")
+  .runWith({timeoutSeconds: 60, memory: "256MB"})
+  .https.onCall(async (data, context) => {
+    try {
+      return await stylistShoppingOrchestrator.dispatch(context.auth, {
+        operation: "GET_CANDIDATE_DETAILS",
+        sessionId: data?.sessionId,
+        variantId: data?.variantId,
+      });
+    } catch (error) {
+      if (!(error instanceof ShoppingOrchestrationError)) throw error;
+      const code = error.code === "UNAUTHENTICATED" ? "unauthenticated" :
+        (error.code === "SESSION_FORBIDDEN" ? "permission-denied" :
+          (error.code === "SESSION_NOT_FOUND" ? "not-found" :
+            (["SESSION_EXPIRED", "POOL_STALE"].includes(error.code) ?
+              "failed-precondition" : "invalid-argument")));
+      throw new functions.https.HttpsError(code, error.code);
+    }
+  });
 
 // ---------------------------------------------------------------------------
 // FCM push pre stylist chat (asynchrónne doručenie odpovede)
@@ -159,6 +315,27 @@ function getOpenAiKey() {
     process.env.OPENAI_API_KEY ||
     getConfigValue(["openai", "api_key"]) ||
     getConfigValue(["openai", "key"])
+  );
+}
+
+function getGeminiKey() {
+  if (process.env.GEMINI_API_KEY && String(process.env.GEMINI_API_KEY).trim()) {
+    return String(process.env.GEMINI_API_KEY).trim();
+  }
+  try {
+    const {
+      GEMINI_API_KEY_SECRET,
+    } = require("./clothing_vision/gemini_secret_binding");
+    const fromSecret = GEMINI_API_KEY_SECRET.value();
+    if (typeof fromSecret === "string" && fromSecret.trim()) {
+      return fromSecret.trim();
+    }
+  } catch (_) {
+    // Secret not bound in this runtime / unavailable.
+  }
+  return (
+    getConfigValue(["gemini", "api_key"]) ||
+    getConfigValue(["gemini", "key"])
   );
 }
 
@@ -1396,617 +1573,47 @@ exports.attachCleanImageOnWardrobeWrite = functions
     });
 
   // ---------------------------------------------------------------------------
-  // 1) analyzeClothingImage – GEN1 HTTPS (OpenAI Vision)
+  // 1) analyzeClothingImage – GEN1 HTTPS (Gemini primary / OpenAI legacy kill-switch)
   // ---------------------------------------------------------------------------
   exports.analyzeClothingImage = functions
+    .runWith({
+      timeoutSeconds: 120,
+      memory: "512MB",
+      secrets: [GEMINI_API_KEY_SECRET],
+    })
     .region("us-east1")
-    .https.onRequest(async (req, res) => {
-      if (req.method !== "POST") {
-        return res.status(405).send("Metóda nie je povolená. Použite POST.");
-      }
+    .https.onRequest(createAnalyzeClothingImageHandler({
+      admin,
+      logger,
+      getOpenAiKey,
+      getGeminiApiKey: getGeminiKey,
+      fetchImpl: fetch,
+    }));
 
-      const { imageUrl } = req.body || {};
-      if (!imageUrl) {
-        return res.status(400).send("Chýba imageUrl v tele požiadavky.");
-      }
-
-      const apiKey = getOpenAiKey();
-      if (!apiKey) {
-        logger.error("Chýba OPENAI_API_KEY (env alebo functions.config().openai.key)");
-        return res.status(500).send("Server nemá nastavený OPENAI_API_KEY.");
-      }
-
-      const ALLOWED_SEASONS = ["jar", "leto", "jeseň", "zima", "celoročne"];
-      const ALLOWED_PATTERNS = [
-        "jednofarebné",
-        "pruhované",
-        "kockované",
-        "bodkované",
-        "kvetované",
-        "maskáčové",
-        "animal print",
-        "grafické",
-        "iný vzor",
-      ];
-      const ALLOWED_STYLES = [
-        "elegantný",
-        "casual",
-        "streetwear",
-        "športový",
-        "business",
-        "outdoor",
-        "basic",
-        "party",
-      ];
-      const ALLOWED_COLORS = [
-        "čierna",
-        "biela",
-        "sivá",
-        "tmavomodrá",
-        "modrá",
-        "svetlomodrá",
-        "zelená",
-        "olivová",
-        "khaki",
-        "hnedá",
-        "béžová",
-        "červená",
-        "bordová",
-        "žltá",
-        "oranžová",
-        "ružová",
-        "fialová",
-      ];
-
-      const ALLOWED_FIT = ["slim", "regular", "relaxed", "oversized", "unknown"];
-      const ALLOWED_VIBE = [
-        "basic",
-        "minimalist",
-        "casual",
-        "streetwear",
-        "sport",
-        "business",
-        "elegant",
-        "outdoor",
-        "party",
-        "beach",
-        "urban",
-        "unknown",
-      ];
-      const ALLOWED_LOGO_PROMINENCE = ["none", "small", "medium", "large", "unknown"];
-      const ALLOWED_OCCASION_FIT = [
-        "daily",
-        "work",
-        "date",
-        "party",
-        "sport",
-        "travel",
-        "beach",
-        "home",
-        "outdoor",
-        "formal_event",
-      ];
-      const ALLOWED_LAYER_ROLE = ["base_layer", "mid_layer", "outer_layer"];
-
-      const COLOR_MAP = {
-        navy: "tmavomodrá",
-        "dark blue": "tmavomodrá",
-        midnight: "tmavomodrá",
-        blue: "modrá",
-        "light blue": "svetlomodrá",
-        black: "čierna",
-        white: "biela",
-        grey: "sivá",
-        gray: "sivá",
-        beige: "béžová",
-        brown: "hnedá",
-        tan: "hnedá",
-        olive: "olivová",
-        khaki: "khaki",
-        green: "zelená",
-        red: "červená",
-        burgundy: "bordová",
-        maroon: "bordová",
-        yellow: "žltá",
-        orange: "oranžová",
-        pink: "ružová",
-        purple: "fialová",
-      };
-
-      const STYLE_MAP = {
-        elegant: "elegantný",
-        formal: "elegantný",
-        smart: "business",
-        business: "business",
-        casual: "casual",
-        street: "streetwear",
-        streetwear: "streetwear",
-        sport: "športový",
-        sports: "športový",
-        athletic: "športový",
-        outdoor: "outdoor",
-        basic: "basic",
-        party: "party",
-      };
-
-      const PATTERN_MAP = {
-        solid: "jednofarebné",
-        plain: "jednofarebné",
-        striped: "pruhované",
-        stripes: "pruhované",
-        checked: "kockované",
-        plaid: "kockované",
-        dots: "bodkované",
-        polka: "bodkované",
-        floral: "kvetované",
-        camo: "maskáčové",
-        camouflage: "maskáčové",
-        animal: "animal print",
-        graphic: "grafické",
-      };
-
-      const SEASON_MAP = {
-        spring: "jar",
-        summer: "leto",
-        autumn: "jeseň",
-        fall: "jeseň",
-        winter: "zima",
-        all: "celoročne",
-        "all season": "celoročne",
-        year: "celoročne",
-      };
-
-      const FIT_MAP = {
-        skinny: "slim",
-        tight: "slim",
-        fitted: "slim",
-        normal: "regular",
-        standard: "regular",
-        classic: "regular",
-        loose: "relaxed",
-        baggy: "oversized",
-        oversized: "oversized",
-        oversize: "oversized",
-      };
-
-      const VIBE_MAP = {
-        minimal: "minimalist",
-        minimalist: "minimalist",
-        street: "streetwear",
-        sporty: "sport",
-        athletic: "sport",
-        formal: "elegant",
-        smart: "business",
-        office: "business",
-        city: "urban",
-      };
-
-      const LOGO_MAP = {
-        hidden: "none",
-        subtle: "small",
-        moderate: "medium",
-        prominent: "large",
-        big: "large",
-      };
-
-      const OCCASION_MAP = {
-        everyday: "daily",
-        casual: "daily",
-        office: "work",
-        business: "work",
-        romantic: "date",
-        nightlife: "party",
-        gym: "sport",
-        workout: "sport",
-        vacation: "travel",
-        pool: "beach",
-        lounge: "home",
-        hiking: "outdoor",
-        wedding: "formal_event",
-        gala: "formal_event",
-      };
-
-      const LAYER_ROLE_MAP = {
-        base: "base_layer",
-        baselayer: "base_layer",
-        "base layer": "base_layer",
-        underwear: "base_layer",
-        mid: "mid_layer",
-        middle: "mid_layer",
-        "mid layer": "mid_layer",
-        midlayer: "mid_layer",
-        outer: "outer_layer",
-        "outer layer": "outer_layer",
-        outerlayer: "outer_layer",
-        shell: "outer_layer",
-        jacket: "outer_layer",
-        coat: "outer_layer",
-      };
-
-      function toStringArray(x) {
-        if (!x) return [];
-        if (Array.isArray(x)) return x.map((v) => String(v).trim()).filter(Boolean);
-        return [String(x).trim()].filter(Boolean);
-      }
-
-      function normalizeToAllowed(value, allowed, map) {
-        const raw = String(value || "").toLowerCase().trim();
-        if (!raw) return null;
-
-        const exact = allowed.find((a) => a.toLowerCase() === raw);
-        if (exact) return exact;
-
-        if (map[raw] && allowed.includes(map[raw])) return map[raw];
-
-        for (const k of Object.keys(map)) {
-          if (raw.includes(k)) {
-            const m = map[k];
-            if (allowed.includes(m)) return m;
-          }
-        }
-        return null;
-      }
-
-      function normalizeScalar(value, allowed, map, fallback) {
-        const mapped = normalizeToAllowed(value, allowed, map);
-        return mapped || fallback;
-      }
-
-      function normalizeFormality(value) {
-        const n = Number(value);
-        if (!Number.isFinite(n)) return 5;
-        return Math.min(10, Math.max(1, Math.round(n)));
-      }
-
-      function normalizeWarmthLevel(value) {
-        const n = Number(value);
-        if (!Number.isFinite(n)) return 5;
-        return Math.min(10, Math.max(1, Math.round(n)));
-      }
-
-      function normalizeConfidence(value) {
-        const n = Number(value);
-        if (!Number.isFinite(n)) return 0;
-        return Math.min(100, Math.max(0, Math.round(n)));
-      }
-
-      const IDENTITY_CONFIDENCE_THRESHOLD = 80;
-
-      function normalizeVisualIdentity(identityRaw, confidenceRaw) {
-        const identity_confidence = normalizeConfidence(confidenceRaw);
-        let visual_identity = String(identityRaw || "").trim();
-        if (identity_confidence < IDENTITY_CONFIDENCE_THRESHOLD) {
-          visual_identity = "";
-        }
-        return { visual_identity, identity_confidence };
-      }
-
-      function normalizeOccasionFit(values) {
-        const result = [];
-        for (const v of toStringArray(values)) {
-          const mapped = normalizeToAllowed(v, ALLOWED_OCCASION_FIT, OCCASION_MAP);
-          if (mapped && !result.includes(mapped)) result.push(mapped);
-        }
-        return result;
-      }
-
-      function stripCodeFences(text) {
-        let raw = String(text || "").trim();
-        if (raw.startsWith("```")) {
-          const firstNl = raw.indexOf("\n");
-          if (firstNl !== -1) raw = raw.substring(firstNl + 1);
-        }
-        if (raw.endsWith("```")) {
-          raw = raw.substring(0, raw.lastIndexOf("```")).trim();
-        }
-        return raw.trim();
-      }
-
-      try {
-        const systemPrompt = `
-  Si profesionálny módny stylista a expert na rozpoznávanie oblečenia z fotiek pre mobilnú aplikáciu.
-  Tieto metadáta použije osobný stylista na posúdenie, či kusy vizuálne k sebe pasujú (outfity, scoring, odporúčania).
-
-  NEOPTIMALIZUJ pre kategórie e-shopu ani jednu „dokonalú“ produktovú triedu.
-  OPTIMALIZUJ pre styling a skladanie outfitu: vrstva, teplo, vzhľad, príležitosť.
-  Pri nejednoznačných kusoch (track jacket, fleece, overshirt, bomber, zip hoodie, softshell…) nevydávaj sa za istého – radšej uveď secondary_type a nižší confidence.
-
-  Vráť STRICTNE jeden JSON objekt. Nepíš žiadny iný text. Žiadny markdown. Žiadne \`\`\`.
-
-  MUSÍŠ vrátiť VŽDY všetky tieto kľúče (aj keď sú prázdne alebo "unknown"):
-  {
-    "type": "krátky názov v slovenčine (napr. \\"Nohavice\\")",
-    "type_pretty": "detailnejší názov v slovenčine (napr. \\"Chino nohavice\\")",
-    "canonical_type": "technický kľúč v angličtine (napr. pants, jeans, t_shirt, hoodie...)",
-    "brand": "značka alebo prázdny string",
-    "colors": ["zoznam farieb v slovenčine"],
-    "styles": ["zoznam štýlov v slovenčine"],
-    "patterns": ["max 1 vzor v slovenčine"],
-    "seasons": ["zoznam sezón v slovenčine"],
-    "debug_reason": "stručný dôvod rozhodnutí (1 veta)",
-    "fit": "jedna z povolených hodnôt fit",
-    "formality": "číslo 1–10",
-    "vibe": "jedna z povolených hodnôt vibe",
-    "logo_prominence": "jedna z povolených hodnôt logo_prominence",
-    "occasion_fit": ["zoznam príležitostí"],
-    "material_feel": "krátka fráza v angličtine alebo slovenčine (napr. light cotton, denim)",
-    "visual_description": "jedna krátka praktická veta v slovenčine – čo kus vizuálne vyzerá (nie marketing)",
-    "primary_type": "najlepší odhad kategórie v slovenčine pre outfit (napr. tréningová bunda)",
-    "secondary_type": "alternatívna rozumná kategória ak je kus nejednoznačný, inak prázdny string",
-    "layer_role": "jedna z povolených hodnôt layer_role",
-    "warmth_level": "číslo 1–10",
-    "confidence": "číslo 0–100, istota o primary_type",
-    "visual_identity": "krátky rozpoznateľný vizuálny identita (klub, frančíza, tím, značka) alebo prázdny string",
-    "identity_confidence": "číslo 0–100, istota o visual_identity"
-  }
-
-  visual_identity sa neskôr použije na vyhýbanie sa vizuálne konfliktným kombináciám v outfite
-  (napr. Chelsea FC + Manchester United, Real Madrid + Barcelona, Ferrari + Mercedes AMG, Marvel + DC, PlayStation + Xbox).
-
-  Použi LEN tieto povolené hodnoty:
-  FARBY (colors): ${JSON.stringify(ALLOWED_COLORS)}
-  ŠTÝLY (styles): ${JSON.stringify(ALLOWED_STYLES)}
-  VZORY (patterns): ${JSON.stringify(ALLOWED_PATTERNS)}
-  SEZÓNY (seasons): ${JSON.stringify(ALLOWED_SEASONS)}
-  FIT (fit): ${JSON.stringify(ALLOWED_FIT)}
-  VIBE (vibe): ${JSON.stringify(ALLOWED_VIBE)}
-  LOGO (logo_prominence): ${JSON.stringify(ALLOWED_LOGO_PROMINENCE)}
-  OCCASION (occasion_fit): ${JSON.stringify(ALLOWED_OCCASION_FIT)}
-  LAYER (layer_role): ${JSON.stringify(ALLOWED_LAYER_ROLE)}
-
-  Formality (formality): celé číslo 1–10
-  1 = pláž/domov/šport, veľmi casual
-  3 = casual/streetwear
-  5 = smart casual
-  7 = business/elegant
-  10 = formálny oblek / veľmi formálne
-
-  Warmth (warmth_level): celé číslo 1–10
-  1 = tielko / veľmi ľahké
-  3 = tričko
-  5 = mikina / stredné teplo
-  7 = prechodná bunda
-  10 = zimná bunda / veľmi teplé
-
-  Confidence (confidence): 0–100, ako si istý primary_type.
-  Ak confidence < 70 a iná kategória je pravdepodobná, MUSÍŠ vyplniť secondary_type.
-  Pri neistote uprednostni správne layer_role a warmth_level pred falošnou istotou v primary_type.
-
-  Visual identity (visual_identity, identity_confidence):
-  - Krátky oficiálny/rozšírený názov identity v angličtine (napr. "Chelsea FC", "Ferrari", "Marvel", "PlayStation", "Harvard", "Jordan").
-  - identity_confidence: 0–100. visual_identity vráť LEN ak identity_confidence >= 80.
-  - Ak identity_confidence < 80: visual_identity="" a identity_confidence = skutočná istota (nie 0 nasilu).
-  - Ak nie je silná identita: visual_identity="", identity_confidence=0.
-  - NEHÁDAJ agresívne. Identitu detekuj LEN keď je viditeľné logo, erb klubu, čitateľný text alebo zjavné branding.
-  - NEVYVODZUJ identitu len z farby (zlé: modrá športová bunda → Chelsea FC; dobré: viditeľný erb/text Chelsea → Chelsea FC).
-  - brand môže byť Nike/Adidas; visual_identity je silná vizuálna identita na oblečení (klub, frančíza, sub-brand ako Jordan).
-
-  Príklady nejednoznačných kusov:
-  - track jacket → primary_type="tréningová bunda", secondary_type="mikina na zips", layer_role="mid_layer", warmth_level=5, confidence≈68
-  - overshirt → primary_type="košeľa", secondary_type="ľahká bunda", layer_role="mid_layer"
-  - tričko → layer_role="base_layer"; mikina → mid_layer; zimný kabát → outer_layer; softshell → outer_layer
-
-  Pravidlá:
-  - type/type_pretty/canonical_type nech ostávajú použiteľné pre UI; primary_type môže byť stylisticky presnejší.
-  - Ak si nie si istý farbou/štýlom/vzorom/sezónou, radšej vráť prázdne pole alebo "jednofarebné" pri vzore.
-  - Pri fit, vibe, logo_prominence, material_feel: nehádaj agresívne – ak nie si istý, použij "unknown".
-  - patterns: vráť buď [] alebo [jedna_hodnota]
-  - seasons: ak je vhodné celoročne, vráť ["celoročne"].
-  - type_pretty má byť prirodzený názov pre človeka, ale bez zdvojenia typu.
-  - occasion_fit: len hodnoty z povoleného zoznamu; ak nevieš, vráť [].
-  - visual_description: praktický vizuálny opis (farba, strih, logo, materiál), nie reklamný text.
-  - secondary_type: prázdny string ak nie je alternatíva; inak iná rozumná kategória ako primary_type.
-  - visual_identity: prázdny string ak logo/erb/text nie je jednoznačný; inak konzistentný krátky názov identity.
-
-  LOGO A VZOR — POVINNÁ VIZUÁLNA KONTROLA (pozri na hrud, límec, rukáv):
-  - Akékoľvek logo značky (Nike, Adidas, Levi's, Jordan, Puma, Champion, Tommy Hilfiger, Lacoste…)
-    → logo_prominence aspoň "small"; pri väčšom/výraznom logu "medium" alebo "large".
-  - Ak je potlač, text, obrázok, erb, značka, grafický motív alebo kontrastný branding na látke
-    → patterns MUSÍ byť "grafické" (NIKDY "jednofarebné").
-  - "jednofarebné" LEN ak je kus úplne hladký bez akéhokoľvek loga, textu, potlače ani výrazného motívu.
-  - visual_description MUSÍ explicitne spomenúť logo/potlač ak na fotke existuje
-    (napr. "čierne tričko s červeným logom Levi's na hrudi").
-  - Ak vidíš logo ale si neistý o veľkosti → logo_prominence "small", nie "unknown".
-        `.trim();
-
-        const openAiBody = {
-          model: "gpt-4o-mini",
-          temperature: 0.1,
-          messages: [
-            { role: "system", content: systemPrompt },
-            {
-              role: "user",
-              content: [
-                {
-                  type: "text",
-                  text: "Analyzuj tento jeden kus oblečenia na fotke a vráť JSON podľa inštrukcií.",
-                },
-                { type: "image_url", image_url: { url: imageUrl } },
-              ],
-            },
-          ],
-        };
-
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify(openAiBody),
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          logger.error("OpenAI analyzeClothingImage error:", response.status, errorText);
-          return res.status(500).send(`OpenAI analyzeClothingImage error ${response.status}: ${errorText}`);
-        }
-
-        const data = await response.json();
-        const text = data?.choices?.[0]?.message?.content;
-        if (!text) throw new Error("OpenAI nevrátil text (analyzeClothingImage).");
-
-        const raw = stripCodeFences(text);
-        logger.info("AI RAW TEXT:", raw);
-
-        let parsed = null;
+  // M11.1 read-only Vision v2 experiment. It has no Firestore or Storage
+  // dependency and cannot mutate a wardrobe item.
+  exports.analyzeClothingImageV2Shadow = functions
+    .region("us-east1")
+    .https.onRequest(createVisionV2ShadowHandler({
+      fetchImpl: fetch,
+      getApiKey: getOpenAiKey,
+      logger,
+      authorize: async (req) => {
+        const header = String(req.headers.authorization || "");
+        if (!header.startsWith("Bearer ")) return null;
         try {
-          parsed = JSON.parse(raw);
-        } catch (e) {
-          logger.error("JSON.parse failed:", e);
+          const decoded = await admin.auth().verifyIdToken(header.slice(7));
+          const allowed = String(process.env.VISION_V2_SHADOW_ALLOWED_UIDS || "")
+            .split(",")
+            .map((value) => value.trim())
+            .filter(Boolean);
+          if (allowed.length && !allowed.includes(decoded.uid)) return null;
+          return {uid: decoded.uid};
+        } catch (_) {
+          return null;
         }
-
-        const p = parsed && typeof parsed === "object" ? parsed : {};
-
-        const out = {
-          type: String(p.type || ""),
-          type_pretty: String(p.type_pretty || ""),
-          canonical_type: String(p.canonical_type || ""),
-          brand: String(p.brand || ""),
-          colors: toStringArray(p.colors),
-          styles: toStringArray(p.styles),
-          patterns: toStringArray(p.patterns),
-          seasons: toStringArray(p.seasons),
-          debug_reason: String(p.debug_reason || ""),
-          fit: String(p.fit || ""),
-          formality: p.formality,
-          vibe: String(p.vibe || ""),
-          logo_prominence: String(p.logo_prominence || ""),
-          occasion_fit: toStringArray(p.occasion_fit),
-          material_feel: String(p.material_feel || ""),
-          visual_description: String(p.visual_description || ""),
-          primary_type: String(p.primary_type || ""),
-          secondary_type: String(p.secondary_type || ""),
-          layer_role: String(p.layer_role || ""),
-          warmth_level: p.warmth_level,
-          confidence: p.confidence,
-          visual_identity: String(p.visual_identity || ""),
-          identity_confidence: p.identity_confidence,
-        };
-
-        const colors = [];
-        for (const c of out.colors) {
-          const mapped = normalizeToAllowed(c, ALLOWED_COLORS, COLOR_MAP);
-          if (mapped && !colors.includes(mapped)) colors.push(mapped);
-        }
-
-        const styles = [];
-        for (const s of out.styles) {
-          const mapped = normalizeToAllowed(s, ALLOWED_STYLES, STYLE_MAP);
-          if (mapped && !styles.includes(mapped)) styles.push(mapped);
-        }
-
-        let patterns = [];
-        for (const pat of out.patterns) {
-          const mapped = normalizeToAllowed(pat, ALLOWED_PATTERNS, PATTERN_MAP);
-          if (mapped) {
-            patterns = [mapped];
-            break;
-          }
-        }
-
-        let seasons = [];
-        for (const sea of out.seasons) {
-          const mapped = normalizeToAllowed(sea, ALLOWED_SEASONS, SEASON_MAP);
-          if (mapped && !seasons.includes(mapped)) seasons.push(mapped);
-        }
-
-        const hasAllFour = ["jar", "leto", "jeseň", "zima"].every((x) => seasons.includes(x));
-        if (seasons.includes("celoročne") || hasAllFour) seasons = ["celoročne"];
-
-        const fit = normalizeScalar(out.fit, ALLOWED_FIT, FIT_MAP, "unknown");
-        const formality = normalizeFormality(out.formality);
-        const vibe = normalizeScalar(out.vibe, ALLOWED_VIBE, VIBE_MAP, "unknown");
-        const logo_prominence = normalizeScalar(
-          out.logo_prominence,
-          ALLOWED_LOGO_PROMINENCE,
-          LOGO_MAP,
-          "unknown"
-        );
-        const occasion_fit = normalizeOccasionFit(out.occasion_fit);
-        const material_feel = out.material_feel.trim() || "unknown";
-        const visual_description = out.visual_description.trim();
-
-        const typeFallback = out.type || out.type_pretty || "";
-        let primary_type = out.primary_type.trim() || typeFallback;
-        let secondary_type = out.secondary_type.trim();
-        const layer_role =
-          normalizeScalar(out.layer_role, ALLOWED_LAYER_ROLE, LAYER_ROLE_MAP, "") || "";
-        const warmth_level = normalizeWarmthLevel(out.warmth_level);
-        const confidence = normalizeConfidence(out.confidence);
-
-        if (secondary_type && secondary_type.toLowerCase() === primary_type.toLowerCase()) {
-          secondary_type = "";
-        }
-
-        const { visual_identity, identity_confidence } = normalizeVisualIdentity(
-          out.visual_identity,
-          out.identity_confidence
-        );
-
-        // Ak AI nevidí vzor ale logo/potlač existuje, oprav deterministicky.
-        const visualBlob = [
-          visual_description,
-          visual_identity,
-          out.brand,
-        ].join(" ").toLowerCase();
-        const logoSuggestsGraphic =
-          logo_prominence === "medium" || logo_prominence === "large" ||
-          (logo_prominence === "small" && visualBlob.length > 0);
-        const textSuggestsGraphic =
-          /\b(logo|potla|grafik|print|brand|nike|adidas|levi|jordan|puma|champion|tommy|lacoste|jumpman)\b/
-            .test(visualBlob) ||
-          (identity_confidence >= 80 && visual_identity.length > 0);
-
-        if (!patterns.length) {
-          if (logoSuggestsGraphic || textSuggestsGraphic) {
-            patterns = ["grafické"];
-          } else {
-            patterns = ["jednofarebné"];
-          }
-        } else if (
-          patterns.includes("jednofarebné") &&
-          (logo_prominence === "medium" || logo_prominence === "large" ||
-            textSuggestsGraphic)
-        ) {
-          patterns = ["grafické"];
-        }
-
-        const normalized = {
-          type: out.type || out.type_pretty || "",
-          type_pretty: out.type_pretty || out.type || "",
-          canonical_type: out.canonical_type,
-          brand: out.brand,
-          colors,
-          styles,
-          patterns,
-          seasons,
-          debug_reason: out.debug_reason,
-          fit,
-          formality,
-          vibe,
-          logo_prominence,
-          occasion_fit,
-          material_feel,
-          visual_description,
-          primary_type,
-          secondary_type,
-          layer_role,
-          warmth_level,
-          confidence,
-          visual_identity,
-          identity_confidence,
-        };
-
-        logger.info("AI NORMALIZED OUT:", normalized);
-        return res.status(200).send(normalized);
-      } catch (error) {
-        logger.error("Chyba pri analyzeClothingImage:", error);
-        return res.status(500).send(
-          "Chyba servera pri analýze obrázka: " + (error.message || String(error))
-        );
-      }
-    });
+      },
+    }));
 
   // ---------------------------------------------------------------------------
   // 2) chatWithStylist – GEN1 HTTPS
@@ -2731,6 +2338,10 @@ exports.attachCleanImageOnWardrobeWrite = functions
           data.occasionContext :
           null;
 
+      const homeTaste = attachHomeFinalReviewPreferences(
+        data?.userStylePreferences,
+      );
+
       const hasOccasionContext = Boolean(
         occasionContext &&
         (occasionContext.occasionLabel ||
@@ -2773,6 +2384,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         `3) Pri voľnom čase a teple (napr. ≥26°C) môžu byť shorts vhodné — LEN ak occasionContext to nezakazuje.\n` +
         `4) NIKDY nevyber kandidáta s discouraged bottom family, ak existuje iný s preferred/allowed spodným dielom.\n` +
         `5) Každý kandidát má bottomFamily, bottomAllowed, bottomPreferred, prípadne compromiseNotes — použi ich.\n` +
+        homeTaste.systemSuffix +
         `\n` +
         `Vráť striktne STRICT JSON iba s týmto tvarom:\n` +
         `{\n` +
@@ -2787,7 +2399,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         `Ak suggestedSwap nie je potrebný, daj "suggestedSwap": null.\n` +
         `Bez markdownu, bez ďalšieho textu.\n`;
 
-      const userPrompt = JSON.stringify({
+      const userPromptPayload = {
         weatherContext,
         occasionContext: hasOccasionContext ? occasionContext : null,
         footwearGuidance,
@@ -2810,7 +2422,12 @@ exports.attachCleanImageOnWardrobeWrite = functions
           items: cand.items,
         })),
         availableItemIds: Array.from(availableItemIds).slice(0, 120),
-      });
+      };
+      if (homeTaste.prefs) {
+        userPromptPayload.userStylePreferences = homeTaste.prefs;
+        userPromptPayload.stylePreferenceNotes = homeTaste.userBlock;
+      }
+      const userPrompt = JSON.stringify(userPromptPayload);
 
       const messages = [
         { role: "system", content: systemPrompt },
@@ -3770,54 +3387,6 @@ exports.attachCleanImageOnWardrobeWrite = functions
     };
   }
 
-  function wardrobeDocToSummaryLine(item) {
-    const name = String(item.name || item.typePretty || item.type || "").trim();
-    const category = String(item.category || item.categoryKey || "").trim();
-    const subCategory = String(item.subCategory || item.subCategoryKey || "").trim();
-    const mainGroup = String(item.mainGroup || item.mainGroupKey || "").trim();
-    const brand = String(item.brand || "").trim();
-    const colors = Array.isArray(item.colors) ?
-      item.colors.map((v) => String(v).trim()).filter(Boolean) :
-      [];
-    const styles = Array.isArray(item.styles) ?
-      item.styles.map((v) => String(v).trim()).filter(Boolean) :
-      [];
-    const seasons = Array.isArray(item.seasons) ?
-      item.seasons.map((v) => String(v).trim()).filter(Boolean) :
-      [];
-    const patterns = Array.isArray(item.patterns) ?
-      item.patterns.map((v) => String(v).trim()).filter(Boolean) :
-      [];
-    const logoProminence = String(
-      item.logo_prominence || item.logoProminence || "",
-    ).trim();
-    const warmthRaw = Number(item.warmth_level ?? item.warmthLevel);
-    const warmthLevel = Number.isFinite(warmthRaw) ? warmthRaw : null;
-    const layerRole = String(item.layer_role || item.layerRole || "").trim();
-
-    const details = [];
-    if (category) details.push(`kategória: ${category}`);
-    if (subCategory) details.push(`subkategória: ${subCategory}`);
-    if (mainGroup) details.push(`skupina: ${mainGroup}`);
-    if (colors.length) details.push(`farby: ${colors.join(", ")}`);
-    if (patterns.length) details.push(`vzor: ${patterns.join(", ")}`);
-    if (logoProminence && logoProminence !== "unknown") {
-      details.push(`logo: ${logoProminence}`);
-    }
-    if (warmthLevel != null) details.push(`teplo(1-10): ${warmthLevel}`);
-    if (layerRole) details.push(`vrstva: ${layerRole}`);
-    if (styles.length) details.push(`štýl: ${styles.join(", ")}`);
-    if (seasons.length) details.push(`sezóny: ${seasons.join(", ")}`);
-    if (brand) details.push(`značka: ${brand}`);
-    const visualDesc = String(
-      item.visual_description || item.visualDescription || "",
-    ).trim();
-    if (visualDesc) details.push(`vizuál: ${visualDesc.slice(0, 120)}`);
-    if (item.id) details.push(`id: ${item.id}`);
-
-    const label = name || "Neznámy kúsok";
-    return details.length ? `- ${label} | ${details.join(" | ")}` : `- ${label}`;
-  }
 
   function filterWardrobeDocsForFormalOccasion(docs) {
     return docs.filter((item) => {
@@ -4002,7 +3571,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
     .runWith({timeoutSeconds: 120, memory: "512MB"})
     .https.onCall(async (data, context) => {
       const uid = context.auth?.uid || null;
-      const message = String(data?.message || "").trim();
+      let message = String(data?.message || "").trim();
+      let clearShoppingContext = false;
       const weatherContext =
         data?.weatherContext && typeof data.weatherContext === "object" ?
           data.weatherContext :
@@ -4011,6 +3581,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
         data?.clientContext && typeof data.clientContext === "object" ?
           data.clientContext :
           null;
+      const userStylePreferences =
+        sanitizeUserStylePreferences(data?.userStylePreferences);
       const outfitContextState =
         data?.outfitContextState && typeof data.outfitContextState === "object" ?
           data.outfitContextState :
@@ -4053,7 +3625,19 @@ exports.attachCleanImageOnWardrobeWrite = functions
             .map((doc) => ({id: doc.id, ...(doc.data() || {})}));
           wardrobeItemsForSuggestions = wardrobeDocs.map(slimWardrobeItemForClient);
 
-          wardrobeSummaryLines = wardrobeDocs.map(wardrobeDocToSummaryLine);
+          wardrobeSummaryLines = wardrobeDocs.map(
+            (doc) => wardrobeDocToSummaryLine(doc, wardrobeDocs),
+          );
+          const setLines = wardrobeSummaryLines.filter((line) =>
+            String(line).includes("setId:"),
+          );
+          logger.info("stylistChat: set_signal_projection", {
+            uid,
+            includeWardrobe,
+            wardrobeCount: wardrobeDocs.length,
+            setLineCount: setLines.length,
+            setLines,
+          });
         } catch (err) {
           logger.warn("stylistChat: wardrobe load failed", {uid, error: err?.message || String(err)});
           wardrobeSummaryLines = [];
@@ -4062,6 +3646,64 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
       if (!message && !(isRatePhoto && photoImageUrl)) {
         return { reply: "Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš s outfitom." };
+      }
+
+      // Shopping commands are resolved before the LLM path. The typed runtime
+      // may interpret user intent, but every product fact comes exclusively
+      // from the Phase 4 orchestration DTO.
+      if (!isRatePhoto && mode === "chat" && uid) {
+        const shoppingContext =
+          data?.shoppingContext && typeof data.shoppingContext === "object" ?
+            data.shoppingContext :
+            {};
+        const wardrobeSignal =
+          data?.shoppingWardrobeSignal &&
+          typeof data.shoppingWardrobeSignal === "object" ?
+            data.shoppingWardrobeSignal :
+            null;
+        let shoppingTurn;
+        try {
+          shoppingTurn = await handleStylistShoppingTurn({
+            auth: {uid},
+            message,
+            shoppingContext,
+            orchestrator: stylistShoppingOrchestrator,
+            wardrobeSignal,
+          });
+        } catch (error) {
+          if (!(error instanceof ShoppingOrchestrationError)) throw error;
+          logger.warn("stylistChat: Shopping session rejected", {
+            code: error.code,
+            uid,
+          });
+          const recoverable = ["SESSION_EXPIRED", "POOL_STALE"].includes(error.code);
+          return await finalizeStylistResult(uid, notifyJobId, chatId, {
+            reply: recoverable ?
+              "Tento nákupný výber už nie je aktuálny." :
+              "Nákupný výber sa nepodarilo bezpečne použiť.",
+            action: "RETURN_TO_WARDROBE_STYLIST",
+            suggestedItems: [],
+            messageAttachments: recoverable ? [{
+              kind: "shopping_session_recovery",
+              errorCode: error.code,
+              actionMessage: "vyhľadaj znova",
+            }] : [],
+            clearShoppingContext: true,
+            shoppingErrorCode: error.code,
+          });
+        }
+        if (shoppingTurn.handled) {
+          return await finalizeStylistResult(
+            uid,
+            notifyJobId,
+            chatId,
+            shoppingTurn.response,
+          );
+        }
+        if (shoppingTurn.passThroughMessage) {
+          message = String(shoppingTurn.passThroughMessage).trim();
+        }
+        clearShoppingContext = shoppingTurn.clearShoppingContext === true;
       }
 
       const eventContextInput =
@@ -4099,7 +3741,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         }
         const wardrobeListForVision = wardrobeDocsForPrompt.length > 0 ?
           wardrobeDocsForPrompt
-            .map(wardrobeDocToSummaryLine)
+            .map((doc) => wardrobeDocToSummaryLine(doc, wardrobeDocsForPrompt))
             .slice(0, 60)
             .join("\n") :
           wardrobeSummaryLines.length > 0 ?
@@ -4168,13 +3810,17 @@ exports.attachCleanImageOnWardrobeWrite = functions
             `Šatník používateľa (z neho navrhni alternatívu, použi PRESNÉ id ` +
             `zo zoznamu):\n${wardrobeListForVision}` :
           baseText;
+        const userTextWithPrefs = appendStylePreferencesSection(
+          userText,
+          userStylePreferences,
+        );
         const visionMessages = [
           {role: "system", content: ratePrompt},
           ...historyFromClient,
           {
             role: "user",
             content: [
-              {type: "text", text: userText},
+              {type: "text", text: userTextWithPrefs},
               {type: "text", text: "FOTKA POUŽÍVATEĽA (hodnotený outfit):"},
               {type: "image_url", image_url: {url: photoImageUrl}},
               ...formalImages.content,
@@ -4304,7 +3950,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           ...historyFromClient,
           {
             role: "user",
-            content:
+            content: appendStylePreferencesSection(
               `Najnovšia správa používateľa:\n${message}\n\n` +
               `Event context:\n${JSON.stringify(eventContextInput || {})}\n\n` +
               `Occasion context:\n${JSON.stringify(occasionContext || {})}\n\n` +
@@ -4314,6 +3960,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
               `Wardrobe analysis:\n${JSON.stringify(wardrobeAnalysis || {})}\n\n` +
               `Stylist opinion (tvoj strop pre optimizmus):\n${JSON.stringify(stylistOpinion || {})}\n\n` +
               `Vybraný outfit na zhodnotenie vhodnosti:\n${outfitLines.join("\n") || "- (prázdny outfit)"}`,
+              userStylePreferences,
+            ),
           },
         ];
         try {
@@ -4384,7 +4032,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         ...historyFromClient,
         {
           role: "user",
-          content:
+          content: appendStylePreferencesSection(
             `Najnovšia správa používateľa:\n${message}\n\n` +
             `Client context (dátum/čas):\n${formatStylistChatClientContext(clientContext)}\n\n` +
             `Outfit context state (známe fakty z appky — NEPÝTAJ sa na to, čo tu už je):\n` +
@@ -4394,6 +4042,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
             `Weather context (autoritatívne — NIKDY sa usera nepýtaj na počasie):\n` +
             `${JSON.stringify(weatherContext)}\n\n` +
             `User wardrobe:\n${wardrobeContext}`,
+            userStylePreferences,
+          ),
         },
       ];
 
@@ -4404,6 +4054,18 @@ exports.attachCleanImageOnWardrobeWrite = functions
           temperature: routing.temperature,
         });
         const parsed = extractFirstJsonObject(raw);
+        if (parsed?.shoppingAction) {
+          const validation = validateShoppingAiActionInRuntime(
+            parsed.shoppingAction,
+            data?.shoppingContext || {},
+          );
+          if (!validation.valid) {
+            logger.warn("stylistChat: rejected AI Shopping action", {
+              code: validation.code,
+            });
+            delete parsed.shoppingAction;
+          }
+        }
 
         const clarifyRoundUsed =
           outfitContextState?.clarifyRoundUsed === true;
@@ -4488,6 +4150,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           assumptions,
           clarifyReason,
           impactFields,
+          clearShoppingContext,
         });
       } catch (error) {
         logger.error("stylistChat error:", error);
@@ -9994,3 +9657,137 @@ exports.processWardrobeProductLinkImage = functions
     }
     return null;
   });
+
+// =============================================================================
+// M11.1 Phase 10B/10D.1 — Controlled wardrobe authority callable exports
+// Default mode: disabled (WARDROBE_AUTHORITY_MODE).
+// Callable names must match Flutter: wardrobeRevisionLifecycle,
+// wardrobeQualificationAuthority.
+//
+// Deploy note (Windows PowerShell): quote --only filters. Unquoted commas are
+// parsed as PowerShell arrays and yield "No function matches given --only
+// filters" even when these exports exist. Prefer:
+//   firebase deploy --only "functions:wardrobeRevisionLifecycle,functions:wardrobeQualificationAuthority" --project outfitoftheday-4d401
+// =============================================================================
+(function registerWardrobeAuthorityCallables() {
+  const {
+    isWardrobeAuthorityStaticExportAllowed,
+    phase10bStaticExportState,
+    buildWardrobeAuthorityCallables,
+    CALLABLE_NAMES,
+  } = require("./wardrobe_authority_callable_exports");
+  const {
+    resolveWardrobeAuthorityMode,
+    DEFAULT_MODE,
+  } = require("./wardrobe_authority_runtime_mode");
+
+  const exportState = phase10bStaticExportState();
+  if (!isWardrobeAuthorityStaticExportAllowed(exportState)) {
+    throw new Error(
+      "wardrobe_authority_static_export_gate_failed:" +
+        "callables must remain registered for deploy discovery",
+    );
+  }
+
+  if (exports[CALLABLE_NAMES.lifecycle] || exports[CALLABLE_NAMES.authority]) {
+    throw new Error("wardrobe_authority_duplicate_export");
+  }
+
+  // Lazy production composition. Disabled mode returns before `.get()`, so
+  // import and disabled calls perform no Firestore/Storage/OpenAI operation.
+  const {createWardrobeAuthorityProductionDependencies} =
+    require("./wardrobe_authority_production_dependencies");
+  const {resolveOpenAISecret} = require("./openai_secret_binding");
+  const {resolveControlledShadowPolicy} =
+    require("./controlled_shadow_policy_config");
+  const {resolveControlledWritePolicy} =
+    require("./controlled_write_policy_config");
+  const {createAdminShadowLeaseStore} =
+    require("./wardrobe_admin_shadow_lease_store");
+  const {createAdminFirestoreTransactionRunner} =
+    require("./wardrobe_admin_firestore_transactional_store");
+  const {createAdminControlledWriteLeaseStore} =
+    require("./wardrobe_admin_controlled_write_lease_store");
+  const authorityProjectId = process.env.GCLOUD_PROJECT ||
+    process.env.GOOGLE_CLOUD_PROJECT;
+  const authorityBucketName = process.env.STORAGE_BUCKET;
+  const authorityBucket = () => admin.storage().bucket(authorityBucketName);
+  const dependencyFactory = createWardrobeAuthorityProductionDependencies({
+    config: {
+      environmentMode: "production",
+      projectId: authorityProjectId || "unresolved-project",
+      storageBucket: authorityBucketName,
+      region: "us-east1",
+      visionSchemaVersion: 9,
+      modelIdentifier: "gpt-4o-mini",
+      promptVersion: "vision-v2-schema-9",
+      qualificationVersion: "qualification-v1",
+      revisionContractVersion: "wardrobe-qualification-revision-context-v1",
+      persistenceSchemaVersion: 1,
+    },
+    firestoreStoreOptions: {
+      get: async (uid, itemId) => admin.firestore().collection("users")
+        .doc(uid).collection("wardrobe").doc(itemId).get(),
+      runTransaction: createAdminFirestoreTransactionRunner({
+        firestore: admin.firestore(),
+      }),
+    },
+    adminStorageGetMetadata: async (storagePath) => {
+      try {
+        const [metadata] = await authorityBucket().file(storagePath).getMetadata();
+        return metadata;
+      } catch (error) {
+        if (error && Number(error.code) === 404) return null;
+        throw error;
+      }
+    },
+    readObjectBytes: async (storagePath) => {
+      const file = authorityBucket().file(storagePath);
+      const [buffer] = await file.download();
+      const [metadata] = await file.getMetadata();
+      return {buffer, contentType: metadata.contentType || "image/jpeg"};
+    },
+    fetchImpl: fetch,
+    resolveOpenAISecret,
+    resolveShadowPolicy: resolveControlledShadowPolicy,
+    resolveControlledWritePolicy,
+    createShadowLeaseStore: () => createAdminShadowLeaseStore({
+      firestore: admin.firestore(),
+    }),
+    createControlledWriteLeaseStore: () =>
+      createAdminControlledWriteLeaseStore({firestore: admin.firestore()}),
+    serverClock: () => new Date().toISOString(),
+    invocationIdFactory: () => crypto.randomUUID(),
+    logger,
+  });
+
+  const built = buildWardrobeAuthorityCallables({
+    dependencyFactory,
+    resolveMode: () =>
+      resolveWardrobeAuthorityMode(
+        process.env.WARDROBE_AUTHORITY_MODE || DEFAULT_MODE,
+      ),
+    logger,
+  });
+
+  // Exact Gen1 callable export names (Firebase CLI --only filters).
+  exports.wardrobeRevisionLifecycle = built.lifecycleCallable;
+  exports.wardrobeQualificationAuthority = built.authorityCallable;
+
+  const lifecycleExport = exports.wardrobeRevisionLifecycle;
+  const authorityExport = exports.wardrobeQualificationAuthority;
+  if (
+    typeof lifecycleExport !== "function" ||
+    typeof authorityExport !== "function" ||
+    !lifecycleExport.__trigger ||
+    !authorityExport.__trigger
+  ) {
+    throw new Error("wardrobe_authority_callable_export_metadata_missing");
+  }
+
+  logger.info(
+    "wardrobe authority callables registered " +
+      "(defaultMode=" + DEFAULT_MODE + " names=" +
+      CALLABLE_NAMES.lifecycle + "," + CALLABLE_NAMES.authority + ")",
+  );
+})();

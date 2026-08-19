@@ -6,19 +6,25 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../utils/wardrobe_image_url_priority.dart';
+import '../domain/trip/trip_intent_policy.dart';
+import '../domain/trip/trip_packing_coverage.dart';
+import '../domain/wardrobe_v2/wardrobe_ontology_v2.dart';
+import '../domain/wardrobe_v2/wardrobe_v2_adapters.dart';
+import '../domain/wardrobe_v2/wardrobe_item_v2.dart';
+import 'native_wardrobe_v2_runtime.dart';
 import 'destination_search_service.dart';
 import 'trip_flight_models.dart';
+import 'calendar_weather_resolver.dart';
+import 'trip_destination_weather.dart';
 
 enum TripKind { holiday, cityBreak, business, hiking, beach, festival }
+
 enum TripTransport { car, plane, train, bus }
+
 enum TripTravelStyle { comfy, elegant, subtle, stylish }
 
 /// Zdroj času príchodu / príletu (Firestore / staré dokumenty: `auto_estimated` | `manual` | `unknown`).
-enum TripArrivalTimeSource {
-  autoEstimated,
-  manual,
-  unknown,
-}
+enum TripArrivalTimeSource { autoEstimated, manual, unknown }
 
 String tripArrivalTimeSourceToWire(TripArrivalTimeSource s) {
   switch (s) {
@@ -74,6 +80,7 @@ class TripPlanInput {
   /// Môže byť viac súčasne (napr. dovolenka + pláž + turistika).
   final Set<TripKind> tripKinds;
   final TripTransport transport;
+
   /// Viaceré naraz ovplyvňujú výber (pohodlie, elegancia, …).
   final Set<TripTravelStyle> travelStyles;
   final String activityNotes;
@@ -173,6 +180,7 @@ class TripWardrobePiece {
   final String id;
   final String nameSk;
   final String? imageUrl;
+
   /// Hero-order URLs (cutout → clean → product → legacy → original) for resilient tiles.
   final List<String> imageDisplayUrls;
 
@@ -183,9 +191,15 @@ class TripWardrobePiece {
     List<String>? imageDisplayUrls,
   }) : imageDisplayUrls = _freezeTripImageUrls(imageDisplayUrls, imageUrl);
 
-  static List<String> _freezeTripImageUrls(List<String>? explicit, String? primary) {
+  static List<String> _freezeTripImageUrls(
+    List<String>? explicit,
+    String? primary,
+  ) {
     if (explicit != null && explicit.isNotEmpty) {
-      final u = explicit.map((e) => e.trim()).where((e) => e.isNotEmpty).toList();
+      final u = explicit
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
       return List<String>.unmodifiable(u);
     }
     final p = primary?.trim();
@@ -201,11 +215,19 @@ class TripWeatherDayPreview {
   final int highTempC;
   final int lowTempC;
   final String conditionSk;
+  final bool forecastAvailable;
+  final String sourceLabelSk;
+  final bool isRainy;
+  final bool isWindy;
   const TripWeatherDayPreview({
     required this.label,
     required this.highTempC,
     required this.lowTempC,
     required this.conditionSk,
+    this.forecastAvailable = false,
+    this.sourceLabelSk = 'Odhad',
+    this.isRainy = false,
+    this.isWindy = false,
   });
 }
 
@@ -245,6 +267,7 @@ class TripDailyOutfitPreview {
   final int dayIndex;
   final String titleSk;
   final String summarySk;
+
   /// Voliteľný kontext (vrstva na let, návrat domov, …).
   final String? dayHintSk;
   final List<TripWardrobePiece> pieces;
@@ -255,6 +278,8 @@ class TripDailyOutfitPreview {
   final int? weatherHighC;
   final int? weatherLowC;
   final String? weatherConditionSk;
+  final String? weatherSourceLabelSk;
+  final bool? weatherForecastAvailable;
 
   const TripDailyOutfitPreview({
     required this.dayIndex,
@@ -267,13 +292,18 @@ class TripDailyOutfitPreview {
     this.weatherHighC,
     this.weatherLowC,
     this.weatherConditionSk,
+    this.weatherSourceLabelSk,
+    this.weatherForecastAvailable,
   });
 }
 
 class TripMissingItemSuggestion {
   final String nameSk;
   final String reasonSk;
-  const TripMissingItemSuggestion({required this.nameSk, required this.reasonSk});
+  const TripMissingItemSuggestion({
+    required this.nameSk,
+    required this.reasonSk,
+  });
 }
 
 class TripPackingPlaceholderResult {
@@ -282,9 +312,11 @@ class TripPackingPlaceholderResult {
   final List<TripWardrobePiece> travelOutboundPieces;
   final List<TripWardrobePiece> travelReturnPieces;
   final List<TripWardrobePiece> luggageItems;
+
   /// Len outfity pobytu v destinácii (nie letisko ani návrat).
   final List<TripDailyOutfitPreview> destinationDailyPlans;
   final List<TripMissingItemSuggestion> missingItems;
+
   /// Šatník mal aspoň jeden kandidát pri generovaní (Firestore načítaný).
   final bool hadWardrobeCandidates;
   const TripPackingPlaceholderResult({
@@ -303,8 +335,43 @@ class TripPackingPlaceholderResult {
 class _WardrobeCandidate {
   final TripWardrobePiece piece;
   final String blob;
+  final WardrobeItemV2 v2;
 
-  const _WardrobeCandidate({required this.piece, required this.blob});
+  const _WardrobeCandidate({
+    required this.piece,
+    required this.blob,
+    required this.v2,
+  });
+
+  bool get isUpperBody => v2.bodySlots.contains('upper_body');
+  bool get isLowerBody => v2.bodySlots.contains('lower_body');
+  bool get isFullBody => v2.bodySlots.contains('full_body');
+  bool get isFootwear => v2.bodySlots.contains('feet');
+  bool get isMidLayer => v2.layerPosition == 'mid';
+  bool get isOuterLayer =>
+      v2.layerPosition == 'outer' || v2.layerPosition == 'shell';
+  bool get isThermal =>
+      v2.layerPosition == 'skin_base' || v2.outfitFunctions.contains('thermal');
+  bool get isBag =>
+      v2.accessoryGroup == 'bag' || v2.outfitFunctions.contains('carrying');
+  bool get isHeadwear =>
+      v2.bodySlots.contains('head') && v2.canonicalFamily == 'headwear';
+  bool get isEyewear =>
+      v2.bodySlots.contains('face_eyes') || v2.canonicalFamily == 'eyewear';
+  bool get isShorts =>
+      v2.canonicalType == 'shorts' || v2.canonicalFamily == 'shorts';
+  bool get isSandals =>
+      v2.canonicalType.contains('sandal') ||
+      v2.canonicalType == 'flip_flops' ||
+      v2.canonicalType == 'slides';
+  bool get isSwimwear =>
+      v2.canonicalFamily == 'swimwear' || v2.outfitFunctions.contains('swim');
+  bool get highReuse =>
+      isOuterLayer ||
+      isBag ||
+      v2.canonicalType == 'watch' ||
+      v2.accessoryGroup != null;
+  bool get contextualReuse => isLowerBody || isMidLayer || isFootwear;
 }
 
 enum _PieceReuseCategory { low, medium, high }
@@ -325,67 +392,772 @@ abstract final class TripPackingService {
 
   // --- Aliasy (normalizované cez _normList) ---
   static final List<String> _topsAliases = _normList(const [
-    'tričko', 'tricko', 't-shirt', 'tshirt', 'tee', 'top', 'tielko', 'tank', 'crop', 'polo',
-    'shirt', 'blúzka', 'bluzka', 'košeľa', 'kosela', 'blouse',
+    'tričko',
+    'tricko',
+    't-shirt',
+    'tshirt',
+    'tee',
+    'top',
+    'tielko',
+    'tank',
+    'crop',
+    'polo',
+    'shirt',
+    'blúzka',
+    'bluzka',
+    'košeľa',
+    'kosela',
+    'blouse',
   ]);
   static final List<String> _shortsAliases = _normList(const [
-    'kraťasy', 'kratasy', 'šortky', 'sortky', 'shorts', 'short', 'bermuda',
+    'kraťasy',
+    'kratasy',
+    'šortky',
+    'sortky',
+    'shorts',
+    'short',
+    'bermuda',
   ]);
   static final List<String> _sneakerAliases = _normList(const [
-    'tenisk', 'tenisky', 'sneaker', 'sneakers', 'trainer', 'running',
+    'tenisk',
+    'tenisky',
+    'sneaker',
+    'sneakers',
+    'trainer',
+    'running',
   ]);
   static final List<String> _sandalAliases = _normList(const [
-    'sandál', 'sandale', 'sandals', 'šľapky', 'slapky', 'flip', 'slide', 'slides', 'slipper',
+    'sandál',
+    'sandale',
+    'sandals',
+    'šľapky',
+    'slapky',
+    'flip',
+    'slide',
+    'slides',
+    'slipper',
   ]);
   static final List<String> _shoesAllAliases = _normList(const [
-    'tenisk', 'tenisky', 'sneaker', 'topánky', 'topanky', 'obuv', 'shoe', 'sandál', 'sandale',
-    'šľapky', 'slapky', 'loafer', 'mokas', 'členok', 'chelsea',
+    'tenisk',
+    'tenisky',
+    'sneaker',
+    'topánky',
+    'topanky',
+    'obuv',
+    'shoe',
+    'sandál',
+    'sandale',
+    'šľapky',
+    'slapky',
+    'loafer',
+    'mokas',
+    'členok',
+    'chelsea',
   ]);
   static final List<String> _swimAliases = _normList(const [
-    'plavk', 'swim', 'bikini', 'boardshort', 'swimwear',
+    'plavk',
+    'swim',
+    'bikini',
+    'boardshort',
+    'swimwear',
   ]);
   static final List<String> _layerAliases = _normList(const [
-    'mikina', 'hoodie', 'sweatshirt', 'sveter', 'cardigan', 'zip', 'fleece',
-    'ľahká bunda', 'lahka bunda', 'bunda', 'jacket', 'windbreaker',
+    'mikina',
+    'hoodie',
+    'sweatshirt',
+    'sveter',
+    'cardigan',
+    'zip',
+    'fleece',
+    'ľahká bunda',
+    'lahka bunda',
+    'bunda',
+    'jacket',
+    'windbreaker',
   ]);
   static final List<String> _longPantsAliases = _normList(const [
-    'chinos', 'jeans', 'nohavice', 'pants', 'trouser', 'teplák', 'teplak', 'legín',
+    'chinos',
+    'jeans',
+    'nohavice',
+    'pants',
+    'trouser',
+    'teplák',
+    'teplak',
+    'legín',
   ]);
   static final List<String> _hatAliases = _normList(const [
-    'čiap', 'šilt', 'klobú', 'cap', 'hat', 'bucket',
+    'čiap',
+    'šilt',
+    'klobú',
+    'cap',
+    'hat',
+    'bucket',
   ]);
   static final List<String> _tankOnlyAliases = _normList(const [
-    'tielko', 'tank', 'crop',
+    'tielko',
+    'tank',
+    'crop',
   ]);
   static final List<String> _sunglassesAliases = _normList(const [
-    'okuliar', 'slneč', 'sunglass',
+    'okuliar',
+    'slneč',
+    'sunglass',
   ]);
   static final List<String> _linenLightShirtAliases = _normList(const [
-    'ľan', 'linen', 'košeľa', 'kosela', 'shirt', 'button',
+    'ľan',
+    'linen',
+    'košeľa',
+    'kosela',
+    'shirt',
+    'button',
   ]);
   static final List<String> _bagAliases = _normList(const [
-    'batoh', 'tašk', 'bag', 'crossbody', 'ruksak', 'backpack',
+    'batoh',
+    'tašk',
+    'bag',
+    'crossbody',
+    'ruksak',
+    'backpack',
   ]);
   static final List<String> _workShirtAliases = _normList(const [
-    'košeľa', 'kosela', 'shirt', 'blúzka', 'bluzka', 'blouse',
+    'košeľa',
+    'kosela',
+    'shirt',
+    'blúzka',
+    'bluzka',
+    'blouse',
   ]);
   static final List<String> _workPantsAliases = _normList(const [
-    'chinos', 'nohavice', 'tailor', 'formál', 'formal', 'dress pant',
+    'chinos',
+    'nohavice',
+    'tailor',
+    'formál',
+    'formal',
+    'dress pant',
   ]);
   static final List<String> _workShoeAliases = _normList(const [
-    'loafer', 'oxford', 'chelsea', 'mokas', 'topán', 'topan',
+    'loafer',
+    'oxford',
+    'chelsea',
+    'mokas',
+    'topán',
+    'topan',
   ]);
   static final List<String> _blazerAliases = _normList(const [
-    'sako', 'blazer', 'suit',
+    'sako',
+    'blazer',
+    'suit',
   ]);
   static final List<String> _hikeBootAliases = _normList(const [
-    'turist', 'hike', 'trail', 'boot', 'goretex',
+    'turist',
+    'hike',
+    'trail',
+    'boot',
+    'goretex',
   ]);
   static final List<String> _hikeShellAliases = _normList(const [
-    'fleece', 'softshell', 'nepromok', 'bunda', 'shell',
+    'fleece',
+    'softshell',
+    'nepromok',
+    'bunda',
+    'shell',
   ]);
 
-  static Future<TripPackingPlaceholderResult> generatePlaceholderPlan(TripPlanInput input) async {
+  static Future<TripPackingPlaceholderResult> generatePlaceholderPlan(
+    TripPlanInput input,
+  ) async {
+    final candidates = await _loadCandidates(input.userId);
+    final destinationWeather = await _resolveDestinationWeather(input);
+    return _composePlaceholderPlan(
+      input,
+      candidates,
+      destinationWeather: destinationWeather,
+    );
+  }
+
+  /// Test seam for the live generator. Does not read Firestore or style prefs.
+  @visibleForTesting
+  static TripPackingPlaceholderResult composePlaceholderPlanForTest({
+    required TripPlanInput input,
+    required List<Map<String, dynamic>> wardrobeDocs,
+    WardrobeOntologyV2? ontology,
+    List<TripResolvedDayWeather>? destinationWeather,
+  }) {
+    return _composePlaceholderPlan(
+      input,
+      _candidatesFromRaws(wardrobeDocs, ontology: ontology),
+      destinationWeather: destinationWeather,
+    );
+  }
+
+  /// Test seam that exercises the real-or-fallback weather resolver.
+  @visibleForTesting
+  static Future<TripPackingPlaceholderResult>
+  composePlaceholderPlanWithWeatherSourceForTest({
+    required TripPlanInput input,
+    required List<Map<String, dynamic>> wardrobeDocs,
+    required TripDestinationWeatherSource weatherSource,
+    WardrobeOntologyV2? ontology,
+  }) async {
+    final destinationWeather = await _resolveDestinationWeather(
+      input,
+      source: weatherSource,
+    );
+    return _composePlaceholderPlan(
+      input,
+      _candidatesFromRaws(wardrobeDocs, ontology: ontology),
+      destinationWeather: destinationWeather,
+    );
+  }
+
+  static TripPackingPlaceholderResult _composePlaceholderPlan(
+    TripPlanInput input,
+    List<_WardrobeCandidate> candidates, {
+    List<TripResolvedDayWeather>? destinationWeather,
+  }) {
+    final warmBeach = _isWarmBeachContext(input);
+    final weather = _buildWeatherBundle(
+      input,
+      warmBeach: warmBeach,
+      cityTrip: input.tripKinds.contains(TripKind.cityBreak),
+      destinationWeather: destinationWeather,
+    );
+    final workTrip = input.tripKinds.contains(TripKind.business) ||
+        _hasWorkEvent(input.activityNotes);
+    final hikingTrip = input.tripKinds.contains(TripKind.hiking);
+    if (candidates.isEmpty) {
+      return TripPackingPlaceholderResult(
+        tripDays: input.tripDayCount,
+        weather: weather,
+        travelOutboundPieces: const [],
+        travelReturnPieces: const [],
+        luggageItems: const [],
+        destinationDailyPlans: _emptyDestinationDailyPlans(input),
+        missingItems: _missingWhenNoWardrobe(
+          warmBeach: warmBeach,
+          workTrip: workTrip,
+          cityTrip: input.tripKinds.contains(TripKind.cityBreak),
+          hikingTrip: hikingTrip,
+        ),
+        hadWardrobeCandidates: false,
+      );
+    }
+
+    final upper = candidates.where((item) => item.isUpperBody).toList();
+    final lower = candidates.where((item) => item.isLowerBody).toList();
+    final full = candidates.where((item) => item.isFullBody).toList();
+    final footwear = candidates.where((item) => item.isFootwear).toList();
+    final layers = candidates
+        .where(
+          (item) =>
+              (item.isMidLayer || item.isOuterLayer) &&
+              !item.isLowerBody &&
+              !item.isFootwear &&
+              item.v2.layerPosition != 'skin_base',
+        )
+        .toList();
+    final accessories = candidates
+        .where((item) => item.isBag || item.isHeadwear || item.isEyewear)
+        .toList();
+    final missing = <TripMissingItemSuggestion>[
+      if (full.isEmpty && upper.isEmpty)
+        const TripMissingItemSuggestion(
+          nameSk: 'vrchný alebo jednodielny základ',
+          reasonSk: 'Chýba V2 core položka pre hornú alebo celú postavu.',
+        ),
+      if (full.isEmpty && lower.isEmpty)
+        const TripMissingItemSuggestion(
+          nameSk: 'spodný diel',
+          reasonSk: 'Chýba V2 lower_body core položka.',
+        ),
+      if (footwear.isEmpty)
+        const TripMissingItemSuggestion(
+          nameSk: 'obuv',
+          reasonSk: 'Chýba V2 položka pre body slot feet.',
+        ),
+      if (hikingTrip &&
+          footwear.isNotEmpty &&
+          !footwear.any(
+            (item) => TripIntentPolicy.isAcceptableHikingFootwear(item.v2),
+          ))
+        const TripMissingItemSuggestion(
+          nameSk: 'turistická / outdoorová obuv',
+          reasonSk:
+              'Na turistiku treba uzavretú outdoorovú obuv (hiking_shoes, boots). Použitá je najbezpečnejšia náhrada zo šatníka.',
+        ),
+      if (workTrip &&
+          !_hasBusinessAppropriateOutfit(
+            upper: upper,
+            lower: lower,
+            full: full,
+            footwear: footwear,
+          ))
+        const TripMissingItemSuggestion(
+          nameSk: 'pracovne vhodný základ outfitu',
+          reasonSk:
+              'Na pracovnú cestu chýba kombinácia s formality aspoň 5 (V2) pre vrch/spodok.',
+        ),
+    ];
+    final dates = _timelineDestinationDates(input, logTimeline: false);
+    final byId = <String, _WardrobeCandidate>{
+      for (final item in candidates) item.piece.id: item,
+    };
+    final coreUppers = _coreUpperPool(upper);
+    final coreLowers = lower
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) == TripIntentSlot.lower,
+        )
+        .toList();
+    final coreFull = full
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) == TripIntentSlot.full,
+        )
+        .toList();
+    final coreFootwear = footwear
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) ==
+              TripIntentSlot.footwear,
+        )
+        .toList();
+    final coreLayers = layers
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) == TripIntentSlot.layer,
+        )
+        .toList();
+    final coreAccessories = accessories
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) ==
+              TripIntentSlot.accessory,
+        )
+        .toList();
+    final dayNeeds = <TripCoverageDayNeed>[];
+    final daySignals = <TripIntentSignals>[];
+    for (var day = 0; day < dates.length; day++) {
+      final w = weather.destinationStayDays.elementAtOrNull(day);
+      final destSignals = _intentSignalsFor(
+        input,
+        warmBeach: warmBeach,
+        workTrip: workTrip,
+        hikingTrip: hikingTrip,
+        highTempC: w?.highTempC,
+        lowTempC: w?.lowTempC,
+        isRainy: w?.isRainy ?? false,
+        isWindy: w?.isWindy ?? false,
+        travelLeg: false,
+        dayIndex: day,
+        dayCount: dates.length,
+      );
+      daySignals.add(destSignals);
+      final valid = <TripIntentSlot, List<String>>{};
+      final useFull =
+          coreFull.isNotEmpty && (coreUppers.isEmpty || coreLowers.isEmpty);
+      if (useFull) {
+        valid[TripIntentSlot.full] = _intentRankedIds(
+          pool: coreFull,
+          signals: destSignals,
+          slot: TripIntentSlot.full,
+        );
+      } else {
+        if (coreUppers.isNotEmpty) {
+          valid[TripIntentSlot.upper] = _intentRankedIds(
+            pool: coreUppers,
+            signals: destSignals,
+            slot: TripIntentSlot.upper,
+          );
+        }
+        if (coreLowers.isNotEmpty) {
+          valid[TripIntentSlot.lower] = _intentRankedIds(
+            pool: coreLowers,
+            signals: destSignals,
+            slot: TripIntentSlot.lower,
+          );
+        }
+      }
+      if (coreFootwear.isNotEmpty) {
+        valid[TripIntentSlot.footwear] = _intentRankedIds(
+          pool: coreFootwear,
+          signals: destSignals,
+          slot: TripIntentSlot.footwear,
+        );
+      }
+      if (destSignals.needsWeatherLayer) {
+        valid[TripIntentSlot.layer] = _intentRankedIds(
+          pool: coreLayers,
+          signals: destSignals,
+          slot: TripIntentSlot.layer,
+        );
+      }
+      if (coreAccessories.isNotEmpty && day.isEven) {
+        valid[TripIntentSlot.accessory] = _intentRankedIds(
+          pool: coreAccessories,
+          signals: destSignals,
+          slot: TripIntentSlot.accessory,
+        );
+      }
+      dayNeeds.add(TripCoverageDayNeed(dayIndex: day, validIds: valid));
+    }
+    final catalog = <String, WardrobeItemV2>{
+      for (final item in candidates) item.piece.id: item.v2,
+    };
+    final coverage = dates.isEmpty
+        ? const TripCoverageResult(
+            assignment: {},
+            packedIds: {},
+            uncovered: [],
+          )
+        : TripPackingCoverage.plan(days: dayNeeds, catalog: catalog);
+    _addCoverageMissing(
+      missing,
+      uncovered: coverage.uncovered,
+      daySignals: daySignals,
+    );
+    final plans = <TripDailyOutfitPreview>[
+      for (var day = 0; day < dates.length; day++)
+        _previewForCoverageDay(
+          day: day,
+          weatherDay: weather.destinationStayDays.elementAtOrNull(day),
+          assigned: coverage.assignment[day] ?? const {},
+          byId: byId,
+        ),
+    ];
+    final used = <String, _WardrobeCandidate>{};
+    for (final plan in plans) {
+      for (final piece in plan.pieces) {
+        final candidate = byId[piece.id];
+        if (candidate != null) used[piece.id] = candidate;
+      }
+    }
+    // Unique destination IDs: reused pieces appear once in luggage.
+    // Travel-worn items are a separate UI section and are not extra luggage
+    // unless they are also used on a destination day.
+    final luggage = used.values
+        .map((item) => item.piece)
+        .toList(growable: false);
+    final travelSignals = _intentSignalsFor(
+      input,
+      warmBeach: warmBeach,
+      workTrip: workTrip,
+      hikingTrip: hikingTrip,
+      highTempC: weather.outboundRoute?.tempToC ??
+          weather.destinationStayDays.firstOrNull?.highTempC,
+      lowTempC: weather.destinationStayDays.firstOrNull?.lowTempC ??
+          weather.outboundRoute?.tempFromC,
+      isRainy: weather.destinationStayDays.firstOrNull?.isRainy ?? false,
+      isWindy: weather.destinationStayDays.firstOrNull?.isWindy ?? false,
+      travelLeg: true,
+    );
+    List<_WardrobeCandidate> packedFirst(List<_WardrobeCandidate> pool) {
+      final hit = pool.where((c) => used.containsKey(c.piece.id)).toList();
+      return hit.isNotEmpty ? hit : pool;
+    }
+
+    final travel = <TripWardrobePiece>[
+      if (_pickIntentAware(
+            pool: packedFirst(coreUppers.isNotEmpty ? coreUppers : upper),
+            signals: travelSignals,
+            slot: TripIntentSlot.upper,
+            dayIndex: 0,
+          )
+          case final item?)
+        item.piece,
+      if (_pickIntentAware(
+            pool: packedFirst(coreLowers.isNotEmpty ? coreLowers : lower),
+            signals: travelSignals,
+            slot: TripIntentSlot.lower,
+            dayIndex: 0,
+          )
+          case final item?)
+        item.piece,
+      if (travelSignals.needsWeatherLayer)
+        if (_pickIntentAware(
+              pool: packedFirst(coreLayers.isNotEmpty ? coreLayers : layers),
+              signals: travelSignals,
+              slot: TripIntentSlot.layer,
+              dayIndex: 0,
+            )
+            case final item?)
+          item.piece,
+    ];
+    debugPrint(
+      '[TRIP_PACKING] finalOutbound=${travel.map((p) => '${p.id}:${p.nameSk}').toList()}',
+    );
+    debugPrint(
+      '[TRIP_PACKING] finalReturn=${travel.map((p) => '${p.id}:${p.nameSk}').toList()}',
+    );
+    debugPrint(
+      '[TRIP_PACKING] finalLuggageItems=${luggage.map((p) => '${p.id}:${p.nameSk}').toList()}',
+    );
+    debugPrint(
+      '[TRIP_COMPONENT_INDEPENDENCE] uniqueItemIds=${used.keys.toList()} count=${used.length}',
+    );
+    return TripPackingPlaceholderResult(
+      tripDays: input.tripDayCount,
+      weather: weather,
+      travelOutboundPieces: travel,
+      travelReturnPieces: travel,
+      luggageItems: luggage,
+      destinationDailyPlans: plans,
+      missingItems: missing,
+      hadWardrobeCandidates: true,
+    );
+  }
+
+  static TripIntentSignals _intentSignalsFor(
+    TripPlanInput input, {
+    required bool warmBeach,
+    required bool workTrip,
+    required bool hikingTrip,
+    required bool travelLeg,
+    int? highTempC,
+    int? lowTempC,
+    bool isRainy = false,
+    bool isWindy = false,
+    int dayIndex = 0,
+    int dayCount = 1,
+  }) {
+    final mixed = input.tripKinds.length > 1;
+    return TripIntentSignals(
+      hiking: travelLeg
+          ? hikingTrip
+          : TripIntentPolicy.hikingAppliesOnDay(
+              selected: hikingTrip,
+              mixedKinds: mixed,
+              dayIndex: dayIndex,
+              dayCount: dayCount,
+            ),
+      business: travelLeg
+          ? workTrip
+          : TripIntentPolicy.businessAppliesOnDay(
+              selected: workTrip,
+              mixedKinds: mixed,
+              dayIndex: dayIndex,
+              dayCount: dayCount,
+            ),
+      warmBeach: warmBeach,
+      travelLeg: travelLeg,
+      travelStyles: input.travelStyles.map((e) => e.name).toSet(),
+      transport: input.transport.name,
+      highTempC: highTempC,
+      lowTempC: lowTempC,
+      isRainy: isRainy,
+      isWindy: isWindy,
+      tripIncludesHiking: hikingTrip,
+    );
+  }
+
+  static List<_WardrobeCandidate> _coreUpperPool(
+    List<_WardrobeCandidate> upper,
+  ) {
+    final core = upper
+        .where(
+          (item) =>
+              TripPackingCoverage.primarySlot(item.v2) == TripIntentSlot.upper,
+        )
+        .toList();
+    if (core.isNotEmpty) return core;
+    return upper
+        .where((item) => !item.isOuterLayer && !item.isFootwear)
+        .toList();
+  }
+
+  static List<String> _intentRankedIds({
+    required List<_WardrobeCandidate> pool,
+    required TripIntentSignals signals,
+    required TripIntentSlot slot,
+  }) {
+    return _intentRankedPool(
+      pool: pool,
+      signals: signals,
+      slot: slot,
+    ).map((item) => item.piece.id).toList(growable: false);
+  }
+
+  static List<_WardrobeCandidate> _intentRankedPool({
+    required List<_WardrobeCandidate> pool,
+    required TripIntentSignals signals,
+    required TripIntentSlot slot,
+  }) {
+    if (pool.isEmpty) return const [];
+    int hardOf(_WardrobeCandidate c) =>
+        TripIntentPolicy.hardScore(c.v2, signals, slot);
+    final maxHard = pool.map(hardOf).reduce((a, b) => a >= b ? a : b);
+    final suitable = pool
+        .where((c) => hardOf(c) == maxHard)
+        .toList(growable: false);
+    int styleOf(_WardrobeCandidate c) =>
+        TripIntentPolicy.travelStyleScore(c.v2, signals, slot);
+    final maxStyle = suitable.map(styleOf).reduce((a, b) => a >= b ? a : b);
+    return suitable.where((c) => styleOf(c) == maxStyle).toList(growable: false);
+  }
+
+  static _WardrobeCandidate? _pickIntentAware({
+    required List<_WardrobeCandidate> pool,
+    required TripIntentSignals signals,
+    required TripIntentSlot slot,
+    required int dayIndex,
+    _WardrobeCandidate? setAnchor,
+  }) {
+    final ranked = _intentRankedPool(pool: pool, signals: signals, slot: slot);
+    if (ranked.isEmpty) return null;
+    return _preferConfirmedSetPartner(
+      anchor: setAnchor,
+      alternatives: ranked,
+      fallbackIndex: dayIndex,
+    );
+  }
+
+  static TripDailyOutfitPreview _previewForCoverageDay({
+    required int day,
+    required TripWeatherDayPreview? weatherDay,
+    required Map<TripIntentSlot, String> assigned,
+    required Map<String, _WardrobeCandidate> byId,
+  }) {
+    const slotOrder = [
+      TripIntentSlot.full,
+      TripIntentSlot.upper,
+      TripIntentSlot.lower,
+      TripIntentSlot.footwear,
+      TripIntentSlot.layer,
+      TripIntentSlot.accessory,
+    ];
+    final selected = <_WardrobeCandidate>[];
+    final seen = <String>{};
+    for (final slot in slotOrder) {
+      final id = assigned[slot];
+      if (id == null || !seen.add(id)) continue;
+      final candidate = byId[id];
+      if (candidate != null) selected.add(candidate);
+    }
+    return TripDailyOutfitPreview(
+      dayIndex: day,
+      titleSk: 'Deň ${day + 1}',
+      summarySk: selected.any((item) => item.isFullBody)
+          ? 'Jednodielna V2 kompozícia'
+          : 'V2 separates kompozícia',
+      pieces: selected.map((item) => item.piece).toList(growable: false),
+      weatherDateLabelSk: weatherDay?.label,
+      weatherHighC: weatherDay?.highTempC,
+      weatherLowC: weatherDay?.lowTempC,
+      weatherConditionSk: weatherDay?.conditionSk,
+      weatherSourceLabelSk: weatherDay?.sourceLabelSk,
+      weatherForecastAvailable: weatherDay?.forecastAvailable,
+    );
+  }
+
+  static void _addCoverageMissing(
+    List<TripMissingItemSuggestion> missing, {
+    required List<(int dayIndex, TripIntentSlot slot)> uncovered,
+    required List<TripIntentSignals> daySignals,
+  }) {
+    bool hasName(String name) => missing.any((item) => item.nameSk == name);
+    for (final pair in uncovered) {
+      final signals = pair.$1 < daySignals.length
+          ? daySignals[pair.$1]
+          : null;
+      switch (pair.$2) {
+        case TripIntentSlot.footwear:
+          if (signals?.hiking == true &&
+              !hasName('turistická / outdoorová obuv')) {
+            missing.add(
+              const TripMissingItemSuggestion(
+                nameSk: 'turistická / outdoorová obuv',
+                reasonSk:
+                    'Na turistický deň chýba uzavretá outdoorová obuv zo šatníka.',
+              ),
+            );
+          }
+        case TripIntentSlot.layer:
+          if (!hasName('ochranná / zateplená vrstva')) {
+            missing.add(
+              const TripMissingItemSuggestion(
+                nameSk: 'ochranná / zateplená vrstva',
+                reasonSk:
+                    'Na chladný, daždivý alebo veterný deň chýba vhodná vrstva zo šatníka.',
+              ),
+            );
+          }
+        case TripIntentSlot.upper:
+        case TripIntentSlot.full:
+          if (signals?.business == true &&
+              !hasName('pracovne vhodný vrch')) {
+            missing.add(
+              const TripMissingItemSuggestion(
+                nameSk: 'pracovne vhodný vrch',
+                reasonSk:
+                    'Na pracovný deň chýba vrchný diel s formality aspoň 5 (V2).',
+              ),
+            );
+          }
+        case TripIntentSlot.lower:
+          if (signals?.business == true &&
+              !hasName('pracovne vhodný spodok')) {
+            missing.add(
+              const TripMissingItemSuggestion(
+                nameSk: 'pracovne vhodný spodok',
+                reasonSk:
+                    'Na pracovný deň chýba spodný diel s formality aspoň 5 (V2).',
+              ),
+            );
+          }
+        case TripIntentSlot.accessory:
+          break;
+      }
+    }
+  }
+
+  static bool _hasBusinessAppropriateOutfit({
+    required List<_WardrobeCandidate> upper,
+    required List<_WardrobeCandidate> lower,
+    required List<_WardrobeCandidate> full,
+    required List<_WardrobeCandidate> footwear,
+  }) {
+    final hasTop = full.any(
+          (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
+        ) ||
+        upper.any((item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2));
+    final hasBottom = full.any(
+          (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
+        ) ||
+        lower.any((item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2));
+    return hasTop && hasBottom;
+  }
+
+  static _WardrobeCandidate _preferConfirmedSetPartner({
+    required _WardrobeCandidate? anchor,
+    required List<_WardrobeCandidate> alternatives,
+    required int fallbackIndex,
+  }) {
+    final setId = anchor?.v2.setMembership?.setId;
+    if (setId != null && setId.isNotEmpty) {
+      final matching = alternatives.where(
+        (candidate) => candidate.v2.setMembership?.setId == setId,
+      );
+      if (matching.isNotEmpty) {
+        debugPrint(
+          '[TRIP_SET_SIGNAL] preference=true constraint=false '
+          'anchor=${anchor!.piece.id} setId=$setId '
+          'partner=${matching.first.piece.id}',
+        );
+        return matching.first;
+      }
+      debugPrint(
+        '[TRIP_SET_SIGNAL] preference=none setId=$setId '
+        'anchor=${anchor?.piece.id}',
+      );
+    }
+    return alternatives[fallbackIndex % alternatives.length];
+  }
+
+  // Historical rollback implementation. Active V2 planning never calls it.
+  // ignore: unused_element
+  static Future<TripPackingPlaceholderResult> _legacyGeneratePlaceholderPlan(
+    TripPlanInput input,
+  ) async {
     await Future<void>.delayed(const Duration(milliseconds: 2000));
 
     final warmBeach = _isWarmBeachContext(input);
@@ -395,10 +1167,17 @@ abstract final class TripPackingService {
     final hikingTrip = kinds.contains(TripKind.hiking);
     final festivalTrip = kinds.contains(TripKind.festival);
     final hasWorkEvent = _hasWorkEvent(input.activityNotes);
-    final coolSeason = _isCoolSeason(input.climateRangeStart, input.climateRangeEnd);
+    final coolSeason = _isCoolSeason(
+      input.climateRangeStart,
+      input.climateRangeEnd,
+    );
 
     final candidates = await _loadCandidates(input.userId);
-    final weather = _buildWeatherBundle(input, warmBeach: warmBeach, cityTrip: cityTrip);
+    final weather = _buildWeatherBundle(
+      input,
+      warmBeach: warmBeach,
+      cityTrip: cityTrip,
+    );
 
     if (candidates.isNotEmpty) {
       _timelineDestinationDates(input, logTimeline: true);
@@ -419,7 +1198,11 @@ abstract final class TripPackingService {
         plans: _emptyDestinationDailyPlans(input),
       );
       luggagePieces = const [];
-      missing = _missingWhenNoWardrobe(warmBeach: warmBeach, workTrip: workTrip, cityTrip: cityTrip);
+      missing = _missingWhenNoWardrobe(
+        warmBeach: warmBeach,
+        workTrip: workTrip,
+        cityTrip: cityTrip,
+      );
     } else if (warmBeach) {
       final packed = _packWarmBeachSplit(input, candidates);
       outbound = packed.outbound;
@@ -450,7 +1233,10 @@ abstract final class TripPackingService {
       );
       _logUsageSplit(outbound, return_, destinationPlans);
     } else {
-      final destDayCount = _timelineDestinationDates(input, logTimeline: false).length;
+      final destDayCount = _timelineDestinationDates(
+        input,
+        logTimeline: false,
+      ).length;
       final full = _buildDailyOutfitsFirst(
         input: input,
         candidates: candidates,
@@ -528,7 +1314,10 @@ abstract final class TripPackingService {
         outboundTravel: outbound,
         returnTravel: return_,
       );
-      final requestedDays = _timelineDestinationDates(input, logTimeline: false).length;
+      final requestedDays = _timelineDestinationDates(
+        input,
+        logTimeline: false,
+      ).length;
       debugPrint(
         '[TRIP_DAILY_COUNT] requested=$requestedDays totalGenerated=${destinationPlans.length}',
       );
@@ -537,15 +1326,21 @@ abstract final class TripPackingService {
     debugPrint(
       '[TRIP_PACKING] finalOutbound=${outbound.map((p) => '${p.id}:${p.nameSk}').toList()}',
     );
-    debugPrint('[TRIP_PACKING] finalReturn=${return_.map((p) => '${p.id}:${p.nameSk}').toList()}');
+    debugPrint(
+      '[TRIP_PACKING] finalReturn=${return_.map((p) => '${p.id}:${p.nameSk}').toList()}',
+    );
     debugPrint(
       '[TRIP_PACKING] finalLuggageItems=${luggagePieces.map((p) => '${p.id}:${p.nameSk}').toList()}',
     );
-    debugPrint('[TRIP_PACKING] missingNeeds=${missing.map((m) => m.nameSk).toList()}');
+    debugPrint(
+      '[TRIP_PACKING] missingNeeds=${missing.map((m) => m.nameSk).toList()}',
+    );
 
     if (candidates.isNotEmpty) {
       final wornIds = outbound.map((p) => p.id).toSet();
-      final usable = candidates.where((c) => !wornIds.contains(c.piece.id)).length;
+      final usable = candidates
+          .where((c) => !wornIds.contains(c.piece.id))
+          .length;
       debugPrint(
         '[DESTINATION_POOL] usableItems=$usable totalWardrobe=${candidates.length} travelWornCount=${outbound.length}',
       );
@@ -564,12 +1359,15 @@ abstract final class TripPackingService {
       );
     }
 
-    final orderedDest =
-        candidates.isEmpty ? destinationPlans : _orderAllDestinationPieces(destinationPlans, candidates);
-    final orderedOb =
-        candidates.isEmpty ? outbound : _orderPiecesTravelVisual(outbound, candidates);
-    final orderedRet =
-        candidates.isEmpty ? return_ : _orderPiecesTravelVisual(return_, candidates);
+    final orderedDest = candidates.isEmpty
+        ? destinationPlans
+        : _orderAllDestinationPieces(destinationPlans, candidates);
+    final orderedOb = candidates.isEmpty
+        ? outbound
+        : _orderPiecesTravelVisual(outbound, candidates);
+    final orderedRet = candidates.isEmpty
+        ? return_
+        : _orderPiecesTravelVisual(return_, candidates);
 
     return TripPackingPlaceholderResult(
       tripDays: input.tripDayCount,
@@ -598,7 +1396,9 @@ abstract final class TripPackingService {
       return returnSoFar;
     }
 
-    log('repair=start outbound=${outbound.length} destPlans=${destinationPlans.length}');
+    log(
+      'repair=start outbound=${outbound.length} destPlans=${destinationPlans.length}',
+    );
 
     final usedIds = <String>{};
     for (final p in outbound) {
@@ -620,7 +1420,8 @@ abstract final class TripPackingService {
     final shoesMix = _buildShoesMix(candidates);
     final anyShoe = _piecesMatching(candidates, _shoesAllAliases);
 
-    final retAnchor = input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd;
+    final retAnchor =
+        input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd;
     final retCold = _homeClimateFeelsCold(retAnchor);
     final wantTransportLayer = _transportSuggestsAirportLayer(input.transport);
     final preferLayer = retCold || wantTransportLayer;
@@ -636,7 +1437,8 @@ abstract final class TripPackingService {
 
       if (level >= 1) {
         for (final c in candidates) {
-          if (_reuseCategoryForPiece(c.piece, candidates) == _PieceReuseCategory.medium) {
+          if (_reuseCategoryForPiece(c.piece, candidates) ==
+              _PieceReuseCategory.medium) {
             avoid.remove(c.piece.id);
           }
         }
@@ -655,10 +1457,14 @@ abstract final class TripPackingService {
         avoid.clear();
       }
 
-      final freshCandidates =
-          tops.where((t) => !usedIds.contains(t.id)).map((e) => e.nameSk).toList();
-      final relaxedCandidates =
-          tops.where((t) => !avoid.contains(t.id)).map((e) => e.nameSk).toList();
+      final freshCandidates = tops
+          .where((t) => !usedIds.contains(t.id))
+          .map((e) => e.nameSk)
+          .toList();
+      final relaxedCandidates = tops
+          .where((t) => !avoid.contains(t.id))
+          .map((e) => e.nameSk)
+          .toList();
 
       log('freshCandidates=$freshCandidates');
       log('relaxedCandidates=$relaxedCandidates');
@@ -669,18 +1475,25 @@ abstract final class TripPackingService {
       }
 
       if (preferLayer && layers.isNotEmpty) {
-        final lp = _pickPieceAvoiding(layers, avoid) ?? (level >= 3 ? layers.first : null);
+        final lp =
+            _pickPieceAvoiding(layers, avoid) ??
+            (level >= 3 ? layers.first : null);
         addP(lp);
       }
 
-      addP(_pickPieceAvoiding(tops, avoid) ?? (tops.isNotEmpty ? tops.first : null));
+      addP(
+        _pickPieceAvoiding(tops, avoid) ??
+            (tops.isNotEmpty ? tops.first : null),
+      );
 
       TripWardrobePiece? bottomPick;
       if (retCold) {
         bottomPick =
-            _pickPieceAvoiding(longPants, avoid) ?? (longPants.isNotEmpty ? longPants.first : null);
+            _pickPieceAvoiding(longPants, avoid) ??
+            (longPants.isNotEmpty ? longPants.first : null);
       } else {
-        bottomPick = _pickPieceAvoiding(shorts, avoid) ??
+        bottomPick =
+            _pickPieceAvoiding(shorts, avoid) ??
             _pickPieceAvoiding(longPants, avoid) ??
             (shorts.isNotEmpty ? shorts.first : null) ??
             (longPants.isNotEmpty ? longPants.first : null);
@@ -696,7 +1509,12 @@ abstract final class TripPackingService {
 
       if (wantTransportLayer &&
           layers.isNotEmpty &&
-          !pieces.any((p) => _blobMatchesAnyAlias(_blobForPiece(p, candidates), _layerAliases))) {
+          !pieces.any(
+            (p) => _blobMatchesAnyAlias(
+              _blobForPiece(p, candidates),
+              _layerAliases,
+            ),
+          )) {
         addP(_pickPieceAvoiding(layers, avoid) ?? layers.first);
       }
 
@@ -732,21 +1550,31 @@ abstract final class TripPackingService {
     return _orderPiecesTravelVisual(emergency, candidates);
   }
 
-  static DateTime _dateOnlyCalendar(DateTime d) => DateTime(d.year, d.month, d.day);
+  static DateTime _dateOnlyCalendar(DateTime d) =>
+      DateTime(d.year, d.month, d.day);
 
   /// Jednotný model: dni s realisticky použiteľným časom v destinácii (hodiny podľa zadania).
-  static List<DateTime> _timelineDestinationDates(TripPlanInput input, {bool logTimeline = true}) {
-    final arrAnchor = input.outboundArrival ?? input.outboundDeparture ?? input.climateRangeStart;
-    final retAnchor = input.returnDeparture ?? input.returnArrival ?? input.climateRangeEnd;
+  static List<DateTime> _timelineDestinationDates(
+    TripPlanInput input, {
+    bool logTimeline = true,
+  }) {
+    final arrAnchor =
+        input.outboundArrival ??
+        input.outboundDeparture ??
+        input.climateRangeStart;
+    final retAnchor =
+        input.returnDeparture ?? input.returnArrival ?? input.climateRangeEnd;
     final arrDay = _dateOnlyCalendar(arrAnchor);
     final retDay = _dateOnlyCalendar(retAnchor);
     final arrival = input.outboundArrival;
     final retDep = input.returnDeparture;
 
-    final arrivalAllowsDestinationDay =
-        arrival == null ? true : arrival.hour < 16;
-    final returnAllowsDestinationDay =
-        retDep == null ? true : retDep.hour >= 13;
+    final arrivalAllowsDestinationDay = arrival == null
+        ? true
+        : arrival.hour < 16;
+    final returnAllowsDestinationDay = retDep == null
+        ? true
+        : retDep.hour >= 13;
 
     void tl(String m) {
       if (logTimeline) debugPrint('[TRIP_TIMELINE] $m');
@@ -756,12 +1584,18 @@ abstract final class TripPackingService {
     tl('departure=${retDep ?? retAnchor}');
 
     if (retDay.isBefore(arrDay)) {
-      tl('arrivalDayIncluded=false returnDayIncluded=false destinationDates=[]');
+      tl(
+        'arrivalDayIncluded=false returnDayIncluded=false destinationDates=[]',
+      );
       return [];
     }
 
     final out = <DateTime>[];
-    for (var d = arrDay; !d.isAfter(retDay); d = d.add(const Duration(days: 1))) {
+    for (
+      var d = arrDay;
+      !d.isAfter(retDay);
+      d = d.add(const Duration(days: 1))
+    ) {
       final isArr = _dateOnlyCalendar(d) == arrDay;
       final isRet = _dateOnlyCalendar(d) == retDay;
       final middle = !isArr && !isRet;
@@ -788,7 +1622,9 @@ abstract final class TripPackingService {
 
     tl('arrivalDayIncluded=$arrivalIncluded');
     tl('returnDayIncluded=$returnIncluded');
-    tl('destinationDates=${capped.map((e) => '${e.year}-${e.month}-${e.day}').toList()}');
+    tl(
+      'destinationDates=${capped.map((e) => '${e.year}-${e.month}-${e.day}').toList()}',
+    );
 
     return capped;
   }
@@ -799,7 +1635,10 @@ abstract final class TripPackingService {
 
   /// Počet kariet „Deň N“ len pre pobyt v destinácii.
   static int _destinationOutfitDayCount(TripPlanInput input) {
-    return _timelineDestinationDates(input, logTimeline: false).length.clamp(0, 30);
+    return _timelineDestinationDates(
+      input,
+      logTimeline: false,
+    ).length.clamp(0, 30);
   }
 
   /// Len názov mesta pre kompaktné karty (žiadne letiská, kódy ani „Medzinárodné letisko“).
@@ -856,7 +1695,10 @@ abstract final class TripPackingService {
   }
 
   /// Krátke mestské názvy pre karty počasia — výhradne mesto, bez letísk a kódov.
-  static String _compactEndpointCitySk(String? raw, {required String fallback}) {
+  static String _compactEndpointCitySk(
+    String? raw, {
+    required String fallback,
+  }) {
     var s = (raw ?? '').trim();
     if (s.isEmpty) return fallback;
 
@@ -914,11 +1756,16 @@ abstract final class TripPackingService {
     return fallback.trim().isNotEmpty ? fallback : '···';
   }
 
-  static String _compactTravelRouteArrowSk(TripPlanInput input, {required bool returnLeg}) {
+  static String _compactTravelRouteArrowSk(
+    TripPlanInput input, {
+    required bool returnLeg,
+  }) {
     final dest = _shortDestLabel(input);
     if (returnLeg) {
       final from = _compactEndpointCitySk(
-        input.returnOriginLabel ?? input.selectedDestinationName ?? input.destinationText,
+        input.returnOriginLabel ??
+            input.selectedDestinationName ??
+            input.destinationText,
         fallback: dest,
       );
       final to = _compactEndpointCitySk(
@@ -927,22 +1774,32 @@ abstract final class TripPackingService {
       );
       return '$from → $to';
     }
-    final from = _compactEndpointCitySk(input.outboundOriginLabel, fallback: 'Domov');
+    final from = _compactEndpointCitySk(
+      input.outboundOriginLabel,
+      fallback: 'Domov',
+    );
     final to = _compactEndpointCitySk(
-      input.outboundDestinationLabel ?? input.selectedDestinationName ?? input.destinationText,
+      input.outboundDestinationLabel ??
+          input.selectedDestinationName ??
+          input.destinationText,
       fallback: dest,
     );
     return '$from → $to';
   }
 
-  static List<DateTime> _stayCalendarDatesForDestinationPlans(TripPlanInput input, int planCount) {
+  static List<DateTime> _stayCalendarDatesForDestinationPlans(
+    TripPlanInput input,
+    int planCount,
+  ) {
     final cal = _timelineDestinationDates(input, logTimeline: false);
     if (cal.length == planCount && planCount > 0) return cal;
     if (planCount == 1) {
-      final a = input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
+      final a =
+          input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
       return [DateTime(a.year, a.month, a.day)];
     }
-    final anchor = input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
+    final anchor =
+        input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
     final base = DateTime(anchor.year, anchor.month, anchor.day);
     return List.generate(planCount, (i) => base.add(Duration(days: i)));
   }
@@ -954,7 +1811,12 @@ abstract final class TripPackingService {
     int totalDestDays,
   ) {
     final dayLabel = _skDayLabel(date);
-    final suffix = _activitySuffixForNotes(input.activityNotes, destOrdinal, totalDestDays, input.primaryKindForTitles);
+    final suffix = _activitySuffixForNotes(
+      input.activityNotes,
+      destOrdinal,
+      totalDestDays,
+      input.primaryKindForTitles,
+    );
     return suffix == null ? dayLabel : '$dayLabel – $suffix';
   }
 
@@ -969,21 +1831,36 @@ abstract final class TripPackingService {
 
   static bool _conditionImpliesRain(String condSk) {
     final n = DestinationSearchService.normalizeQuery(condSk);
-    const keys = ['dazd', 'daz', 'burk', 'prehan', 'raz', 'storm', 'show', 'rain', 'wet'];
+    const keys = [
+      'dazd',
+      'daz',
+      'burk',
+      'prehan',
+      'raz',
+      'storm',
+      'show',
+      'rain',
+      'wet',
+    ];
     return keys.any(n.contains);
   }
 
   /// Chlad, dážď alebo typické „počasím zlé“ dni → mikina/bunda/nohavice namiesto pláže / tielka.
-  static bool _needsCoolRainUrbanLook((int high, int low, String cond) w, String destText) {
+  static bool _needsCoolRainUrbanLook(
+    (int high, int low, String cond) w,
+    String destText,
+  ) {
     final nc = DestinationSearchService.normalizeQuery(w.$3);
-    final cloudyCool = (nc.contains('oblac') || nc.contains('cloud')) && w.$1 < 22;
+    final cloudyCool =
+        (nc.contains('oblac') || nc.contains('cloud')) && w.$1 < 22;
 
     if (_conditionImpliesRain(w.$3)) return true;
     if (w.$1 < 20) return true;
     if (cloudyCool) return true;
 
     if (_looksUkOrLondon(destText)) {
-      if (w.$1 >= 24 && !_conditionImpliesRain(w.$3) && !cloudyCool) return false;
+      if (w.$1 >= 24 && !_conditionImpliesRain(w.$3) && !cloudyCool)
+        return false;
       return true;
     }
     return false;
@@ -1002,7 +1879,8 @@ abstract final class TripPackingService {
   ) {
     final rain = _conditionImpliesRain(w.$3);
     final nc = DestinationSearchService.normalizeQuery(w.$3);
-    final cloudyCool = (nc.contains('oblac') || nc.contains('cloud')) && w.$1 < 22;
+    final cloudyCool =
+        (nc.contains('oblac') || nc.contains('cloud')) && w.$1 < 22;
     final warmDry = w.$1 >= 23 && !rain && !cloudyCool;
 
     final tops = _piecesMatching(all, _topsAliases);
@@ -1033,8 +1911,9 @@ abstract final class TripPackingService {
 
     TripWardrobePiece? pickTop() {
       final eligible = tops.where((t) => !avoidTopIds.contains(t.id)).toList();
-      final nonTank =
-          eligible.where((t) => !_blobMatchesAnyAlias(blobFor(t), _tankOnlyAliases)).toList();
+      final nonTank = eligible
+          .where((t) => !_blobMatchesAnyAlias(blobFor(t), _tankOnlyAliases))
+          .toList();
       final pool = nonTank.isNotEmpty ? nonTank : eligible;
       final fallbackPool = pool.isNotEmpty ? pool : tops;
       if (fallbackPool.isEmpty) return null;
@@ -1059,7 +1938,8 @@ abstract final class TripPackingService {
       if (p != null && !pieces.any((e) => e.id == p.id)) pieces.add(p);
     }
 
-    final wantLayer = rain ||
+    final wantLayer =
+        rain ||
         w.$1 < 22 ||
         cloudyCool ||
         (_looksUkOrLondon(destText) && w.$1 < 24);
@@ -1073,8 +1953,8 @@ abstract final class TripPackingService {
       final pool = warmDry && shorts.isNotEmpty
           ? shorts
           : longPants.isNotEmpty
-              ? longPants
-              : shorts;
+          ? longPants
+          : shorts;
       if (pool.isEmpty) return null;
       if (rotation != null) {
         return _pickRotatedFromPool(
@@ -1116,8 +1996,9 @@ abstract final class TripPackingService {
           );
         }
         if (anyShoe.isEmpty) return null;
-        final nonSand =
-            anyShoe.where((p) => !_blobMatchesAnyAlias(blobFor(p), _sandalAliases)).toList();
+        final nonSand = anyShoe
+            .where((p) => !_blobMatchesAnyAlias(blobFor(p), _sandalAliases))
+            .toList();
         final pool = nonSand.isNotEmpty ? nonSand : anyShoe;
         return _pickRotatedFromPool(
           pool: pool,
@@ -1137,8 +2018,9 @@ abstract final class TripPackingService {
         return a ?? shoesMix[i % shoesMix.length];
       }
       if (anyShoe.isEmpty) return null;
-      final nonSand =
-          anyShoe.where((p) => !_blobMatchesAnyAlias(blobFor(p), _sandalAliases)).toList();
+      final nonSand = anyShoe
+          .where((p) => !_blobMatchesAnyAlias(blobFor(p), _sandalAliases))
+          .toList();
       final pool = nonSand.isNotEmpty ? nonSand : anyShoe;
       final a = _pickPieceAvoiding(pool, avoidShoeIds);
       return a ?? pool[i % pool.length];
@@ -1159,7 +2041,8 @@ abstract final class TripPackingService {
     List<TripWardrobePiece> outbound,
     List<TripWardrobePiece> return_,
     List<TripDailyOutfitPreview> destination,
-  }) _packWarmBeachSplit(TripPlanInput input, List<_WardrobeCandidate> all) {
+  })
+  _packWarmBeachSplit(TripPlanInput input, List<_WardrobeCandidate> all) {
     final ledger = _TripPackLedger(all);
     final rotation = _TripOutfitRotation();
     final destDays = _timelineDestinationDates(input, logTimeline: false);
@@ -1195,7 +2078,9 @@ abstract final class TripPackingService {
       var ordinal = 1;
       for (var i = 0; i < destDays.length; i++) {
         final lightDay =
-            i == 0 && _lateNightArrival(input.outboundArrival) && destDays.length > 1;
+            i == 0 &&
+            _lateNightArrival(input.outboundArrival) &&
+            destDays.length > 1;
         final plan = _warmBeachDestinationDayV2(
           input,
           all,
@@ -1227,7 +2112,11 @@ abstract final class TripPackingService {
       '[TRIP_TRAVEL_OUTFIT] direction=return items=${returnPieces.map((p) => p.nameSk).toList()}',
     );
 
-    return (outbound: outboundPieces, return_: returnPieces, destination: destPlans);
+    return (
+      outbound: outboundPieces,
+      return_: returnPieces,
+      destination: destPlans,
+    );
   }
 
   /// Návratový outfit (ne-plážové výlety): vyhni sa topom a spodkom už „opotrebovaným“ v destinácii.
@@ -1335,8 +2224,13 @@ abstract final class TripPackingService {
     }
   }
 
-  static List<TripDailyOutfitPreview> _emptyDestinationDailyPlans(TripPlanInput input) {
-    final timelineN = _timelineDestinationDates(input, logTimeline: false).length;
+  static List<TripDailyOutfitPreview> _emptyDestinationDailyPlans(
+    TripPlanInput input,
+  ) {
+    final timelineN = _timelineDestinationDates(
+      input,
+      logTimeline: false,
+    ).length;
     final n = timelineN > 0 ? timelineN : (input.tripDayCount <= 1 ? 1 : 0);
     if (n == 0) return [];
     return List.generate(
@@ -1358,7 +2252,12 @@ abstract final class TripPackingService {
     String notes,
     TripKind kind,
   ) {
-    final suffix = _activitySuffixForNotes(notes, destOrdinal, totalDestDays, kind);
+    final suffix = _activitySuffixForNotes(
+      notes,
+      destOrdinal,
+      totalDestDays,
+      kind,
+    );
     return suffix == null ? 'Deň $destOrdinal' : 'Deň $destOrdinal – $suffix';
   }
 
@@ -1370,16 +2269,20 @@ abstract final class TripPackingService {
   ) {
     final n = notes.trim().toLowerCase();
     if (n.isEmpty) return null;
-    if ((n.contains('večera pri mori') || (n.contains('večera') && n.contains('mor'))) &&
+    if ((n.contains('večera pri mori') ||
+            (n.contains('večera') && n.contains('mor'))) &&
         destOrdinal == totalDestDays) {
       return 'večera pri mori';
     }
-    if ((n.contains('stretnutie') || n.contains('meeting') || n.contains('konferenc')) &&
+    if ((n.contains('stretnutie') ||
+            n.contains('meeting') ||
+            n.contains('konferenc')) &&
         destOrdinal == 1 &&
         kind == TripKind.business) {
       return 'pracovné stretnutie';
     }
-    if ((n.contains('loď') || n.contains('lod') || n.contains('boat')) && destOrdinal == 1) {
+    if ((n.contains('loď') || n.contains('lod') || n.contains('boat')) &&
+        destOrdinal == 1) {
       return 'výlet loďou';
     }
     return null;
@@ -1436,7 +2339,10 @@ abstract final class TripPackingService {
       }
     }
     if (missingFromLuggage.isNotEmpty) {
-      sorted = _orderLuggageVisual([...sorted, ...missingFromLuggage], candidates);
+      sorted = _orderLuggageVisual([
+        ...sorted,
+        ...missingFromLuggage,
+      ], candidates);
     }
 
     debugPrint(
@@ -1445,12 +2351,15 @@ abstract final class TripPackingService {
     debugPrint(
       '[TRIP_LUGGAGE_FINAL] items=${sorted.map((p) => '${p.id}:${p.nameSk}').toList()}',
     );
-    debugPrint('[TRIP_LUGGAGE_ORDER] orderedItems=${sorted.map((p) => p.nameSk).join('|')}');
+    debugPrint(
+      '[TRIP_LUGGAGE_ORDER] orderedItems=${sorted.map((p) => p.nameSk).join('|')}',
+    );
     return sorted;
   }
 
   /// Destinačné outfity: nahradí rovnaké top/spodok/obuv ako na odlete, ak existuje alternatíva v šatníku.
-  static List<TripDailyOutfitPreview> _destinationPlansPreferringNotOutboundWear(
+  static List<TripDailyOutfitPreview>
+  _destinationPlansPreferringNotOutboundWear(
     List<TripDailyOutfitPreview> plans,
     List<TripWardrobePiece> outboundWear,
     List<_WardrobeCandidate> all,
@@ -1476,7 +2385,9 @@ abstract final class TripPackingService {
         .toList();
     final bottomPool = _uniquePieces([...shorts, ...longPants]);
     final shoesMix = _buildShoesMix(all);
-    final shoePool = shoesMix.isNotEmpty ? shoesMix : _piecesMatching(all, _shoesAllAliases);
+    final shoePool = shoesMix.isNotEmpty
+        ? shoesMix
+        : _piecesMatching(all, _shoesAllAliases);
 
     List<TripWardrobePiece> swapPieces(List<TripWardrobePiece> pieces) {
       final used = <String>{};
@@ -1553,7 +2464,12 @@ abstract final class TripPackingService {
         TripDailyOutfitPreview(
           dayIndex: plans[i].dayIndex,
           titleSk: i < dates.length
-              ? _destinationCardTitleSk(input, dates[i], plans[i].dayIndex, total)
+              ? _destinationCardTitleSk(
+                  input,
+                  dates[i],
+                  plans[i].dayIndex,
+                  total,
+                )
               : plans[i].titleSk,
           summarySk: plans[i].summarySk,
           dayHintSk: plans[i].dayHintSk,
@@ -1573,8 +2489,12 @@ abstract final class TripPackingService {
     List<TripDailyOutfitPreview> destination,
   ) {
     debugPrint('[TRAVEL_WORN] items=${outbound.map((p) => p.nameSk).toList()}');
-    debugPrint('[TRIP_PACKING_USAGE] outbound=${outbound.map((p) => p.nameSk).toList()}');
-    debugPrint('[TRIP_PACKING_USAGE] return=${return_.map((p) => p.nameSk).toList()}');
+    debugPrint(
+      '[TRIP_PACKING_USAGE] outbound=${outbound.map((p) => p.nameSk).toList()}',
+    );
+    debugPrint(
+      '[TRIP_PACKING_USAGE] return=${return_.map((p) => p.nameSk).toList()}',
+    );
     for (final d in destination) {
       debugPrint(
         '[TRIP_PACKING_USAGE] dest ${d.titleSk} => ${d.pieces.map((p) => p.nameSk).toList()}',
@@ -1586,6 +2506,7 @@ abstract final class TripPackingService {
     required bool warmBeach,
     required bool workTrip,
     required bool cityTrip,
+    bool hikingTrip = false,
   }) {
     if (warmBeach) {
       return [
@@ -1593,20 +2514,38 @@ abstract final class TripPackingService {
           nameSk: 'Nemáš žiadne kúsky s fotkou v šatníku',
           reasonSk: 'Pridaj oblečenie alebo sa prihlás.',
         ),
-        const TripMissingItemSuggestion(nameSk: 'Nemáš ľahké kraťasy', reasonSk: 'Na horúce dni.'),
-        const TripMissingItemSuggestion(nameSk: 'Nemáš vhodné sandále', reasonSk: 'Na pláž a teplo.'),
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš ľahké kraťasy',
+          reasonSk: 'Na horúce dni.',
+        ),
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš vhodné sandále',
+          reasonSk: 'Na pláž a teplo.',
+        ),
       ];
     }
-    return const [
-      TripMissingItemSuggestion(
+    return [
+      const TripMissingItemSuggestion(
         nameSk: 'Nemáš žiadne kúsky s fotkou v šatníku',
         reasonSk: 'Pridaj oblečenie alebo sa prihlás.',
       ),
+      if (hikingTrip)
+        const TripMissingItemSuggestion(
+          nameSk: 'turistická / outdoorová obuv',
+          reasonSk: 'Na turistiku treba uzavretú outdoorovú obuv.',
+        ),
+      if (workTrip)
+        const TripMissingItemSuggestion(
+          nameSk: 'pracovne vhodný základ outfitu',
+          reasonSk: 'Na pracovnú cestu chýba kombinácia s formality aspoň 5.',
+        ),
     ];
   }
 
   /// Rovnaká priorita ako [resolveHeroHomeOutfitImageUrl]: cutout → clean → product → imageUrl → original.
-  static List<String> _heroOrderedTripImageUrlsFromRaw(Map<String, dynamic> raw) {
+  static List<String> _heroOrderedTripImageUrlsFromRaw(
+    Map<String, dynamic> raw,
+  ) {
     String? g(String k) {
       final v = raw[k];
       if (v == null) return null;
@@ -1628,7 +2567,9 @@ abstract final class TripPackingService {
     return out;
   }
 
-  static Future<List<_WardrobeCandidate>> _loadCandidates(String? userId) async {
+  static Future<List<_WardrobeCandidate>> _loadCandidates(
+    String? userId,
+  ) async {
     if (userId == null || userId.isEmpty) return const [];
     try {
       final snap = await FirebaseFirestore.instance
@@ -1636,86 +2577,71 @@ abstract final class TripPackingService {
           .doc(userId)
           .collection('wardrobe')
           .get();
-      final out = <_WardrobeCandidate>[];
-      for (final d in snap.docs) {
-        final raw = Map<String, dynamic>.from(d.data());
-        final name = (raw['name'] ?? raw['title'] ?? raw['displayName'] ?? '').toString().trim();
-        if (name.isEmpty) continue;
-        final urls = _heroOrderedTripImageUrlsFromRaw(raw);
-        final url = urls.isNotEmpty ? urls.first : resolveHeroHomeOutfitImageUrl(raw);
-        if (url == null || url.isEmpty) continue;
-        final cut = (raw['cutoutImageUrl'] ?? '').toString();
-        final cln = (raw['cleanImageUrl'] ?? '').toString();
-        final prd = (raw['productImageUrl'] ?? '').toString();
-        final leg = (raw['imageUrl'] ?? '').toString();
-        final org = (raw['originalImageUrl'] ?? '').toString();
-        debugPrint(
-          '[TRIP_IMAGE_PICK] item=$name cutout=$cut clean=$cln product=$prd imageUrl=$leg original=$org picked=$url',
-        );
-        final blob = _buildSearchBlob(raw, fallbackName: name);
-        out.add(
-          _WardrobeCandidate(
-            piece: TripWardrobePiece(
-              id: d.id,
-              nameSk: name,
-              imageUrl: url,
-              imageDisplayUrls: urls,
-            ),
-            blob: blob,
-          ),
-        );
-      }
-      return out;
+      return _candidatesFromRaws([
+        for (final d in snap.docs) <String, dynamic>{...d.data(), 'id': d.id},
+      ]);
     } catch (_) {
       return const [];
     }
   }
 
-  /// Spojí všetky zmysluplné textové polia dokumentu do jedného normalizovaného reťazca.
-  static String _buildSearchBlob(Map<String, dynamic> raw, {required String fallbackName}) {
-    final parts = <String>[fallbackName];
-
-    void add(dynamic v) {
-      if (v == null) return;
-      if (v is String) {
-        if (v.trim().isNotEmpty) parts.add(v);
-      } else if (v is num) {
-        parts.add(v.toString());
-      } else if (v is List) {
-        for (final e in v) {
-          add(e);
-        }
-      } else if (v is Map) {
-        v.forEach((_, val) => add(val));
-      }
+  static List<_WardrobeCandidate> _candidatesFromRaws(
+    Iterable<Map<String, dynamic>> docs, {
+    WardrobeOntologyV2? ontology,
+  }) {
+    final out = <_WardrobeCandidate>[];
+    for (final d in docs) {
+      final raw = Map<String, dynamic>.from(d);
+      raw['id'] ??= '';
+      final resolved = NativeWardrobeV2Runtime.resolveAll([
+        raw,
+      ], ontology: ontology);
+      if (resolved.isEmpty) continue;
+      final itemV2 = resolved.single.item;
+      final name = (raw['name'] ?? raw['title'] ?? raw['displayName'] ?? '')
+          .toString()
+          .trim();
+      if (name.isEmpty) continue;
+      final urls = _heroOrderedTripImageUrlsFromRaw(raw);
+      final url = urls.isNotEmpty
+          ? urls.first
+          : resolveHeroHomeOutfitImageUrl(raw);
+      if (url == null || url.isEmpty) continue;
+      final cut = (raw['cutoutImageUrl'] ?? '').toString();
+      final cln = (raw['cleanImageUrl'] ?? '').toString();
+      final prd = (raw['productImageUrl'] ?? '').toString();
+      final leg = (raw['imageUrl'] ?? '').toString();
+      final org = (raw['originalImageUrl'] ?? '').toString();
+      debugPrint(
+        '[TRIP_IMAGE_PICK] item=$name cutout=$cut clean=$cln product=$prd imageUrl=$leg original=$org picked=$url',
+      );
+      final blob = _norm(
+        [
+          name,
+          ...WardrobeSearchProjectionV2.tokens(itemV2),
+          ...itemV2.bodySlots,
+          itemV2.layerPosition,
+          ...itemV2.outfitFunctions,
+          if (itemV2.setMembership case final set?) set.setType,
+        ].join(' '),
+      );
+      out.add(
+        _WardrobeCandidate(
+          piece: TripWardrobePiece(
+            id: (raw['id'] ?? '').toString(),
+            nameSk: name,
+            imageUrl: url,
+            imageDisplayUrls: urls,
+          ),
+          blob: blob,
+          v2: itemV2,
+        ),
+      );
     }
-
-    for (final key in [
-      'type',
-      'type_pretty',
-      'canonical_type',
-      'categoryKey',
-      'subCategoryKey',
-      'mainGroupKey',
-      'subtype',
-      'category',
-      'subcategory',
-      'brand',
-      'description',
-      'notes',
-    ]) {
-      add(raw[key]);
-    }
-    add(raw['colors']);
-    add(raw['seasons']);
-    add(raw['styles']);
-    add(raw['patterns']);
-    add(raw['tags']);
-    add(raw['materials']);
-
-    return _norm(parts.join(' '));
+    return out;
   }
 
+  /// Spojí všetky zmysluplné textové polia dokumentu do jedného normalizovaného reťazca.
   static String _norm(String s) {
     const diacritics = {
       'á': 'a',
@@ -1849,7 +2775,10 @@ abstract final class TripPackingService {
       return 2;
     }
 
-    if (_blobMatchesAnyAlias(fused, _normList(const ['bunda', 'jacket', 'coat']))) {
+    if (_blobMatchesAnyAlias(
+      fused,
+      _normList(const ['bunda', 'jacket', 'coat']),
+    )) {
       return 3;
     }
 
@@ -1918,12 +2847,16 @@ abstract final class TripPackingService {
     final n = DestinationSearchService.normalizeQuery(blob);
     final hasHood = n.contains('kapuc') || n.contains('hood');
     final rainShell =
-        n.contains('nepromok') || n.contains('rain') || n.contains('waterproof') || n.contains('storm');
+        n.contains('nepromok') ||
+        n.contains('rain') ||
+        n.contains('waterproof') ||
+        n.contains('storm');
 
     if (rain) {
       if (insulation <= 2 && hasHood) return 0;
       if (insulation <= 2) return 1;
-      if (rainShell || n.contains('shell') || n.contains('windbreaker')) return 2;
+      if (rainShell || n.contains('shell') || n.contains('windbreaker'))
+        return 2;
       if (insulation <= 3) return 3;
       return 10 + insulation;
     }
@@ -1953,7 +2886,9 @@ abstract final class TripPackingService {
         all.where((c) => c.piece.id == p.id).firstOrNull?.blob ?? '';
 
     var maxInsulation = _maxLayerInsulationForTemp(tempHighC);
-    if (_isMildEuropeanUrbanDestination(destinationText) && tempHighC >= 8 && tempHighC <= 19) {
+    if (_isMildEuropeanUrbanDestination(destinationText) &&
+        tempHighC >= 8 &&
+        tempHighC <= 19) {
       maxInsulation = maxInsulation.clamp(1, 3);
     }
 
@@ -1976,21 +2911,21 @@ abstract final class TripPackingService {
       return null;
     }
 
-    TripWardrobePiece? pickFromPool(List<TripWardrobePiece> pool, String reason) {
-      final ranked = pool
-          .where((p) => !avoidIds.contains(p.id))
-          .map((p) {
+    TripWardrobePiece? pickFromPool(
+      List<TripWardrobePiece> pool,
+      String reason,
+    ) {
+      final ranked =
+          pool.where((p) => !avoidIds.contains(p.id)).map((p) {
             final b = blobFor(p);
             final ins = _layerInsulationWeight(b, p.nameSk);
             final rank = _layerStylistPriorityRank(p, b, ins, rain, tempHighC);
             return (p, ins, rank);
-          })
-          .toList()
-        ..sort((a, b) {
-          final c = a.$3.compareTo(b.$3);
-          if (c != 0) return c;
-          return a.$2.compareTo(b.$2);
-        });
+          }).toList()..sort((a, b) {
+            final c = a.$3.compareTo(b.$3);
+            if (c != 0) return c;
+            return a.$2.compareTo(b.$2);
+          });
 
       if (ranked.isEmpty) return null;
       final chosen = ranked.first.$1;
@@ -1998,13 +2933,18 @@ abstract final class TripPackingService {
       final chosenIns = _layerInsulationWeight(chosenBlob, chosen.nameSk);
       final rejected = pool
           .where((p) => p.id != chosen.id)
-          .map((p) => '${p.nameSk}:${_layerWarmthLabel(_layerInsulationWeight(blobFor(p), p.nameSk))}')
+          .map(
+            (p) =>
+                '${p.nameSk}:${_layerWarmthLabel(_layerInsulationWeight(blobFor(p), p.nameSk))}',
+          )
           .join(', ');
       debugPrint(
         '[WEATHER_LAYER_PICK] slot=$slot weather=${tempHighC}C rain=$rain selected=${chosen.nameSk}(${_layerWarmthLabel(chosenIns)}) rejected=[$rejected]',
       );
       debugPrint('[WEATHER_LAYER_REASON] slot=$slot $reason');
-      final hadHeavy = pool.any((p) => _layerInsulationWeight(blobFor(p), p.nameSk) >= 5);
+      final hadHeavy = pool.any(
+        (p) => _layerInsulationWeight(blobFor(p), p.nameSk) >= 5,
+      );
       if (hadHeavy && chosenIns <= 3 && tempHighC >= 5) {
         debugPrint(
           '[WEATHER_LAYER_REASON] slot=$slot selected ${_layerWarmthLabel(chosenIns)} over winter jacket because temp=${tempHighC}C',
@@ -2069,22 +3009,36 @@ abstract final class TripPackingService {
   }
 
   static _PieceReuseCategory _reuseCategoryFromBlob(String blob) {
-    if (_blobMatchesAnyAlias(blob, _layerAliases)) return _PieceReuseCategory.high;
-    if (_blobMatchesAnyAlias(blob, _bagAliases)) return _PieceReuseCategory.high;
-    if (_blobMatchesAnyAlias(blob, _hatAliases)) return _PieceReuseCategory.high;
-    if (_blobMatchesAnyAlias(blob, _sunglassesAliases)) return _PieceReuseCategory.high;
-    if (_blobMatchesAnyAlias(blob, _shoesAllAliases)) return _PieceReuseCategory.high;
-    if (_blobMatchesAnyAlias(blob, _topsAliases)) return _PieceReuseCategory.low;
-    if (_blobMatchesAnyAlias(blob, _shortsAliases) || _blobMatchesAnyAlias(blob, _longPantsAliases)) {
+    if (_blobMatchesAnyAlias(blob, _layerAliases))
+      return _PieceReuseCategory.high;
+    if (_blobMatchesAnyAlias(blob, _bagAliases))
+      return _PieceReuseCategory.high;
+    if (_blobMatchesAnyAlias(blob, _hatAliases))
+      return _PieceReuseCategory.high;
+    if (_blobMatchesAnyAlias(blob, _sunglassesAliases))
+      return _PieceReuseCategory.high;
+    if (_blobMatchesAnyAlias(blob, _shoesAllAliases))
+      return _PieceReuseCategory.high;
+    if (_blobMatchesAnyAlias(blob, _topsAliases))
+      return _PieceReuseCategory.low;
+    if (_blobMatchesAnyAlias(blob, _shortsAliases) ||
+        _blobMatchesAnyAlias(blob, _longPantsAliases)) {
       return _PieceReuseCategory.medium;
     }
-    if (_blobMatchesAnyAlias(blob, _swimAliases)) return _PieceReuseCategory.medium;
+    if (_blobMatchesAnyAlias(blob, _swimAliases))
+      return _PieceReuseCategory.medium;
     return _PieceReuseCategory.medium;
   }
 
-  static _PieceReuseCategory _reuseCategoryForPiece(TripWardrobePiece p, List<_WardrobeCandidate> all) {
+  static _PieceReuseCategory _reuseCategoryForPiece(
+    TripWardrobePiece p,
+    List<_WardrobeCandidate> all,
+  ) {
     for (final c in all) {
-      if (c.piece.id == p.id) return _reuseCategoryFromBlob(c.blob);
+      if (c.piece.id != p.id) continue;
+      if (c.highReuse) return _PieceReuseCategory.high;
+      if (c.contextualReuse) return _PieceReuseCategory.medium;
+      return _PieceReuseCategory.low;
     }
     return _PieceReuseCategory.medium;
   }
@@ -2096,7 +3050,10 @@ abstract final class TripPackingService {
     return src.where((c) => _blobMatchesAnyAlias(c.blob, aliases)).toList();
   }
 
-  static List<TripWardrobePiece> _piecesMatching(List<_WardrobeCandidate> all, List<String> aliases) {
+  static List<TripWardrobePiece> _piecesMatching(
+    List<_WardrobeCandidate> all,
+    List<String> aliases,
+  ) {
     final out = <TripWardrobePiece>[];
     final seen = <String>{};
     for (final wc in all) {
@@ -2118,7 +3075,11 @@ abstract final class TripPackingService {
     return mix;
   }
 
-  static void _tripMatchLog(String need, List<_WardrobeCandidate> candidates, List<_WardrobeCandidate> selected) {
+  static void _tripMatchLog(
+    String need,
+    List<_WardrobeCandidate> candidates,
+    List<_WardrobeCandidate> selected,
+  ) {
     debugPrint(
       '[TRIP_MATCH] need=$need candidates=${candidates.map((c) => '${c.piece.id}:${c.piece.nameSk}').toList()} '
       'selected=${selected.map((c) => '${c.piece.id}:${c.piece.nameSk}').toList()}',
@@ -2197,7 +3158,10 @@ abstract final class TripPackingService {
     ];
   }
 
-  static List<TripMissingItemSuggestion> _missingWarmBeach(TripPlanInput input, List<_WardrobeCandidate> all) {
+  static List<TripMissingItemSuggestion> _missingWarmBeach(
+    TripPlanInput input,
+    List<_WardrobeCandidate> all,
+  ) {
     final tops = _filter(all, _topsAliases);
     final shorts = _filter(all, _shortsAliases);
     final swim = _filter(all, _swimAliases);
@@ -2207,7 +3171,12 @@ abstract final class TripPackingService {
     final sunnies = _filter(all, _sunglassesAliases);
     final hats = _filter(all, _hatAliases);
     final linenShirts = _filter(all, _linenLightShirtAliases)
-        .where((c) => _blobMatchesAnyAlias(c.blob, _normList(const ['ľan', 'linen', 'košeľa', 'shirt'])))
+        .where(
+          (c) => _blobMatchesAnyAlias(
+            c.blob,
+            _normList(const ['ľan', 'linen', 'košeľa', 'shirt']),
+          ),
+        )
         .toList();
 
     _tripMatchLog('tops', tops, tops);
@@ -2219,58 +3188,76 @@ abstract final class TripPackingService {
 
     final missing = <TripMissingItemSuggestion>[];
     if (tops.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš ľahký top alebo tričko',
-        reasonSk: 'Na horúce dni ako základ outfitu.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš ľahký top alebo tričko',
+          reasonSk: 'Na horúce dni ako základ outfitu.',
+        ),
+      );
     }
     if (shorts.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš ľahké kraťasy',
-        reasonSk: 'Na teplo a pohyb pri vode.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš ľahké kraťasy',
+          reasonSk: 'Na teplo a pohyb pri vode.',
+        ),
+      );
     }
     if (swim.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš plavky',
-        reasonSk: 'Na kúpanie a pláž.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš plavky',
+          reasonSk: 'Na kúpanie a pláž.',
+        ),
+      );
     }
     if (sandals.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš vhodné sandále',
-        reasonSk: 'Na horúci piesok a prestupy.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš vhodné sandále',
+          reasonSk: 'Na horúci piesok a prestupy.',
+        ),
+      );
     }
     if (sneakers.isEmpty && _filter(all, _shoesAllAliases).isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš pohodlnú obuv',
-        reasonSk: 'Na presuny a celodenné nosenie.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš pohodlnú obuv',
+          reasonSk: 'Na presuny a celodenné nosenie.',
+        ),
+      );
     }
     if (input.transport == TripTransport.plane && layers.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš vrstvu na lietadlo',
-        reasonSk: 'Mikina alebo ľahká bunda do klímy v kabíne.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš vrstvu na lietadlo',
+          reasonSk: 'Mikina alebo ľahká bunda do klímy v kabíne.',
+        ),
+      );
     }
     if (sunnies.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš slnečné okuliare',
-        reasonSk: 'Pri silnom slnku.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš slnečné okuliare',
+          reasonSk: 'Pri silnom slnku.',
+        ),
+      );
     }
     if (hats.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš pokrývku hlavy',
-        reasonSk: 'Šiltovka alebo klobúk pred úpalom.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš pokrývku hlavy',
+          reasonSk: 'Šiltovka alebo klobúk pred úpalom.',
+        ),
+      );
     }
     if (linenShirts.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš ľanovú alebo ľahkú košeľu',
-        reasonSk: 'Na večer a vzdušný outfit.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš ľanovú alebo ľahkú košeľu',
+          reasonSk: 'Na večer a vzdušný outfit.',
+        ),
+      );
     }
 
     return missing;
@@ -2288,28 +3275,36 @@ abstract final class TripPackingService {
 
     final missing = <TripMissingItemSuggestion>[];
     if (shirts.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš košeľu alebo blúzku',
-        reasonSk: 'Smart casual základ.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš košeľu alebo blúzku',
+          reasonSk: 'Smart casual základ.',
+        ),
+      );
     }
     if (pants.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš vhodné nohavice do práce',
-        reasonSk: 'Chinos alebo tmavšie nohavice.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš vhodné nohavice do práce',
+          reasonSk: 'Chinos alebo tmavšie nohavice.',
+        ),
+      );
     }
     if (shoes.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš čistejšie mestské topánky',
-        reasonSk: 'Namiesto športových tenisiek.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš čistejšie mestské topánky',
+          reasonSk: 'Namiesto športových tenisiek.',
+        ),
+      );
     }
     if (hasWorkEvent && blazers.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš elegantnejšiu vrstvu (sako)',
-        reasonSk: 'Na stretnutie alebo večeru.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš elegantnejšiu vrstvu (sako)',
+          reasonSk: 'Na stretnutie alebo večeru.',
+        ),
+      );
     }
 
     _tripMatchLog('tops', tops, tops);
@@ -2328,52 +3323,68 @@ abstract final class TripPackingService {
 
     final missing = <TripMissingItemSuggestion>[];
     if (_sneakersOnly(all).isEmpty && _filter(all, _shoesAllAliases).isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš pohodlnú obuv na chodenie',
-        reasonSk: 'Na celodenné presuny.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš pohodlnú obuv na chodenie',
+          reasonSk: 'Na celodenné presuny.',
+        ),
+      );
     }
     if (pants.isEmpty && shorts.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš univerzálne nohavice',
-        reasonSk: 'Jeans alebo chinos na mesto.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš univerzálne nohavice',
+          reasonSk: 'Jeans alebo chinos na mesto.',
+        ),
+      );
     }
     if (coolSeason && layers.isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš ľahkú bundu alebo vrstvu',
-        reasonSk: 'Na chladnejší večer.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš ľahkú bundu alebo vrstvu',
+          reasonSk: 'Na chladnejší večer.',
+        ),
+      );
     }
 
     return missing;
   }
 
-  static List<TripMissingItemSuggestion> _missingHiking(List<_WardrobeCandidate> all) {
+  static List<TripMissingItemSuggestion> _missingHiking(
+    List<_WardrobeCandidate> all,
+  ) {
     final missing = <TripMissingItemSuggestion>[];
     if (_filter(all, _hikeBootAliases).isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš turistickú obuv',
-        reasonSk: 'Na terén a stabilitu.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš turistickú obuv',
+          reasonSk: 'Na terén a stabilitu.',
+        ),
+      );
     }
     if (_filter(all, _hikeShellAliases).isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš funkčnú vrstvu',
-        reasonSk: 'Pri zmene počasia.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš funkčnú vrstvu',
+          reasonSk: 'Pri zmene počasia.',
+        ),
+      );
     }
 
     return missing;
   }
 
-  static List<TripMissingItemSuggestion> _missingFestival(List<_WardrobeCandidate> all) {
+  static List<TripMissingItemSuggestion> _missingFestival(
+    List<_WardrobeCandidate> all,
+  ) {
     final missing = <TripMissingItemSuggestion>[];
     if (_filter(all, _topsAliases).isEmpty) {
-      missing.add(const TripMissingItemSuggestion(
-        nameSk: 'Nemáš pohodlný top',
-        reasonSk: 'Na celý deň v dave.',
-      ));
+      missing.add(
+        const TripMissingItemSuggestion(
+          nameSk: 'Nemáš pohodlný top',
+          reasonSk: 'Na celý deň v dave.',
+        ),
+      );
     }
 
     return missing;
@@ -2395,12 +3406,37 @@ abstract final class TripPackingService {
     if (warmBeach) return [];
     if (destinationDayCount <= 0) return [];
     if (workTrip) {
-      return _dailyWork(input, candidates, hasWorkEvent: hasWorkEvent, maxDaysOverride: destinationDayCount);
+      return _dailyWork(
+        input,
+        candidates,
+        hasWorkEvent: hasWorkEvent,
+        maxDaysOverride: destinationDayCount,
+      );
     }
-    if (hikingTrip) return _dailyHiking(input, candidates, maxDaysOverride: destinationDayCount);
-    if (cityTrip) return _dailyCity(input, candidates, coolSeason: coolSeason, maxDaysOverride: destinationDayCount);
-    if (festivalTrip) return _dailyFestival(input, candidates, maxDaysOverride: destinationDayCount);
-    return _dailyGeneral(input, candidates, maxDaysOverride: destinationDayCount);
+    if (hikingTrip)
+      return _dailyHiking(
+        input,
+        candidates,
+        maxDaysOverride: destinationDayCount,
+      );
+    if (cityTrip)
+      return _dailyCity(
+        input,
+        candidates,
+        coolSeason: coolSeason,
+        maxDaysOverride: destinationDayCount,
+      );
+    if (festivalTrip)
+      return _dailyFestival(
+        input,
+        candidates,
+        maxDaysOverride: destinationDayCount,
+      );
+    return _dailyGeneral(
+      input,
+      candidates,
+      maxDaysOverride: destinationDayCount,
+    );
   }
 
   static List<TripWardrobePiece> _genericOutboundTravelPieces(
@@ -2415,13 +3451,23 @@ abstract final class TripPackingService {
   }) {
     List<TripDailyOutfitPreview> previews;
     if (workTrip) {
-      previews = _dailyWork(input, all, hasWorkEvent: hasWorkEvent, maxDaysOverride: 1);
+      previews = _dailyWork(
+        input,
+        all,
+        hasWorkEvent: hasWorkEvent,
+        maxDaysOverride: 1,
+      );
     } else if (hikingTrip) {
       previews = _dailyHiking(input, all, maxDaysOverride: 1);
     } else if (festivalTrip) {
       previews = _dailyFestival(input, all, maxDaysOverride: 1);
     } else if (cityTrip) {
-      previews = _dailyCity(input, all, coolSeason: coolSeason, maxDaysOverride: 1);
+      previews = _dailyCity(
+        input,
+        all,
+        coolSeason: coolSeason,
+        maxDaysOverride: 1,
+      );
     } else {
       previews = _dailyGeneral(input, all, maxDaysOverride: 1);
     }
@@ -2445,13 +3491,23 @@ abstract final class TripPackingService {
 
     List<TripDailyOutfitPreview> previews;
     if (workTrip) {
-      previews = _dailyWork(input, all, hasWorkEvent: hasWorkEvent, maxDaysOverride: 2);
+      previews = _dailyWork(
+        input,
+        all,
+        hasWorkEvent: hasWorkEvent,
+        maxDaysOverride: 2,
+      );
     } else if (hikingTrip) {
       previews = _dailyHiking(input, all, maxDaysOverride: 2);
     } else if (festivalTrip) {
       previews = _dailyFestival(input, all, maxDaysOverride: 2);
     } else if (cityTrip) {
-      previews = _dailyCity(input, all, coolSeason: coolSeason, maxDaysOverride: 2);
+      previews = _dailyCity(
+        input,
+        all,
+        coolSeason: coolSeason,
+        maxDaysOverride: 2,
+      );
     } else {
       previews = _dailyGeneral(input, all, maxDaysOverride: 2);
     }
@@ -2474,7 +3530,9 @@ abstract final class TripPackingService {
   }
 
   static bool _transportSuggestsAirportLayer(TripTransport t) {
-    return t == TripTransport.plane || t == TripTransport.train || t == TripTransport.bus;
+    return t == TripTransport.plane ||
+        t == TripTransport.train ||
+        t == TripTransport.bus;
   }
 
   static TripWardrobePiece? _pickTravelSneaker(List<_WardrobeCandidate> all) {
@@ -2522,21 +3580,30 @@ abstract final class TripPackingService {
     TripPlanInput input, {
     required bool warmBeach,
     required bool cityTrip,
+    List<TripResolvedDayWeather>? destinationWeather,
   }) {
     final dest = _shortDestLabel(input);
     final destText =
         '${input.destinationText} ${input.selectedDestinationName ?? ''} ${input.destinationCountry ?? ''}';
 
-    final outboundAnchor = input.outboundDeparture ?? input.outboundArrival ?? input.climateRangeStart;
-    final returnAnchor = input.returnDeparture ?? input.returnArrival ?? input.climateRangeEnd;
+    final outboundAnchor =
+        input.outboundDeparture ??
+        input.outboundArrival ??
+        input.climateRangeStart;
+    final returnAnchor =
+        input.returnDeparture ?? input.returnArrival ?? input.climateRangeEnd;
 
     final homeOutTriple = _homeWeatherTriple(outboundAnchor);
-    final homeRetTriple = _homeWeatherTriple(input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd);
+    final homeRetTriple = _homeWeatherTriple(
+      input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd,
+    );
 
     final routeOut = _compactTravelRouteArrowSk(input, returnLeg: false);
     final routeRet = _compactTravelRouteArrowSk(input, returnLeg: true);
 
     int destHighForDay(int dayIx) {
+      final resolved = destinationWeather?.elementAtOrNull(dayIx);
+      if (resolved != null) return resolved.highTempC;
       final w = _weatherForContext(
         warmBeach: warmBeach,
         cityTrip: cityTrip,
@@ -2547,6 +3614,8 @@ abstract final class TripPackingService {
     }
 
     String destCondForDay(int dayIx) {
+      final resolved = destinationWeather?.elementAtOrNull(dayIx);
+      if (resolved != null) return resolved.conditionSk;
       final w = _weatherForContext(
         warmBeach: warmBeach,
         cityTrip: cityTrip,
@@ -2556,12 +3625,8 @@ abstract final class TripPackingService {
       return w.$3;
     }
 
-    final destLeg = _weatherForContext(
-      warmBeach: warmBeach,
-      cityTrip: cityTrip,
-      destinationText: destText,
-      dayIndex: 0,
-    );
+    final destLegHigh = destHighForDay(0);
+    final destLegCond = destCondForDay(0);
 
     final outboundDateLabel = _skDayLabel(
       DateTime(outboundAnchor.year, outboundAnchor.month, outboundAnchor.day),
@@ -2571,58 +3636,53 @@ abstract final class TripPackingService {
       travelDateLabelSk: outboundDateLabel,
       routeTitleSk: routeOut,
       conditionFromSk: homeOutTriple.$3,
-      conditionToSk: destLeg.$3,
+      conditionToSk: destLegCond,
       tempFromC: homeOutTriple.$1,
-      tempToC: destLeg.$1,
+      tempToC: destLegHigh,
     );
 
     debugPrint(
       '[TRIP_WEATHER_CARD] type=departure route=$routeOut '
-      'temps=${homeOutTriple.$1}°/${destLeg.$1}° cond=${homeOutTriple.$3}/${destLeg.$3}',
+      'temps=${homeOutTriple.$1}°/${destLegHigh}° cond=${homeOutTriple.$3}/$destLegCond',
     );
 
     final stayDays = <TripWeatherDayPreview>[];
     final destCalDays = _destinationCalendarDays(input);
-    final anchorStay = input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
+    final anchorStay =
+        input.outboundArrival ?? input.outboundDeparture ?? DateTime.now();
 
     if (destCalDays.isEmpty && input.tripDayCount == 1) {
       final date = DateTime(anchorStay.year, anchorStay.month, anchorStay.day);
-      final w = _weatherForContext(
-        warmBeach: warmBeach,
-        cityTrip: cityTrip,
-        destinationText: destText,
-        dayIndex: 0,
-      );
       stayDays.add(
-        TripWeatherDayPreview(
-          label: _skDayLabel(date),
-          highTempC: w.$1,
-          lowTempC: w.$2,
-          conditionSk: w.$3,
+        _stayPreviewForDay(
+          date: date,
+          dayIndex: 0,
+          resolved: destinationWeather?.elementAtOrNull(0),
+          warmBeach: warmBeach,
+          cityTrip: cityTrip,
+          destinationText: destText,
         ),
       );
+      final w = stayDays.last;
       debugPrint(
-        '[TRIP_WEATHER_CARD] type=stay route=$dest temps=${w.$1}°/${w.$2}° cond=${w.$3}',
+        '[TRIP_WEATHER_CARD] type=stay route=$dest temps=${w.highTempC}°/${w.lowTempC}° cond=${w.conditionSk} source=${w.sourceLabelSk}',
       );
     } else {
       for (var i = 0; i < destCalDays.length; i++) {
         final date = destCalDays[i];
-        final w = _weatherForContext(
-          warmBeach: warmBeach,
-          cityTrip: cityTrip,
-          destinationText: destText,
-          dayIndex: i,
-        );
         stayDays.add(
-          TripWeatherDayPreview(
-            label: _skDayLabel(date),
-            highTempC: w.$1,
-            lowTempC: w.$2,
-            conditionSk: w.$3,
+          _stayPreviewForDay(
+            date: date,
+            dayIndex: i,
+            resolved: destinationWeather?.elementAtOrNull(i),
+            warmBeach: warmBeach,
+            cityTrip: cityTrip,
+            destinationText: destText,
           ),
         );
+        final w = stayDays.last;
         debugPrint(
-          '[TRIP_WEATHER_CARD] type=stay route=$dest day=$i temps=${w.$1}°/${w.$2}° cond=${w.$3}',
+          '[TRIP_WEATHER_CARD] type=stay route=$dest day=$i temps=${w.highTempC}°/${w.lowTempC}° cond=${w.conditionSk} source=${w.sourceLabelSk}',
         );
       }
     }
@@ -2655,15 +3715,20 @@ abstract final class TripPackingService {
     );
   }
 
-  static TripWardrobePiece? _pickPieceAvoiding(List<TripWardrobePiece> pool, Set<String> avoid) {
+  static TripWardrobePiece? _pickPieceAvoiding(
+    List<TripWardrobePiece> pool,
+    Set<String> avoid,
+  ) {
     for (final p in pool) {
       if (!avoid.contains(p.id)) return p;
     }
     return pool.isNotEmpty ? pool.first : null;
   }
 
-  static String _blobForPiece(TripWardrobePiece p, List<_WardrobeCandidate> all) =>
-      all.where((c) => c.piece.id == p.id).firstOrNull?.blob ?? '';
+  static String _blobForPiece(
+    TripWardrobePiece p,
+    List<_WardrobeCandidate> all,
+  ) => all.where((c) => c.piece.id == p.id).firstOrNull?.blob ?? '';
 
   /// Vonkajšia vrstva → top → spodok/plávanie → obuv → doplnky (čiapka, okuliare, batoh).
   static int _travelVisualLane(String blob) {
@@ -2728,7 +3793,11 @@ abstract final class TripPackingService {
     }).toList();
   }
 
-  static double _rotationPenalty(_TripOutfitRotation r, TripWardrobePiece p, _RotPickAxis axis) {
+  static double _rotationPenalty(
+    _TripOutfitRotation r,
+    TripWardrobePiece p,
+    _RotPickAxis axis,
+  ) {
     final uses = r.usesInTrip[p.id] ?? 0;
     var pen = uses * 4.0;
     switch (axis) {
@@ -2775,8 +3844,13 @@ abstract final class TripPackingService {
     debugPrint(
       '[TRIP_ROTATION] item=${chosen.nameSk} previousUses=$prevUses penalty=${penLog.toStringAsFixed(1)}',
     );
-    final alts = usePool.where((p) => p.id != chosen.id).map((p) => p.nameSk).join('|');
-    debugPrint('[TRIP_SELECTION] category=$logCategory selected=${chosen.nameSk} alternatives=$alts');
+    final alts = usePool
+        .where((p) => p.id != chosen.id)
+        .map((p) => p.nameSk)
+        .join('|');
+    debugPrint(
+      '[TRIP_SELECTION] category=$logCategory selected=${chosen.nameSk} alternatives=$alts',
+    );
     return chosen;
   }
 
@@ -2804,7 +3878,8 @@ abstract final class TripPackingService {
         botId ??= p.id;
         continue;
       }
-      if (_reuseCategoryFromBlob(b) == _PieceReuseCategory.low && _blobMatchesAnyAlias(b, _topsAliases)) {
+      if (_reuseCategoryFromBlob(b) == _PieceReuseCategory.low &&
+          _blobMatchesAnyAlias(b, _topsAliases)) {
         topId ??= p.id;
       }
     }
@@ -2844,12 +3919,17 @@ abstract final class TripPackingService {
     final shoesMix = _buildShoesMix(all);
     final anyShoe = _piecesMatching(all, _shoesAllAliases);
 
-    final depCold = _homeClimateFeelsCold(input.outboundDeparture ?? input.climateRangeStart);
+    final depCold = _homeClimateFeelsCold(
+      input.outboundDeparture ?? input.climateRangeStart,
+    );
     final nightOutbound =
-        _lateNightArrival(input.outboundDeparture) || _lateNightArrival(input.outboundArrival);
-    final wantOutboundLayer = layers.isNotEmpty &&
+        _lateNightArrival(input.outboundDeparture) ||
+        _lateNightArrival(input.outboundArrival);
+    final wantOutboundLayer =
+        layers.isNotEmpty &&
         (input.transport == TripTransport.plane ||
-            (_transportSuggestsAirportLayer(input.transport) && (depCold || nightOutbound)));
+            (_transportSuggestsAirportLayer(input.transport) &&
+                (depCold || nightOutbound)));
 
     final pieces = <TripWardrobePiece>[];
     void addP(TripWardrobePiece? p) {
@@ -2924,7 +4004,12 @@ abstract final class TripPackingService {
     final shoesMix = _buildShoesMix(all);
     final anyShoe = _piecesMatching(all, _shoesAllAliases);
     final linenShirts = _filter(all, _linenLightShirtAliases)
-        .where((c) => _blobMatchesAnyAlias(c.blob, _normList(const ['ľan', 'linen', 'košeľa', 'shirt'])))
+        .where(
+          (c) => _blobMatchesAnyAlias(
+            c.blob,
+            _normList(const ['ľan', 'linen', 'košeľa', 'shirt']),
+          ),
+        )
         .map((c) => c.piece)
         .toList();
 
@@ -2950,19 +4035,26 @@ abstract final class TripPackingService {
     }
 
     final outboundLayer = _firstLayerFromPieces(outboundPieces, all);
-    final retCold = _homeClimateFeelsCold(input.returnArrival ?? input.climateRangeEnd);
+    final retCold = _homeClimateFeelsCold(
+      input.returnArrival ?? input.climateRangeEnd,
+    );
     final layerForReturnTransport =
-        retCold && _transportSuggestsAirportLayer(input.transport) && layers.isNotEmpty;
+        retCold &&
+        _transportSuggestsAirportLayer(input.transport) &&
+        layers.isNotEmpty;
     final nightReturn =
-        _lateNightArrival(input.returnDeparture) || _lateNightArrival(input.returnArrival);
-    final mirrorOutboundLayer = outboundLayer != null &&
+        _lateNightArrival(input.returnDeparture) ||
+        _lateNightArrival(input.returnArrival);
+    final mirrorOutboundLayer =
+        outboundLayer != null &&
         _transportSuggestsAirportLayer(input.transport) &&
         layers.isNotEmpty &&
         (retCold || nightReturn);
 
     bool wantReturnLayer() {
       if (layers.isEmpty) return false;
-      if (input.transport == TripTransport.plane && outboundLayer != null) return true;
+      if (input.transport == TripTransport.plane && outboundLayer != null)
+        return true;
       return layerForReturnTransport || mirrorOutboundLayer;
     }
 
@@ -2974,7 +4066,8 @@ abstract final class TripPackingService {
           (layerForReturnTransport || mirrorOutboundLayer)) {
         return ol;
       }
-      final retAnchor = input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd;
+      final retAnchor =
+          input.returnArrival ?? input.returnDeparture ?? input.climateRangeEnd;
       final est = _estimateHomeHighC(retAnchor);
       return _pickTravelOuterLayerForHomeClimate(
             layers: layers,
@@ -3047,7 +4140,12 @@ abstract final class TripPackingService {
       rotation,
     );
 
-    final titleSk = _destinationTitleSk(destDayOrdinal, totalDestDays, input.activityNotes, TripKind.beach);
+    final titleSk = _destinationTitleSk(
+      destDayOrdinal,
+      totalDestDays,
+      input.activityNotes,
+      TripKind.beach,
+    );
     final summary = pieces.isEmpty
         ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
         : pieces.map((e) => e.nameSk).join(', ');
@@ -3102,7 +4200,12 @@ abstract final class TripPackingService {
     final hats = _piecesMatching(all, _hatAliases);
     final sunnies = _piecesMatching(all, _sunglassesAliases);
     final linenShirts = _filter(all, _linenLightShirtAliases)
-        .where((c) => _blobMatchesAnyAlias(c.blob, _normList(const ['ľan', 'linen', 'košeľa', 'shirt'])))
+        .where(
+          (c) => _blobMatchesAnyAlias(
+            c.blob,
+            _normList(const ['ľan', 'linen', 'košeľa', 'shirt']),
+          ),
+        )
         .map((c) => c.piece)
         .toList();
     final longPants = _filter(all, _longPantsAliases)
@@ -3302,27 +4405,38 @@ abstract final class TripPackingService {
 
     final orderedPieces = _orderPiecesTravelVisual(pieces, all);
 
-    final titleSk = _destinationTitleSk(destDayOrdinal, totalDestDays, input.activityNotes, TripKind.beach);
+    final titleSk = _destinationTitleSk(
+      destDayOrdinal,
+      totalDestDays,
+      input.activityNotes,
+      TripKind.beach,
+    );
     final summary = orderedPieces.isEmpty
         ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
         : orderedPieces.map((e) => e.nameSk).join(', ');
 
-    final topDbg = orderedPieces
-            .where((p) => _reuseCategoryForPiece(p, all) == _PieceReuseCategory.low)
+    final topDbg =
+        orderedPieces
+            .where(
+              (p) => _reuseCategoryForPiece(p, all) == _PieceReuseCategory.low,
+            )
             .map((p) => p.nameSk)
             .firstOrNull ??
         '-';
     final botDbg = orderedPieces
-            .where((p) => _reuseCategoryForPiece(p, all) == _PieceReuseCategory.medium)
-            .map((p) => p.nameSk)
-            .join(',');
+        .where(
+          (p) => _reuseCategoryForPiece(p, all) == _PieceReuseCategory.medium,
+        )
+        .map((p) => p.nameSk)
+        .join(',');
     final shoeDbg = orderedPieces
-            .where((p) {
-          final b = all.where((c) => c.piece.id == p.id).firstOrNull?.blob ?? '';
+        .where((p) {
+          final b =
+              all.where((c) => c.piece.id == p.id).firstOrNull?.blob ?? '';
           return _blobMatchesAnyAlias(b, _shoesAllAliases);
         })
-            .map((p) => p.nameSk)
-            .join(',');
+        .map((p) => p.nameSk)
+        .join(',');
     debugPrint(
       '[TRIP_OUTFIT_BUILD] day=$destDayOrdinal selectedTop=$topDbg selectedBottom=${botDbg.isEmpty ? '-' : botDbg} selectedShoes=${shoeDbg.isEmpty ? '-' : shoeDbg}',
     );
@@ -3375,7 +4489,8 @@ abstract final class TripPackingService {
 
     TripWardrobePiece? shoeForDay(int di) {
       if (workShoes.isNotEmpty) return workShoes[di % workShoes.length];
-      if (sneakersList.isNotEmpty) return sneakersList[di % sneakersList.length];
+      if (sneakersList.isNotEmpty)
+        return sneakersList[di % sneakersList.length];
       if (shoesMix.isNotEmpty) return shoesMix[di % shoesMix.length];
       return null;
     }
@@ -3387,8 +4502,12 @@ abstract final class TripPackingService {
 
     for (var i = 0; i < maxDays; i++) {
       final day = i + 1;
-      final title =
-          _dayTitle(day: day, totalDays: totalLabelDays, warmBeach: false, kind: input.primaryKindForTitles);
+      final title = _dayTitle(
+        day: day,
+        totalDays: totalLabelDays,
+        warmBeach: false,
+        kind: input.primaryKindForTitles,
+      );
       final pieces = <TripWardrobePiece>[];
 
       void addP(TripWardrobePiece? p) {
@@ -3415,7 +4534,14 @@ abstract final class TripPackingService {
           ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
           : pieces.map((e) => e.nameSk).join(', ');
 
-      out.add(TripDailyOutfitPreview(dayIndex: day, titleSk: title, summarySk: summary, pieces: pieces));
+      out.add(
+        TripDailyOutfitPreview(
+          dayIndex: day,
+          titleSk: title,
+          summarySk: summary,
+          pieces: pieces,
+        ),
+      );
     }
     return out;
   }
@@ -3446,8 +4572,12 @@ abstract final class TripPackingService {
 
     for (var i = 0; i < maxDays; i++) {
       final day = i + 1;
-      final title =
-          _dayTitle(day: day, totalDays: totalLabelDays, warmBeach: false, kind: TripKind.cityBreak);
+      final title = _dayTitle(
+        day: day,
+        totalDays: totalLabelDays,
+        warmBeach: false,
+        kind: TripKind.cityBreak,
+      );
       final pieces = <TripWardrobePiece>[];
 
       void addP(TripWardrobePiece? p) {
@@ -3584,7 +4714,14 @@ abstract final class TripPackingService {
           ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
           : ordered.map((e) => e.nameSk).join(', ');
 
-      out.add(TripDailyOutfitPreview(dayIndex: day, titleSk: title, summarySk: summary, pieces: ordered));
+      out.add(
+        TripDailyOutfitPreview(
+          dayIndex: day,
+          titleSk: title,
+          summarySk: summary,
+          pieces: ordered,
+        ),
+      );
     }
     return out;
   }
@@ -3603,8 +4740,12 @@ abstract final class TripPackingService {
 
     for (var i = 0; i < maxDays; i++) {
       final day = i + 1;
-      final title =
-          _dayTitle(day: day, totalDays: maxDays, warmBeach: false, kind: TripKind.hiking);
+      final title = _dayTitle(
+        day: day,
+        totalDays: maxDays,
+        warmBeach: false,
+        kind: TripKind.hiking,
+      );
       final pieces = <TripWardrobePiece>[];
 
       void addP(TripWardrobePiece? p) {
@@ -3620,7 +4761,14 @@ abstract final class TripPackingService {
           ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
           : pieces.map((e) => e.nameSk).join(', ');
 
-      out.add(TripDailyOutfitPreview(dayIndex: day, titleSk: title, summarySk: summary, pieces: pieces));
+      out.add(
+        TripDailyOutfitPreview(
+          dayIndex: day,
+          titleSk: title,
+          summarySk: summary,
+          pieces: pieces,
+        ),
+      );
     }
     return out;
   }
@@ -3639,8 +4787,12 @@ abstract final class TripPackingService {
 
     for (var i = 0; i < maxDays; i++) {
       final day = i + 1;
-      final title =
-          _dayTitle(day: day, totalDays: maxDays, warmBeach: false, kind: TripKind.festival);
+      final title = _dayTitle(
+        day: day,
+        totalDays: maxDays,
+        warmBeach: false,
+        kind: TripKind.festival,
+      );
       final pieces = <TripWardrobePiece>[];
 
       void addP(TripWardrobePiece? p) {
@@ -3652,7 +4804,9 @@ abstract final class TripPackingService {
       if (shoesMix.isNotEmpty) addP(shoesMix[i % shoesMix.length]);
 
       var sig = pieces.map((p) => p.id).join('|');
-      if (prevSig != null && sig == prevSig && (tops.length > 1 || shorts.length > 1)) {
+      if (prevSig != null &&
+          sig == prevSig &&
+          (tops.length > 1 || shorts.length > 1)) {
         pieces.clear();
         if (tops.isNotEmpty) addP(tops[(i + 1) % tops.length]);
         if (shorts.isNotEmpty) addP(shorts[(i + 1) % shorts.length]);
@@ -3665,7 +4819,14 @@ abstract final class TripPackingService {
           ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
           : pieces.map((e) => e.nameSk).join(', ');
 
-      out.add(TripDailyOutfitPreview(dayIndex: day, titleSk: title, summarySk: summary, pieces: pieces));
+      out.add(
+        TripDailyOutfitPreview(
+          dayIndex: day,
+          titleSk: title,
+          summarySk: summary,
+          pieces: pieces,
+        ),
+      );
     }
     return out;
   }
@@ -3676,7 +4837,12 @@ abstract final class TripPackingService {
     int? maxDaysOverride,
   }) {
     final tops = _piecesMatching(all, _topsAliases);
-    final bottoms = _uniquePieces(_filter(all, [..._longPantsAliases, ..._shortsAliases]).map((c) => c.piece));
+    final bottoms = _uniquePieces(
+      _filter(all, [
+        ..._longPantsAliases,
+        ..._shortsAliases,
+      ]).map((c) => c.piece),
+    );
     final shoesMix = _buildShoesMix(all);
     final fallbackShoes = _piecesMatching(all, _shoesAllAliases);
     final maxDays = maxDaysOverride ?? _destinationOutfitDayCount(input);
@@ -3685,8 +4851,12 @@ abstract final class TripPackingService {
 
     for (var i = 0; i < maxDays; i++) {
       final day = i + 1;
-      final title =
-          _dayTitle(day: day, totalDays: maxDays, warmBeach: false, kind: input.primaryKindForTitles);
+      final title = _dayTitle(
+        day: day,
+        totalDays: maxDays,
+        warmBeach: false,
+        kind: input.primaryKindForTitles,
+      );
       final pieces = <TripWardrobePiece>[];
 
       void addP(TripWardrobePiece? p) {
@@ -3704,7 +4874,10 @@ abstract final class TripPackingService {
       var sig = pieces.map((p) => p.id).join('|');
       if (prevSig != null &&
           sig == prevSig &&
-          (tops.length > 1 || bottoms.length > 1 || shoesMix.length > 1 || fallbackShoes.length > 1)) {
+          (tops.length > 1 ||
+              bottoms.length > 1 ||
+              shoesMix.length > 1 ||
+              fallbackShoes.length > 1)) {
         if (tops.length > 1) {
           pieces.clear();
           addP(tops[(i + 1) % tops.length]);
@@ -3723,12 +4896,21 @@ abstract final class TripPackingService {
           ? 'Z aktuálneho výberu neviem poskladať kombináciu.'
           : pieces.map((e) => e.nameSk).join(', ');
 
-      out.add(TripDailyOutfitPreview(dayIndex: day, titleSk: title, summarySk: summary, pieces: pieces));
+      out.add(
+        TripDailyOutfitPreview(
+          dayIndex: day,
+          titleSk: title,
+          summarySk: summary,
+          pieces: pieces,
+        ),
+      );
     }
     return out;
   }
 
-  static List<TripWardrobePiece> _uniquePieces(Iterable<TripWardrobePiece> raw) {
+  static List<TripWardrobePiece> _uniquePieces(
+    Iterable<TripWardrobePiece> raw,
+  ) {
     final seen = <String>{};
     final out = <TripWardrobePiece>[];
     for (final p in raw) {
@@ -3742,6 +4924,128 @@ abstract final class TripPackingService {
     return '${w[day.weekday - 1]} ${day.day}. ${day.month}.';
   }
 
+  static TripWeatherDayPreview _stayPreviewForDay({
+    required DateTime date,
+    required int dayIndex,
+    required TripResolvedDayWeather? resolved,
+    required bool warmBeach,
+    required bool cityTrip,
+    required String destinationText,
+  }) {
+    if (resolved != null) {
+      return TripWeatherDayPreview(
+        label: _skDayLabel(date),
+        highTempC: resolved.highTempC,
+        lowTempC: resolved.lowTempC,
+        conditionSk: resolved.conditionSk,
+        forecastAvailable: resolved.forecastAvailable,
+        sourceLabelSk: resolved.sourceLabelSk,
+        isRainy: resolved.isRainy,
+        isWindy: resolved.isWindy,
+      );
+    }
+    final w = _weatherForContext(
+      warmBeach: warmBeach,
+      cityTrip: cityTrip,
+      destinationText: destinationText,
+      dayIndex: dayIndex,
+    );
+    return TripWeatherDayPreview(
+      label: _skDayLabel(date),
+      highTempC: w.$1,
+      lowTempC: w.$2,
+      conditionSk: w.$3,
+      forecastAvailable: false,
+      sourceLabelSk: CalendarWeatherMapper.estimateLabel,
+      isRainy: w.$3 == 'Dážď',
+    );
+  }
+
+  static Future<List<TripResolvedDayWeather>> _resolveDestinationWeather(
+    TripPlanInput input, {
+    TripDestinationWeatherSource? source,
+  }) async {
+    final dates = _timelineDestinationDates(input, logTimeline: false);
+    if (dates.isEmpty) return const [];
+    final warmBeach = _isWarmBeachContext(input);
+    final cityTrip = input.tripKinds.contains(TripKind.cityBreak);
+    final destText =
+        '${input.destinationText} ${input.selectedDestinationName ?? ''} ${input.destinationCountry ?? ''}';
+    Map<String, TripOpenMeteoDay> real = {};
+    final lat = input.destinationLatitude;
+    final lon = input.destinationLongitude;
+    if (lat != null && lon != null) {
+      try {
+        real = await (source ?? HourlyTripDestinationWeatherSource())
+            .fetchRealForecastDays(
+              latitude: lat,
+              longitude: lon,
+              dates: dates,
+              locationLabel: _shortDestLabel(input),
+            );
+      } catch (_) {
+        real = {};
+      }
+    }
+    return [
+      for (var i = 0; i < dates.length; i++)
+        _mergeResolvedDay(
+          date: dates[i],
+          real: real[CalendarWeatherMapper.dateKey(dates[i])],
+          fallback: _weatherForContext(
+            warmBeach: warmBeach,
+            cityTrip: cityTrip,
+            destinationText: destText,
+            dayIndex: i,
+          ),
+        ),
+    ];
+  }
+
+  static TripResolvedDayWeather _mergeResolvedDay({
+    required DateTime date,
+    required TripOpenMeteoDay? real,
+    required (int, int, String) fallback,
+  }) {
+    if (real != null) {
+      return TripResolvedDayWeather(
+        date: date,
+        highTempC: real.highTempC,
+        lowTempC: real.lowTempC,
+        conditionSk: real.conditionSk,
+        forecastAvailable: true,
+        sourceLabelSk: CalendarWeatherMapper.forecastLabel,
+        isRainy: real.isRainy,
+        isWindy: real.isWindy,
+      );
+    }
+    return TripResolvedDayWeather(
+      date: date,
+      highTempC: fallback.$1,
+      lowTempC: fallback.$2,
+      conditionSk: fallback.$3,
+      forecastAvailable: false,
+      sourceLabelSk: CalendarWeatherMapper.estimateLabel,
+      isRainy: fallback.$3 == 'Dážď',
+      isWindy: false,
+    );
+  }
+
+  @visibleForTesting
+  static (int high, int low, String conditionSk) syntheticWeatherForContextForTest({
+    required bool warmBeach,
+    required bool cityTrip,
+    required String destinationText,
+    required int dayIndex,
+  }) {
+    return _weatherForContext(
+      warmBeach: warmBeach,
+      cityTrip: cityTrip,
+      destinationText: destinationText,
+      dayIndex: dayIndex,
+    );
+  }
+
   static (int, int, String) _weatherForContext({
     required bool warmBeach,
     required bool cityTrip,
@@ -3750,19 +5054,41 @@ abstract final class TripPackingService {
   }) {
     final text = destinationText.toLowerCase();
     final isLondon =
-        text.contains('london') || text.contains('londýn') || text.contains('uk') || text.contains('england');
-    if (warmBeach) return (29 + (dayIndex % 6), 22 + (dayIndex % 4), ['Jasno', 'Jasno', 'Polooblačno'][dayIndex % 3]);
+        text.contains('london') ||
+        text.contains('londýn') ||
+        text.contains('uk') ||
+        text.contains('england');
+    if (warmBeach)
+      return (
+        29 + (dayIndex % 6),
+        22 + (dayIndex % 4),
+        ['Jasno', 'Jasno', 'Polooblačno'][dayIndex % 3],
+      );
     if (isLondon) {
       final conds = ['Dážď', 'Oblačno', 'Polooblačno', 'Dážď', 'Oblačno'];
-      return (14 + (dayIndex % 5), 9 + (dayIndex % 4), conds[dayIndex % conds.length]);
+      return (
+        14 + (dayIndex % 5),
+        9 + (dayIndex % 4),
+        conds[dayIndex % conds.length],
+      );
     }
-    if (cityTrip) return (18 + (dayIndex % 7), 11 + (dayIndex % 4), ['Polooblačno', 'Jasno', 'Oblačno'][dayIndex % 3]);
-    return (18 + (dayIndex % 6), 10 + (dayIndex % 4), ['Jasno', 'Polooblačno', 'Oblačno'][dayIndex % 3]);
+    if (cityTrip)
+      return (
+        18 + (dayIndex % 7),
+        11 + (dayIndex % 4),
+        ['Polooblačno', 'Jasno', 'Oblačno'][dayIndex % 3],
+      );
+    return (
+      18 + (dayIndex % 6),
+      10 + (dayIndex % 4),
+      ['Jasno', 'Polooblačno', 'Oblačno'][dayIndex % 3],
+    );
   }
 
   static bool _isWarmBeachContext(TripPlanInput input) {
     final text =
-        '${input.destinationText} ${input.selectedDestinationName ?? ''} ${input.destinationCountry ?? ''}'.toLowerCase();
+        '${input.destinationText} ${input.selectedDestinationName ?? ''} ${input.destinationCountry ?? ''}'
+            .toLowerCase();
     if (text.contains('london') ||
         text.contains('londýn') ||
         text.contains('united kingdom') ||
@@ -3789,7 +5115,14 @@ abstract final class TripPackingService {
 
   static bool _hasWorkEvent(String note) {
     final n = note.toLowerCase();
-    const keys = ['meeting', 'stretnutie', 'pracovné stretnutie', 'konferencia', 'večera', 'dinner'];
+    const keys = [
+      'meeting',
+      'stretnutie',
+      'pracovné stretnutie',
+      'konferencia',
+      'večera',
+      'dinner',
+    ];
     return keys.any(n.contains);
   }
 
@@ -3811,7 +5144,10 @@ abstract final class TripPackingService {
       return 'Deň $day – pláž / výlet';
     }
     if (kind == TripKind.cityBreak) return 'Deň $day – mesto a chodenie';
-    if (kind == TripKind.business) return day == 1 ? 'Deň 1 – pracovný štart' : 'Deň $day – pracovný program';
+    if (kind == TripKind.business)
+      return day == 1
+          ? 'Deň 1 – pracovný štart'
+          : 'Deň $day – pracovný program';
     return 'Deň $day – cesty podľa plánu';
   }
 }
@@ -3847,7 +5183,10 @@ final class _TripPackLedger {
       if (slot == 'outbound') {
         if (c == _PieceReuseCategory.low) _travelLowTopIds.add(p.id);
         if (c == _PieceReuseCategory.medium) _travelOutboundMediumIds.add(p.id);
-        if (TripPackingService._blobMatchesAnyAlias(blob, TripPackingService._shoesAllAliases)) {
+        if (TripPackingService._blobMatchesAnyAlias(
+          blob,
+          TripPackingService._shoesAllAliases,
+        )) {
           _travelOutboundShoeIds.add(p.id);
         }
       }
@@ -3856,10 +5195,15 @@ final class _TripPackLedger {
 
   void registerDestinationDay(List<TripWardrobePiece> pieces, int dayOrdinal) {
     registerWear(pieces, 'dest_day_$dayOrdinal');
-    final lows = pieces.where((p) => categoryOf(p) == _PieceReuseCategory.low).map((p) => p.id).toSet();
+    final lows = pieces
+        .where((p) => categoryOf(p) == _PieceReuseCategory.low)
+        .map((p) => p.id)
+        .toSet();
     _destLowTopIdsByDay[dayOrdinal] = lows;
-    final meds =
-        pieces.where((p) => categoryOf(p) == _PieceReuseCategory.medium).map((p) => p.id).toSet();
+    final meds = pieces
+        .where((p) => categoryOf(p) == _PieceReuseCategory.medium)
+        .map((p) => p.id)
+        .toSet();
     _destMediumBottomIdsByDay[dayOrdinal] = meds;
   }
 
@@ -3887,6 +5231,8 @@ final class _TripPackLedger {
   Set<String> wornMediumIdsAcrossDestination() =>
       _destMediumBottomIdsByDay.values.expand((s) => s).toSet();
 
-  Set<String> wornLowIdsForReturnAvoidance() =>
-      {..._travelLowTopIds, ...wornLowIdsAcrossDestination()};
+  Set<String> wornLowIdsForReturnAvoidance() => {
+    ..._travelLowTopIds,
+    ...wornLowIdsAcrossDestination(),
+  };
 }

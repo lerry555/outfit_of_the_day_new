@@ -329,11 +329,12 @@ class _HeroOutfitTileCard extends StatelessWidget {
                   ),
                 ),
               ),
-              Positioned(
-                top: 7,
-                right: 7,
-                child: _HeroRemoveChip(onTap: onRemoveTap),
-              ),
+              if (!_isEmptyHeroEditSlot(item))
+                Positioned(
+                  top: 7,
+                  right: 7,
+                  child: _HeroRemoveChip(onTap: onRemoveTap),
+                ),
             ],
           )
         : showOptionalInfo
@@ -346,13 +347,22 @@ class _HeroOutfitTileCard extends StatelessWidget {
               )
             : core;
 
+    final labeled = editMode && _isEmptyHeroEditSlot(item)
+        ? Semantics(
+            identifier: 'ootd_edit_empty_outerwear',
+            button: true,
+            label: item.label,
+            child: body,
+          )
+        : body;
+
     if (expandCell) {
-      return SizedBox.expand(child: body);
+      return SizedBox.expand(child: labeled);
     }
 
     return AspectRatio(
       aspectRatio: 1,
-      child: body,
+      child: labeled,
     );
   }
 }
@@ -486,7 +496,8 @@ class _HeroOutfitImageView extends StatelessWidget {
       normalizedImageUrl,
       key: slotKey != null && slotKey.isNotEmpty ? ValueKey(slotKey) : null,
       fit: BoxFit.contain,
-      filterQuality: FilterQuality.high,
+      filterQuality: FilterQuality.medium,
+      cacheWidth: kHomeHeroImageCacheWidth,
       gaplessPlayback: true,
       alignment: Alignment.center,
       errorBuilder: (context, error, stackTrace) => const SizedBox.shrink(),

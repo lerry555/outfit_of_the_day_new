@@ -18,27 +18,35 @@ import '../widgets/home/home_greeting_header.dart';
 import '../widgets/home/home_inspiration_carousel.dart';
 import '../widgets/home/home_luxury_palette.dart';
 import '../widgets/home/home_quick_action_orb.dart';
-import '../widgets/home/home_recommended_section.dart';
 
 import 'friends_screen.dart';
 import 'messages_screen.dart';
 import 'premium_screen.dart';
 import 'profile_screen.dart';
-import 'recommended_screen.dart';
 import 'calendar_outfit_screen.dart';
 import 'trip_packing_screen.dart';
-import 'user_preferences_screen.dart';
+import 'style_preferences_screen.dart';
 import 'wardrobe_analysis_screen.dart';
 import 'wardrobe_reanalyze_review_screen.dart';
 import '../utils/outfit_reason_builder.dart';
 import '../utils/briefing_weather_condition.dart';
 import '../utils/luxury_weather_emoji.dart';
+import '../Services/auth_session.dart';
 import '../Services/hourly_weather_service.dart';
 import '../Services/user_location_service.dart';
 import '../Services/home_ai_outfit_service.dart';
+import '../Services/home_final_review_payload.dart';
+import '../Services/home_generation_telemetry.dart';
 import '../Services/home_stylist_final_review_service.dart';
+import '../Services/outfit_stylist_final_review_runner.dart';
 import '../Services/home_outfit_stylist_explanation_service.dart';
+import '../Services/native_wardrobe_v2_runtime.dart';
 import '../Services/home_daily_outfit_cache_service.dart';
+import '../Services/user_style_preferences_reader.dart';
+import '../domain/style_preferences/home_taste_cache_policy.dart';
+import '../domain/style_preferences/style_preference_taste.dart';
+import '../domain/style_preferences/style_preferences_runtime.dart';
+import '../domain/style_preferences/user_style_preferences.dart';
 import '../Services/outfit_generation_service.dart';
 import '../Services/wardrobe_metadata_migration_service.dart';
 import '../Services/wardrobe_reanalyze_apply_service.dart';
@@ -54,7 +62,10 @@ import '../utils/family_guidance_exclusion_audit.dart';
 import '../utils/footwear_family_guidance.dart';
 import '../utils/layer_harmony_guard.dart';
 import '../utils/home_debug_logging.dart';
+import '../utils/home_user_facing_reason.dart';
 import '../utils/home_wardrobe_normalizer.dart';
+import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
+import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/wardrobe_image_processing.dart';
 
@@ -139,6 +150,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       const HomeOutfitStylistExplanationService();
   final HomeDailyOutfitCacheService _dailyOutfitCacheService =
       HomeDailyOutfitCacheService();
+  final UserStylePreferencesReader _stylePreferencesReader =
+      UserStylePreferencesReader();
+  UserStylePreferences _stylePreferences = UserStylePreferences.empty;
+  String _stylePreferenceFingerprint =
+      StylePreferencesRuntime.consumptionFingerprint(
+        UserStylePreferences.empty,
+      );
+  bool _stylePreferencesLoadInFlight = false;
   List<Map<String, dynamic>> _lastWardrobeForCache = const [];
   /// KB-normalized wardrobe maps — sole clothing metadata source for Home outfit generation.
   List<Map<String, dynamic>> _normalizedWardrobeForHomeBrain = const [];
@@ -176,6 +195,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   bool _weatherFetchInFlight = false;
   DateTime? _lastWeatherFetchAt;
   String? _lastWardrobeStreamSig;
+  bool _wardrobeSnapshotUnavailable = false;
+  String? _lastFirestoreUnavailableLogKey;
+  final Set<String> _deferredLocalRecSigs = {};
   final Map<String, String> _cachedHeroBuildKeyByDateKey = {};
   final Map<String, _HeroTodayState> _cachedHeroBuildStateByDateKey = {};
   final Map<String, _HeroOutfitRecommendation?> _localRecCacheByDateSig = {};
@@ -349,9 +371,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     super.dispose();
   }
 
+  bool _homeRouteWasCurrent = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final isCurrent = ModalRoute.of(context)?.isCurrent ?? false;
+    if (isCurrent && !_homeRouteWasCurrent) {
+      unawaited(_reloadStylePreferencesAndInvalidateIfNeeded());
+    }
+    _homeRouteWasCurrent = isCurrent;
+  }
+
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
+      unawaited(_reloadStylePreferencesAndInvalidateIfNeeded());
       if (_weatherLoaded &&
           _lastWeatherFetchAt != null &&
           DateTime.now().difference(_lastWeatherFetchAt!) < _weatherFreshDuration) {
@@ -617,6 +652,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _logHomeWeatherDebug(contextTag: 'toggle_day', selectedDate: date);
+      debugPrint(
+        '[HOME_DAY] on_demand_ensure day=${index == 1 ? 'tomorrow' : 'today'}',
+      );
       if (_lastWardrobeForCache.isNotEmpty && _weatherLoaded) {
         _refreshMissingHomeImageUrlsInBackground(
           dateKey: dateKey,
@@ -927,6 +965,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       updatedAt: updatedAt,
       weatherSignature: doc.weatherSignature,
       wardrobeSignature: doc.wardrobeSignature,
+      stylePreferenceFingerprint: doc.stylePreferenceFingerprint,
       likedOutfitKey: doc.likedOutfitKey,
     );
   }
@@ -940,6 +979,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String persistSource,
     required DateTime updatedAt,
     String? likedOutfitKey,
+    String stylePreferenceFingerprint = '',
   }) {
     if (!_heroStateHasValidOutfit(state)) return null;
     final ids = _heroOutfitItemIds(state.outfitItems);
@@ -955,6 +995,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       updatedAt: updatedAt,
       weatherSignature: weatherSignature,
       wardrobeSignature: wardrobeSignature,
+      stylePreferenceFingerprint: stylePreferenceFingerprint,
       likedOutfitKey: likedOutfitKey,
     );
   }
@@ -994,6 +1035,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           updatedAt: DateTime.fromMillisecondsSinceEpoch(lastNewOutfitAtMs),
           weatherSignature: firestoreDoc.weatherSignature,
           wardrobeSignature: firestoreDoc.wardrobeSignature,
+          stylePreferenceFingerprint: firestoreDoc.stylePreferenceFingerprint,
           likedOutfitKey: firestoreDoc.likedOutfitKey,
         );
         snapshots.add(lastNewOutfit);
@@ -1008,6 +1050,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         state: cache.state,
         weatherSignature: cache.weatherSignature,
         wardrobeSignature: cache.wardrobeSignature,
+        stylePreferenceFingerprint: cache.stylePreferenceFingerprint,
         userModified: cache.userModified,
         persistSource: cache.persistSource ?? 'memory',
         updatedAt: cache.updatedAt ?? memoryUpdatedAt,
@@ -1031,6 +1074,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           updatedAt: memoryUpdatedAt,
           weatherSignature: cache?.weatherSignature ?? '',
           wardrobeSignature: cache?.wardrobeSignature ?? '',
+          stylePreferenceFingerprint: cache?.stylePreferenceFingerprint ?? '',
           likedOutfitKey: _likedOutfitKeyByDay[dayIdx],
         ),
       );
@@ -1043,6 +1087,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         state: sticky,
         weatherSignature: cache?.weatherSignature ?? '',
         wardrobeSignature: cache?.wardrobeSignature ?? '',
+        stylePreferenceFingerprint: cache?.stylePreferenceFingerprint ?? '',
         userModified: cache?.userModified ?? editedManual,
         persistSource: cache?.persistSource ?? 'sticky',
         updatedAt: memoryUpdatedAt,
@@ -1058,6 +1103,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         state: pinned,
         weatherSignature: cache?.weatherSignature ?? '',
         wardrobeSignature: cache?.wardrobeSignature ?? '',
+        stylePreferenceFingerprint: cache?.stylePreferenceFingerprint ?? '',
         userModified: cache?.userModified ?? editedManual,
         persistSource: cache?.persistSource ?? 'pinned',
         updatedAt: memoryUpdatedAt,
@@ -1080,6 +1126,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           updatedAt: memoryUpdatedAt,
           weatherSignature: cache?.weatherSignature ?? '',
           wardrobeSignature: cache?.wardrobeSignature ?? '',
+          stylePreferenceFingerprint: cache?.stylePreferenceFingerprint ?? '',
           likedOutfitKey: _likedOutfitKeyByDay[dayIdx],
         ),
       );
@@ -1096,8 +1143,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     final valid = <_HomeDayCacheSnapshot>[];
     for (final snapshot in snapshots) {
-      final isUserPinnedOutfit =
-          snapshot.userModified || snapshot.persistSource == 'manual_new_outfit';
+      final isUserPinnedOutfit = HomeTasteCachePolicy.isUserPinned(
+        userModified: snapshot.userModified,
+        persistSource: snapshot.persistSource,
+      );
       if (snapshot.weatherSignature.isNotEmpty &&
           snapshot.weatherSignature != weatherSignature &&
           !isUserPinnedOutfit) {
@@ -1107,6 +1156,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           !isUserPinnedOutfit &&
           snapshot.wardrobeSignature.isNotEmpty &&
           snapshot.wardrobeSignature != wardrobeSignature) {
+        continue;
+      }
+      if (HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
+            userPinned: isUserPinnedOutfit,
+            cachedFingerprint: snapshot.stylePreferenceFingerprint,
+            currentFingerprint: _stylePreferenceFingerprint,
+          )) {
         continue;
       }
       if (isUserPinnedOutfit &&
@@ -1762,6 +1818,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       state: heroState,
       weatherSignature: weatherSig,
       wardrobeSignature: wardrobeSig,
+      stylePreferenceFingerprint: _stylePreferenceFingerprint,
       userModified: true,
       persistSource: 'restore_footwear_fix',
       updatedAt: savedAt,
@@ -1990,14 +2047,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final weather = _weatherForDate(date);
     final weatherSig = _homeWeatherSignature(weather);
     final effectiveWardrobe = wardrobe ?? _lastWardrobeForCache;
-    final reason = (reasonOverride ?? '').trim().isNotEmpty
-        ? reasonOverride!.trim()
-        : _regenerateStylistReason(
-            date: date,
-            outfitItems: normalized,
-            source: reasonSource,
-            wardrobe: effectiveWardrobe,
-          );
+    final reason = _userFacingOutfitReason(
+      items: normalized,
+      weather: weather,
+      preferred: reasonOverride,
+      fallbackSource: reasonSource,
+    );
     final wardrobeSig = _wardrobeSignature(effectiveWardrobe);
     final persistSource = _persistSourceForReason(reasonSource);
     final existing = _homeDayHeroCacheByDateKey[dateKey];
@@ -2020,6 +2075,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         wardrobeSignature: wardrobeSig.isNotEmpty
             ? wardrobeSig
             : (existing?.wardrobeSignature ?? ''),
+        stylePreferenceFingerprint: _stylePreferenceFingerprint,
         userModified: markManual,
         persistSource: persistSource,
         updatedAt: now,
@@ -2200,6 +2256,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       reasonItemIds: itemIds,
       weatherSignature: weatherSig,
       wardrobeSignature: wardrobeSig,
+      stylePreferenceFingerprint: _stylePreferenceFingerprint,
       source: persistSource,
       userModified: userModified,
       likedOutfitKey: likedOutfitKey,
@@ -2291,6 +2348,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _weatherSnapTomorrow != null;
     logVerboseHome(
       '[HOME_BOOT] weatherReady=$weatherReady wardrobeReady=${_lastWardrobeForCache.isNotEmpty} '
+      'wardrobeUnavailable=$_wardrobeSnapshotUnavailable '
       'todayCache=${_homeBootCacheLabel(_dateKey(today))} '
       'tomorrowCache=${_homeBootCacheLabel(_dateKey(tomorrow))}',
     );
@@ -2316,12 +2374,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     var anyRestored = false;
 
     try {
+      await _reloadStylePreferencesAndInvalidateIfNeeded();
       for (final date in dates) {
         final dateKey = _dateKey(date);
         final dayLabel = _dayIndexForDate(date) == 0 ? 'today' : 'tomorrow';
         if (_hydratedDailyOutfitWithWardrobeDateKeys.contains(dateKey)) {
           final cached = _homeDayHeroCacheByDateKey[dateKey];
-          if (cached != null && _heroStateHasValidOutfit(cached.state)) {
+          final pinned = cached != null &&
+              HomeTasteCachePolicy.isUserPinned(
+                userModified: cached.userModified,
+                persistSource: cached.persistSource ?? '',
+              );
+          if (cached != null &&
+              _heroStateHasValidOutfit(cached.state) &&
+              (pinned ||
+                  !HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
+                    userPinned: false,
+                    cachedFingerprint: cached.stylePreferenceFingerprint,
+                    currentFingerprint: _stylePreferenceFingerprint,
+                  ))) {
             continue;
           }
         }
@@ -2370,6 +2441,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               !doc.userModified &&
               doc.wardrobeSignature != wardrobeSig) {
             _logHomeRestoreSkipped(dayLabel, 'wardrobe_signature_mismatch');
+          } else if (doc != null &&
+              !doc.userModified &&
+              HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
+                userPinned: false,
+                cachedFingerprint: doc.stylePreferenceFingerprint,
+                currentFingerprint: _stylePreferenceFingerprint,
+              )) {
+            _logHomeRestoreSkipped(dayLabel, 'style_preference_mismatch');
           } else if (doc != null &&
               doc.userModified &&
               wardrobe.isNotEmpty &&
@@ -2561,6 +2640,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           state: nextState,
           weatherSignature: weatherSig,
           wardrobeSignature: wardrobeSig,
+          stylePreferenceFingerprint: chosen.stylePreferenceFingerprint.isNotEmpty
+              ? chosen.stylePreferenceFingerprint
+              : _stylePreferenceFingerprint,
           userModified: effectiveUserModified,
           persistSource: effectivePersistSource,
           updatedAt: chosen.updatedAt,
@@ -2773,6 +2855,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       state: heroState,
       weatherSignature: cache.weatherSignature,
       wardrobeSignature: cache.wardrobeSignature,
+      stylePreferenceFingerprint: cache.stylePreferenceFingerprint,
       userModified: cache.userModified,
       persistSource: cache.persistSource,
       updatedAt: DateTime.now(),
@@ -2847,7 +2930,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       'vziat nieco na prehodenie',
       'pripravujem stylisticke vysvetlenie',
     ];
-    return banned.any((phrase) => normalized.contains(phrase));
+    if (HomeUserFacingReason.isInternal(text) ||
+        banned.any((phrase) => normalized.contains(phrase))) {
+      return true;
+    }
+    return false;
   }
 
   String _outfitFeedbackKey(List<_HeroOutfitItem> items) {
@@ -3008,7 +3095,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String wardrobeSignature,
     required bool isPremiumUser,
   }) {
-    return '$dateKey|$weatherSignature|$wardrobeSignature|p=${isPremiumUser ? 1 : 0}';
+    return '$dateKey|$weatherSignature|$wardrobeSignature|t=$_stylePreferenceFingerprint|p=${isPremiumUser ? 1 : 0}';
   }
 
   int _countChangedHeroPieces(List<_HeroOutfitItem> oldList, List<_HeroOutfitItem> newList) {
@@ -3156,6 +3243,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           rejectedCombinationSignatures: rejectedSigs,
           previousOutfitItemIds: effectivePreviousItemIds,
           forceDifferentOutfit: effectiveItems.isNotEmpty,
+          source: 'manual_refresh',
         );
       } finally {
         _currentHeroBuildDateKey = prevBuildDateKey;
@@ -3762,6 +3850,40 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return '$base Pri chladnejšom počasí sa vyplatí mať po ruke aspoň jednu teplejšiu vrstvu.';
   }
 
+  String _userFacingOutfitReason({
+    required List<_HeroOutfitItem> items,
+    required _LocalWeather weather,
+    String? preferred,
+    String fallbackSource = 'local',
+    DateTime? date,
+    List<Map<String, dynamic>>? wardrobe,
+  }) {
+    final fromPreferred = HomeUserFacingReason.forDisplay(preferred);
+    if (fromPreferred != null) return fromPreferred;
+    if (items.length >= 3) {
+      String? outer;
+      for (final item in items) {
+        if (item.type == _HeroWearType.outerwear) {
+          outer = item.label;
+          break;
+        }
+      }
+      return HomeUserFacingReason.fromLocalSelection(
+        tempC: weather.tempC,
+        isRainy: weather.isRainy,
+        isWindy: weather.isWindy,
+        garmentLabels: items.map((e) => e.label).toList(growable: false),
+        outerwearLabel: outer,
+      );
+    }
+    return _regenerateStylistReason(
+      date: date ?? weather.calendarDate,
+      outfitItems: items,
+      source: fallbackSource,
+      wardrobe: wardrobe,
+    );
+  }
+
   bool _heroStateHasValidOutfit(_HeroTodayState state) {
     if (state.source == 'loading') return false;
     final items = state.outfitItems;
@@ -3792,6 +3914,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (hero.userModified) {
         return true;
       }
+      if (HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
+        userPinned: false,
+        cachedFingerprint: hero.stylePreferenceFingerprint,
+        currentFingerprint: _stylePreferenceFingerprint,
+      )) {
+        return false;
+      }
       if (hero.weatherSignature == weatherSignature) {
         if (hero.wardrobeSignature == wardrobeSignature) {
           return true;
@@ -3803,7 +3932,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final latestSig = _homeAiLatestSignatureByDateKey[dateKey];
     if (latestSig != null &&
-        latestSig.startsWith('$dateKey|$weatherSignature|') &&
+        latestSig.startsWith(
+          '$dateKey|$weatherSignature|$_stylePreferenceFingerprint|',
+        ) &&
         _validAiRecommendationForSignature(latestSig) != null) {
       return true;
     }
@@ -3829,6 +3960,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (existing != null &&
         existing.weatherSignature == weatherSignature &&
         existing.wardrobeSignature == wardrobeSignature &&
+        existing.stylePreferenceFingerprint == _stylePreferenceFingerprint &&
         existing.userModified == userModified &&
         (existing.persistSource ?? '') == (persistSource ?? '') &&
         _sameHeroTodayState(existing.state, state)) {
@@ -3838,6 +3970,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       state: state,
       weatherSignature: weatherSignature,
       wardrobeSignature: wardrobeSignature,
+      stylePreferenceFingerprint: _stylePreferenceFingerprint,
       userModified: userModified,
       persistSource: persistSource,
     );
@@ -3865,6 +3998,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   void _tryScheduleHomeOutfitPreload() {
+    unawaited(_tryScheduleHomeOutfitPreloadAfterPrefs());
+  }
+
+  Future<void> _tryScheduleHomeOutfitPreloadAfterPrefs() async {
+    await _reloadStylePreferencesAndInvalidateIfNeeded();
     if (!_weatherLoaded) return;
     unawaited(_ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache));
     if (_lastWardrobeForCache.isEmpty) return;
@@ -3873,6 +4011,70 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       isPremiumUser: _lastIsPremiumUser,
     );
   }
+
+  Future<void> _reloadStylePreferencesAndInvalidateIfNeeded() async {
+    if (_stylePreferencesLoadInFlight) return;
+    _stylePreferencesLoadInFlight = true;
+    final previous = _stylePreferenceFingerprint;
+    try {
+      final prefs = await _stylePreferencesReader.loadForUid(
+        _auth.currentUser?.uid,
+      );
+      _stylePreferences = prefs;
+      _stylePreferenceFingerprint =
+          StylePreferencesRuntime.consumptionFingerprint(prefs);
+    } catch (error) {
+      debugPrint('[HOME_STYLE_PREFS] read_failed error=$error');
+      _stylePreferences = UserStylePreferences.empty;
+      _stylePreferenceFingerprint =
+          StylePreferencesRuntime.consumptionFingerprint(
+            UserStylePreferences.empty,
+          );
+    } finally {
+      _stylePreferencesLoadInFlight = false;
+    }
+    if (previous == _stylePreferenceFingerprint) return;
+    debugPrint(
+      '[HOME_STYLE_PREFS] fingerprint_changed from=$previous '
+      'to=$_stylePreferenceFingerprint',
+    );
+    _invalidateAutoGeneratedHomeCachesForTaste();
+    if (_weatherLoaded &&
+        _lastWardrobeForCache.isNotEmpty &&
+        !_persistedDailyHydrationInFlight) {
+      _tryScheduleHomeOutfitPreload();
+    }
+  }
+
+  void _invalidateAutoGeneratedHomeCachesForTaste() {
+    final staleKeys = <String>[];
+    _homeDayHeroCacheByDateKey.forEach((dateKey, hero) {
+      if (HomeTasteCachePolicy.isUserPinned(
+        userModified: hero.userModified,
+        persistSource: hero.persistSource ?? '',
+      )) {
+        return;
+      }
+      staleKeys.add(dateKey);
+    });
+    for (final dateKey in staleKeys) {
+      _homeDayHeroCacheByDateKey.remove(dateKey);
+      _hydratedDailyOutfitWithWardrobeDateKeys.remove(dateKey);
+      _hydratedHomeCacheDateKeys.remove(dateKey);
+      _cachedHeroBuildKeyByDateKey.remove(dateKey);
+      _cachedHeroBuildStateByDateKey.remove(dateKey);
+      _homeAiLatestSignatureByDateKey.remove(dateKey);
+      _stickyVisibleHeroByDateKey.remove(dateKey);
+    }
+    _homeAiCacheBySignature.clear();
+    _localRecCacheByDateSig.clear();
+    _deferredLocalRecSigs.clear();
+    _stylistFinalReviewDone.clear();
+    _persistedDailyHydrationDone = false;
+  }
+
+  StylePreferenceTaste get _homeStyleTaste =>
+      StylePreferencesRuntime.effectiveTaste(_stylePreferences);
 
   void _scheduleHomeOutfitPreloadOnce({
     required List<Map<String, dynamic>> wardrobe,
@@ -3918,22 +4120,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) async {
     if (!_weatherLoaded || wardrobe.isEmpty) return;
     _homePreloadRanChecks = true;
-    logVerboseHome('[HOME_PRELOAD] ensure_today_tomorrow started');
+    logVerboseHome('[HOME_PRELOAD] ensure_today_only started');
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
-    final tomorrow = today.add(const Duration(days: 1));
-    await Future.wait([
-      _ensureDailyOutfitChecked(
-        date: today,
-        wardrobe: wardrobe,
-        isPremiumUser: isPremiumUser,
-      ),
-      _ensureDailyOutfitChecked(
-        date: tomorrow,
-        wardrobe: wardrobe,
-        isPremiumUser: isPremiumUser,
-      ),
-    ]);
+    await _ensureDailyOutfitChecked(
+      date: today,
+      wardrobe: wardrobe,
+      isPremiumUser: isPremiumUser,
+    );
+    // Tomorrow is not on screen at cold start. Do not generate it until the
+    // user opens Zajtra (_setDayIndex). Hydration of an already-persisted
+    // tomorrow cache still happens in _ensurePersistedDailyOutfitsHydrated.
+    logVerboseHome('[HOME_PRELOAD] tomorrow_deferred_until_zajtra');
   }
 
   Future<void> _ensureDailyOutfitChecked({
@@ -4642,7 +4840,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         debugPrint('[HOME_AI_OUTFIT] ai_result_preserved=true');
       }
       final state = _HeroTodayState(
-        vm: _HeroBannerVM(description: aiCachedRec.reason),
+        vm: _HeroBannerVM(
+          description: _userFacingOutfitReason(
+            items: aiCachedRec.items,
+            weather: w,
+            preferred: aiCachedRec.reason,
+          ),
+        ),
         outfitItems: aiCachedRec.items,
         source: 'ai',
       );
@@ -4659,6 +4863,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (aiEntry == null || aiPendingForDate) {
       final cachedWhilePending = _renderHeroStateForDateKey(dateKey, dayLabel);
       if (cachedWhilePending != null) return cachedWhilePending;
+      final localSig =
+          '$dateKey|${_homeWeatherSignature(w)}|$_stylePreferenceFingerprint|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
+      if (!_localRecCacheByDateSig.containsKey(localSig)) {
+        _scheduleDeferredLocalOutfitRecommend(
+          localSig: localSig,
+          wardrobe: wardrobe,
+          weather: w,
+          isPremiumUser: isPremiumUser,
+        );
+      } else {
+        final pendingLocal = _localRecCacheByDateSig[localSig];
+        if (pendingLocal != null && pendingLocal.items.length >= 3) {
+          return _finalizeHeroState(
+            dateKey: dateKey,
+            state: _HeroTodayState(
+              vm: _HeroBannerVM(
+                description: _userFacingOutfitReason(
+                  items: pendingLocal.items,
+                  weather: w,
+                  preferred: pendingLocal.reason,
+                ),
+              ),
+              outfitItems: pendingLocal.items,
+              source: 'local',
+            ),
+          );
+        }
+      }
       return _finalizeHeroState(
         dateKey: dateKey,
         state: _HeroTodayState(
@@ -4691,9 +4923,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (rec == null) {
       final state = _HeroTodayState(
-        vm: _HeroBannerVM(
-          description: _emptyHeroOutfitDescription(w),
-        ),
+        vm: _HeroBannerVM(description: _emptyHeroOutfitDescription(w)),
         outfitItems: const <_HeroOutfitItem>[],
         source: 'local',
       );
@@ -4706,10 +4936,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _finalizeHeroState(dateKey: dateKey, state: state);
     }
 
+    final humanReason = _userFacingOutfitReason(
+      items: rec.items,
+      weather: w,
+      preferred: rec.reason,
+    );
     final state = _HeroTodayState(
-      vm: _HeroBannerVM(
-        description: rec.reason,
-      ),
+      vm: _HeroBannerVM(description: humanReason),
       outfitItems: rec.items,
       source: 'local',
     );
@@ -4720,7 +4953,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       wardrobeSignature: wardrobeSignature,
       persistSource: 'fallback',
     );
-    if (_isPendingAiStylistReason(rec.reason)) {
+    if (_isPendingAiStylistReason(humanReason)) {
       unawaited(
         _refreshStylistReasonInBackground(
           date: date,
@@ -4730,16 +4963,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ),
       );
     }
-    unawaited(
-      _maybeRunStylistFinalReviewForDateKey(
-        dateKey: dateKey,
-        dayLabel: dayLabel,
-        wardrobe: wardrobe,
-        w: w,
-        isPremiumUser: isPremiumUser,
-        weatherSignature: weatherSignature,
-        wardrobeSignature: wardrobeSignature,
-      ),
+    debugPrint(
+      '[HOME_FINAL_REVIEW] skip_late_replace reason=keep_visible_local_fallback',
     );
     return _finalizeHeroState(dateKey: dateKey, state: state);
   }
@@ -4805,7 +5030,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return;
     }
     final aiSignature =
-        '$dateKey|$weatherSignature|$wardrobeSignature|fd=${forceDifferent ? 1 : 0}|n=$_homeAiRefreshNonce';
+        '$dateKey|$weatherSignature|$_stylePreferenceFingerprint|$wardrobeSignature|fd=${forceDifferent ? 1 : 0}|n=$_homeAiRefreshNonce';
     final excluded = <String>{};
     final rejected =
         Set<String>.from(_rejectedOutfitCombinationKeysByDay[targetDayIdx] ?? {});
@@ -4856,12 +5081,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _homeAiLastWeatherSignatureByDateKey[dateKey] = weatherSignature;
     _homeAiLastWardrobeSignatureByDateKey[dateKey] = wardrobeSignature;
     _homeAiRequestInFlight.add(aiSignature);
-    unawaited(_fetchHomeAiRecommendation(
-      dateKey: dateKey,
-      aiSignature: aiSignature,
+    final localSig =
+        '$dateKey|$weatherSignature|$_stylePreferenceFingerprint|$wardrobeSignature|p=${isPremiumUser ? 1 : 0}';
+    _scheduleDeferredLocalOutfitRecommend(
+      localSig: localSig,
       wardrobe: wardrobe,
-      request: request,
-    ));
+      weather: weather,
+      isPremiumUser: isPremiumUser,
+    );
+    unawaited(
+      _fetchHomeAiRecommendation(
+        dateKey: dateKey,
+        aiSignature: aiSignature,
+        wardrobe: wardrobe,
+        request: request,
+        source: source,
+      ),
+    );
   }
 
   Future<void> _fetchHomeAiRecommendation({
@@ -4869,12 +5105,22 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String aiSignature,
     required List<Map<String, dynamic>> wardrobe,
     required _HomeAiRequestContext request,
+    String source = 'other',
   }) async {
     final weatherContext = _homeAiWeatherContext(request.weather);
+    final trace = HomeGenerationTrace(
+      runId: HomeGenerationTrace.newRunId(),
+      day: _dayIndexForDate(request.date) == 0 ? 'today' : 'tomorrow',
+      source: source == 'regenerate' ? 'manual_refresh' : source,
+    );
+    trace.logStart();
+    trace.wardrobeItemCount = wardrobe.length;
     debugPrint(
       '[HOME_AI_OUTFIT] request date=$dateKey forceDifferent=${request.forceDifferentOutfit} '
-      'excluded=${request.excludedItemIds.length} rejected=${request.rejectedCombinationSignatures.length}',
+      'excluded=${request.excludedItemIds.length} rejected=${request.rejectedCombinationSignatures.length} '
+      'runId=${trace.runId}',
     );
+    final reviewWatch = Stopwatch()..start();
     try {
       final result = await _homeAiOutfitService
           .generateHomeOutfit(
@@ -4887,10 +5133,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             previousOutfitItemIds: request.previousOutfitItemIds.toList(growable: false),
             forceDifferentOutfit: request.forceDifferentOutfit,
           )
-          .timeout(const Duration(seconds: 9));
+          .timeout(kHomeGenerateOutfitTimeout);
+      trace.mark('FINAL_REVIEW_BACKEND_MS', reviewWatch);
+      trace.mark('FINAL_REVIEW_TOTAL_MS', reviewWatch);
+      trace.finalReviewAttempted = true;
 
       if (result.fallback) {
         debugPrint('[HOME_AI_OUTFIT] fallback reason=server_fallback_marker');
+        trace.finalReviewOutcome = 'invalid';
+        trace.fallbackType = 'generate_home_outfit_server_fallback';
         if (!mounted) return;
         setState(() {
           _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
@@ -4911,6 +5162,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       if (rec == null || rec.items.length < 3) {
         debugPrint('[HOME_AI_OUTFIT] fallback reason=invalid_or_short_result');
+        trace.finalReviewOutcome = 'invalid';
+        trace.fallbackType = 'generate_home_outfit_invalid_result';
         if (!mounted) return;
         setState(() {
           _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
@@ -5005,12 +5258,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               _heroRenderSignature(preparedItems);
           _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
             state: _HeroTodayState(
-              vm: _HeroBannerVM(description: rec.reason),
+              vm: _HeroBannerVM(
+                description: _userFacingOutfitReason(
+                  items: preparedItems,
+                  weather: request.weather,
+                  preferred: rec.reason,
+                ),
+              ),
               outfitItems: preparedItems,
               source: heroSource,
             ),
             weatherSignature: _homeWeatherSignature(request.weather),
             wardrobeSignature: _wardrobeSignature(wardrobe),
+            stylePreferenceFingerprint: _stylePreferenceFingerprint,
             userModified: userModified,
             persistSource: persistSource,
             updatedAt: savedAt,
@@ -5025,7 +5285,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             dayLabel: dayLabel,
             normalized: preparedItems,
             heroState: _HeroTodayState(
-              vm: _HeroBannerVM(description: rec.reason),
+              vm: _HeroBannerVM(
+                description: _userFacingOutfitReason(
+                  items: preparedItems,
+                  weather: request.weather,
+                  preferred: rec.reason,
+                ),
+              ),
               outfitItems: preparedItems,
               source: heroSource,
             ),
@@ -5056,8 +5322,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       debugPrint('[HOME_AI_OUTFIT] success names=$names');
       debugPrint('[HOME_AI_OUTFIT] applied_to_hero=true');
+      trace.finalReviewOutcome = 'success';
+      trace.fallbackType = 'none';
     } catch (e) {
       debugPrint('[HOME_AI_OUTFIT] error=$e');
+      trace.finalReviewAttempted = true;
+      final timedOut = e.toString().toLowerCase().contains('timeout');
+      trace.finalReviewOutcome = timedOut ? 'timeout' : 'failure';
+      trace.fallbackType = timedOut
+          ? 'generate_home_outfit_timeout'
+          : 'generate_home_outfit_network_failure';
       if (!mounted) return;
       setState(() {
         _homeAiCacheBySignature[aiSignature] = _HomeAiCacheEntry(
@@ -5068,6 +5342,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _homeAiForceDifferentNextByDateKey[dateKey] = false;
       });
     } finally {
+      trace.logFinish();
       _homeAiRequestInFlight.remove(aiSignature);
       _generatingDateKeys.remove(dateKey);
     }
@@ -5153,7 +5428,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       afternoonRainSegment: weather.afternoonRainSegment,
       eveningRainSegment: weather.eveningRainSegment,
     );
-    final reason = aiReply.trim().isNotEmpty ? aiReply.trim() : localReason;
+    final reason = HomeUserFacingReason.forDisplay(aiReply) ??
+        _userFacingOutfitReason(
+          items: ordered,
+          weather: weather,
+          preferred: localReason,
+        );
     return _HeroOutfitRecommendation(items: ordered, reason: reason);
   }
 
@@ -5214,6 +5494,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return '${wardrobe.length}:${ids.join(",")}';
   }
 
+  void _logFirestoreUnavailableIfNeeded(Object? error) {
+    final message = error?.toString() ?? 'unknown';
+    final key = message.length > 180 ? message.substring(0, 180) : message;
+    if (_lastFirestoreUnavailableLogKey == key) return;
+    _lastFirestoreUnavailableLogKey = key;
+    debugPrint('[HOME_FIRESTORE] unavailable_or_error=$key');
+  }
+
   void _syncWardrobeSnapshotIfChanged({
     required AsyncSnapshot<QuerySnapshot<Map<String, dynamic>>> snap,
     required bool isPremiumUser,
@@ -5257,7 +5545,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         : '';
     final dateKey = _dateKey(activeDate);
     final buildKey =
-        '$dateKey|${_wardrobeSignature(wardrobe)}|$_weatherLoaded|$_homeAiRefreshNonce|ready=$dataReady|edit=$editedSig';
+        '$dateKey|${_wardrobeSignature(wardrobe)}|t=$_stylePreferenceFingerprint|$_weatherLoaded|$_homeAiRefreshNonce|ready=$dataReady|edit=$editedSig';
     final cachedKey = _cachedHeroBuildKeyByDateKey[dateKey];
     final cachedState = _cachedHeroBuildStateByDateKey[dateKey];
     if (cachedKey == buildKey && cachedState != null) {
@@ -6061,7 +6349,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             footwearGuidance: footwearGuidance.toPayload(),
             bottomGuidance: bottomGuidance.toPayload(),
           )
-          .timeout(const Duration(seconds: 6));
+          .timeout(kHomeFinalReviewTimeout);
     } catch (e) {
       debugPrint(
         '[STYLIST_FINAL_REVIEW_RESULT] selectedIndex=0 '
@@ -6135,6 +6423,30 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       items: outfitTiles,
       reason: _specificLocalReasonFromPreview(
         preview: preview,
+        weather: weather,
+      ),
+    );
+  }
+
+  _HeroOutfitRecommendation? _heroRecommendationFromFlexible({
+    required V2FlexibleOutfitResult flexible,
+    required _LocalWeather weather,
+  }) {
+    final items = <_HeroOutfitItem>[];
+    for (final value in flexible.items) {
+      final raw = <String, dynamic>{...value.display, 'id': value.itemId};
+      items.add(
+        _heroItemFromWardrobe(
+          raw: raw,
+          type: _heroDisplayTypeFromFlexible(value),
+        ),
+      );
+    }
+    if (items.isEmpty) return null;
+    return _HeroOutfitRecommendation(
+      items: items,
+      reason: _userFacingOutfitReason(
+        items: items,
         weather: weather,
       ),
     );
@@ -6356,21 +6668,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required List<Map<String, dynamic>> wardrobe,
   }) {
     final p = selection.finalSelectedCandidate;
-    final shoeFamily = classifyFootwearFamily(p.shoes.item);
-    final itemNames = [
-      p.top.label,
-      p.bottom.label,
-      p.shoes.label,
-      if (p.outerwear != null) p.outerwear!.label,
-    ].join(' | ');
+    if (p != null) {
+      final shoeFamily = classifyFootwearFamily(p.shoes.item);
+      final itemNames = [
+        p.top.label,
+        p.bottom.label,
+        p.shoes.label,
+        if (p.outerwear != null) p.outerwear!.label,
+      ].join(' | ');
 
-    debugPrint(
-      '[STYLIST_FINAL_REVIEW_APPLY] selectedIndex=${selection.finalSelectedIndex} '
-      'selectedItems=$itemNames '
-      'selectedIds=${selection.finalSelectedItemIds.join(",")} '
-      'selectedFootwear=${p.shoes.label} '
-      'selectedFootwearFamily=${shoeFamily.wireName}',
-    );
+      debugPrint(
+        '[STYLIST_FINAL_REVIEW_APPLY] selectedIndex=${selection.finalSelectedIndex} '
+        'selectedItems=$itemNames '
+        'selectedIds=${selection.finalSelectedItemIds.join(",")} '
+        'selectedFootwear=${p.shoes.label} '
+        'selectedFootwearFamily=${shoeFamily.wireName}',
+      );
+    } else {
+      debugPrint(
+        '[STYLIST_FINAL_REVIEW_APPLY] selectedIndex=${selection.finalSelectedIndex} '
+        'selectedIds=${selection.finalSelectedItemIds.join(",")} '
+        'flexible=${selection.flexibleOutfit != null}',
+      );
+    }
 
     final hydrated = _hydrateFinalReviewOutfitImages(
       dateKey: dateKey,
@@ -6406,200 +6726,128 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Set<String> rejectedCombinationSignatures = const {},
     Set<String> previousOutfitItemIds = const {},
     bool forceDifferentOutfit = false,
+    String source = 'other',
   }) async {
-    final snap = OutfitWeatherSnapshot(
-      tempC: weather.tempC,
-      isRainy: weather.isRainy,
-      isWindy: weather.isWindy,
-      seasonKey: weather.seasonKey,
+    final trace = HomeGenerationTrace(
+      runId: HomeGenerationTrace.newRunId(),
+      day: _dayIndexForDate(weather.calendarDate) == 0 ? 'today' : 'tomorrow',
+      source: source,
     );
-    final wardrobeForGen = _wardrobeForOutfitGeneration(wardrobe);
-    final footwearGuidance = computeFootwearFamilyGuidance(weather: snap);
-    final footwearInventory =
-        footwearFamilyInventoryFromWardrobe(wardrobeForGen);
-    final preferredFootwearExists =
-        footwearInventory.hasPreferred(footwearGuidance);
-
-    final bottomGuidance = computeBottomFamilyGuidance(weather: snap);
-    final bottomInventory = bottomFamilyInventoryFromWardrobe(wardrobeForGen);
-    final preferredBottomExists = bottomInventory.hasPreferred(bottomGuidance);
-    final peerClothingItemIds = _peerDayOutfitItemIdsForDate(
-      weather.calendarDate,
-      clothingOnly: true,
+    trace.logStart();
+    trace.wardrobeItemCount = wardrobe.length;
+    final resolveWatch = Stopwatch()..start();
+    final strict = NativeWardrobeV2Runtime.resolveAll(wardrobe)
+        .where((item) => !excludedItemIds.contains(item.itemId))
+        .toList(growable: false);
+    trace.mark('WARDROBE_RESOLVE_MS', resolveWatch);
+    final matrixWatch = Stopwatch()..start();
+    final matrix = V2FlexibleCandidateMatrix.generate(
+      wardrobe: strict,
+      context: V2CandidateMatrixContext(
+        weatherProtectionRequired: weather.isRainy || weather.isWindy,
+        maxCandidates: HomeFinalReviewPayload.maxCandidates,
+        tempC: weather.tempC,
+        feelsLikeC: weather.tempC,
+        eveningTempC: weather.briefingEveningC,
+        isRainy: weather.isRainy,
+        isWindy: weather.isWindy,
+        styleTaste: _homeStyleTaste,
+      ),
     );
-    final effectiveExcludedItemIds = <String>{
-      ...excludedItemIds,
-      ...peerClothingItemIds,
-    };
-    final effectivePreviousOutfitItemIds = <String>{
-      ...previousOutfitItemIds,
-      ..._peerDayOutfitItemIdsForDate(weather.calendarDate),
-    };
-
-    final candidates = _generateOutfitCandidatePreviews(
-      wardrobeForGen: wardrobeForGen,
-      snap: snap,
-      comfortWeather: _comfortWeatherInputFor(weather),
-      excludedItemIds: effectiveExcludedItemIds,
-      rejectedCombinationSignatures: rejectedCombinationSignatures,
-      previousOutfitItemIds: effectivePreviousOutfitItemIds,
-      forceDifferentOutfit: forceDifferentOutfit,
-    );
-
-    if (candidates.isEmpty) {
-      if (!preferredFootwearExists) return null;
-      final fallback = _generatePreferredFootwearFallbackPreview(
-        wardrobeForGen: wardrobeForGen,
-        snap: snap,
-        guidance: footwearGuidance,
-        inventory: footwearInventory,
-        excludedItemIds: effectiveExcludedItemIds,
-        rejectedCombinationSignatures: rejectedCombinationSignatures,
-        previousOutfitItemIds: effectivePreviousOutfitItemIds,
-        forceDifferentOutfit: forceDifferentOutfit,
-      );
-      if (fallback == null) return null;
+    trace.mark('CANDIDATE_MATRIX_MS', matrixWatch);
+    trace.candidateCountBeforeDedup = matrix.length;
+    trace.candidateCount = matrix.length;
+    if (matrix.isEmpty) {
+      trace.fallbackType = 'matrix_empty';
+      trace.logFinish();
+      return null;
+    }
+    for (final candidate in matrix) {
+      final ids = candidate.outfit.items.map((x) => x.itemId).join(',');
       debugPrint(
-        '[STYLIST_FINAL_REVIEW_ABORT] reason=only_discouraged_footwear_candidates',
-      );
-      return await _stylistFinalReviewSelectionFromChosenCandidate(
-        finalSelectedIndex: 0,
-        finalSelectedCandidate: fallback,
-        weather: weather,
-        isPremiumUser: isPremiumUser,
-        wardrobe: wardrobe,
+        '[HOME_SET_SIGNAL] generate candidateId=${candidate.candidateId} '
+        'ids=$ids score=${candidate.score} '
+        'setCompatibility=${candidate.scoreBreakdown['setCompatibility']} '
+        'breakdown=${candidate.scoreBreakdown}',
       );
     }
-
-    final onlyDiscouragedFootwear = preferredFootwearExists &&
-        candidates.every(
-          (p) => previewHasDiscouragedFootwear(
-            preview: p,
-            guidance: footwearGuidance,
-          ),
+    var selectedIndex = 0;
+    String selectedReason = '';
+    if (matrix.length > 1) {
+      try {
+        final pick = await const OutfitStylistFinalReviewRunner()
+            .selectBestCandidateDetailed(
+              candidates: matrix,
+              weather: OutfitWeatherSnapshot(
+                tempC: weather.tempC,
+                isRainy: weather.isRainy,
+                isWindy: weather.isWindy,
+                seasonKey: weather.seasonKey,
+              ),
+              weatherContext: _stylistFinalReviewWeatherContext(weather),
+              userStylePreferences:
+                  StylePreferencesRuntime.stylistPayload(_stylePreferences),
+              logPrefix: '[HOME_AI_OUTFIT final_review_v2]',
+              trace: trace,
+            );
+        final match = matrix.indexWhere(
+          (candidate) => identical(candidate.outfit, pick.outfit),
         );
-    if (onlyDiscouragedFootwear) {
-      debugPrint(
-        '[STYLIST_FINAL_REVIEW_ABORT] reason=only_discouraged_footwear_candidates',
-      );
-      final fallback = _generatePreferredFootwearFallbackPreview(
-        wardrobeForGen: wardrobeForGen,
-        snap: snap,
-        guidance: footwearGuidance,
-        inventory: footwearInventory,
-        excludedItemIds: effectiveExcludedItemIds,
-        rejectedCombinationSignatures: rejectedCombinationSignatures,
-        previousOutfitItemIds: effectivePreviousOutfitItemIds,
-        forceDifferentOutfit: forceDifferentOutfit,
-      );
-      if (fallback == null) return null;
-      return await _stylistFinalReviewSelectionFromChosenCandidate(
-        finalSelectedIndex: 0,
-        finalSelectedCandidate: fallback,
-        weather: weather,
-        isPremiumUser: isPremiumUser,
-        wardrobe: wardrobe,
+        if (match >= 0) selectedIndex = match;
+        selectedReason = pick.reason;
+      } catch (_) {
+        trace.finalReviewOutcome = 'failure';
+        trace.fallbackType = 'final_review_network_failure';
+      }
+    } else {
+      trace.finalReviewAttempted = false;
+      trace.finalReviewOutcome = 'not_attempted';
+      trace.fallbackType = 'single_candidate';
+    }
+    if (trace.finalReviewOutcome != 'success') {
+      trace.fallbackType = trace.fallbackType == 'none'
+          ? 'local_rule_score'
+          : trace.fallbackType;
+    }
+    final selected = matrix[selectedIndex].outfit;
+    final heroItems = <_HeroOutfitItem>[];
+    for (final value in selected.items) {
+      final raw = <String, dynamic>{...value.display, 'id': value.itemId};
+      heroItems.add(
+        _heroItemFromWardrobe(
+          raw: raw,
+          type: _heroDisplayTypeFromFlexible(value),
+        ),
       );
     }
-
-    final review = await _runStylistFinalReviewOnPreviews(
-      candidatePreviews: candidates,
-      weather: weather,
-      snap: snap,
+    if (!selected.completeness.coreComplete || heroItems.isEmpty) {
+      trace.fallbackType = 'invalid_composition';
+      trace.logFinish();
+      return null;
+    }
+    final ids = selected.items
+        .map((item) => item.itemId)
+        .toList(growable: false);
+    final signature = [...ids]..sort();
+    final tasteHint = StylePreferenceExplain.naturalHint(
+      taste: _homeStyleTaste,
+      outfit: selected,
+      tasteScore: matrix[selectedIndex].scoreBreakdown['styleTaste'] ?? 0,
     );
-
-    var chosen = candidates[review.selectedIndex];
-    if (review.suggestedSwap != null) {
-      final swapped = _tryApplySuggestedFootwearSwap(
-        preview: chosen,
-        suggestedSwap: review.suggestedSwap!,
-        wardrobe: wardrobe,
-        guidance: footwearGuidance,
-      );
-      if (swapped != null) {
-        chosen = swapped;
-      }
-    }
-
-    final ruleScores = candidates
-        .map(
-          (p) => OutfitGenerationService.ruleBasedOutfitScoreForPreview(
-            preview: p,
-            weather: snap,
-          ),
-        )
-        .toList();
-
-    if (preferredFootwearExists &&
-        previewHasDiscouragedFootwear(
-          preview: chosen,
-          guidance: footwearGuidance,
-        )) {
-      final guarded = applyFootwearFamilyGuard(
-        selectedIndex: review.selectedIndex,
-        candidates: candidates,
-        guidance: footwearGuidance,
-        ruleScores: ruleScores,
-        weather: snap,
-      );
-      chosen = candidates[guarded];
-      if (previewHasDiscouragedFootwear(
-        preview: chosen,
-        guidance: footwearGuidance,
-      )) {
-        final fallback = _generatePreferredFootwearFallbackPreview(
-          wardrobeForGen: wardrobeForGen,
-          snap: snap,
-          guidance: footwearGuidance,
-          inventory: footwearInventory,
-          excludedItemIds: effectiveExcludedItemIds,
-          rejectedCombinationSignatures: rejectedCombinationSignatures,
-          previousOutfitItemIds: effectivePreviousOutfitItemIds,
-          forceDifferentOutfit: forceDifferentOutfit,
-        );
-        if (fallback == null) return null;
-        chosen = fallback;
-      }
-    }
-
-    if (preferredBottomExists &&
-        previewHasDiscouragedBottom(
-          preview: chosen,
-          guidance: bottomGuidance,
-        )) {
-      final guardedBottom = applyBottomFamilyGuard(
-        selectedIndex: review.selectedIndex,
-        candidates: candidates,
-        guidance: bottomGuidance,
-        ruleScores: ruleScores,
-      );
-      chosen = candidates[guardedBottom];
-      if (previewHasDiscouragedBottom(
-        preview: chosen,
-        guidance: bottomGuidance,
-      )) {
-        final fallbackBottom = _generatePreferredBottomFallbackPreview(
-          wardrobeForGen: wardrobeForGen,
-          snap: snap,
-          guidance: bottomGuidance,
-          inventory: bottomInventory,
-          excludedItemIds: effectiveExcludedItemIds,
-          rejectedCombinationSignatures: rejectedCombinationSignatures,
-          previousOutfitItemIds: effectivePreviousOutfitItemIds,
-          forceDifferentOutfit: forceDifferentOutfit,
-        );
-        if (fallbackBottom == null) return null;
-        chosen = fallbackBottom;
-      }
-    }
-
-    return await _stylistFinalReviewSelectionFromChosenCandidate(
-      finalSelectedIndex: review.selectedIndex,
-      finalSelectedCandidate: chosen,
+    final reason = _userFacingOutfitReason(
+      items: heroItems,
       weather: weather,
-      isPremiumUser: isPremiumUser,
-      wardrobe: wardrobe,
-      selectedReason: review.reason,
+      preferred: selectedReason.isNotEmpty ? selectedReason : tasteHint,
+    );
+    trace.logFinish();
+    return _StylistFinalReviewSelection(
+      finalSelectedIndex: selectedIndex,
+      finalSelectedCandidate: null,
+      flexibleOutfit: selected,
+      finalSelectedSignature: signature.join('|'),
+      finalSelectedItemIds: ids,
+      heroItems: heroItems,
+      reason: reason,
     );
   }
 
@@ -6641,7 +6889,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required _LocalWeather weather,
     required bool isPremiumUser,
   }) {
-    final localSig = '$dateKey|${_homeWeatherSignature(weather)}|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
+    final localSig = '$dateKey|${_homeWeatherSignature(weather)}|$_stylePreferenceFingerprint|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
     if (_localRecCacheByDateSig.containsKey(localSig)) {
       return _localRecCacheByDateSig[localSig];
     }
@@ -6652,6 +6900,66 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     _localRecCacheByDateSig[localSig] = rec;
     return rec;
+  }
+
+  void _scheduleDeferredLocalOutfitRecommend({
+    required String localSig,
+    required List<Map<String, dynamic>> wardrobe,
+    required _LocalWeather weather,
+    required bool isPremiumUser,
+  }) {
+    if (_deferredLocalRecSigs.contains(localSig)) return;
+    _deferredLocalRecSigs.add(localSig);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      unawaited(
+        _runDeferredLocalOutfitRecommend(
+          localSig: localSig,
+          wardrobe: wardrobe,
+          weather: weather,
+          isPremiumUser: isPremiumUser,
+        ),
+      );
+    });
+  }
+
+  Future<void> _runDeferredLocalOutfitRecommend({
+    required String localSig,
+    required List<Map<String, dynamic>> wardrobe,
+    required _LocalWeather weather,
+    required bool isPremiumUser,
+  }) async {
+    if (!mounted) return;
+    await Future<void>.delayed(Duration.zero);
+    if (!mounted) return;
+    if (_localRecCacheByDateSig.containsKey(localSig)) return;
+    final rec = _recommendOutfitForWeather(
+      wardrobe: wardrobe,
+      weather: weather,
+      isPremiumUser: isPremiumUser,
+    );
+    _localRecCacheByDateSig[localSig] = rec;
+    if (!mounted) return;
+    _invalidateHomeHeroBuildCache();
+    setState(() {});
+  }
+
+  _HeroWearType _heroDisplayTypeFromFlexible(V2FlexibleOutfitItem value) {
+    final group = value.compositionGroup;
+    final slots = value.item.bodySlots;
+    final layer = value.item.layerPosition;
+    if (group.contains('footwear') || slots.contains('feet')) {
+      return _HeroWearType.shoes;
+    }
+    if (group.contains('lower_body') || slots.contains('lower_body')) {
+      return _HeroWearType.bottom;
+    }
+    if (group.startsWith('layer_outer') ||
+        group.startsWith('layer_shell') ||
+        layer == 'outer' ||
+        layer == 'shell') {
+      return _HeroWearType.outerwear;
+    }
+    return _HeroWearType.top;
   }
 
   _HeroWearType _heroWearFromOutfitWear(OutfitWearType t) {
@@ -6782,7 +7090,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required String wardrobeSignature,
   }) async {
     final signatureKey =
-        '$dateKey|$weatherSignature|$wardrobeSignature|p=${isPremiumUser ? 1 : 0}';
+        '$dateKey|$weatherSignature|$wardrobeSignature|t=$_stylePreferenceFingerprint|p=${isPremiumUser ? 1 : 0}';
 
     if (_stylistFinalReviewDone.contains(signatureKey) ||
         _stylistFinalReviewInFlight.contains(signatureKey)) {
@@ -6807,6 +7115,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           wardrobe: wardrobe,
           weather: w,
           isPremiumUser: isPremiumUser,
+          source: 'deferred_final_review',
         );
       } finally {
         _currentHeroBuildDateKey = prevBuildDateKey;
@@ -6818,6 +7127,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (currentEntry?.userModified == true) return;
       if (currentEntry?.state.source == 'ai') return;
       if ((_editedManuallyByDay[targetDayIdx] ?? false) == true) return;
+      if (currentEntry != null &&
+          currentEntry.state.source == 'local' &&
+          _heroStateHasValidOutfit(currentEntry.state)) {
+        debugPrint(
+          '[HOME_FINAL_REVIEW] skip_late_replace reason=keep_visible_local_fallback',
+        );
+        _stylistFinalReviewDone.add(signatureKey);
+        return;
+      }
 
       final currentSig = currentEntry != null
           ? _heroOutfitSignatureFromItems(currentEntry.state.outfitItems)
@@ -6836,8 +7154,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       if (hydratedItems == null) return;
 
+      final applyReason = _userFacingOutfitReason(
+        items: hydratedItems,
+        weather: w,
+        preferred: selection.reason,
+      );
       final state = _HeroTodayState(
-        vm: _HeroBannerVM(description: selection.reason),
+        vm: _HeroBannerVM(description: applyReason),
         outfitItems: hydratedItems,
         source: 'local',
       );
@@ -6863,7 +7186,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _finalizeHeroState(dateKey: dateKey, state: state);
       if (mounted) setState(() {});
 
-      if (_isPendingAiStylistReason(selection.reason)) {
+      if (_isPendingAiStylistReason(applyReason)) {
         unawaited(
           _refreshStylistReasonInBackground(
             date: w.calendarDate,
@@ -7434,8 +7757,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           isPlaceholder: outfitItems.isEmpty,
           isLoadingReason: _isPendingAiStylistReason(vm.description),
         ),
-        const SizedBox(height: 26),
-        HomeRecommendedSection(onOpenRecommended: _openRecommended),
         const SizedBox(height: 26),
         HomeInspirationCarousel(
           onOpenInspiration: () {
@@ -8192,6 +8513,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _wardrobeStream(user.uid),
             builder: (context, snap) {
+              if (snap.hasError) {
+                _wardrobeSnapshotUnavailable = true;
+                _logFirestoreUnavailableIfNeeded(snap.error);
+              } else if (snap.hasData) {
+                _wardrobeSnapshotUnavailable = false;
+              }
               _syncWardrobeSnapshotIfChanged(
                 snap: snap,
                 isPremiumUser: isPremiumUser,
@@ -8381,13 +8708,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           ],
         ),
       ),
-    );
-  }
-
-  void _openRecommended() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => const RecommendedScreen(initialTab: 0)),
     );
   }
 
@@ -9044,12 +9364,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 'Nastavenia',
                 style: TextStyle(color: HomeLuxuryPalette.accent),
               ),
-              onTap: () {
+              onTap: () async {
                 Navigator.of(context).pop();
-                Navigator.push(
+                await Navigator.push(
                   context,
-                  MaterialPageRoute(builder: (_) => const UserPreferencesScreen()),
+                  MaterialPageRoute(builder: (_) => const StylePreferencesScreen()),
                 );
+                if (!mounted) return;
+                await _reloadStylePreferencesAndInvalidateIfNeeded();
               },
             ),
                 ],
@@ -9066,7 +9388,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               ),
               onTap: () async {
                 Navigator.of(context).pop();
-                await _auth.signOut();
+                await AuthSession.instance.signOut();
               },
             ),
     ],

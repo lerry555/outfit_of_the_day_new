@@ -18,6 +18,17 @@ class CanonicalResolution {
 abstract final class CanonicalResolver {
   CanonicalResolver._();
 
+  /// Structured taxonomy keys that are intentionally too broad for a safe
+  /// canonical prior. Production legacy normalization may still use its
+  /// existing fallback behavior through [resolve].
+  static const Set<String> _ambiguousStructuredCanonicalKeys = <String>{
+    'nohavicerifle|nohaviceklasicke',
+    'nohavicerifle|nohavice',
+    'nohavice|nohaviceklasicke',
+    'bundykabaty|bunda',
+    'tenisky|teniskysportove',
+  };
+
   /// categoryKey|subCategoryKey (normalized) → default canonical when sub alone is ambiguous.
   static const Map<String, String> _categorySubCanonical = <String, String>{
     'trickatopy|tricko': 't_shirt',
@@ -69,20 +80,69 @@ abstract final class CanonicalResolver {
     'obuv|tenisky': 'sneakers',
   };
 
+  /// Resolves only an exact category/subcategory taxonomy combination.
+  ///
+  /// This method never reads an item name, display label or free-form text.
+  /// Broad combinations listed in [_ambiguousStructuredCanonicalKeys] remain
+  /// unknown even if the legacy Home resolver has a compatibility fallback.
+  static CanonicalResolution? resolveStructuredTaxonomy(
+    Map<String, dynamic> raw,
+  ) {
+    if (_hasStructuredAliasConflict(raw, const ['categoryKey', 'category']) ||
+        _hasStructuredAliasConflict(raw, const [
+          'subCategoryKey',
+          'subCategory',
+        ])) {
+      return null;
+    }
+    final categoryKey = _firstNonEmpty([raw['categoryKey'], raw['category']]);
+    final subCategoryKey = _firstNonEmpty([
+      raw['subCategoryKey'],
+      raw['subCategory'],
+    ]);
+    final category = _normalizeKey(categoryKey);
+    final subcategory = _normalizeKey(subCategoryKey);
+    if (category.isEmpty || subcategory.isEmpty) return null;
+
+    final compositeKey = '$category|$subcategory';
+    if (_ambiguousStructuredCanonicalKeys.contains(compositeKey)) return null;
+    final canonicalType = _categorySubCanonical[compositeKey];
+    if (canonicalType == null) return null;
+    if (ClothingKnowledgeBase.findByCanonicalType(canonicalType) == null) {
+      return null;
+    }
+    return CanonicalResolution(
+      canonicalType: canonicalType,
+      confidence: 90,
+      source: 'structured_category_subcategory',
+    );
+  }
+
+  static bool _hasStructuredAliasConflict(
+    Map<String, dynamic> raw,
+    List<String> keys,
+  ) {
+    final values = keys
+        .map((key) => (raw[key] ?? '').toString())
+        .map(_normalizeKey)
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    return values.length > 1;
+  }
+
   /// Resolve canonical type: subCategory → category+sub map → typePretty → name.
   static CanonicalResolution? resolve(
     Map<String, dynamic> raw, {
     String? name,
   }) {
     final categoryKey = _firstNonEmpty([raw['categoryKey'], raw['category']]);
-    final subCategoryKey =
-        _firstNonEmpty([raw['subCategoryKey'], raw['subCategory']]);
-    final typePretty = _firstNonEmpty([
-      raw['type_pretty'],
-      raw['typePretty'],
+    final subCategoryKey = _firstNonEmpty([
+      raw['subCategoryKey'],
+      raw['subCategory'],
     ]);
-    final itemName = name ??
-        _firstNonEmpty([raw['name'], raw['title'], typePretty]);
+    final typePretty = _firstNonEmpty([raw['type_pretty'], raw['typePretty']]);
+    final itemName =
+        name ?? _firstNonEmpty([raw['name'], raw['title'], typePretty]);
     final nameBlob = _nameBlob(itemName, typePretty);
 
     final fromSub = _resolveFromSubCategory(
@@ -99,7 +159,9 @@ abstract final class CanonicalResolver {
     if (fromComposite != null) return fromComposite;
 
     if (typePretty.isNotEmpty) {
-      final kb = ClothingKnowledgeBase.resolveClothingType(typePretty: typePretty);
+      final kb = ClothingKnowledgeBase.resolveClothingType(
+        typePretty: typePretty,
+      );
       if (kb != null) {
         return CanonicalResolution(
           canonicalType: kb.canonicalType,
@@ -188,7 +250,8 @@ abstract final class CanonicalResolver {
     }
 
     if (subNorm.isNotEmpty) {
-      final subOnly = _categorySubCanonical['|$subNorm'] ??
+      final subOnly =
+          _categorySubCanonical['|$subNorm'] ??
           _categorySubCanonical.entries
               .where((e) => e.key.endsWith('|$subNorm'))
               .map((e) => e.value)

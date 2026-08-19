@@ -1,10 +1,18 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../Services/calendar_outfit_ownership.dart';
+import '../Services/calendar_weather_stale_policy.dart';
 import '../Services/date_weather_service.dart';
 import '../Services/outfit_generation_service.dart';
 
 class CalendarOutfitItem {
   final OutfitWearType type;
+  final String? itemId;
+  final String? canonicalType;
+  final String? compositionRole;
+  final String? compositionGroup;
+  final String? requiredness;
+  final String? selectionReason;
   final String label;
 
   // Image URLs needed for preview. Some fields are optional because older
@@ -23,14 +31,20 @@ class CalendarOutfitItem {
     required this.cleanImageUrl,
     required this.originalImageUrl,
     required this.imageUrl,
+    this.itemId,
+    this.canonicalType,
+    this.compositionRole,
+    this.compositionGroup,
+    this.requiredness,
+    this.selectionReason,
   });
 
   static String typeToKey(OutfitWearType type) => switch (type) {
-        OutfitWearType.top => 'top',
-        OutfitWearType.bottom => 'bottom',
-        OutfitWearType.shoes => 'shoes',
-        OutfitWearType.outerwear => 'outerwear',
-      };
+    OutfitWearType.top => 'top',
+    OutfitWearType.bottom => 'bottom',
+    OutfitWearType.shoes => 'shoes',
+    OutfitWearType.outerwear => 'outerwear',
+  };
 
   static OutfitWearType typeFromKey(String? key) {
     switch (key) {
@@ -63,6 +77,12 @@ class CalendarOutfitItem {
       cleanImageUrl: getStr('cleanImageUrl'),
       originalImageUrl: getStr('originalImageUrl'),
       imageUrl: getStr('imageUrl'),
+      itemId: getStr('itemId'),
+      canonicalType: getStr('canonicalType'),
+      compositionRole: getStr('compositionRole'),
+      compositionGroup: getStr('compositionGroup'),
+      requiredness: getStr('requiredness'),
+      selectionReason: getStr('selectionReason'),
     );
   }
 
@@ -75,6 +95,12 @@ class CalendarOutfitItem {
       'cleanImageUrl': cleanImageUrl,
       'originalImageUrl': originalImageUrl,
       'imageUrl': imageUrl,
+      if (itemId != null) 'itemId': itemId,
+      if (canonicalType != null) 'canonicalType': canonicalType,
+      if (compositionRole != null) 'compositionRole': compositionRole,
+      if (compositionGroup != null) 'compositionGroup': compositionGroup,
+      if (requiredness != null) 'requiredness': requiredness,
+      if (selectionReason != null) 'selectionReason': selectionReason,
     };
   }
 }
@@ -86,9 +112,13 @@ class CalendarOutfitDay {
   final DateTime? generatedAt;
 
   final DateWeatherSnapshot weatherSnapshot;
+  /// Clothing-weather evidence from the saved document, or null when a
+  /// legacy doc cannot be compared confidently.
+  final CalendarGenerationWeather? generationWeather;
 
   final List<CalendarOutfitItem> outfitItems;
   final String generationSource;
+  final CalendarOutfitSource source;
   final int? version;
   final String? reason;
   const CalendarOutfitDay({
@@ -96,12 +126,36 @@ class CalendarOutfitDay {
     required this.weatherSnapshot,
     required this.outfitItems,
     required this.generationSource,
+    this.source = CalendarOutfitSource.calendar,
+    this.generationWeather,
     this.createdAt,
     this.updatedAt,
     this.generatedAt,
     this.version,
     this.reason,
   });
+
+  CalendarOutfitDay copyWith({
+    CalendarOutfitSource? source,
+    CalendarGenerationWeather? generationWeather,
+    List<CalendarOutfitItem>? outfitItems,
+    String? generationSource,
+    String? reason,
+  }) {
+    return CalendarOutfitDay(
+      dateKey: dateKey,
+      weatherSnapshot: weatherSnapshot,
+      generationWeather: generationWeather ?? this.generationWeather,
+      outfitItems: outfitItems ?? this.outfitItems,
+      generationSource: generationSource ?? this.generationSource,
+      source: source ?? this.source,
+      createdAt: createdAt,
+      updatedAt: updatedAt,
+      generatedAt: generatedAt,
+      version: version,
+      reason: reason ?? this.reason,
+    );
+  }
 
   static DateTime? _ts(dynamic v) {
     if (v is Timestamp) return v.toDate();
@@ -113,9 +167,12 @@ class CalendarOutfitDay {
     required Map<String, dynamic> data,
   }) {
     final weatherRaw = data['weatherSnapshot'];
-    final weatherMap =
-        weatherRaw is Map ? weatherRaw.cast<String, dynamic>() : null;
+    final weatherMap = weatherRaw is Map
+        ? weatherRaw.cast<String, dynamic>()
+        : null;
 
+    final generationWeather =
+        CalendarGenerationWeather.tryFromSavedJson(weatherMap);
     final weatherSnapshot = weatherMap != null
         ? DateWeatherSnapshot.fromJson(weatherMap)
         : DateWeatherSnapshot(
@@ -142,12 +199,13 @@ class CalendarOutfitDay {
       updatedAt: _ts(data['updatedAt']),
       generatedAt: _ts(data['generatedAt']),
       weatherSnapshot: weatherSnapshot,
+      generationWeather: generationWeather,
       outfitItems: outfitItems,
       generationSource: (data['generationSource'] ?? 'calendar').toString(),
+      source: CalendarOutfitSource.calendar,
       version: data['version'] is int ? data['version'] as int : null,
 
       reason: data['reason']?.toString(),
     );
   }
 }
-

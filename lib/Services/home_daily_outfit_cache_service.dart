@@ -9,6 +9,7 @@ class HomeDailyOutfitCacheDocument {
   final String reasonText;
   final String weatherSignature;
   final String wardrobeSignature;
+  final String stylePreferenceFingerprint;
   final String source;
   final bool userModified;
   final String? likedOutfitKey;
@@ -18,6 +19,7 @@ class HomeDailyOutfitCacheDocument {
   final int? lastNewOutfitSavedAtMs;
   final int cacheSchemaVersion;
   final List<String>? reasonItemIds;
+  final Map<String, dynamic>? flexibleOutfitV2;
 
   const HomeDailyOutfitCacheDocument({
     required this.dateKey,
@@ -26,6 +28,7 @@ class HomeDailyOutfitCacheDocument {
     required this.reasonText,
     required this.weatherSignature,
     required this.wardrobeSignature,
+    this.stylePreferenceFingerprint = '',
     required this.source,
     required this.userModified,
     this.likedOutfitKey,
@@ -35,12 +38,13 @@ class HomeDailyOutfitCacheDocument {
     this.lastNewOutfitSavedAtMs,
     this.cacheSchemaVersion = 1,
     this.reasonItemIds,
+    this.flexibleOutfitV2,
   });
 }
 
 class HomeDailyOutfitCacheService {
   HomeDailyOutfitCacheService({FirebaseFirestore? firestore})
-      : _firestore = firestore ?? FirebaseFirestore.instance;
+    : _firestore = firestore ?? FirebaseFirestore.instance;
 
   final FirebaseFirestore _firestore;
 
@@ -71,7 +75,7 @@ class HomeDailyOutfitCacheService {
       if (!snap.exists) return null;
       final data = snap.data();
       if (data == null) return null;
-      return _fromFirestore(dateKey, data);
+      return parseDocument(dateKey, data);
     } catch (e) {
       debugPrint('[HOME_DAY_CACHE] load_error date=$dateKey error=$e');
       return null;
@@ -99,7 +103,18 @@ class HomeDailyOutfitCacheService {
     }
   }
 
-  HomeDailyOutfitCacheDocument? _fromFirestore(
+  static HomeDailyOutfitCacheDocument? parseDocument(
+    String dateKey,
+    Map<String, dynamic> data,
+  ) {
+    try {
+      return _fromFirestore(dateKey, data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static HomeDailyOutfitCacheDocument? _fromFirestore(
     String dateKey,
     Map<String, dynamic> data,
   ) {
@@ -159,22 +174,29 @@ class HomeDailyOutfitCacheService {
       reasonText: (data['reasonText'] ?? data['reason'] ?? '').toString(),
       weatherSignature: (data['weatherSignature'] ?? '').toString(),
       wardrobeSignature: (data['wardrobeSignature'] ?? '').toString(),
+      stylePreferenceFingerprint:
+          (data['stylePreferenceFingerprint'] ?? '').toString(),
       source: (data['source'] ?? 'ai_generated').toString(),
       userModified: data['userModified'] == true,
-      likedOutfitKey: (data['likedOutfitKey'] as String?)?.trim().isNotEmpty == true
+      likedOutfitKey:
+          (data['likedOutfitKey'] as String?)?.trim().isNotEmpty == true
           ? (data['likedOutfitKey'] as String).trim()
           : null,
       updatedAt: updated,
       clientUpdatedAtMs: clientUpdatedAtMs,
-      lastNewOutfitItemIds:
-          lastNewOutfitItemIds.isEmpty ? null : lastNewOutfitItemIds,
+      lastNewOutfitItemIds: lastNewOutfitItemIds.isEmpty
+          ? null
+          : lastNewOutfitItemIds,
       lastNewOutfitSavedAtMs: lastNewOutfitSavedAtMs,
       cacheSchemaVersion: cacheSchemaVersion,
       reasonItemIds: reasonItemIds.isEmpty ? null : reasonItemIds,
+      flexibleOutfitV2: data['flexibleOutfitV2'] is Map
+          ? Map<String, dynamic>.from(data['flexibleOutfitV2'] as Map)
+          : null,
     );
   }
 
-  List<String> _readStringList(dynamic raw) {
+  static List<String> _readStringList(dynamic raw) {
     final out = <String>[];
     if (raw is List) {
       for (final value in raw) {
@@ -185,7 +207,7 @@ class HomeDailyOutfitCacheService {
     return out;
   }
 
-  int? _readInt(dynamic value) {
+  static int? _readInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();
     final parsed = int.tryParse(value?.toString() ?? '');
@@ -193,7 +215,8 @@ class HomeDailyOutfitCacheService {
   }
 
   Map<String, dynamic> _toFirestore(HomeDailyOutfitCacheDocument doc) {
-    final clientMs = doc.clientUpdatedAtMs ??
+    final clientMs =
+        doc.clientUpdatedAtMs ??
         doc.updatedAt?.millisecondsSinceEpoch ??
         DateTime.now().millisecondsSinceEpoch;
     return <String, dynamic>{
@@ -203,8 +226,11 @@ class HomeDailyOutfitCacheService {
       'reasonText': doc.reasonText,
       if (doc.reasonItemIds != null && doc.reasonItemIds!.isNotEmpty)
         'reasonItemIds': doc.reasonItemIds,
+      if (doc.flexibleOutfitV2 != null)
+        'flexibleOutfitV2': doc.flexibleOutfitV2,
       'weatherSignature': doc.weatherSignature,
       'wardrobeSignature': doc.wardrobeSignature,
+      'stylePreferenceFingerprint': doc.stylePreferenceFingerprint,
       'source': doc.source,
       'userModified': doc.userModified,
       'clientUpdatedAtMs': clientMs,
@@ -214,8 +240,7 @@ class HomeDailyOutfitCacheService {
       if (doc.lastNewOutfitItemIds != null &&
           doc.lastNewOutfitItemIds!.isNotEmpty) ...<String, dynamic>{
         'lastNewOutfitItemIds': doc.lastNewOutfitItemIds,
-        'lastNewOutfitSavedAtMs':
-            doc.lastNewOutfitSavedAtMs ?? clientMs,
+        'lastNewOutfitSavedAtMs': doc.lastNewOutfitSavedAtMs ?? clientMs,
       },
       'updatedAt': FieldValue.serverTimestamp(),
     };

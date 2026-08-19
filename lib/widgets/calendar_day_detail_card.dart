@@ -17,9 +17,11 @@ class CalendarDayDetailCard extends StatelessWidget {
     required this.isOutfitLoading,
     required this.isGenerating,
     required this.isGenerationLocked,
+    required this.isWeatherStale,
     required this.onGenerate,
     required this.onUnlockPlanning,
     required this.onEditOutfit,
+    this.onRefreshOutfit,
   });
 
   final DateTime date;
@@ -28,9 +30,11 @@ class CalendarDayDetailCard extends StatelessWidget {
   final bool isOutfitLoading;
   final bool isGenerating;
   final bool isGenerationLocked;
+  final bool isWeatherStale;
   final VoidCallback onGenerate;
   final VoidCallback onUnlockPlanning;
   final VoidCallback onEditOutfit;
+  final VoidCallback? onRefreshOutfit;
 
   @override
   Widget build(BuildContext context) {
@@ -121,6 +125,14 @@ class CalendarDayDetailCard extends StatelessWidget {
                 ),
               ),
 
+              if (hasOutfit && isWeatherStale) ...[
+                const SizedBox(height: 10),
+                _StaleWeatherBanner(
+                  isUpdating: isGenerating,
+                  onRefresh: onRefreshOutfit,
+                ),
+              ],
+
               const SizedBox(height: 14),
 
               Text(
@@ -141,7 +153,7 @@ class CalendarDayDetailCard extends StatelessWidget {
 
               const SizedBox(height: 14),
 
-              if (!hasOutfit || isGenerating)
+              if (!hasOutfit)
                 SizedBox(
                   width: double.infinity,
                   child: isGenerationLocked
@@ -252,6 +264,64 @@ class CalendarDayDetailCard extends StatelessWidget {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+}
+
+class _StaleWeatherBanner extends StatelessWidget {
+  const _StaleWeatherBanner({
+    required this.isUpdating,
+    required this.onRefresh,
+  });
+
+  final bool isUpdating;
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    const accent = Color(0xFFC8A36A);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: accent.withOpacity(0.10),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: accent.withOpacity(0.28)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Počasie sa zmenilo',
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: isUpdating ? null : onRefresh,
+              style: OutlinedButton.styleFrom(
+                foregroundColor: accent,
+                disabledForegroundColor: accent.withOpacity(0.7),
+                side: const BorderSide(color: Color(0x66C8A36A)),
+                backgroundColor: const Color(0x2224252A),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              child: Text(
+                isUpdating ? 'Aktualizujem outfit...' : 'Aktualizovať outfit',
+                style: const TextStyle(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
         ],
       ),
     );

@@ -58,6 +58,29 @@ class ColorNamingService {
     'strieborná': '#C0C0C0',
   };
 
+  /// Slovak UI display name → V2 `colorProfile` family.
+  /// Inverse of [_aliases]; round-trips through [normalizeDisplayColor].
+  static const Map<String, String> _canonicalFamilyByDisplay = <String, String>{
+    'biela': 'white',
+    'čierna': 'black',
+    'sivá': 'grey',
+    'béžová': 'beige',
+    'hnedá': 'brown',
+    'modrá': 'blue',
+    'tmavomodrá': 'navy',
+    'svetlomodrá': 'light blue',
+    'červená': 'red',
+    'bordová': 'burgundy',
+    'ružová': 'pink',
+    'fialová': 'purple',
+    'zelená': 'green',
+    'khaki': 'olive',
+    'žltá': 'yellow',
+    'oranžová': 'orange',
+    'zlatá': 'gold',
+    'strieborná': 'silver',
+  };
+
   static const Map<String, String> _aliases = <String, String>{
     'black': 'čierna',
     'white': 'biela',
@@ -108,6 +131,18 @@ class ColorNamingService {
       if (normalized != null && !out.contains(normalized)) out.add(normalized);
     }
     return out;
+  }
+
+  String? canonicalFamilyFromDisplay(String? raw) {
+    final display = normalizeDisplayColor(raw);
+    if (display == null) return null;
+    return _canonicalFamilyByDisplay[display];
+  }
+
+  String? hexForDisplay(String? raw) {
+    final display = normalizeDisplayColor(raw);
+    if (display == null) return null;
+    return _hexByDisplay[display];
   }
 
   ColorMatch? matchByName(String? raw) {

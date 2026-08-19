@@ -5,6 +5,10 @@ const String kImageProcessingStatusProcessing = 'processing';
 const String kImageProcessingStatusDone = 'done';
 const String kImageProcessingStatusFailed = 'failed';
 
+/// PL-3/PL-4: owned `wardrobe/{uid}/...` analyzer source must not queue the
+/// Serper/packshot job (it can replace the garment and patch colors).
+const String kOwnedV2AnalyzerSourceSkipReason = 'owned_v2_analyzer_source';
+
 class ProductImageProcessingSaveDecision {
   const ProductImageProcessingSaveDecision({
     required this.needsProcessing,
@@ -21,7 +25,19 @@ ProductImageProcessingSaveDecision decideProductLinkImageProcessing({
   bool personDetected = false,
   String? cleanImageUrl,
   String? imageProcessingReason,
+  String? ownedWardrobeStoragePath,
 }) {
+  final owned = (ownedWardrobeStoragePath ?? '').trim();
+  if (owned.startsWith('wardrobe/') &&
+      !owned.startsWith('wardrobe_product/') &&
+      !owned.contains('..') &&
+      owned.split('/').length >= 3) {
+    return const ProductImageProcessingSaveDecision(
+      needsProcessing: false,
+      reason: kOwnedV2AnalyzerSourceSkipReason,
+    );
+  }
+
   final src = sourceUrl.trim();
   final selected = selectedImageUrl.trim();
 

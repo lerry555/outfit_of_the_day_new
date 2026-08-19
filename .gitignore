@@ -46,3 +46,12 @@ app.*.map.json
 
 # Large OurAirports source CSV (regenerate with tool/build_airports_json.py)
 tool/airports_raw.csv
+
+# Local read-only Firebase metadata audit outputs (never commit).
+.local_audit/
+*.readonly.json
+
+# Partner feed samples / private onboarding artifacts (never commit).
+private_partner_samples/
+**/private_partner_samples/
+functions/private_partner_samples/

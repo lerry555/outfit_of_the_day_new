@@ -1,4 +1,9 @@
+import 'dart:convert';
+
 import 'package:cloud_functions/cloud_functions.dart';
+import 'package:flutter/foundation.dart';
+
+import 'stylist_chat_service.dart';
 
 /// Result from AI stylist final review between multiple full outfit candidates.
 class HomeStylistFinalReviewResult {
@@ -26,17 +31,26 @@ class HomeStylistFinalReviewService {
     Map<String, dynamic>? footwearGuidance,
     Map<String, dynamic>? bottomGuidance,
     Map<String, dynamic>? occasionContext,
+    Map<String, dynamic>? userStylePreferences,
   }) async {
     final callable = FirebaseFunctions.instanceFor(region: 'us-east1')
         .httpsCallable('finalReviewHomeOutfitCandidates');
 
-    final result = await callable.call(<String, dynamic>{
+    final request = StylistChatService.jsonSafeMapForCallable(<String, dynamic>{
       'weatherContext': weatherContext,
       'candidates': candidates,
       if (footwearGuidance != null) 'footwearGuidance': footwearGuidance,
       if (bottomGuidance != null) 'bottomGuidance': bottomGuidance,
       if (occasionContext != null) 'occasionContext': occasionContext,
+      if (userStylePreferences != null && userStylePreferences.isNotEmpty)
+        'userStylePreferences': userStylePreferences,
     });
+    debugPrint(
+      '[HOME_FINAL_REVIEW] payloadBytes=${utf8.encode(jsonEncode(request)).length} '
+      'candidateCount=${candidates.length}',
+    );
+
+    final result = await callable.call(request);
 
     final data = result.data;
     if (data is! Map) {

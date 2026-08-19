@@ -378,7 +378,7 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
                         const Padding(
                           padding: EdgeInsets.symmetric(horizontal: 2),
                           child: Text(
-                            'Pomôž AI stylistovi lepšie pochopiť tvoj štýl.',
+                            'Nastav si svoje štýlové preferencie.',
                             style: TextStyle(
                               color: _textSecondary,
                               fontSize: 13,

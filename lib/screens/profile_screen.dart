@@ -3,6 +3,7 @@ import 'dart:ui';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../Services/auth_session.dart';
 import 'premium_screen.dart';
 import 'style_preferences_screen.dart';
 
@@ -33,7 +34,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     });
 
     try {
-      await _auth.signOut();
+      await AuthSession.instance.signOut();
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

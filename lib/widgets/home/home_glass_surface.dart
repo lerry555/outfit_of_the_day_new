@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 import 'home_luxury_palette.dart';
@@ -24,37 +22,34 @@ class HomeGlassSurface extends StatelessWidget {
     final r = BorderRadius.circular(borderRadius);
     return ClipRRect(
       borderRadius: r,
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: blurSigma, sigmaY: blurSigma),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            borderRadius: r,
-            border: Border.all(color: HomeLuxuryPalette.border),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                HomeLuxuryPalette.surfaceSoft.withOpacity(0.52),
-                HomeLuxuryPalette.surface.withOpacity(0.38),
-                HomeLuxuryPalette.bgMid.withOpacity(0.42),
-              ],
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.35),
-                blurRadius: 24,
-                offset: const Offset(0, 14),
-              ),
-              BoxShadow(
-                color: HomeLuxuryPalette.accent.withOpacity(0.06),
-                blurRadius: 28,
-                spreadRadius: -4,
-              ),
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          borderRadius: r,
+          border: Border.all(color: HomeLuxuryPalette.border),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              HomeLuxuryPalette.surfaceSoft.withOpacity(0.52),
+              HomeLuxuryPalette.surface.withOpacity(0.38),
+              HomeLuxuryPalette.bgMid.withOpacity(0.42),
             ],
           ),
-          child: child,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.35),
+              blurRadius: 24,
+              offset: const Offset(0, 14),
+            ),
+            BoxShadow(
+              color: HomeLuxuryPalette.accent.withOpacity(0.06),
+              blurRadius: 28,
+              spreadRadius: -4,
+            ),
+          ],
         ),
+        child: child,
       ),
     );
   }

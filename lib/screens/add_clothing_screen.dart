@@ -1,16 +1,13 @@
 // lib/screens/add_clothing_screen.dart
 
 import 'dart:async';
-import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' show ImageFilter;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart'; // compute
-import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
@@ -21,14 +18,23 @@ import 'package:crop_your_image/crop_your_image.dart';
 
 import '../constants/app_constants.dart';
 import '../Services/color_naming_service.dart';
+import '../Services/clothing_analyzer_pipeline.dart';
 import '../Services/product_link_analyzer_service.dart';
 import '../Services/product_link_image_cleanup.dart';
+import '../Services/product_link_owned_image_handoff.dart';
 import '../Services/product_link_url_fallback.dart';
+import '../Services/wardrobe_write_path_cutover.dart';
+import '../Services/add_clothing_v2_save_coordinator.dart';
+import '../Services/add_clothing_analyzer_mapper.dart';
+import 'wardrobe_set_screens.dart';
+import '../Services/wardrobe_v2_edit_prepopulation.dart';
+import '../domain/wardrobe_v2/wardrobe_ontology_v2.dart';
+import '../utils/add_clothing_image_prep.dart';
 import '../utils/product_link_image_resolve.dart';
 import '../utils/product_link_url_sanitize.dart';
 import '../utils/wardrobe_image_url_priority.dart';
-import '../utils/ai_clothing_parser.dart';
 import '../data/clothing_knowledge_base.dart';
+import '../domain/wardrobe_v2/wardrobe_v1_retirement.dart';
 import '../widgets/category_picker.dart';
 import '../widgets/clothing_image_preview.dart';
 import '../widgets/home/home_luxury_palette.dart';
@@ -38,17 +44,33 @@ import 'stylist_chat_screen.dart';
 
 /// Home screen gold accent for Add Clothing labels and highlights.
 const Color _kAddClothingAccent = OotdCtaColors.gold;
+
+/// Photo preflight must not [Navigator.pushReplacement] when the caller needs
+/// the saved item id. Replacement completes the preflight route with null and
+/// drops the Set/component capture result.
+Future<void> continueAddClothingFromPreflight({
+  required NavigatorState navigator,
+  required Route<Object?> formRoute,
+  required bool returnItemId,
+}) async {
+  if (returnItemId) {
+    final result = await navigator.push<Object?>(formRoute);
+    navigator.pop(result);
+    return;
+  }
+  navigator.pushReplacement<Object?, Object?>(formRoute);
+}
 TextStyle get _addClothingLabelStyle => TextStyle(
-      color: _kAddClothingAccent.withOpacity(0.92),
-      fontWeight: FontWeight.w600,
-    );
+  color: _kAddClothingAccent.withOpacity(0.92),
+  fontWeight: FontWeight.w600,
+);
 
 ThemeData _addClothingFormTheme(BuildContext context) {
   return Theme.of(context).copyWith(
     colorScheme: Theme.of(context).colorScheme.copyWith(
-          primary: _kAddClothingAccent,
-          secondary: _kAddClothingAccent,
-        ),
+      primary: _kAddClothingAccent,
+      secondary: _kAddClothingAccent,
+    ),
     inputDecorationTheme: InputDecorationTheme(
       labelStyle: _addClothingLabelStyle,
       floatingLabelStyle: _addClothingLabelStyle,
@@ -99,46 +121,10 @@ Uint8List _prepareJpgForEditing(Map<String, dynamic> args) {
     );
   }
 
-  return Uint8List.fromList(
-    img.encodeJpg(out, quality: 95),
-  );
+  return Uint8List.fromList(img.encodeJpg(out, quality: 95));
 }
-/// ✅ UPLOAD helper mimo UI thread:
-/// - zmenší finálnu fotku pred uploadom do Storage
-/// - zachová pomer strán
-/// - zmenšuje LEN keď je fotka väčšia než limit
-/// - vysoká kvalita, aby cutout a AI ostali pekné
-Uint8List _prepareJpgForUpload(Map<String, dynamic> args) {
-  final Uint8List bytes = args['bytes'] as Uint8List;
-  final int maxSide = args['maxSide'] as int;
-  final int quality = args['quality'] as int;
 
-  final decoded = img.decodeImage(bytes);
-  if (decoded == null) return bytes;
-
-  final int w = decoded.width;
-  final int h = decoded.height;
-  final int longest = w > h ? w : h;
-
-  img.Image out = decoded;
-
-  if (longest > maxSide) {
-    final double scale = maxSide / longest;
-    final int nw = (w * scale).round();
-    final int nh = (h * scale).round();
-
-    out = img.copyResize(
-      decoded,
-      width: nw,
-      height: nh,
-      interpolation: img.Interpolation.average,
-    );
-  }
-
-  return Uint8List.fromList(
-    img.encodeJpg(out, quality: quality),
-  );
-}
+/// ✅ UPLOAD helper mimo UI thread is [prepareJpgForUpload].
 
 bool isValidProductLinkUrl(String raw) {
   final trimmed = raw.trim();
@@ -160,8 +146,7 @@ bool isValidProductLinkUrl(String raw) {
 
 String normalizeProductLinkUrl(String raw) {
   final trimmed = raw.trim();
-  final withScheme =
-      trimmed.contains('://') ? trimmed : 'https://$trimmed';
+  final withScheme = trimmed.contains('://') ? trimmed : 'https://$trimmed';
   return canonicalProductLinkUrl(withScheme);
 }
 
@@ -188,12 +173,16 @@ Future<File> storeAddClothingImageInternally(
 }
 
 class AddClothingScreen extends StatefulWidget {
+  static const _switchToSetResult = '__switch_to_set__';
   final Map<String, dynamic>? initialData;
   final String? imageUrl;
+
   /// Product image shown immediately on the analyzing screen (product link flow).
   final String? initialProductImageUrl;
   final String? itemId;
   final bool isEditing;
+  final bool returnItemId;
+  final VoidCallback? onAnalyzerRequest;
 
   const AddClothingScreen({
     super.key,
@@ -202,10 +191,16 @@ class AddClothingScreen extends StatefulWidget {
     this.initialProductImageUrl,
     this.itemId,
     this.isEditing = false,
+    this.returnItemId = false,
+    this.onAnalyzerRequest,
   });
 
   /// ✅ Bottom sheet picker (kamera prvá) -> potom otvorí Preflight (otáčanie + crop)
-  static Future<void> openFromPicker(BuildContext context) async {
+  static Future<String?> openFromPicker(
+    BuildContext context, {
+    bool componentMode = false,
+    VoidCallback? onAnalyzerRequest,
+  }) async {
     final picker = ImagePicker();
 
     final choice = await showModalBottomSheet<String>(
@@ -221,20 +216,17 @@ class AddClothingScreen extends StatefulWidget {
           double opacity = 0.06,
           BorderRadius? radius,
         }) {
-          return ClipRRect(
-            borderRadius: radius ?? BorderRadius.circular(24),
-            child: BackdropFilter(
-              filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-              child: Container(
-                padding: padding ?? const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  borderRadius: radius ?? BorderRadius.circular(24),
-                  color: Colors.white.withOpacity(opacity),
-                  border: Border.all(color: Colors.white10),
-                ),
-                child: child,
-              ),
+          // A full-screen backdrop blur over the animated Home surface can
+          // block Android emulator input long enough to trigger an ANR.
+          // Keep the same translucent card without the expensive live blur.
+          return Container(
+            padding: padding ?? const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              borderRadius: radius ?? BorderRadius.circular(24),
+              color: Colors.white.withOpacity(opacity),
+              border: Border.all(color: Colors.white10),
             ),
+            child: child,
           );
         }
 
@@ -322,127 +314,154 @@ class AddClothingScreen extends StatefulWidget {
           decoration: const BoxDecoration(color: HomeLuxuryPalette.bgBottom),
           child: OotdLuxuryBackground(
             child: SafeArea(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          OotdBackButton(
-                            onTap: () => Navigator.pop(sheetCtx),
-                            size: 42,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        OotdBackButton(
+                          onTap: () => Navigator.pop(sheetCtx),
+                          size: 42,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'Pridať oblečenie',
+                                style: OotdHeaderStyle.screenTitle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                'Vyber spôsob pridania oblečenia',
+                                style: OotdHeaderStyle.subtitle(),
+                              ),
+                            ],
                           ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Pridať oblečenie',
-                                  style: OotdHeaderStyle.screenTitle(
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w900,
-                                  ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 90),
+
+                    glassCard(
+                      padding: const EdgeInsets.all(16),
+                      child: const Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.lightbulb_outline_rounded,
+                                color: Colors.white70,
+                                size: 18,
+                              ),
+                              SizedBox(width: 8),
+                              Text(
+                                "Tipy pre najlepšiu fotku",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 15,
                                 ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  'Vyber spôsob pridania oblečenia',
-                                  style: OotdHeaderStyle.subtitle(),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 12),
+                          _TipRow(
+                            icon: Icons.check_rounded,
+                            text: "Celý kúsok maj v zábere",
+                          ),
+                          _TipRow(
+                            icon: Icons.check_rounded,
+                            text: "Jednoduché pozadie",
+                          ),
+                          _TipRow(
+                            icon: Icons.check_rounded,
+                            text: "Dobré svetlo",
                           ),
                         ],
                       ),
-                      const SizedBox(height: 90),
+                    ),
 
-                      glassCard(
-                        padding: const EdgeInsets.all(16),
-                        child: const Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.lightbulb_outline_rounded,
-                                  color: Colors.white70,
-                                  size: 18,
-                                ),
-                                SizedBox(width: 8),
-                                Text(
-                                  "Tipy pre najlepšiu fotku",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w800,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            SizedBox(height: 12),
-                            _TipRow(
-                              icon: Icons.check_rounded,
-                              text: "Celý kúsok maj v zábere",
-                            ),
-                            _TipRow(
-                              icon: Icons.check_rounded,
-                              text: "Jednoduché pozadie",
-                            ),
-                            _TipRow(
-                              icon: Icons.check_rounded,
-                              text: "Dobré svetlo",
-                            ),
-                          ],
-                        ),
-                      ),
+                    const SizedBox(height: 28),
 
-                      const SizedBox(height: 28),
+                    actionCard(
+                      icon: Icons.camera_alt_rounded,
+                      title: "Odfotiť",
+                      subtitle: "Použiť kameru",
+                      primary: true,
+                      onTap: () => Navigator.pop(sheetCtx, 'camera'),
+                    ),
 
-                      actionCard(
-                        icon: Icons.camera_alt_rounded,
-                        title: "Odfotiť",
-                        subtitle: "Použiť kameru",
-                        primary: true,
-                        onTap: () => Navigator.pop(sheetCtx, 'camera'),
-                      ),
-
+                    if (!componentMode) ...[
                       const SizedBox(height: 14),
-
                       actionCard(
-                        icon: Icons.photo_library_rounded,
-                        title: "Vybrať z galérie",
-                        subtitle: "Použiť existujúcu fotku oblečenia",
-                        onTap: () => Navigator.pop(sheetCtx, 'gallery'),
-                      ),
-
-                      const SizedBox(height: 14),
-
-                      actionCard(
-                        icon: Icons.link_rounded,
-                        title: 'Pridať cez link',
-                        subtitle: 'Zara, AboutYou, Zalando, H&M a ďalšie obchody',
-                        onTap: () => Navigator.pop(sheetCtx, 'link'),
+                        icon: Icons.interests_rounded,
+                        title: 'Pridať set / súpravu',
+                        subtitle: 'Dva až šesť samostatne odfotených kúskov',
+                        onTap: () => Navigator.pop(sheetCtx, 'set'),
                       ),
                     ],
-                  ),
+
+                    const SizedBox(height: 14),
+
+                    actionCard(
+                      icon: Icons.photo_library_rounded,
+                      title: "Vybrať z galérie",
+                      subtitle: "Použiť existujúcu fotku oblečenia",
+                      onTap: () => Navigator.pop(sheetCtx, 'gallery'),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    actionCard(
+                      icon: Icons.link_rounded,
+                      title: 'Pridať cez link',
+                      subtitle: 'Zara, AboutYou, Zalando, H&M a ďalšie obchody',
+                      onTap: () => Navigator.pop(sheetCtx, 'link'),
+                    ),
+                  ],
                 ),
+              ),
             ),
           ),
         );
       },
     );
 
-    if (choice == null) return;
+    if (choice == null) return null;
+
+    if (choice == 'set') {
+      if (!context.mounted) return null;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WardrobeSetCreationScreen(
+            captureNewItem: (hostContext, trackRequest) =>
+                AddClothingScreen.openFromPicker(
+                  hostContext,
+                  componentMode: true,
+                  onAnalyzerRequest: trackRequest,
+                ),
+          ),
+        ),
+      );
+      return null;
+    }
 
     if (choice == 'link') {
-      if (!context.mounted) return;
+      if (!context.mounted) return null;
       Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => const _AddClothingProductLinkScreen(),
         ),
       );
-      return;
+      return null;
     }
 
     File? pickedFile;
@@ -453,7 +472,7 @@ class AddClothingScreen extends StatefulWidget {
         imageQuality: 90,
       );
 
-      if (x == null) return;
+      if (x == null) return null;
       pickedFile = File(x.path);
     } else if (choice == 'gallery') {
       final result = await FilePicker.platform.pickFiles(
@@ -466,10 +485,10 @@ class AddClothingScreen extends StatefulWidget {
         compressionQuality: 0,
       );
 
-      if (result == null || result.files.isEmpty) return;
+      if (result == null || result.files.isEmpty) return null;
 
       final path = result.files.single.path;
-      if (path == null) return;
+      if (path == null) return null;
 
       pickedFile = await storeAddClothingImageInternally(
         File(path),
@@ -477,7 +496,7 @@ class AddClothingScreen extends StatefulWidget {
       );
     }
 
-    if (pickedFile == null) return;
+    if (pickedFile == null) return null;
 
     if (choice == 'camera') {
       pickedFile = await storeAddClothingImageInternally(
@@ -488,11 +507,33 @@ class AddClothingScreen extends StatefulWidget {
     final selectedFile = pickedFile;
 
     // ignore: use_build_context_synchronously
-    Navigator.of(context).push(
+    final result = await Navigator.of(context).push<Object?>(
       MaterialPageRoute(
-        builder: (_) => _PhotoPreflightScreen(localFile: selectedFile),
+        builder: (_) => _PhotoPreflightScreen(
+          localFile: selectedFile,
+          returnItemId: componentMode,
+          componentMode: componentMode,
+          onAnalyzerRequest: onAnalyzerRequest,
+        ),
       ),
     );
+    if (result == _switchToSetResult && !componentMode) {
+      if (!context.mounted) return null;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => WardrobeSetCreationScreen(
+            captureNewItem: (hostContext, trackRequest) =>
+                AddClothingScreen.openFromPicker(
+                  hostContext,
+                  componentMode: true,
+                  onAnalyzerRequest: trackRequest,
+                ),
+          ),
+        ),
+      );
+      return null;
+    }
+    return result is String ? result : null;
   }
 
   @override
@@ -537,7 +578,15 @@ class _TipRow extends StatelessWidget {
 /// =======================================================
 class _PhotoPreflightScreen extends StatefulWidget {
   final File localFile;
-  const _PhotoPreflightScreen({required this.localFile});
+  final bool returnItemId;
+  final bool componentMode;
+  final VoidCallback? onAnalyzerRequest;
+  const _PhotoPreflightScreen({
+    required this.localFile,
+    required this.returnItemId,
+    required this.componentMode,
+    this.onAnalyzerRequest,
+  });
 
   @override
   State<_PhotoPreflightScreen> createState() => _PhotoPreflightScreenState();
@@ -624,10 +673,20 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
     );
 
     if (!mounted) return;
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => _AddClothingEntryPoint(localFile: outFile),
+    final formRoute = MaterialPageRoute<Object?>(
+      builder: (_) => _AddClothingEntryPoint(
+        localFile: outFile,
+        returnItemId: widget.returnItemId,
+        onAnalyzerRequest: widget.onAnalyzerRequest,
       ),
+    );
+    // pushReplacement completes the preflight route with null immediately.
+    // Component/Set capture must receive the saved item id, so keep preflight
+    // on the stack and pop it with the form result.
+    await continueAddClothingFromPreflight(
+      navigator: Navigator.of(context),
+      formRoute: formRoute,
+      returnItemId: widget.returnItemId,
     );
   }
 
@@ -751,10 +810,7 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
           Expanded(
             child: Text.rich(
               TextSpan(
-                style: const TextStyle(
-                  fontSize: 13.5,
-                  height: 1.4,
-                ),
+                style: const TextStyle(fontSize: 13.5, height: 1.4),
                 children: [
                   TextSpan(
                     text: 'Tip: ',
@@ -789,219 +845,261 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
       backgroundColor: HomeLuxuryPalette.bgBottom,
       body: OotdLuxuryBackground(
         child: SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                  child: _glassCard(
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                    child: Row(
-                      children: [
-                        OotdBackButton(onTap: () => Navigator.pop(context)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                'Úprava fotky',
-                                style: OotdHeaderStyle.screenTitle(fontSize: 17),
-                              ),
-                              const SizedBox(height: 3),
-                              Text(
-                                _isCropping
-                                    ? 'Orež oblečenie čo najpresnejšie'
-                                    : 'Otoč alebo orež pred spracovaním',
-                                style: OotdHeaderStyle.subtitle(),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                child: _glassCard(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
                   ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                  child: _tipCard(),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
-                    child: _glassCard(
-                      padding: const EdgeInsets.all(12),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(18),
-                        child: Stack(
+                  child: Row(
+                    children: [
+                      OotdBackButton(onTap: () => Navigator.pop(context)),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Positioned.fill(
-                              child: bytes == null
-                                  ? const Center(child: CircularProgressIndicator())
-                                  : _isCropping
-                                  ? (_cropPreparing || _cropBytesReady == null)
-                                  ? Center(
-                                child: Column(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const SizedBox(
-                                      width: 22,
-                                      height: 22,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                        color: _kAddClothingAccent,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Text(
-                                      'Pripravujem orez…',
-                                      style: TextStyle(
-                                        color: HomeLuxuryPalette.textPrimary
-                                            .withOpacity(0.88),
-                                        fontWeight: FontWeight.w700,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                                  : Crop(
-                                controller: _cropController,
-                                image: _cropBytesReady!,
-                                onCropped: (CropResult result) async {
-                                  final Uint8List? croppedBytes =
-                                  result is CropSuccess ? result.croppedImage : null;
-
-                                  if (croppedBytes == null) {
-                                    if (!mounted) return;
-                                    setState(() => _saving = false);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('Orezanie bolo zrušené.'),
-                                      ),
-                                    );
-                                    return;
-                                  }
-
-                                  if (!mounted) return;
-                                  setState(() {
-                                    _imageBytes = croppedBytes;
-                                    _isCropping = false;
-                                    _cropPreparing = false;
-                                    _cropBytesReady = null;
-                                    _saving = false;
-                                    _quarterTurns = 0;
-                                  });
-
-                                  try {
-                                    await _continueWithBytes(croppedBytes);
-                                  } catch (e) {
-                                    if (!mounted) return;
-                                    setState(() => _saving = false);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          'Nepodarilo sa uložiť orez. ($e)',
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                },
-                                aspectRatio: null,
-                                baseColor: Colors.black,
-                                maskColor: Colors.black.withOpacity(0.55),
-                                radius: 0,
-                                interactive: false,
-                                willUpdateScale: (_) => false,
-                                cornerDotBuilder: (size, edgeAlignment) =>
-                                    const DotControl(
-                                  color: Color(0xFFC8A36A),
-                                  padding: 4,
-                                ),
-                              )
-                                  : Center(
-                                child: RotatedBox(
-                                  quarterTurns: _quarterTurns,
-                                  child: Image.memory(bytes, fit: BoxFit.contain),
-                                ),
-                              ),
+                            Text(
+                              'Úprava fotky',
+                              style: OotdHeaderStyle.screenTitle(fontSize: 17),
                             ),
-                            Positioned.fill(
-                              child: IgnorePointer(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    borderRadius: BorderRadius.circular(18),
-                                    border: Border.all(
-                                      color: HomeLuxuryPalette.border,
-                                    ),
-                                  ),
-                                ),
-                              ),
+                            const SizedBox(height: 3),
+                            Text(
+                              _isCropping
+                                  ? 'Orež oblečenie čo najpresnejšie'
+                                  : 'Otoč alebo orež pred spracovaním',
+                              style: OotdHeaderStyle.subtitle(),
                             ),
                           ],
                         ),
                       ),
-                    ),
+                    ],
                   ),
                 ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                child: _tipCard(),
+              ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
                   child: _glassCard(
                     padding: const EdgeInsets.all(12),
-                    child: Column(
-                      children: [
-                        Wrap(
-                          spacing: 10,
-                          runSpacing: 10,
-                          children: [
-                            OotdSecondaryButton(
-                              icon: Icons.rotate_left,
-                              text: 'Vľavo',
-                              onPressed: (_saving || _isCropping)
-                                  ? null
-                                  : () => setState(
-                                    () => _quarterTurns = (_quarterTurns + 3) % 4,
-                              ),
-                            ),
-                            OotdSecondaryButton(
-                              icon: Icons.rotate_right,
-                              text: 'Vpravo',
-                              onPressed: (_saving || _isCropping)
-                                  ? null
-                                  : () => setState(
-                                    () => _quarterTurns = (_quarterTurns + 1) % 4,
-                              ),
-                            ),
-                            OotdSecondaryButton(
-                              icon: _isCropping ? Icons.close : Icons.crop,
-                              text: _isCropping ? 'Zrušiť orez' : 'Orezať',
-                              active: _isCropping,
-                              onPressed: _saving
-                                  ? null
-                                  : () async {
-                                if (_isCropping) {
-                                  await _exitCropMode();
-                                } else {
-                                  await _enterCropMode();
-                                }
-                              },
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: double.infinity,
-                          child: OotdPrimaryButton(
-                            text: _saving ? 'Pripravujem…' : 'Pokračovať',
-                            isLoading: _saving,
-                            onPressed: _saving ? null : _confirm,
-                            showTrailingArrow: true,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: Stack(
+                        children: [
+                          Positioned.fill(
+                            child: bytes == null
+                                ? const Center(
+                                    child: CircularProgressIndicator(),
+                                  )
+                                : _isCropping
+                                ? (_cropPreparing || _cropBytesReady == null)
+                                      ? Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              const SizedBox(
+                                                width: 22,
+                                                height: 22,
+                                                child:
+                                                    CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color:
+                                                          _kAddClothingAccent,
+                                                    ),
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(
+                                                'Pripravujem orez…',
+                                                style: TextStyle(
+                                                  color: HomeLuxuryPalette
+                                                      .textPrimary
+                                                      .withOpacity(0.88),
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        )
+                                      : Crop(
+                                          controller: _cropController,
+                                          image: _cropBytesReady!,
+                                          onCropped: (CropResult result) async {
+                                            final Uint8List? croppedBytes =
+                                                result is CropSuccess
+                                                ? result.croppedImage
+                                                : null;
+
+                                            if (croppedBytes == null) {
+                                              if (!mounted) return;
+                                              setState(() => _saving = false);
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                const SnackBar(
+                                                  content: Text(
+                                                    'Orezanie bolo zrušené.',
+                                                  ),
+                                                ),
+                                              );
+                                              return;
+                                            }
+
+                                            if (!mounted) return;
+                                            setState(() {
+                                              _imageBytes = croppedBytes;
+                                              _isCropping = false;
+                                              _cropPreparing = false;
+                                              _cropBytesReady = null;
+                                              _saving = false;
+                                              _quarterTurns = 0;
+                                            });
+
+                                            try {
+                                              await _continueWithBytes(
+                                                croppedBytes,
+                                              );
+                                            } catch (e) {
+                                              if (!mounted) return;
+                                              setState(() => _saving = false);
+                                              ScaffoldMessenger.of(
+                                                context,
+                                              ).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(
+                                                    'Nepodarilo sa uložiť orez. ($e)',
+                                                  ),
+                                                ),
+                                              );
+                                            }
+                                          },
+                                          aspectRatio: null,
+                                          baseColor: Colors.black,
+                                          maskColor: Colors.black.withOpacity(
+                                            0.55,
+                                          ),
+                                          radius: 0,
+                                          interactive: false,
+                                          willUpdateScale: (_) => false,
+                                          cornerDotBuilder:
+                                              (size, edgeAlignment) =>
+                                                  const DotControl(
+                                                    color: Color(0xFFC8A36A),
+                                                    padding: 4,
+                                                  ),
+                                        )
+                                : Center(
+                                    child: RotatedBox(
+                                      quarterTurns: _quarterTurns,
+                                      child: Image.memory(
+                                        bytes,
+                                        fit: BoxFit.contain,
+                                      ),
+                                    ),
+                                  ),
                           ),
-                        ),
-                      ],
+                          Positioned.fill(
+                            child: IgnorePointer(
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: HomeLuxuryPalette.border,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ),
-              ],
-            ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 14),
+                child: _glassCard(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          OotdSecondaryButton(
+                            icon: Icons.rotate_left,
+                            text: 'Vľavo',
+                            onPressed: (_saving || _isCropping)
+                                ? null
+                                : () => setState(
+                                    () =>
+                                        _quarterTurns = (_quarterTurns + 3) % 4,
+                                  ),
+                          ),
+                          OotdSecondaryButton(
+                            icon: Icons.rotate_right,
+                            text: 'Vpravo',
+                            onPressed: (_saving || _isCropping)
+                                ? null
+                                : () => setState(
+                                    () =>
+                                        _quarterTurns = (_quarterTurns + 1) % 4,
+                                  ),
+                          ),
+                          OotdSecondaryButton(
+                            icon: _isCropping ? Icons.close : Icons.crop,
+                            text: _isCropping ? 'Zrušiť orez' : 'Orezať',
+                            active: _isCropping,
+                            onPressed: _saving
+                                ? null
+                                : () async {
+                                    if (_isCropping) {
+                                      await _exitCropMode();
+                                    } else {
+                                      await _enterCropMode();
+                                    }
+                                  },
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      if (!widget.componentMode && !_isCropping) ...[
+                        SizedBox(
+                          width: double.infinity,
+                          child: OotdSecondaryButton(
+                            icon: Icons.interests_rounded,
+                            text: 'Pridávam set / súpravu',
+                            onPressed: _saving
+                                ? null
+                                : () => Navigator.pop(
+                                    context,
+                                    AddClothingScreen._switchToSetResult,
+                                  ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                      ],
+                      SizedBox(
+                        width: double.infinity,
+                        child: OotdPrimaryButton(
+                          text: _saving ? 'Pripravujem…' : 'Pokračovať',
+                          isLoading: _saving,
+                          onPressed: _saving ? null : _confirm,
+                          showTrailingArrow: true,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1010,17 +1108,34 @@ class _PhotoPreflightScreenState extends State<_PhotoPreflightScreen> {
 
 class _AddClothingEntryPoint extends StatelessWidget {
   final File localFile;
-  const _AddClothingEntryPoint({required this.localFile});
+  final bool returnItemId;
+  final VoidCallback? onAnalyzerRequest;
+  const _AddClothingEntryPoint({
+    required this.localFile,
+    required this.returnItemId,
+    this.onAnalyzerRequest,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return AddClothingScreenHost(localFile: localFile);
+    return AddClothingScreenHost(
+      localFile: localFile,
+      returnItemId: returnItemId,
+      onAnalyzerRequest: onAnalyzerRequest,
+    );
   }
 }
 
 class AddClothingScreenHost extends StatefulWidget {
   final File localFile;
-  const AddClothingScreenHost({super.key, required this.localFile});
+  final bool returnItemId;
+  final VoidCallback? onAnalyzerRequest;
+  const AddClothingScreenHost({
+    super.key,
+    required this.localFile,
+    this.returnItemId = false,
+    this.onAnalyzerRequest,
+  });
 
   @override
   State<AddClothingScreenHost> createState() => _AddClothingScreenHostState();
@@ -1033,6 +1148,8 @@ class _AddClothingScreenHostState extends State<AddClothingScreenHost> {
       initialData: {'_localFilePath': widget.localFile.path},
       imageUrl: null,
       isEditing: false,
+      returnItemId: widget.returnItemId,
+      onAnalyzerRequest: widget.onAnalyzerRequest,
     );
   }
 }
@@ -1069,21 +1186,6 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return allowedSeasons.where((s) => set.contains(s)).toList();
   }
 
-  String? _findCategoryForSubKeyLocal(String subKey) {
-    for (final entry in subCategoryTree.entries) {
-      if (entry.value.contains(subKey)) return entry.key;
-    }
-    return null;
-  }
-
-
-  String? _findMainGroupForCategoryLocal(String? categoryKey) {
-    if (categoryKey == null) return null;
-    for (final entry in categoryTree.entries) {
-      if (entry.value.contains(categoryKey)) return entry.key;
-    }
-    return null;
-  }
   final _auth = FirebaseAuth.instance;
   final _firestore = FirebaseFirestore.instance;
   final _storage = FirebaseStorage.instance;
@@ -1105,6 +1207,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   String? _selectedLayerRole;
   String? _aiStylingLayerRole;
   int? _aiWarmthLevel;
+
   /// KB [ClothingKbItem.skName] when [ClothingKnowledgeBase.resolveClothingType] matched.
   String? _kbTypeDisplayName;
 
@@ -1115,6 +1218,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   List<String> _selectedPatterns = [];
   List<String> _selectedSeasons = [];
   Map<String, dynamic> _hiddenAiMetadata = {};
+  String? _baselineSubCategoryKey;
+  List<String> _baselineDisplayColors = const [];
 
   static const List<String> _hiddenAiFieldKeys = [
     'canonical_type',
@@ -1138,19 +1243,41 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   ];
 
   bool _isAiLoading = false;
+  final AddClothingV2SaveCoordinator _v2SaveCoordinator =
+      AddClothingV2SaveCoordinator();
   bool _aiCompleted = false;
   bool _aiFailed = false;
   String? _productLinkOriginalImageUrl;
   String? _productLinkCleanImageUrl;
+  String? _productLinkSeedImageUrl;
   bool _productLinkPersonDetected = false;
+  String? _productLinkPageTitle;
+  bool _productLinkOwnedImageReady = false;
 
-  final List<String> _progressSteps = const [
-    'Analyzujem obrázok',
-    'Rozpoznávam typ kúsku',
-    'Zaraďujem do kategórie',
-    'Kontrolujem farbu a typ',
-    'Pripravujem formulár',
-  ];
+  /// `_aiCompleted` remains a form-ready gate, not proof of Wardrobe V2 analysis.
+  List<String> get _progressSteps =>
+      _fromProductLink &&
+          _localImageFile == null &&
+          !ClothingAnalyzerPipeline.isOwnedAnalyzerStoragePath(
+            _uploadedStoragePath,
+          )
+      ? const [
+          'Načítavam stránku',
+          'Hľadám názov a značku',
+          'Hľadám obrázok',
+          'Pripravujem obrázok',
+          'Otváram formulár',
+        ]
+      : const [
+          'Analyzujem obrázok',
+          'Rozpoznávam typ kúsku',
+          'Zaraďujem do kategórie',
+          'Kontrolujem farbu a typ',
+          'Pripravujem formulár',
+        ];
+
+  bool get _hasOwnedAnalyzerSource =>
+      ClothingAnalyzerPipeline.isOwnedAnalyzerStoragePath(_uploadedStoragePath);
 
   final List<bool> _done = [false, false, false, false, false];
   int _activeStepIndex = 0;
@@ -1236,17 +1363,19 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _isAiLoading = true;
       _aiCompleted = false;
       _aiFailed = false;
-      final pendingUrl =
-          (widget.initialData?['_pendingLinkUrl'] ?? '').toString().trim();
-      if (pendingUrl.isNotEmpty) _sourceUrl = pendingUrl;
-
-      final prefetchedImage = (widget.initialProductImageUrl ??
-              widget.initialData?['productImageUrl'] ??
-              widget.initialData?['imageUrl'] ??
-              widget.imageUrl ??
-              '')
+      final pendingUrl = (widget.initialData?['_pendingLinkUrl'] ?? '')
           .toString()
           .trim();
+      if (pendingUrl.isNotEmpty) _sourceUrl = pendingUrl;
+
+      final prefetchedImage =
+          (widget.initialProductImageUrl ??
+                  widget.initialData?['productImageUrl'] ??
+                  widget.initialData?['imageUrl'] ??
+                  widget.imageUrl ??
+                  '')
+              .toString()
+              .trim();
       if (prefetchedImage.isNotEmpty) {
         _uploadedImageUrl = prefetchedImage;
       }
@@ -1292,16 +1421,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     if (widget.isEditing && widget.initialData != null) {
       final d = widget.initialData!;
       _loadHiddenAiMetadataFromDoc(d);
-      final editCanonical =
-          (_hiddenAiMetadata['canonical_type'] ?? d['canonical_type'] ?? '')
-              .toString()
-              .trim();
+      final prepopulation = WardrobeV2EditPrepopulation.fromDocument(d);
+      final editCanonical = prepopulation.canonicalType;
       final editKb = ClothingKnowledgeBase.resolveClothingType(
         canonicalType: editCanonical,
         type: (_hiddenAiMetadata['type'] ?? d['type'] ?? '').toString(),
-        typePretty:
-            (_hiddenAiMetadata['type_pretty'] ?? d['type_pretty'] ?? '')
-                .toString(),
+        typePretty: (_hiddenAiMetadata['type_pretty'] ?? d['type_pretty'] ?? '')
+            .toString(),
         primaryType:
             (_hiddenAiMetadata['primary_type'] ?? d['primary_type'] ?? '')
                 .toString(),
@@ -1309,49 +1435,35 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (editKb != null) {
         _kbTypeDisplayName = editKb.skName;
       }
-      _brandController.text = _recognizedBrandOrEmpty(d['brand']);
+      _brandController.text = _recognizedBrandOrEmpty(prepopulation.brand);
 
-      _selectedMainGroupKey =
-      (d['mainGroupKey'] ?? d['mainGroup'] ?? '').toString().isEmpty
-          ? null
-          : (d['mainGroupKey'] ?? d['mainGroup']).toString();
+      final mainGroupValue = (prepopulation.mainCategory ?? '').toString();
+      _selectedMainGroupKey = mainGroupValue.isEmpty ? null : mainGroupValue;
 
-      final cat = (d['categoryKey'] ?? d['category'] ?? '').toString();
-      final sub = (d['subCategoryKey'] ?? d['subCategory'] ?? '').toString();
+      final cat = (prepopulation.category ?? '').toString();
+      final sub = (prepopulation.subcategory ?? '').toString();
 
       _selectedCategoryKey = cat.isEmpty ? null : cat;
       _selectedSubCategoryKey = sub.isEmpty ? null : sub;
-      _selectedLayerRole =
-      (d['layerRole'] ?? '').toString().isEmpty
-          ? null
-          : (d['layerRole'] ?? '').toString();
-      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
-      _aiStylingLayerRole = loadedLayerRole.isEmpty ? null : loadedLayerRole;
-      final warmthRaw = d['warmth_level'] ?? d['warmthLevel'];
-      if (warmthRaw != null) {
-        final w = num.tryParse(warmthRaw.toString());
-        if (w != null) _aiWarmthLevel = w.round().clamp(1, 10);
-      }
+      _selectedLayerRole = editKb?.layerRole;
+      _aiStylingLayerRole = editKb?.layerRole;
+      _aiWarmthLevel = prepopulation.warmth?.clamp(1, 10);
 
-      _selectedColors =
-          _normalizeColorsList(_toStringList(d['colors']));
+      _selectedColors = List<String>.from(prepopulation.displayColors);
       _selectedBaseColors = _toStringList(d['baseColors']);
       _selectedColorHex = _toStringList(d['colorHex']);
       if (_selectedBaseColors.isEmpty && _selectedColors.isNotEmpty) {
         _syncColorDerivatives();
       }
-      _selectedStyles =
-          (d['styles'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      _selectedPatterns =
-          (d['patterns'] as List?)?.map((e) => e.toString()).toList() ?? [];
-      if (_selectedPatterns.length > 1) _selectedPatterns = [_selectedPatterns.first];
+      _selectedStyles = List<String>.from(prepopulation.styles);
+      _selectedPatterns = List<String>.from(prepopulation.patterns);
+      if (_selectedPatterns.length > 1)
+        _selectedPatterns = [_selectedPatterns.first];
 
-      final loadedSeasons =
-          (d['seasons'] as List?)?.map((e) => e.toString()).toList() ?? [];
+      final loadedSeasons = prepopulation.seasons;
       _selectedSeasons = _sanitizeSeasons(loadedSeasons);
 
-      _uploadedImageUrl =
-          getBestWardrobeImageUrlOrNull(d) ?? widget.imageUrl;
+      _uploadedImageUrl = getBestWardrobeImageUrlOrNull(d) ?? widget.imageUrl;
       _uploadedStoragePath = (d['storagePath'] ?? '').toString().isEmpty
           ? null
           : (d['storagePath'] ?? '').toString();
@@ -1359,6 +1471,16 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (editSourceUrl.isNotEmpty) _sourceUrl = editSourceUrl;
       _aiCompleted = true;
       _refreshAutoName();
+      final storedName = prepopulation.name;
+      if (storedName.isNotEmpty) _nameController.text = storedName;
+      _baselineSubCategoryKey = _selectedSubCategoryKey;
+      _baselineDisplayColors = List<String>.from(_selectedColors);
+      debugPrint(
+        '[ADD_CLOTHING_EDIT_V2_LOAD] canonical=$editCanonical '
+        'main=${_selectedMainGroupKey ?? ''} category=${_selectedCategoryKey ?? ''} '
+        'subcategory=${_selectedSubCategoryKey ?? ''} colors=$_selectedColors '
+        'warmth=${_aiWarmthLevel ?? ''} v2Keys=${d.keys.where((key) => const <String>{'canonicalType', 'uiProjection', 'colorProfile', 'warmth', 'ontologyVersion'}.contains(key)).join(',')}',
+      );
     }
 
     _loadBrandSuggestions();
@@ -1385,6 +1507,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return [];
   }
 
+  Map<String, dynamic>? _wardrobeV2PayloadFromExistingDoc(
+    Map<String, dynamic> d,
+  ) {
+    if (d['canonicalType'] == null) return null;
+    return WardrobeV2EditPersistence.authoritativePayloadFromDocument(d);
+  }
+
   void _loadHiddenAiMetadataFromDoc(Map<String, dynamic> d) {
     final hidden = <String, dynamic>{};
     for (final key in _hiddenAiFieldKeys) {
@@ -1394,60 +1523,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (v is List && v.isEmpty) continue;
       hidden[key] = v;
     }
-    _hiddenAiMetadata = hidden;
-  }
-
-  void _storeHiddenAiMetadataFromAnalysis(
-    Map<String, dynamic> m, {
-    required String canonical,
-    required String rawType,
-    required String prettyType,
-    required List<String> styles,
-    required List<String> patterns,
-    required List<String> seasons,
-    String? layerRoleFromAi,
-    int? warmthLevelFromAi,
-    int? formalityLevel,
-    String? primaryTypeFromAi,
-    String? secondaryTypeFromAi,
-  }) {
-    final hidden = <String, dynamic>{
-      if (canonical.isNotEmpty) 'canonical_type': canonical,
-      if (rawType.isNotEmpty) 'type': rawType,
-      if (prettyType.isNotEmpty) 'type_pretty': prettyType,
-      if (primaryTypeFromAi != null && primaryTypeFromAi.isNotEmpty)
-        'primary_type': primaryTypeFromAi,
-      if (secondaryTypeFromAi != null && secondaryTypeFromAi.isNotEmpty)
-        'secondary_type': secondaryTypeFromAi,
-      if (styles.isNotEmpty) 'styles': styles,
-      if (patterns.isNotEmpty) 'patterns': patterns,
-      if (seasons.isNotEmpty) 'seasons': seasons,
-      if (layerRoleFromAi != null && layerRoleFromAi.isNotEmpty)
-        'layer_role': layerRoleFromAi,
-      if (warmthLevelFromAi != null) 'warmth_level': warmthLevelFromAi,
-      if (formalityLevel != null) 'formality': formalityLevel,
-    };
-
-    for (final key in [
-      'fit',
-      if (formalityLevel == null) 'formality',
-      'vibe',
-      'logo_prominence',
-      'occasion_fit',
-      'material_feel',
-      'visual_description',
-      'visual_identity',
-      'identity_confidence',
-      'confidence',
-      'debug_reason',
-    ]) {
-      final v = m[key];
-      if (v == null) continue;
-      if (v is String && v.trim().isEmpty) continue;
-      if (v is List && v.isEmpty) continue;
-      hidden[key] = v;
-    }
-
+    final v2 = _wardrobeV2PayloadFromExistingDoc(d);
+    if (v2 != null) hidden['wardrobeV2'] = v2;
     _hiddenAiMetadata = hidden;
   }
 
@@ -1473,87 +1550,41 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     bool markAiComplete = true,
   }) {
     _fromProductLink = true;
-    _linkAnalysisPartial = d['_linkPartial'] == true;
-    _productLinkPersonDetected = d['personDetected'] == true;
+    _linkAnalysisPartial =
+        d['_linkPartial'] == true || d['_linkMissingImage'] == true;
+    // PL-1: product-page metadata is enrichment only. Never take clothing
+    // identity, colors, or hidden analyzer fields from this map.
+    _productLinkPersonDetected = false;
 
     final sourceUrl = (d['sourceUrl'] ?? '').toString().trim();
     if (sourceUrl.isNotEmpty) _sourceUrl = sourceUrl;
 
     final brand = _recognizedBrandOrEmpty(d['brand']);
-    if (brand.isNotEmpty) _brandController.text = brand;
+    if (brand.isNotEmpty && _brandController.text.trim().isEmpty) {
+      _brandController.text = brand;
+    }
 
-    var main = (d['mainGroupKey'] ?? d['mainGroup'] ?? '').toString().trim();
-    var cat = (d['categoryKey'] ?? d['category'] ?? '').toString().trim();
-    var sub = (d['subCategoryKey'] ?? d['subCategory'] ?? '').toString().trim();
-
-    final canonical = (d['canonical_type'] ?? '').toString().trim();
-    if ((sub.isEmpty || cat.isEmpty || main.isEmpty) && canonical.isNotEmpty) {
-      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
-      final mapped = AiClothingParser.fromCanonicalType(
-        canonical,
-        aiLayerRole: loadedLayerRole.isNotEmpty ? loadedLayerRole : null,
-      );
-      if (mapped != null) {
-        main = main.isEmpty ? mapped.mainGroupKey : main;
-        cat = cat.isEmpty ? mapped.categoryKey : cat;
-        sub = sub.isEmpty ? mapped.subCategoryKey : sub;
-        _selectedLayerRole = mapped.layerRole;
+    final pageTitle = (d['name'] ?? '').toString().trim();
+    if (pageTitle.isNotEmpty) {
+      _productLinkPageTitle = pageTitle;
+      if (_nameController.text.trim().isEmpty) {
+        _nameController.text = pageTitle;
       }
     }
 
-    if (main.isNotEmpty) _selectedMainGroupKey = main;
-    if (cat.isNotEmpty) _selectedCategoryKey = cat;
-    if (sub.isNotEmpty) {
-      _selectedSubCategoryKey = sub;
-      final loadedLayerRole = (d['layer_role'] ?? '').toString().trim();
-      _selectedLayerRole = AiClothingParser.resolveLayerRole(
-        subCategoryKey: sub,
-        aiLayerRole: loadedLayerRole.isNotEmpty ? loadedLayerRole : null,
-      );
-    }
-
-    final colors = _normalizeColorsList(_toStringList(d['colors']));
-    if (colors.isNotEmpty) _selectedColors = colors;
-    final baseFromDoc = _toStringList(d['baseColors']);
-    final hexFromDoc = _toStringList(d['colorHex']);
-    if (baseFromDoc.isNotEmpty) {
-      _selectedBaseColors = baseFromDoc;
-    } else if (colors.isNotEmpty) {
-      _selectedBaseColors = _resolveBaseColors(colors);
-    }
-    if (hexFromDoc.isNotEmpty) {
-      _selectedColorHex = hexFromDoc;
-    } else if (colors.isNotEmpty) {
-      _selectedColorHex = _resolveColorHex(colors);
-    }
-
-    final styles = _normalizeStylesList(_toStringList(d['styles']));
-    if (styles.isNotEmpty) _selectedStyles = styles;
-
-    final patterns = _toStringList(d['patterns']);
-    if (patterns.isNotEmpty) {
-      _selectedPatterns = [patterns.first];
-    }
-
-    final seasonsRaw = _toStringList(d['seasons'])
-        .where((s) => allowedSeasons.contains(s))
-        .toList();
-    if (seasonsRaw.isNotEmpty) {
-      _selectedSeasons = _sanitizeSeasons(seasonsRaw);
-    }
-
-    _loadHiddenAiMetadataFromDoc(d);
     _applyProductLinkImageFields(d);
     _refreshAutoName();
 
     if (markAiComplete) {
+      // Form-ready after metadata discovery. Does not mean wardrobeV2 exists.
       _aiCompleted = true;
       _aiFailed = false;
       _isAiLoading = false;
     }
     debugPrint(
-      '[ADD_CLOTHING_LINK] prefilled main=$_selectedMainGroupKey '
-      'cat=$_selectedCategoryKey sub=$_selectedSubCategoryKey partial=$_linkAnalysisPartial',
+      '[ADD_CLOTHING_LINK] metadata prefill brand=${brand.isNotEmpty} '
+      'title=${pageTitle.isNotEmpty} image=${_uploadedImageUrl != null} '
+      'partial=$_linkAnalysisPartial',
     );
   }
 
@@ -1566,11 +1597,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   void _applyProductLinkImageFields(Map<String, dynamic> d) {
-    final original =
-        (d['originalImageUrl'] ?? '').toString().trim();
+    final original = (d['originalImageUrl'] ?? '').toString().trim();
     final clean = (d['cleanImageUrl'] ?? '').toString().trim();
-    final product =
-        (d['productImageUrl'] ?? d['imageUrl'] ?? '').toString().trim();
+    final product = (d['productImageUrl'] ?? d['imageUrl'] ?? '')
+        .toString()
+        .trim();
     var display = getBestWardrobeImageUrl(d);
     if (display.isEmpty) {
       display = clean.isNotEmpty
@@ -1598,22 +1629,78 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     if (display.isNotEmpty && isValidProductLinkImageUrl(display)) {
       _uploadedImageUrl = display;
+      _productLinkSeedImageUrl ??= display;
     }
+  }
+
+  void _applyProductLinkRemotePreview(String? url) {
+    if (url != null &&
+        url.isNotEmpty &&
+        isValidProductLinkImageUrl(url)) {
+      _productLinkPreviewFailed = false;
+      _uploadedImageUrl = url;
+      _productLinkOriginalImageUrl = url;
+      _productLinkSeedImageUrl = url;
+    } else {
+      _productLinkPreviewFailed = false;
+      _uploadedImageUrl = null;
+      _productLinkOriginalImageUrl = null;
+    }
+  }
+
+  Future<void> _showProductLinkMetadataFailure({
+    required bool callableNotFound,
+  }) async {
+    if (!mounted) return;
+    setState(() {
+      _aiCompleted = false;
+      _aiFailed = true;
+      _isAiLoading = false;
+      _linkAnalysisPartial = true;
+    });
+    _stopProgressTimers();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          callableNotFound
+              ? 'Načítanie údajov z odkazu zatiaľ nie je dostupné.'
+              : 'Údaje z odkazu sa nepodarilo načítať. Skús znova.',
+        ),
+      ),
+    );
   }
 
   Future<void> _fillWithProductLinkAi() async {
     if (_isAiLoading == false && _aiCompleted) return;
 
+    if (_hasOwnedAnalyzerSource) {
+      await _fillWithAi();
+      return;
+    }
+
     final url = canonicalProductLinkUrl(
-      (_sourceUrl ?? widget.initialData?['_pendingLinkUrl'] ?? '').toString().trim(),
+      (_sourceUrl ?? widget.initialData?['_pendingLinkUrl'] ?? '')
+          .toString()
+          .trim(),
     );
     if (url.isEmpty) {
       if (!mounted) return;
       setState(() {
         _aiFailed = true;
         _isAiLoading = false;
+        _aiCompleted = false;
       });
       return;
+    }
+
+    if (!_isAiLoading) {
+      setState(() {
+        _isAiLoading = true;
+        _aiFailed = false;
+        _aiCompleted = false;
+        _productLinkOwnedImageReady = false;
+        _uploadedStoragePath = null;
+      });
     }
 
     _sourceUrl = url;
@@ -1632,26 +1719,23 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           previewImage.isNotEmpty &&
           isValidProductLinkImageUrl(previewImage) &&
           mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = previewImage;
-          _productLinkOriginalImageUrl = previewImage;
-        });
+        setState(() => _applyProductLinkRemotePreview(previewImage));
       } else if (mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = null;
-          _productLinkOriginalImageUrl = null;
-        });
+        setState(() => _applyProductLinkRemotePreview(null));
       }
+    } on ProductLinkSourcePageException catch (e) {
+      debugPrint('[ADD_LINK_FLOW][source_page_preview_error] $e');
+      await _ensureMinLinkAnalyzingDuration(started);
+      await _showProductLinkMetadataFailure(
+        callableNotFound:
+            e.kind == ProductLinkSourcePageError.callableNotFound,
+      );
+      return;
     } catch (e) {
       debugPrint('[ADD_LINK_FLOW][source_page_preview_error] $e');
-      if (mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = null;
-        });
-      }
+      await _ensureMinLinkAnalyzingDuration(started);
+      await _showProductLinkMetadataFailure(callableNotFound: false);
+      return;
     }
 
     try {
@@ -1661,80 +1745,118 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         prefetchedMetadata: sourcePage,
       );
 
-      final resolvedPreview = resolveProductLinkImageUrl(outcome.analysis) ??
-          (sourcePage == null
-              ? null
-              : resolveProductLinkImageUrl(sourcePage));
+      if (outcome.callableNotFound || outcome.fetchFailed) {
+        await _ensureMinLinkAnalyzingDuration(started);
+        await _showProductLinkMetadataFailure(
+          callableNotFound: outcome.callableNotFound,
+        );
+        return;
+      }
+
+      var analysis = outcome.analysis;
+      var resolvedPreview = resolveProductLinkImageUrl(analysis);
       if (resolvedPreview != null &&
           resolvedPreview.isNotEmpty &&
           isValidProductLinkImageUrl(resolvedPreview) &&
           mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = resolvedPreview;
-          _productLinkOriginalImageUrl = resolvedPreview;
-        });
+        setState(() => _applyProductLinkRemotePreview(resolvedPreview));
       }
 
       await _ensureMinLinkAnalyzingDuration(started);
 
       if (!mounted) return;
 
-      final hasImage = _uploadedImageUrl != null &&
+      final hasImage =
+          _uploadedImageUrl != null &&
           isValidProductLinkImageUrl(_uploadedImageUrl);
 
       if (!hasImage) {
         debugPrint('[ADD_LINK_FLOW][source_page_retry]');
-        final retry = await fetchProductLinkSourcePage(url);
-        final retryImg =
-            retry == null ? null : resolveProductLinkImageUrl(retry);
-        if (retryImg != null &&
-            retryImg.isNotEmpty &&
-            isValidProductLinkImageUrl(retryImg) &&
-            mounted) {
-          setState(() {
-            _productLinkPreviewFailed = false;
-            _uploadedImageUrl = retryImg;
-            _productLinkOriginalImageUrl = retryImg;
-          });
-          sourcePage = retry;
+        try {
+          final retry = await fetchProductLinkSourcePage(url);
+          final retryImg = retry == null
+              ? null
+              : resolveProductLinkImageUrl(retry);
+          if (retry != null &&
+              retryImg != null &&
+              retryImg.isNotEmpty &&
+              isValidProductLinkImageUrl(retryImg) &&
+              mounted) {
+            setState(() => _applyProductLinkRemotePreview(retryImg));
+            analysis = retry;
+            resolvedPreview = retryImg;
+          }
+        } catch (e) {
+          debugPrint('[ADD_LINK_FLOW][source_page_retry_error] $e');
         }
       }
 
       _reachMilestone(2);
 
-      final formImage = resolveProductLinkImageUrl(outcome.analysis) ??
-          (sourcePage == null
-              ? null
-              : resolveProductLinkImageUrl(sourcePage)) ??
+      final formImage =
+          resolvedPreview ??
+          resolveProductLinkImageUrl(analysis) ??
           _uploadedImageUrl;
-      if (formImage != null &&
-          formImage.isNotEmpty &&
-          isValidProductLinkImageUrl(formImage) &&
-          mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = formImage;
-          _productLinkOriginalImageUrl = formImage;
-        });
-      } else if (mounted) {
-        setState(() {
-          _productLinkPreviewFailed = false;
-          _uploadedImageUrl = null;
-        });
+      if (mounted) {
+        setState(() => _applyProductLinkRemotePreview(formImage));
       }
 
       setState(() {
         _applyProductLinkInitialData(
-          outcome.analysis.toInitialData(),
+          analysis.toInitialData(),
           markAiComplete: false,
         );
         if (_uploadedImageUrl != null) {
-          _applyProductLinkImageFields(outcome.analysis.toInitialData());
+          _applyProductLinkImageFields(analysis.toInitialData());
         }
       });
 
-      _reachMilestone(3);
+      final seed =
+          _productLinkSeedImageUrl ??
+          resolveProductLinkImageUrl(analysis) ??
+          formImage;
+      if (seed != null && isValidProductLinkImageUrl(seed)) {
+        _reachMilestone(3);
+        await _handoffProductLinkOwnedImage(
+          sourceUrl: url,
+          seedImageUrl: seed,
+        );
+      } else {
+        _reachMilestone(3);
+      }
+
+      if (!mounted) return;
+      if (_hasOwnedAnalyzerSource) {
+        final user = _auth.currentUser;
+        if (user == null) {
+          await _showProductLinkMetadataFailure(callableNotFound: false);
+          return;
+        }
+        _resetProgress();
+        try {
+          await _analyzeOwnedWardrobeImage(
+            user: user,
+            imageUrl: (_uploadedImageUrl ?? '').trim(),
+          );
+          if (!mounted) return;
+          if (_linkAnalysisPartial) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Niektoré údaje z odkazu sa nepodarilo vyplniť.',
+                ),
+              ),
+            );
+          }
+        } on TimeoutException {
+          _handleOwnedAnalyzerFailure();
+        } catch (e) {
+          debugPrint('[ADD_LINK_FLOW][analyzer_failed] $e');
+          _handleOwnedAnalyzerFailure();
+        }
+        return;
+      }
+
       await Future.delayed(const Duration(milliseconds: 400));
 
       if (!mounted) return;
@@ -1747,47 +1869,178 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       _reachMilestone(4);
       _stopProgressTimers();
 
-      if (outcome.callableNotFound) {
+      if (analysis.missingImage ||
+          seed == null ||
+          !isValidProductLinkImageUrl(seed)) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'AI analýza produktu ešte nie je dostupná. Použijem základné údaje z odkazu.',
+              'Nepodarilo sa nájsť obrázok produktu. Môžeš použiť fotku z galérie alebo fotoaparátu.',
             ),
-            duration: Duration(seconds: 5),
           ),
         );
       } else if (_linkAnalysisPartial) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              'Niektoré údaje sa nepodarilo vyplniť automaticky.',
+              'Niektoré údaje z odkazu sa nepodarilo vyplniť.',
             ),
           ),
         );
       }
     } catch (e) {
-      debugPrint('[ADD_LINK_FLOW][fallback_used] $e');
+      debugPrint('[ADD_LINK_FLOW][metadata_failed] $e');
       await _ensureMinLinkAnalyzingDuration(started);
-      debugPrint('[ADD_LINK_FLOW][open_form]');
+      await _showProductLinkMetadataFailure(callableNotFound: false);
+    }
+  }
+
+  Future<void> _handoffProductLinkOwnedImage({
+    required String sourceUrl,
+    required String seedImageUrl,
+  }) async {
+    final user = _auth.currentUser;
+    if (user == null) {
       if (!mounted) return;
-      final fallback = detectClothingFromUrlFallback(url);
-      _applyProductLinkInitialData(
-        fallback.toInitialData()..['_linkLoadFailed'] = fallback.partial,
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Musíš byť prihlásený.')),
+      );
+      return;
+    }
+
+    try {
+      final owned = await productLinkOwnedImageHandoff.run(
+        uid: user.uid,
+        sourceUrl: sourceUrl,
+        seedImageUrl: seedImageUrl,
+      );
+      if (!mounted) return;
+      debugPrint(
+        '[ADD_LINK_FLOW][owned_image] path=${owned.storagePath}',
       );
       setState(() {
-        _aiCompleted = true;
-        _aiFailed = fallback.partial;
-        _isAiLoading = false;
+        _sourceUrl = owned.sourceUrl;
+        _productLinkSeedImageUrl = owned.seedImageUrl;
+        _productLinkOriginalImageUrl = owned.seedImageUrl;
+        _uploadedStoragePath = owned.storagePath;
+        _uploadedImageUrl = owned.ownedImageUrl;
+        _productLinkOwnedImageReady = true;
+        _productLinkPreviewFailed = false;
       });
-      _stopProgressTimers();
+    } on ProductLinkImageHandoffException catch (e) {
+      debugPrint('[ADD_LINK_FLOW][owned_image_failed] $e');
+      if (!mounted) return;
+      setState(() {
+        _productLinkOwnedImageReady = false;
+        _uploadedStoragePath = null;
+        _applyProductLinkRemotePreview(seedImageUrl);
+      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(content: Text(productLinkImageHandoffUserMessage(e.kind))),
+      );
+    } catch (e) {
+      debugPrint('[ADD_LINK_FLOW][owned_image_failed] $e');
+      if (!mounted) return;
+      setState(() {
+        _productLinkOwnedImageReady = false;
+        _uploadedStoragePath = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
           content: Text(
-            'Produkt sa nepodarilo načítať úplne. Skontroluj údaje pred uložením.',
+            productLinkImageHandoffUserMessage(
+              ProductLinkImageHandoffError.uploadFailed,
+            ),
           ),
         ),
       );
     }
+  }
+
+  Future<void> _retryProductLinkOwnedImage() async {
+    final seed = (_productLinkSeedImageUrl ?? _productLinkOriginalImageUrl ?? '')
+        .trim();
+    final source = (_sourceUrl ?? '').trim();
+    if (seed.isEmpty || source.isEmpty || _isAiLoading) return;
+    setState(() => _isAiLoading = true);
+    await _handoffProductLinkOwnedImage(
+      sourceUrl: source,
+      seedImageUrl: seed,
+    );
+    if (!mounted) return;
+    setState(() => _isAiLoading = false);
+  }
+
+  Future<void> _pickPhotoForProductLinkFallback() async {
+    if (_isAiLoading) return;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: const Color(0xFF161616),
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined, color: Colors.white),
+                title: const Text(
+                  'Odfotiť',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.pop(sheetCtx, 'camera'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library_outlined, color: Colors.white),
+                title: const Text(
+                  'Vybrať z galérie',
+                  style: TextStyle(color: Colors.white),
+                ),
+                onTap: () => Navigator.pop(sheetCtx, 'gallery'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+
+    File? pickedFile;
+    if (choice == 'camera') {
+      final x = await ImagePicker().pickImage(
+        source: ImageSource.camera,
+        imageQuality: 90,
+      );
+      if (x == null) return;
+      pickedFile = File(x.path);
+    } else if (choice == 'gallery') {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        allowMultiple: false,
+        withData: false,
+        dialogTitle: 'Vyber fotku',
+        allowCompression: false,
+        compressionQuality: 0,
+      );
+      final path = result?.files.single.path;
+      if (path == null || path.isEmpty) return;
+      pickedFile = File(path);
+    }
+    if (pickedFile == null) return;
+
+    pickedFile = await storeAddClothingImageInternally(
+      pickedFile,
+      stage: 'product_link_fallback',
+    );
+    if (!mounted) return;
+    setState(() {
+      _localImageFile = pickedFile;
+      _uploadedImageUrl = null;
+      _uploadedStoragePath = null;
+      _productLinkOwnedImageReady = false;
+      _aiCompleted = false;
+      _aiFailed = false;
+    });
+    await _fillWithAi();
   }
 
   Future<void> _loadBrandSuggestions() async {
@@ -1844,7 +2097,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     if (brand.isEmpty) return;
     if (_isUnknownBrandValue(brand)) return;
 
-    if (!_brandOptions.map((e) => e.toLowerCase()).contains(brand.toLowerCase())) {
+    if (!_brandOptions
+        .map((e) => e.toLowerCase())
+        .contains(brand.toLowerCase())) {
       setState(() {
         _brandOptions = [..._brandOptions, brand]..sort();
       });
@@ -1880,8 +2135,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       setState(() {
         if (_activeStepIndex <= _maxFakeDoneIndex) {
           _done[_activeStepIndex] = true;
-          _activeStepIndex =
-              (_activeStepIndex + 1).clamp(0, _progressSteps.length - 1);
+          _activeStepIndex = (_activeStepIndex + 1).clamp(
+            0,
+            _progressSteps.length - 1,
+          );
         }
       });
     });
@@ -1903,7 +2160,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   Future<String?> _ensureImageUrl() async {
-    if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty) {
+    if (_hasOwnedAnalyzerSource &&
+        _uploadedImageUrl != null &&
+        _uploadedImageUrl!.isNotEmpty) {
       return _uploadedImageUrl;
     }
 
@@ -1919,23 +2178,23 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final rawBytes = await _localImageFile!.readAsBytes();
 
       final uploadBytes = await compute<Map<String, dynamic>, Uint8List>(
-        _prepareJpgForUpload,
+        prepareJpgForUpload,
         {
           'bytes': rawBytes,
-          'maxSide': 1600,
-          'quality': 88,
+          'maxSide': kAddClothingUploadMaxSide,
+          'quality': kAddClothingUploadJpegQuality,
         },
       );
 
-      final metadata = SettableMetadata(
-        contentType: 'image/jpeg',
-      );
+      final metadata = SettableMetadata(contentType: 'image/jpeg');
 
       final task = await ref
           .putData(uploadBytes, metadata)
           .timeout(const Duration(seconds: 25));
 
-      final url = await task.ref.getDownloadURL().timeout(const Duration(seconds: 15));
+      final url = await task.ref.getDownloadURL().timeout(
+        const Duration(seconds: 15),
+      );
 
       setState(() {
         _uploadedImageUrl = url;
@@ -1944,9 +2203,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
       return url;
     } on TimeoutException {
-      throw Exception('Upload trvá príliš dlho (timeout). Skontroluj internet a skús znova.');
+      throw Exception(
+        'Upload trvá príliš dlho (timeout). Skontroluj internet a skús znova.',
+      );
     } on FirebaseException catch (e) {
-      throw Exception('Upload do Storage zlyhal: ${e.code} – ${e.message ?? ''}');
+      throw Exception(
+        'Upload do Storage zlyhal: ${e.code} – ${e.message ?? ''}',
+      );
     } catch (e) {
       throw Exception('Upload do Storage zlyhal: $e');
     }
@@ -1956,9 +2219,26 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     var out = s.toLowerCase().trim();
 
     const repl = {
-      'á': 'a','ä': 'a','č': 'c','ď': 'd','é': 'e','ě': 'e','í': 'i',
-      'ĺ': 'l','ľ': 'l','ň': 'n','ó': 'o','ô': 'o','ŕ': 'r','ř': 'r',
-      'š': 's','ť': 't','ú': 'u','ů': 'u','ý': 'y','ž': 'z'
+      'á': 'a',
+      'ä': 'a',
+      'č': 'c',
+      'ď': 'd',
+      'é': 'e',
+      'ě': 'e',
+      'í': 'i',
+      'ĺ': 'l',
+      'ľ': 'l',
+      'ň': 'n',
+      'ó': 'o',
+      'ô': 'o',
+      'ŕ': 'r',
+      'ř': 'r',
+      'š': 's',
+      'ť': 't',
+      'ú': 'u',
+      'ů': 'u',
+      'ý': 'y',
+      'ž': 'z',
     };
 
     final b = StringBuffer();
@@ -2035,11 +2315,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     final isNikeFamily =
         b.contains('nike') ||
-            b.contains('jordan') ||
-            b.contains('adidas') ||
-            b.contains('puma') ||
-            b.contains('under armour') ||
-            b.contains('reebok');
+        b.contains('jordan') ||
+        b.contains('adidas') ||
+        b.contains('puma') ||
+        b.contains('under armour') ||
+        b.contains('reebok');
 
     List<String> out = [...stylesFromAi];
 
@@ -2090,14 +2370,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         subCategoryKey == 'undershirt') {
       out.add('casual');
 
-      if (subCategoryKey == 'crop_top' ||
-          subCategoryKey == 'korzet_top') {
+      if (subCategoryKey == 'crop_top' || subCategoryKey == 'korzet_top') {
         out.add('streetwear');
       }
 
       if ((subCategoryKey == 'tricko' ||
-          subCategoryKey == 'tricko_dlhy_rukav' ||
-          subCategoryKey == 'tielko') &&
+              subCategoryKey == 'tricko_dlhy_rukav' ||
+              subCategoryKey == 'tielko') &&
           isNikeFamily &&
           (hasTextPattern || hasGraphicPattern)) {
         out.removeWhere((s) => _norm(s) == _norm('sport'));
@@ -2153,18 +2432,18 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     final hasTextHint =
         combined.contains('text') ||
-            combined.contains('napis') ||
-            combined.contains('nápis') ||
-            combined.contains('letter') ||
-            combined.contains('slogan');
+        combined.contains('napis') ||
+        combined.contains('nápis') ||
+        combined.contains('letter') ||
+        combined.contains('slogan');
 
     final hasGraphicHint =
         combined.contains('graphic') ||
-            combined.contains('graf') ||
-            combined.contains('logo') ||
-            combined.contains('print') ||
-            combined.contains('potlac') ||
-            combined.contains('potlač');
+        combined.contains('graf') ||
+        combined.contains('logo') ||
+        combined.contains('print') ||
+        combined.contains('potlac') ||
+        combined.contains('potlač');
 
     for (final p in patternsFromAi) {
       final mapped = _normalizePattern(p);
@@ -2312,7 +2591,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     if (v.contains('text') || v.contains('letter') || v.contains('slogan')) {
       return allowedMap[_norm('textová potlač')];
     }
-    if (v.contains('print') || v.contains('graphic') || v.contains('logo') || v.contains('graf')) {
+    if (v.contains('print') ||
+        v.contains('graphic') ||
+        v.contains('logo') ||
+        v.contains('graf')) {
       return allowedMap[_norm('grafická potlač')];
     }
 
@@ -2382,10 +2664,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   String _colorToAdjectiveForSubcategory(
-      String color,
-      String subKey,
-      String subLabelRaw,
-      ) {
+    String color,
+    String subKey,
+    String subLabelRaw,
+  ) {
     final c = color.trim();
     if (c.isEmpty) return c;
 
@@ -2403,6 +2685,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     return c;
   }
+
   String _displayColorName(String raw) {
     final s = raw.trim();
     if (s.isEmpty) return s;
@@ -2414,8 +2697,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     final subLabelRaw = (_kbTypeDisplayName ?? subCategoryLabels[subKey] ?? '')
         .trim();
 
-    String lowerFirst(String s) => s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
-    String upperFirst(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+    String lowerFirst(String s) =>
+        s.isEmpty ? s : s[0].toLowerCase() + s.substring(1);
+    String upperFirst(String s) =>
+        s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
 
     String colorPart = '';
     if (_selectedColors.isNotEmpty) {
@@ -2450,13 +2735,14 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     final user = _auth.currentUser;
     if (user == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Musíš byť prihlásený.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Musíš byť prihlásený.')));
       return;
     }
 
-    if (_localImageFile == null && (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
+    if (_localImageFile == null &&
+        (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty)) {
       return;
     }
 
@@ -2473,433 +2759,133 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (imageUrl == null || imageUrl.isEmpty) {
         throw Exception('Nepodarilo sa získať URL obrázka.');
       }
-      _reachMilestone(0);
-
-      const endpoint =
-          'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/analyzeClothingImage';
-
-      final resp = await http
-          .post(
-        Uri.parse(endpoint),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'imageUrl': imageUrl}),
-      )
-          .timeout(const Duration(seconds: 30));
-
-      if (resp.statusCode != 200) {
-        throw Exception('AI zlyhalo: ${resp.statusCode} ${resp.body}');
-      }
-
-      final decoded = jsonDecode(resp.body);
-      if (decoded is! Map<String, dynamic>) {
-        throw Exception('AI odpoveď nie je JSON objekt.');
-      }
-
-      _reachMilestone(1);
-
-      final m = decoded;
-      print('AI FULL RESPONSE: ${jsonEncode(m)}');
-
-      final String prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
-      final String rawType = (m['type'] ?? '').toString().trim();
-      String canonical = (m['canonical_type'] ?? '').toString().trim();
-      final String brandFromAi = _recognizedBrandOrEmpty(m['brand']);
-      final String typeEvidence = '$rawType $prettyType'.toLowerCase();
-      final String canonicalLower = canonical.toLowerCase();
-
-      if (canonicalLower == 'jacket') {
-        final bool saysMikina =
-            typeEvidence.contains('mikina') ||
-                typeEvidence.contains('hoodie') ||
-                typeEvidence.contains('sweatshirt');
-
-        final bool saysHood =
-            typeEvidence.contains('kapuc') ||
-                typeEvidence.contains('hood');
-
-        if (saysMikina && saysHood) {
-          print(
-            'AI TYPE GUARD => overriding canonical "jacket" to "hoodie" '
-                'because raw="$rawType", pretty="$prettyType"',
-          );
-          canonical = 'hoodie';
-        } else if (saysMikina) {
-          print(
-            'AI TYPE GUARD => overriding canonical "jacket" to "sweatshirt" '
-                'because raw="$rawType", pretty="$prettyType"',
-          );
-          canonical = 'sweatshirt';
-        }
-      }
-      final colorsFromAi = _toStringList(m['colors'] ?? m['color']);
-      final stylesFromAi = _toStringList(m['style'] ?? m['styles']);
-      final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
-      final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
-      final String primaryTypeFromAi =
-          (m['primary_type'] ?? '').toString().trim();
-      final String secondaryTypeFromAi =
-          (m['secondary_type'] ?? '').toString().trim();
-      final String materialFeelFromAi =
-          (m['material_feel'] ?? '').toString().trim();
-      final String vibeFromAi = (m['vibe'] ?? '').toString().trim();
-      final String visualDescFromAi =
-          (m['visual_description'] ?? '').toString().trim();
-      var layerRoleFromAi = (m['layer_role'] ?? '').toString().trim();
-      int? warmthLevelFromAi;
-      if (m['warmth_level'] != null) {
-        final n = num.tryParse(m['warmth_level'].toString());
-        if (n != null) warmthLevelFromAi = n.round().clamp(1, 10);
-      }
-
-      int? formalityFromAi;
-      if (m['formality'] != null) {
-        final n = num.tryParse(m['formality'].toString());
-        if (n != null) formalityFromAi = n.round().clamp(1, 10);
-      }
-
-      final kbItem = ClothingKnowledgeBase.resolveClothingType(
-        canonicalType: canonical,
-        type: rawType,
-        typePretty: prettyType,
-        primaryType: primaryTypeFromAi,
-      );
-      if (kbItem != null) {
-        ClothingKnowledgeBase.logMatch(kbItem);
-        layerRoleFromAi = kbItem.layerRole;
-        warmthLevelFromAi = kbItem.warmthDefault;
-        formalityFromAi = kbItem.formalityDefault;
-        _kbTypeDisplayName = kbItem.skName;
-      } else {
-        ClothingKnowledgeBase.logNoMatch(
-          canonicalType: canonical,
-          primaryType: primaryTypeFromAi,
-          type: rawType,
-          typePretty: prettyType,
-        );
-        _kbTypeDisplayName = null;
-      }
-
-      String? nextMain;
-      String? nextCat;
-      String? nextSub;
-      String? nextLayerRole;
-
-      final aiLayerForMapping = kbItem == null && layerRoleFromAi.isNotEmpty
-          ? layerRoleFromAi
-          : null;
-
-      if (canonical.isNotEmpty && canonical != 'sneakers' && canonical != 'sneaker') {
-        final mapped = AiClothingParser.fromCanonicalType(
-          canonical,
-          aiLayerRole: aiLayerForMapping,
-        );
-        if (mapped != null) {
-          nextMain = mapped.mainGroupKey;
-          nextCat = mapped.categoryKey;
-          nextSub = mapped.subCategoryKey;
-          nextLayerRole = mapped.layerRole;
-        }
-      }
-
-      if (nextMain == null || nextCat == null || nextSub == null) {
-        final mapped = AiClothingParser.mapType(
-          AiParserInput(
-            rawType: rawType,
-            aiName: prettyType,
-            userName: _computeAutoNameWithColor(),
-            seasons: seasonsFromAi,
-            brand: brandFromAi,
-          ),
-        );
-
-        if (mapped != null) {
-          nextMain = mapped.mainGroupKey;
-          nextCat = mapped.categoryKey;
-          nextSub = mapped.subCategoryKey;
-          if (kbItem == null) {
-            nextLayerRole = AiClothingParser.resolveLayerRole(
-              subCategoryKey: mapped.subCategoryKey,
-              aiLayerRole: aiLayerForMapping,
-            );
-          }
-
-          print(
-            'AI TYPE FALLBACK OK => canonical="$canonical", raw="$rawType", pretty="$prettyType" => '
-                'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
-          );
-        } else {
-          print(
-            'AI TYPE MAPPING FAILED => canonical="$canonical", raw="$rawType", pretty="$prettyType"',
-          );
-        }
-      } else {
-        print(
-          'AI TYPE CANONICAL OK => canonical="$canonical" => '
-              'main="$nextMain", cat="$nextCat", sub="$nextSub", layer="$nextLayerRole"',
-        );
-      }
-
-      if (AiClothingParser.isTrackJacketSignal(
-        canonicalType: canonical,
-        primaryType: primaryTypeFromAi,
-        rawType: rawType,
-        prettyType: prettyType,
-      )) {
-        print(
-          'AI TYPE TRACK_JACKET OK => canonical=$canonical primary=$primaryTypeFromAi '
-          'sub=$nextSub layer_role=${aiLayerForMapping ?? nextLayerRole ?? ''}',
-        );
-      }
-
-      List<String>? jacketSeasonsOverride;
-      if (JacketV2Classifier.shouldClassify(
-        currentSub: nextSub,
-        canonicalType: canonical,
-        primaryType: primaryTypeFromAi,
-        rawType: rawType,
-        prettyType: prettyType,
-      )) {
-        final jacketV2 = JacketV2Classifier.classify(
-          primaryType: primaryTypeFromAi,
-          secondaryType: secondaryTypeFromAi,
-          warmthLevel: warmthLevelFromAi,
-          materialFeel: materialFeelFromAi,
-          vibe: vibeFromAi,
-          visualDescription: visualDescFromAi,
-          rawType: rawType,
-          prettyType: prettyType,
-        );
-        JacketV2Classifier.logDecision(
-          primaryType: primaryTypeFromAi,
-          secondaryType: secondaryTypeFromAi,
-          warmthLevel: warmthLevelFromAi,
-          materialFeel: materialFeelFromAi,
-          vibe: vibeFromAi,
-          result: jacketV2,
-        );
-        if (jacketV2 != null) {
-          nextSub = jacketV2.subCategoryKey;
-          nextCat = _findCategoryForSubKeyLocal(jacketV2.subCategoryKey);
-          nextMain = _findMainGroupForCategoryLocal(nextCat);
-          if (kbItem == null) {
-            nextLayerRole = AiClothingParser.resolveLayerRole(
-              subCategoryKey: jacketV2.subCategoryKey,
-              aiLayerRole: aiLayerForMapping,
-            );
-          }
-          jacketSeasonsOverride = jacketV2.seasons;
-        }
-      }
-
-      if (kbItem != null) {
-        nextLayerRole = kbItem.layerRole;
-        warmthLevelFromAi = kbItem.warmthDefault;
-        formalityFromAi = kbItem.formalityDefault;
-      } else if (nextSub != null) {
-        nextLayerRole = AiClothingParser.resolveLayerRole(
-          subCategoryKey: nextSub,
-          aiLayerRole: aiLayerForMapping,
-        );
-      }
-      _reachMilestone(2);
-      print('CHECKPOINT 1 => after _reachMilestone(2)');
-      final filteredColors = _normalizeColorsList(colorsFromAi);
-      final normalizedStylesFromAi = _normalizeStylesList(stylesFromAi);
-      final resolvedSubKeyForRules = nextSub ?? '';
-
-      final fixedPatterns = _applyPatternRules(
-        patternsFromAi: patternsFromAi,
-        brand: brandFromAi,
-        prettyType: prettyType,
-        rawType: rawType,
-        subCategoryKey: resolvedSubKeyForRules,
-      );
-
-      final fixedStyles = _applyStyleRules(
-        stylesFromAi: normalizedStylesFromAi,
-        brand: brandFromAi,
-        subCategoryKey: resolvedSubKeyForRules,
-        patterns: fixedPatterns,
-      );
-      print('CHECKPOINT 2 => styles/patterns done');
-      print('CHECKPOINT 2A => nextSub=$nextSub');
-      print('CHECKPOINT 2B => fixedPatterns=$fixedPatterns');
-      print('CHECKPOINT 2C => fixedStyles=$fixedStyles');
-      final filteredSeasonsRaw = seasonsFromAi
-          .map((e) => e.toString().trim())
-          .where((s) => allowedSeasons.contains(s))
-          .toList();
-      print('CHECKPOINT S1 => filteredSeasonsRaw=$filteredSeasonsRaw');
-
-      List<String> filteredSeasons = _sanitizeSeasons(filteredSeasonsRaw);
-      print('CHECKPOINT S2 => filteredSeasons after first sanitize=$filteredSeasons');
-
-      final typeForSeason = nextSub ?? '';
-      print('CHECKPOINT S3 => typeForSeason=$typeForSeason');
-
-      if (jacketSeasonsOverride != null) {
-        filteredSeasons = jacketSeasonsOverride;
-        print(
-          'CHECKPOINT JACKET V2 => seasons from classifier: $filteredSeasons',
-        );
-      } else if (typeForSeason == 'bunda_zimna') {
-        print('CHECKPOINT DIRECT WINTER => forcing winter seasons');
-        filteredSeasons = ['jeseň', 'zima'];
-        print('CHECKPOINT DX => after direct winter assign, filteredSeasons=$filteredSeasons');
-      } else {
-        print('CHECKPOINT B1 => entering season branch chain');
-
-        if (typeForSeason == 'tielko') {
-          filteredSeasons = ['jar', 'leto'];
-        } else if (typeForSeason == 'undershirt') {
-          filteredSeasons = ['celoročne'];
-        } else if (typeForSeason == 'tenisky_fashion' ||
-            typeForSeason == 'tenisky_sportove' ||
-            typeForSeason == 'tenisky_bezecke' ||
-            typeForSeason == 'obuv_treningova') {
-          filteredSeasons = ['jar', 'leto', 'jeseň'];
-        } else if (typeForSeason == 'bunda_prechodna' ||
-            typeForSeason == 'bunda_riflova' ||
-            typeForSeason == 'bunda_kozena' ||
-            typeForSeason == 'bunda_bomber' ||
-            typeForSeason == 'trenchcoat' ||
-            typeForSeason == 'sako' ||
-            typeForSeason == 'vesta' ||
-            typeForSeason == 'flisova_bunda' ||
-            typeForSeason == 'softshell_bunda') {
-          if (filteredSeasons.isEmpty ||
-              filteredSeasons.contains('celoročne')) {
-            filteredSeasons = ['jar', 'jeseň'];
-          }
-        } else if (typeForSeason == 'sveter_klasicky' ||
-            typeForSeason == 'sveter_rolak' ||
-            typeForSeason == 'sveter_kardigan' ||
-            typeForSeason == 'sveter_pleteny') {
-
-          print('CHECKPOINT SWEATER BRANCH');
-
-          if (filteredSeasons.isEmpty || filteredSeasons.contains('celoročne')) {
-            filteredSeasons = ['jeseň', 'zima'];
-          }
-          if (filteredSeasons.isEmpty || filteredSeasons.contains('celoročne')) {
-            filteredSeasons = ['jar', 'jeseň'];
-          }
-        } else if (typeForSeason == 'crop_top' ||
-            typeForSeason == 'sortky' ||
-            typeForSeason == 'sortky_sportove' ||
-            typeForSeason == 'sport_sortky' ||
-            typeForSeason == 'sandale' ||
-            typeForSeason == 'sandale_opatok' ||
-            typeForSeason == 'slapky' ||
-            typeForSeason == 'zabky' ||
-            typeForSeason == 'espadrilky') {
-          filteredSeasons = ['jar', 'leto'];
-        }
-      }
-
-      print('CHECKPOINT X => tesne pred final sanitize seasons, filteredSeasons=$filteredSeasons');
-      filteredSeasons = _sanitizeSeasons(filteredSeasons);
-      print('CHECKPOINT 3 => seasons done: $filteredSeasons');
-
-      if (canonical == 'tank_top') {
-        filteredSeasons = ['jar', 'leto'];
-      } else if (canonical == 'undershirt') {
-        filteredSeasons = ['celoročne'];
-      } else if (canonical == 't_shirt') {
-        filteredSeasons = ['celoročne'];
-      } else if (canonical == 'longsleeve' || canonical == 'long_sleeve') {
-        filteredSeasons = ['celoročne'];
-      }
-
-      print('CHECKPOINT 4 => about to enter setState');
-      if (!mounted) return;
-
-      setState(() {
-        if (_brandController.text.trim().isEmpty && brandFromAi.isNotEmpty) {
-          _brandController.text = brandFromAi;
-        }
-
-        if (nextMain != null) _selectedMainGroupKey = nextMain;
-        if (nextCat != null) _selectedCategoryKey = nextCat;
-        if (nextSub != null) _selectedSubCategoryKey = nextSub;
-        if (nextLayerRole != null) _selectedLayerRole = nextLayerRole;
-        _aiStylingLayerRole =
-            layerRoleFromAi.isNotEmpty ? layerRoleFromAi : null;
-        _aiWarmthLevel = warmthLevelFromAi;
-
-        if (filteredColors.isNotEmpty) {
-          _selectedColors = filteredColors;
-          _syncColorDerivatives();
-        }
-        if (fixedStyles.isNotEmpty) _selectedStyles = fixedStyles;
-
-        if (fixedPatterns.isNotEmpty) {
-          _selectedPatterns = [fixedPatterns.first];
-        } else {
-          _selectedPatterns = [];
-        }
-
-        if (filteredSeasons.isNotEmpty) {
-          _selectedSeasons = filteredSeasons;
-        }
-
-        _storeHiddenAiMetadataFromAnalysis(
-          m,
-          canonical: canonical,
-          rawType: rawType,
-          prettyType: prettyType,
-          styles: fixedStyles,
-          patterns: fixedPatterns,
-          seasons: filteredSeasons,
-          layerRoleFromAi: layerRoleFromAi.isNotEmpty ? layerRoleFromAi : null,
-          warmthLevelFromAi: warmthLevelFromAi,
-          formalityLevel: formalityFromAi,
-          primaryTypeFromAi: primaryTypeFromAi,
-          secondaryTypeFromAi: secondaryTypeFromAi,
-        );
-
-        _refreshAutoName();
-
-        _aiCompleted = true;
-        _aiFailed = false;
-        _isAiLoading = false;
-        print('CHECKPOINT 5 => inside setState, loading should end now');
-      });
-
-      print('CHECKPOINT 6 => setState finished');
-
-      if (_brandController.text.trim().isNotEmpty) {
-        await _saveBrandSuggestion(_brandController.text.trim());
-      }
-
-      _reachMilestone(3);
-      _reachMilestone(4);
-      await Future.delayed(const Duration(milliseconds: 450));
-
-      if (!mounted) return;
-      _stopProgressTimers();
-    }on TimeoutException {
-      _stopProgressTimers();
-      if (!mounted) return;
-      setState(() {
-        _aiFailed = true;
-        _aiCompleted = false;
-        _isAiLoading = false;
-      });
+      await _analyzeOwnedWardrobeImage(user: user, imageUrl: imageUrl);
+    } on TimeoutException {
+      _handleOwnedAnalyzerFailure();
     } catch (e) {
-      _stopProgressTimers();
-      if (!mounted) return;
-      setState(() {
-        _aiFailed = true;
-        _aiCompleted = false;
-        _isAiLoading = false;
-      });
+      _handleOwnedAnalyzerFailure();
     }
+  }
+
+  void _handleOwnedAnalyzerFailure() {
+    _stopProgressTimers();
+    if (!mounted) return;
+    setState(() {
+      _aiFailed = true;
+      _aiCompleted = false;
+      _isAiLoading = false;
+    });
+  }
+
+  Future<void> _analyzeOwnedWardrobeImage({
+    required User user,
+    required String imageUrl,
+  }) async {
+    final storagePath = ClothingAnalyzerPipeline.requireOwnedAnalyzerStoragePath(
+      _uploadedStoragePath,
+    );
+    _reachMilestone(0);
+
+    final idToken = await user.getIdToken();
+    if (idToken == null || idToken.isEmpty) {
+      throw Exception('Nepodarilo sa získať auth token.');
+    }
+
+    widget.onAnalyzerRequest?.call();
+    final decoded = await ClothingAnalyzerPipeline.analyzeRaw(
+      idToken: idToken,
+      storagePath: storagePath,
+      imageUrl: imageUrl,
+    );
+
+    _reachMilestone(1);
+
+    final mapped = AddClothingAnalyzerMapper.map(
+      decoded,
+      existingAutoName: _computeAutoNameWithColor(),
+    );
+    _reachMilestone(2);
+
+    print('CHECKPOINT 4 => about to enter setState');
+    if (!mounted) return;
+    _applyAnalyzerMapperToForm(mapped);
+
+    print('CHECKPOINT 6 => setState finished');
+
+    if (_brandController.text.trim().isNotEmpty) {
+      await _saveBrandSuggestion(_brandController.text.trim());
+    }
+
+    _reachMilestone(3);
+    _reachMilestone(4);
+    await Future.delayed(const Duration(milliseconds: 450));
+
+    if (!mounted) return;
+    _stopProgressTimers();
+  }
+
+  void _applyAnalyzerMapperToForm(AddClothingAnalyzerMapperResult mapped) {
+    setState(() {
+      final mergedBrand = preferProductLinkBrand(
+        existingBrand: _brandController.text,
+        analyzerBrand: mapped.brand,
+      );
+      if (mergedBrand.isNotEmpty) {
+        _brandController.text = mergedBrand;
+      }
+
+      if (mapped.mainGroupKey != null) {
+        _selectedMainGroupKey = mapped.mainGroupKey;
+      }
+      if (mapped.categoryKey != null) {
+        _selectedCategoryKey = mapped.categoryKey;
+      }
+      if (mapped.subCategoryKey != null) {
+        _selectedSubCategoryKey = mapped.subCategoryKey;
+      }
+      if (mapped.layerRole != null) {
+        _selectedLayerRole = mapped.layerRole;
+      }
+      _aiStylingLayerRole = mapped.aiStylingLayerRole;
+      _aiWarmthLevel = mapped.warmthLevel;
+      _kbTypeDisplayName = mapped.kbTypeDisplayName;
+
+      if (mapped.displayColors.isNotEmpty) {
+        _selectedColors = mapped.displayColors;
+        _syncColorDerivatives();
+      }
+      if (mapped.styles.isNotEmpty) _selectedStyles = mapped.styles;
+
+      _selectedPatterns = mapped.formPatterns;
+
+      if (mapped.seasons.isNotEmpty) {
+        _selectedSeasons = mapped.seasons;
+      }
+
+      _hiddenAiMetadata = mapped.hiddenAiMetadata;
+
+      _refreshAutoName();
+
+      _baselineSubCategoryKey = _selectedSubCategoryKey;
+      _baselineDisplayColors = List<String>.from(_selectedColors);
+
+      _aiCompleted = true;
+      _aiFailed = false;
+      _isAiLoading = false;
+      print('CHECKPOINT 5 => inside setState, loading should end now');
+    });
   }
 
   Future<void> _save() async {
     final user = _auth.currentUser;
-    if (user == null) return;
+    if (user == null) {
+      debugPrint('[ADD_CLOTHING_V2_SAVE][save_validation_failed] auth_missing');
+      return;
+    }
+    if (_v2SaveCoordinator.inFlight) {
+      debugPrint('[ADD_CLOTHING_V2_SAVE][save_skipped] duplicate_in_flight');
+      return;
+    }
 
     try {
       final imageUrl = await _ensureImageUrl();
@@ -2921,12 +2907,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       );
       final originalImageUrl = _fromProductLink
           ? ((_productLinkOriginalImageUrl?.trim().isNotEmpty == true
-                  ? _productLinkOriginalImageUrl
-                  : displayImageUrl) ??
-              displayImageUrl)
+                    ? _productLinkOriginalImageUrl
+                    : displayImageUrl) ??
+                displayImageUrl)
           : displayImageUrl;
       final hasImage =
-          displayImageUrl != null && isValidProductLinkImageUrl(displayImageUrl);
+          displayImageUrl != null &&
+          isValidProductLinkImageUrl(displayImageUrl);
 
       ProductImageProcessingSaveDecision? preSaveProcessing;
       if (!widget.isEditing && _fromProductLink && src.isNotEmpty) {
@@ -2935,10 +2922,13 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           selectedImageUrl: (displayImageUrl ?? '').trim(),
           personDetected: _productLinkPersonDetected,
           cleanImageUrl: _productLinkCleanImageUrl,
+          ownedWardrobeStoragePath: _uploadedStoragePath,
         );
       }
 
-      if (_fromProductLink && !hasImage && preSaveProcessing?.needsProcessing != true) {
+      if (_fromProductLink &&
+          !hasImage &&
+          preSaveProcessing?.needsProcessing != true) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -2949,9 +2939,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         return;
       }
       if (!hasImage && !_fromProductLink) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chýba obrázok.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Chýba obrázok.')));
         return;
       }
 
@@ -2971,16 +2961,18 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       }
 
       if (_selectedColors.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Vyber farbu kúsku.')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Vyber farbu kúsku.')));
         return;
       }
 
       final finalName = _computeAutoNameWithColor();
       if (finalName.trim().isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Chýba farba alebo typ na vytvorenie názvu.')),
+          const SnackBar(
+            content: Text('Chýba farba alebo typ na vytvorenie názvu.'),
+          ),
         );
         return;
       }
@@ -2989,6 +2981,56 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       await _saveBrandSuggestion(brand);
 
       final hiddenAi = _hiddenAiFieldsForSave();
+      var wardrobeV2PatchRaw = hiddenAi.remove('wardrobeV2');
+      // A metadata edit must never trigger reanalysis. During the V1/V2
+      // transition, rebuild the save payload only from the authoritative V2
+      // fields that were loaded for this existing document.
+      if (wardrobeV2PatchRaw is! Map &&
+          widget.isEditing &&
+          widget.initialData != null) {
+        wardrobeV2PatchRaw = _wardrobeV2PayloadFromExistingDoc(
+          widget.initialData!,
+        );
+      }
+      if (wardrobeV2PatchRaw is! Map) {
+        throw StateError(
+          'Gemini analyzer did not return a validated Wardrobe V2 payload.',
+        );
+      }
+      final wardrobeV2Patch = Map<String, dynamic>.from(wardrobeV2PatchRaw);
+      final ontology = WardrobeOntologyV2.cached;
+      if (ontology == null) {
+        throw StateError('wardrobe_v2_not_preloaded');
+      }
+      final typeEdited =
+          (_selectedSubCategoryKey ?? '') != (_baselineSubCategoryKey ?? '');
+      final colorEdited = !listEquals(_selectedColors, _baselineDisplayColors);
+      final identityOverride = WardrobeV2EditPersistence.applyIdentityOverride(
+        payload: wardrobeV2Patch,
+        ontology: ontology,
+        typeEdited: typeEdited,
+        colorEdited: colorEdited,
+        selectedSubcategory: _selectedSubCategoryKey,
+        selectedCategory: _selectedCategoryKey,
+        selectedDisplayColors: _selectedColors,
+        currentCanonicalType: wardrobeV2Patch['canonicalType']?.toString(),
+      );
+      wardrobeV2Patch
+        ..clear()
+        ..addAll(identityOverride.payload);
+      if (widget.isEditing) {
+        final editedPatch = WardrobeV2EditPersistence.applyBrandEdit(
+          payload: wardrobeV2Patch,
+          originalBrand: (widget.initialData?['brand'] ?? '').toString().trim(),
+          editedBrand: brand,
+        );
+        wardrobeV2Patch
+          ..clear()
+          ..addAll(editedPatch);
+      }
+      if (identityOverride.typeOverrideApplied) {
+        hiddenAi.remove('formality');
+      }
       final safeSeasons = _toStringList(hiddenAi['seasons']);
 
       final seed = (displayImageUrl ?? '').trim();
@@ -2996,7 +3038,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         _productLinkOriginalImageUrl ??= seed;
       }
       String? productLinkSku;
-      productLinkSku = src.isNotEmpty ? extractProductStyleCodeFromUrl(src) : null;
+      productLinkSku = src.isNotEmpty
+          ? extractProductStyleCodeFromUrl(src)
+          : null;
       final processingDecision = preSaveProcessing;
       if (processingDecision != null) {
         debugPrint(
@@ -3009,23 +3053,28 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       final processingReason = processingDecision?.reason;
       final imageProcessingReason =
           (processingReason != null &&
-                  processingReason.isNotEmpty &&
-                  processingReason != 'no_product_link')
-              ? processingReason
-              : null;
+              processingReason.isNotEmpty &&
+              processingReason != 'no_product_link')
+          ? processingReason
+          : null;
       final imageProcessingStatus = queueImageProcessing
           ? kImageProcessingStatusProcessing
           : kImageProcessingStatusDone;
       debugPrint('[ADD_CLOTHING_SAVE][sourceUrl] $src');
       debugPrint('[ADD_CLOTHING_SAVE][imageUrl] ${displayImageUrl ?? ''}');
-      debugPrint('[ADD_CLOTHING_SAVE][productImageUrl] ${displayImageUrl ?? ''}');
-      debugPrint('[ADD_CLOTHING_SAVE][imageProcessingStatus] $imageProcessingStatus');
+      debugPrint(
+        '[ADD_CLOTHING_SAVE][productImageUrl] ${displayImageUrl ?? ''}',
+      );
+      debugPrint(
+        '[ADD_CLOTHING_SAVE][imageProcessingStatus] $imageProcessingStatus',
+      );
       debugPrint(
         '[ADD_CLOTHING_SAVE][imageProcessingJobQueued] $queueImageProcessing',
       );
       debugPrint('[ADD_CLOTHING_SAVE][productLinkSku] ${productLinkSku ?? ''}');
 
-      final data = <String, dynamic>{
+      final compatibilityData = <String, dynamic>{
+        ...Map<String, dynamic>.from(wardrobeV2Patch),
         'name': finalName.trim(),
         'brand': brand,
         'mainGroup': _selectedMainGroupKey,
@@ -3034,7 +3083,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         'categoryKey': _selectedCategoryKey,
         'subCategory': _selectedSubCategoryKey,
         'subCategoryKey': _selectedSubCategoryKey,
-        'layerRole': _selectedLayerRole ??
+        'layerRole':
+            _selectedLayerRole ??
             (_selectedSubCategoryKey == null
                 ? null
                 : subCategoryLayerRoles[_selectedSubCategoryKey!]),
@@ -3066,33 +3116,53 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         if (!widget.isEditing) 'createdAt': FieldValue.serverTimestamp(),
       };
 
+      // Wardrobe V2 is authoritative. UI labels are resolved from uiProjection
+      // and retired aliases must not be recreated after the cleanup stage.
+      final data = WardrobeV1Retirement.stripRetiredFields(compatibilityData);
+
       if (!widget.isEditing && hasImage && _uploadedStoragePath != null) {
-        data['processing'] = {
-          'cutout': 'queued',
-          'product': 'queued',
-        };
+        data['processing'] = {'cutout': 'queued', 'product': 'queued'};
       }
 
-      final ref = _firestore.collection('users').doc(user.uid).collection('wardrobe');
+      final ref = _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('wardrobe');
 
-      if (widget.isEditing && widget.itemId != null) {
-        await ref.doc(widget.itemId).set(data, SetOptions(merge: true));
-      } else {
-        final newDoc = ref.doc();
-        await newDoc.set(data, SetOptions(merge: true));
-      }
-
-      if (queueImageProcessing) {
-        debugPrint('[WARDROBE_IMAGE_PROCESS][queued]');
-      }
-
-      if (!mounted) return;
-      Navigator.pop(context, true);
+      await _v2SaveCoordinator.persist(
+        v2Payload: data,
+        write: () async {
+          if (widget.isEditing && widget.itemId != null) {
+            await ref.doc(widget.itemId!).set(data, SetOptions(merge: true));
+            return widget.itemId!;
+          }
+          final newDoc = ref.doc();
+          await newDoc.set(data, SetOptions(merge: true));
+          return newDoc.id;
+        },
+        afterWrite: (savedItemId) async {
+          await WardrobeWritePathCutover.instance.afterUxSave(
+            isEditing: widget.isEditing,
+            itemId: savedItemId,
+            savedFields: data,
+            storagePath: _uploadedStoragePath,
+            fromProductLink: _fromProductLink,
+          );
+          if (queueImageProcessing) {
+            debugPrint('[WARDROBE_IMAGE_PROCESS][queued]');
+          }
+        },
+        navigateAfterSave: (savedItemId) {
+          if (mounted) {
+            Navigator.pop(context, widget.returnItemId ? savedItemId : true);
+          }
+        },
+      );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Uloženie zlyhalo: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Uloženie zlyhalo: $e')));
     }
   }
 
@@ -3158,7 +3228,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     return null;
   }
 
-  Widget _buildClothingImagePreview({bool allowProductLinkPlaceholder = false}) {
+  Widget _buildClothingImagePreview({
+    bool allowProductLinkPlaceholder = false,
+  }) {
     final imageChild = _buildClothingPreviewImageChild();
     if (imageChild != null) {
       return ClothingImagePreview(image: imageChild);
@@ -3189,13 +3261,15 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'AI spracovanie',
+                _fromProductLink && _localImageFile == null
+                    ? 'Načítavam údaje z odkazu'
+                    : 'AI spracovanie',
                 style: OotdHeaderStyle.sectionTitle(),
               ),
               const SizedBox(height: 6),
               Text(
-                _fromProductLink
-                    ? 'Analyzujem produkt z odkazu…'
+                _fromProductLink && _localImageFile == null
+                    ? 'Hľadám údaje a pripravujem obrázok produktu.'
                     : 'Analyzujujeme fotku a pripravujeme formulár.',
                 style: OotdHeaderStyle.subtitle().copyWith(height: 1.3),
               ),
@@ -3230,7 +3304,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
                 return Container(
                   margin: const EdgeInsets.only(bottom: 10),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
                   decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(16),
                     color: isActive
@@ -3273,6 +3350,55 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
     );
   }
 
+  ProductLinkFailureRetryKind get _productLinkRetryKind =>
+      productLinkFailureRetryKind(
+        hasOwnedAnalyzerSource: _hasOwnedAnalyzerSource,
+        imageHandoffFailed:
+            _fromProductLink &&
+            !_hasOwnedAnalyzerSource &&
+            !_productLinkOwnedImageReady &&
+            (_productLinkSeedImageUrl ?? '').trim().isNotEmpty,
+      );
+
+  String _aiErrorMessage() {
+    if (!_fromProductLink) {
+      return 'AI analýza zlyhala. Skús znova, alebo pokračuj manuálne.';
+    }
+    switch (_productLinkRetryKind) {
+      case ProductLinkFailureRetryKind.analyzer:
+        return 'AI analýza zlyhala. Obrázok ostáva nahratý. Skús analýzu znova.';
+      case ProductLinkFailureRetryKind.imageHandoff:
+        return 'Obrázok z odkazu sa nepodarilo pripraviť. Skús znova.';
+      case ProductLinkFailureRetryKind.metadata:
+        return 'Údaje z odkazu sa nepodarilo načítať. Skús znova.';
+    }
+  }
+
+  String _aiRetryLabel() {
+    if (!_fromProductLink) return 'Skús AI znova';
+    switch (_productLinkRetryKind) {
+      case ProductLinkFailureRetryKind.analyzer:
+        return 'Skús AI znova';
+      case ProductLinkFailureRetryKind.imageHandoff:
+        return 'Skús obrázok znova';
+      case ProductLinkFailureRetryKind.metadata:
+        return 'Skús odkaz znova';
+    }
+  }
+
+  void _retryFailedAiStep() {
+    if (_fromProductLink &&
+        _productLinkRetryKind == ProductLinkFailureRetryKind.analyzer) {
+      _fillWithAi();
+      return;
+    }
+    if (_fromProductLink) {
+      _fillWithProductLinkAi();
+      return;
+    }
+    _fillWithAi();
+  }
+
   Widget _buildAiError() {
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
@@ -3285,23 +3411,38 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             color: Colors.red.withOpacity(0.08),
             border: Border.all(color: Colors.red.withOpacity(0.18)),
           ),
-          child: Row(
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(
-                Icons.error_outline_rounded,
-                color: Colors.redAccent,
-                size: 22,
-              ),
-              const SizedBox(width: 6),
-              const Expanded(
-                child: Text(
-                  'AI analýza zlyhala. Skús použiť inú fotku alebo pokračuj manuálne.',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontSize: 13,
-                    height: 1.3,
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    color: Colors.redAccent,
+                    size: 22,
                   ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      _aiErrorMessage(),
+                      style: const TextStyle(
+                        color: Colors.white70,
+                        fontSize: 13,
+                        height: 1.3,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _isAiLoading ? null : _retryFailedAiStep,
+                  icon: const Icon(Icons.refresh_rounded, size: 18),
+                  label: Text(_aiRetryLabel()),
+                  style: TextButton.styleFrom(foregroundColor: Colors.white),
                 ),
               ),
             ],
@@ -3350,8 +3491,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           _kbTypeDisplayName = null;
           _selectedSubCategoryKey = subKey;
           _selectedCategoryKey = CategoryPicker.categoryKeyForSubKey(subKey);
-          _selectedMainGroupKey =
-              CategoryPicker.mainGroupKeyForCategoryKey(_selectedCategoryKey);
+          _selectedMainGroupKey = CategoryPicker.mainGroupKeyForCategoryKey(
+            _selectedCategoryKey,
+          );
           _selectedLayerRole = subCategoryLayerRoles[subKey];
         }
         _refreshAutoName();
@@ -3360,7 +3502,11 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
   }
 
   Widget _buildGeneratedNameField() {
-    final name = _computeAutoNameWithColor();
+    final auto = _computeAutoNameWithColor();
+    final pageTitle = (_productLinkPageTitle ?? '').trim();
+    final name = auto.isNotEmpty
+        ? auto
+        : (_fromProductLink ? pageTitle : '');
     return InputDecorator(
       decoration: InputDecoration(
         labelText: 'Názov',
@@ -3368,7 +3514,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         floatingLabelStyle: _addClothingLabelStyle,
         filled: true,
         fillColor: Colors.white.withOpacity(0.05),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 16,
+        ),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
           borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
@@ -3379,9 +3528,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         name.isEmpty ? 'Vyber...' : name,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: name.isEmpty ? Colors.white54 : Colors.white,
-        ),
+        style: TextStyle(color: name.isEmpty ? Colors.white54 : Colors.white),
       ),
     );
   }
@@ -3394,7 +3541,14 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       optionsBuilder: (TextEditingValue textEditingValue) {
         final q = textEditingValue.text.trim().toLowerCase();
         if (q.isEmpty) return options.take(25);
-        return options.where((b) => b.toLowerCase().contains(q)).take(50);
+        return options
+            .where((b) {
+              final normalized = b.trim().toLowerCase();
+              // An exact free-form value is already the selected value. Do
+              // not leave an autocomplete overlay over the remaining form.
+              return normalized != q && normalized.contains(q);
+            })
+            .take(50);
       },
       onSelected: (String selection) {
         _brandController.text = selection;
@@ -3402,12 +3556,14 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       },
       fieldViewBuilder: (context, controller, focusNode, onFieldSubmitted) {
         controller.text = _brandController.text;
-        controller.selection =
-            TextSelection.fromPosition(TextPosition(offset: controller.text.length));
+        controller.selection = TextSelection.fromPosition(
+          TextPosition(offset: controller.text.length),
+        );
 
         return TextField(
           controller: controller,
           focusNode: focusNode,
+          onTapOutside: (_) => focusNode.unfocus(),
           style: const TextStyle(color: Colors.white),
           decoration: InputDecoration(
             labelText: 'Značka',
@@ -3417,7 +3573,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             floatingLabelStyle: _addClothingLabelStyle,
             filled: true,
             fillColor: Colors.white.withOpacity(0.05),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 16,
+            ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
               borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
@@ -3429,19 +3588,20 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                 width: 1.2,
               ),
             ),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
             suffixIcon: _brandsLoaded
-                ? const Icon(Icons.arrow_drop_down_rounded, color: Colors.white70)
+                ? const Icon(
+                    Icons.arrow_drop_down_rounded,
+                    color: Colors.white70,
+                  )
                 : const Padding(
-              padding: EdgeInsets.all(12),
-              child: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-            ),
+                    padding: EdgeInsets.all(12),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
           ),
           onChanged: (v) => _brandController.text = v,
           onEditingComplete: () {
@@ -3449,6 +3609,8 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
             _brandController.text = txt;
             _saveBrandSuggestion(txt);
             onFieldSubmitted();
+            focusNode.unfocus();
+            FocusManager.instance.primaryFocus?.unfocus();
           },
         );
       },
@@ -3468,6 +3630,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
       if (v == null || v.isEmpty) return 'Vyber...';
       return formatOption != null ? formatOption(v) : v;
     }
+
     final text = display(selected);
 
     return InkWell(
@@ -3488,7 +3651,10 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           floatingLabelStyle: _addClothingLabelStyle,
           filled: true,
           fillColor: Colors.white.withOpacity(0.05),
-          contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 14,
+            vertical: 16,
+          ),
           enabledBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(16),
             borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
@@ -3500,9 +3666,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
               width: 1.2,
             ),
           ),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(16)),
         ),
         child: Row(
           children: [
@@ -3587,18 +3751,25 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                       TextField(
                         style: const TextStyle(color: Colors.white),
                         decoration: InputDecoration(
-                          prefixIcon: const Icon(Icons.search, color: Colors.white70),
+                          prefixIcon: const Icon(
+                            Icons.search,
+                            color: Colors.white70,
+                          ),
                           hintText: 'Hľadať...',
                           hintStyle: const TextStyle(color: Colors.white38),
                           filled: true,
                           fillColor: Colors.white.withOpacity(0.05),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                            borderSide: BorderSide(
+                              color: Colors.white.withOpacity(0.10),
+                            ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
-                            borderSide: BorderSide(color: Colors.white.withOpacity(0.10)),
+                            borderSide: BorderSide(
+                              color: Colors.white.withOpacity(0.10),
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(16),
@@ -3616,8 +3787,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                           itemBuilder: (ctx, i) {
                             final o = items[i];
                             final checked = (selected == o);
-                            final label =
-                                formatOption != null ? formatOption(o) : o;
+                            final label = formatOption != null
+                                ? formatOption(o)
+                                : o;
 
                             return ListTile(
                               contentPadding: EdgeInsets.zero,
@@ -3627,9 +3799,9 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
                               ),
                               trailing: checked
                                   ? const Icon(
-                                Icons.check_circle_rounded,
-                                color: Color(0xFFC8A36A),
-                              )
+                                      Icons.check_circle_rounded,
+                                      color: Color(0xFFC8A36A),
+                                    )
                                   : const SizedBox(width: 24, height: 24),
                               onTap: () => Navigator.of(ctx).pop(o),
                             );
@@ -3679,7 +3851,7 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
   Widget _buildLinkPartialHint() {
     return Text(
-      'Niektoré údaje sa nepodarilo vyplniť automaticky.',
+      'Niektoré údaje z odkazu sa nepodarilo vyplniť.',
       style: TextStyle(
         color: const Color(0xFFC8A36A).withOpacity(0.92),
         fontSize: 12.5,
@@ -3702,12 +3874,29 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
           _buildClothingImagePreview()
         else if (_fromProductLink)
           _productLinkImagePlaceholder(),
+        if (_fromProductLink && !_productLinkOwnedImageReady) ...[
+          const SizedBox(height: 10),
+          TextButton.icon(
+            onPressed: _isAiLoading ? null : _pickPhotoForProductLinkFallback,
+            icon: const Icon(Icons.photo_camera_outlined, size: 18),
+            label: const Text('Použiť fotku z galérie alebo fotoaparátu'),
+            style: TextButton.styleFrom(foregroundColor: Colors.white70),
+          ),
+          if ((_productLinkSeedImageUrl ?? '').trim().isNotEmpty)
+            TextButton(
+              onPressed: _isAiLoading ? null : _retryProductLinkOwnedImage,
+              style: TextButton.styleFrom(foregroundColor: Colors.white54),
+              child: const Text('Skús pripraviť obrázok znova'),
+            ),
+        ],
         const SizedBox(height: 12),
         _buildGeneratedNameField(),
         const SizedBox(height: 12),
         _buildSingleSelectField(
           label: 'Farba',
-          options: ColorNamingService.instance.chipColorOptions(_selectedColors),
+          options: ColorNamingService.instance.chipColorOptions(
+            _selectedColors,
+          ),
           selected: _selectedColors.isEmpty ? null : _selectedColors.first,
           formatOption: _displayColorName,
           onChanged: (v) => setState(() {
@@ -3727,54 +3916,54 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         const SizedBox(height: 12),
         _buildClothingTypeField(),
         const SizedBox(height: 12),
-    OotdPrimaryButton(
-      text: 'Uložiť do šatníka',
-      onPressed: _save,
-      showTrailingArrow: false,
-      height: 52,
-      borderRadius: 18,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-    ),
-    const SizedBox(height: 10),
-    if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
-    OutlinedButton.icon(
-    onPressed: () {
-    final payload = <String, dynamic>{
-    'name': _computeAutoNameWithColor(),
-    'brand': _brandController.text.trim(),
-    'mainGroupKey': _selectedMainGroupKey,
-    'categoryKey': _selectedCategoryKey,
-    'subCategoryKey': _selectedSubCategoryKey,
-    'color': _selectedColors,
-    'style': _selectedStyles,
-    'pattern': _selectedPatterns,
-    'season': _selectedSeasons,
-    'imageUrl': _uploadedImageUrl,
-    };
+        OotdPrimaryButton(
+          text: 'Uložiť do šatníka',
+          onPressed: _save,
+          showTrailingArrow: false,
+          height: 52,
+          borderRadius: 18,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        ),
+        const SizedBox(height: 10),
+        if (_uploadedImageUrl != null && _uploadedImageUrl!.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: () {
+              final payload = <String, dynamic>{
+                'name': _computeAutoNameWithColor(),
+                'brand': _brandController.text.trim(),
+                'mainGroupKey': _selectedMainGroupKey,
+                'categoryKey': _selectedCategoryKey,
+                'subCategoryKey': _selectedSubCategoryKey,
+                'color': _selectedColors,
+                'style': _selectedStyles,
+                'pattern': _selectedPatterns,
+                'season': _selectedSeasons,
+                'imageUrl': _uploadedImageUrl,
+              };
 
-    Navigator.push(
-    context,
-    MaterialPageRoute(
-    builder: (_) => StylistChatScreen(
-    initialClothingData: payload,
-    ),
-    ),
-    );
-    },
-    icon: const Icon(Icons.chat_bubble_outline_rounded),
-    label: const Text('Poradiť sa o tomto kúsku'),
-    style: OutlinedButton.styleFrom(
-    foregroundColor: Colors.white,
-    side: BorderSide(color: Colors.white.withOpacity(0.14)),
-    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
-    shape: RoundedRectangleBorder(
-    borderRadius: BorderRadius.circular(16),
-    ),
-    ),
-    ),
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      StylistChatScreen(initialClothingData: payload),
+                ),
+              );
+            },
+            icon: const Icon(Icons.chat_bubble_outline_rounded),
+            label: const Text('Poradiť sa o tomto kúsku'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: Colors.white.withOpacity(0.14)),
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 14),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+          ),
       ],
     );
   }
+
   Widget _buildLuxuryEmptyState() {
     Widget glassCard({
       required Widget child,
@@ -3800,217 +3989,245 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
 
     return OotdLuxuryBackground(
       child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-            child: Column(
-              children: [
-                glassCard(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                  child: Row(
-                    children: [
-                      InkWell(
-                        borderRadius: BorderRadius.circular(999),
-                        onTap: () => Navigator.pop(context),
-                        child: Container(
-                          width: 40,
-                          height: 40,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: Colors.white.withOpacity(0.08),
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: const Icon(
-                            Icons.arrow_back_rounded,
-                            color: Colors.white,
-                            size: 20,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Pridať oblečenie',
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                              ),
-                            ),
-                            SizedBox(height: 2),
-                            Text(
-                              'Pridaj nový kúsok do svojho šatníka',
-                              style: TextStyle(
-                                color: Colors.white60,
-                                fontSize: 12.5,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: Column(
+            children: [
+              glassCard(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
                 ),
-                const SizedBox(height: 22),
-                glassCard(
-                  padding: const EdgeInsets.all(18),
-                  opacity: 0.07,
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 46,
-                        height: 46,
+                child: Row(
+                  children: [
+                    InkWell(
+                      borderRadius: BorderRadius.circular(999),
+                      onTap: () => Navigator.pop(context),
+                      child: Container(
+                        width: 40,
+                        height: 40,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: const Color(0xFFC8A36A).withOpacity(0.12),
-                          border: Border.all(
-                            color: const Color(0xFFC8A36A).withOpacity(0.18),
-                          ),
+                          color: Colors.white.withOpacity(0.08),
+                          border: Border.all(color: Colors.white10),
                         ),
                         child: const Icon(
-                          Icons.auto_awesome_outlined,
-                          color: Colors.white70,
+                          Icons.arrow_back_rounded,
+                          color: Colors.white,
+                          size: 20,
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Text(
-                          'Vyber fotku a AI automaticky rozpozná typ oblečenia a farbu.',
-                          style: TextStyle(
-                            color: Colors.white70,
-                            fontSize: 13,
-                            height: 1.38,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                Container(
-                  width: 150,
-                  height: 150,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xFFC8A36A).withOpacity(0.16),
-                        Colors.white.withOpacity(0.04),
-                        Colors.transparent,
-                      ],
                     ),
-                  ),
-                  child: Center(
-                    child: Container(
-                      width: 92,
-                      height: 92,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: Colors.white.withOpacity(0.08),
-                        border: Border.all(color: Colors.white12),
-                      ),
-                      child: const Icon(
-                        Icons.checkroom_rounded,
-                        color: Colors.white,
-                        size: 44,
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 22),
-                const Text(
-                  'Pridaj nový kúsok',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.w900,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Odfotiť alebo vybrať fotku z galérie a pokračovať do AI spracovania.',
-                  style: TextStyle(
-                    color: Colors.white60,
-                    fontSize: 13.5,
-                    height: 1.4,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const Spacer(),
-                SizedBox(
-                  width: double.infinity,
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(999),
-                    onTap: () => AddClothingScreen.openFromPicker(context),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(999),
-                        color: Colors.white.withOpacity(0.94),
-                      ),
-                      child: const Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Icon(Icons.camera_alt_rounded, color: Colors.black87, size: 20),
-                          SizedBox(width: 10),
                           Text(
-                            'Začať pridávanie',
+                            'Pridať oblečenie',
                             style: TextStyle(
-                              color: Colors.black,
-                              fontWeight: FontWeight.w800,
-                              fontSize: 15,
+                              color: Colors.white,
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
-                          SizedBox(width: 10),
-                          Icon(Icons.arrow_forward_ios_rounded, color: Colors.black54, size: 16),
+                          SizedBox(height: 2),
+                          Text(
+                            'Pridaj nový kúsok do svojho šatníka',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         ],
                       ),
                     ),
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                glassCard(
-                  padding: const EdgeInsets.all(14),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Pre lepší výsledok',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
+              ),
+              const SizedBox(height: 22),
+              glassCard(
+                padding: const EdgeInsets.all(18),
+                opacity: 0.07,
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 46,
+                      height: 46,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: const Color(0xFFC8A36A).withOpacity(0.12),
+                        border: Border.all(
+                          color: const Color(0xFFC8A36A).withOpacity(0.18),
                         ),
                       ),
-                      SizedBox(height: 10),
-                      _TipRow(icon: Icons.check_rounded, text: 'Kúsok polož alebo zaves rovno'),
-                      _TipRow(icon: Icons.check_rounded, text: 'Foť bez zbytočných predmetov okolo'),
-                      _TipRow(icon: Icons.check_rounded, text: 'Nenechaj oblečenie príliš tmavé'),
+                      child: const Icon(
+                        Icons.auto_awesome_outlined,
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'Vyber fotku a AI automaticky rozpozná typ oblečenia a farbu.',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          height: 1.38,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Spacer(),
+              Container(
+                width: 150,
+                height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [
+                      const Color(0xFFC8A36A).withOpacity(0.16),
+                      Colors.white.withOpacity(0.04),
+                      Colors.transparent,
                     ],
                   ),
                 ),
-              ],
-            ),
+                child: Center(
+                  child: Container(
+                    width: 92,
+                    height: 92,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withOpacity(0.08),
+                      border: Border.all(color: Colors.white12),
+                    ),
+                    child: const Icon(
+                      Icons.checkroom_rounded,
+                      color: Colors.white,
+                      size: 44,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 22),
+              const Text(
+                'Pridaj nový kúsok',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Odfotiť alebo vybrať fotku z galérie a pokračovať do AI spracovania.',
+                style: TextStyle(
+                  color: Colors.white60,
+                  fontSize: 13.5,
+                  height: 1.4,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const Spacer(),
+              SizedBox(
+                width: double.infinity,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => AddClothingScreen.openFromPicker(context),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 16,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      color: Colors.white.withOpacity(0.94),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.camera_alt_rounded,
+                          color: Colors.black87,
+                          size: 20,
+                        ),
+                        SizedBox(width: 10),
+                        Text(
+                          'Začať pridávanie',
+                          style: TextStyle(
+                            color: Colors.black,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15,
+                          ),
+                        ),
+                        SizedBox(width: 10),
+                        Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          color: Colors.black54,
+                          size: 16,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              glassCard(
+                padding: const EdgeInsets.all(14),
+                child: const Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Pre lepší výsledok',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                      ),
+                    ),
+                    SizedBox(height: 10),
+                    _TipRow(
+                      icon: Icons.check_rounded,
+                      text: 'Kúsok polož alebo zaves rovno',
+                    ),
+                    _TipRow(
+                      icon: Icons.check_rounded,
+                      text: 'Foť bez zbytočných predmetov okolo',
+                    ),
+                    _TipRow(
+                      icon: Icons.check_rounded,
+                      text: 'Nenechaj oblečenie príliš tmavé',
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
         ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final showPick = !_isAiLoading &&
+    final showPick =
+        !_isAiLoading &&
         _localImageFile == null &&
         (_uploadedImageUrl == null || _uploadedImageUrl!.isEmpty) &&
         !widget.isEditing &&
         !_fromProductLink;
 
     final showLoader = _isAiLoading;
-    final showForm = _aiCompleted || widget.isEditing || _aiFailed;
+    final showForm =
+        _aiCompleted ||
+        widget.isEditing ||
+        (_aiFailed && !_fromProductLink) ||
+        (_aiFailed && _fromProductLink && _hasOwnedAnalyzerSource);
 
     if (showPick) {
       return Scaffold(
@@ -4025,75 +4242,81 @@ class _AddClothingScreenState extends State<AddClothingScreen> {
         backgroundColor: HomeLuxuryPalette.bgBottom,
         body: OotdLuxuryBackground(
           child: SafeArea(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(22),
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(22),
-                            color: Colors.white.withOpacity(0.06),
-                            border: Border.all(color: Colors.white10),
-                          ),
-                          child: Row(
-                            children: [
-                              OotdBackButton(onTap: () => Navigator.pop(context)),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      widget.isEditing
-                                          ? 'Upraviť oblečenie'
-                                          : 'Pridať oblečenie',
-                                      style: OotdHeaderStyle.screenTitle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.w900,
-                                      ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(22),
+                    child: BackdropFilter(
+                      filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 12,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(22),
+                          color: Colors.white.withOpacity(0.06),
+                          border: Border.all(color: Colors.white10),
+                        ),
+                        child: Row(
+                          children: [
+                            OotdBackButton(onTap: () => Navigator.pop(context)),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    widget.isEditing
+                                        ? 'Upraviť oblečenie'
+                                        : 'Pridať oblečenie',
+                                    style: OotdHeaderStyle.screenTitle(
+                                      fontSize: 18,
+                                      fontWeight: FontWeight.w900,
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      showLoader
-                                          ? (_fromProductLink
-                                              ? 'Analyzujem produkt z odkazu'
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    showLoader
+                                        ? (_fromProductLink &&
+                                                _localImageFile == null &&
+                                                !_hasOwnedAnalyzerSource
+                                              ? 'Načítavam údaje z odkazu'
                                               : 'AI spracováva obrázok')
-                                          : _fromProductLink
-                                              ? 'Skontroluj údaje produktu z odkazu'
-                                              : 'Skontroluj a ulož detaily kúsku',
-                                      style: OotdHeaderStyle.subtitle(),
-                                    ),
-                                  ],
-                                ),
+                                        : _fromProductLink
+                                        ? (_hasOwnedAnalyzerSource
+                                              ? (_aiFailed
+                                                    ? 'Obrázok je pripravený, skús analýzu znova'
+                                                    : 'Skontroluj a ulož detaily kúsku')
+                                              : 'Skontroluj názov, značku a náhľad z odkazu')
+                                        : 'Skontroluj a ulož detaily kúsku',
+                                    style: OotdHeaderStyle.subtitle(),
+                                  ),
+                                ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 14),
+                  if (showLoader) ...[
+                    _buildProcessingImagePreview(),
                     const SizedBox(height: 14),
-                    if (showLoader) ...[
-                      _buildProcessingImagePreview(),
-                      const SizedBox(height: 14),
-                      _buildProgressChecklist(),
-                    ],
-                    if (_aiFailed) ...[
-                      const SizedBox(height: 14),
-                      _buildAiError(),
-                    ],
-                    if (showForm) ...[
-                      const SizedBox(height: 14),
-                      _buildForm(),
-                    ],
+                    _buildProgressChecklist(),
                   ],
-                ),
+                  if (_aiFailed) ...[
+                    const SizedBox(height: 14),
+                    _buildAiError(),
+                  ],
+                  if (showForm) ...[const SizedBox(height: 14), _buildForm()],
+                ],
               ),
+            ),
           ),
         ),
       ),
@@ -4416,4 +4639,3 @@ class _AddClothingProductLinkScreenState
     );
   }
 }
-

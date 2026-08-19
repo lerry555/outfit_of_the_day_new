@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../utils/home_user_facing_reason.dart';
 import '../../utils/outfit_explanation.dart';
 import 'home_glass_surface.dart';
 import 'home_luxury_palette.dart';
@@ -29,7 +30,7 @@ class HomeAiExplanationCard extends StatelessWidget {
           ? body
           : 'Pripravujem stylistické vysvetlenie k tomuto outfitu.';
     }
-    final body = supplementalBody?.trim() ?? '';
+    final body = HomeUserFacingReason.forDisplay(supplementalBody) ?? '';
     if (body.isNotEmpty) return HomeAiExplanationCard.readableExcerpt(body);
     final fromItems = explanations.teaser;
     if (fromItems.isNotEmpty) return fromItems;

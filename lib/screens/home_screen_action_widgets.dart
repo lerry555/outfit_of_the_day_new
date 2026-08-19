@@ -22,21 +22,19 @@ class _HeroOutfitActionBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.white.withOpacity(0.09)),
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                HomeLuxuryPalette.surfaceSoft.withOpacity(0.62),
-                HomeLuxuryPalette.surface.withOpacity(0.42),
-              ],
-            ),
+      child: Container(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.09)),
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              HomeLuxuryPalette.surfaceSoft.withOpacity(0.62),
+              HomeLuxuryPalette.surface.withOpacity(0.42),
+            ],
           ),
+        ),
           padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
           child: Row(
             children: [
@@ -76,8 +74,7 @@ class _HeroOutfitActionBar extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _barDivider() {
@@ -203,24 +200,22 @@ class _HeroSegmentedDay extends StatelessWidget {
 
     return ClipRRect(
       borderRadius: BorderRadius.circular(999),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          width: double.infinity,
-          height: height,
-          padding: EdgeInsets.all(outerPad),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            border: Border.all(color: Colors.white.withOpacity(0.11)),
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [
-                Colors.white.withOpacity(0.09),
-                Colors.white.withOpacity(0.03),
-              ],
-            ),
+      child: Container(
+        width: double.infinity,
+        height: height,
+        padding: EdgeInsets.all(outerPad),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: Colors.white.withOpacity(0.11)),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white.withOpacity(0.09),
+              Colors.white.withOpacity(0.03),
+            ],
           ),
+        ),
           child: Row(
             children: [
               Expanded(
@@ -243,8 +238,7 @@ class _HeroSegmentedDay extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }
 

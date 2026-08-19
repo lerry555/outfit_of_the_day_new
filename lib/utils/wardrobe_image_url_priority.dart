@@ -1,12 +1,19 @@
 /// Image URL priority helper used across the app.
 ///
-/// [getBestWardrobeImageUrl] picks the best display URL:
+/// Default (legacy) display order:
 /// product (only when `processing.product == done` and distinct from original)
 /// → cutout → clean → imageUrl / originalImageUrl.
+///
+/// Owned-V2 (`storagePath` under `wardrobe/{uid}/...`) keeps that order but
+/// only accepts product/cutout/clean URLs proven to be the owned original or a
+/// rembg/studio derivative of it. Remote seed / Serper `productImageUrl` cannot
+/// replace the classified garment. `originalImageUrl` is lineage-only while
+/// the owned `imageUrl` exists.
 library wardrobe_image_url_priority;
 
 import 'package:flutter/foundation.dart';
 
+import '../Services/product_link_v2_display_policy.dart';
 import 'home_debug_logging.dart';
 
 bool _isHttpUrl(String? s) {
@@ -40,6 +47,16 @@ String? _getStr(Map<String, dynamic> item, String key) {
   return s.isEmpty ? null : s;
 }
 
+bool _isOwnedV2Item(Map<String, dynamic> item) {
+  return isOwnedV2CanonicalStoragePath(_getStr(item, 'storagePath'));
+}
+
+bool _allowOwnedV2DisplayUrl(Map<String, dynamic> item, String? url) {
+  if (!_isHttpUrl(url)) return false;
+  if (!_isOwnedV2Item(item)) return true;
+  return isOwnedV2SameSourceDisplayUrl(item: item, url: url);
+}
+
 bool canUseProductImageUrl(Map<String, dynamic> item) {
   final product = _getStr(item, 'productImageUrl');
   if (!_isHttpUrl(product)) return false;
@@ -51,6 +68,10 @@ bool canUseProductImageUrl(Map<String, dynamic> item) {
   final original = _getStr(item, 'originalImageUrl');
   if (_urlsEqual(product, legacy) || _urlsEqual(product, original)) {
     return false;
+  }
+
+  if (_isOwnedV2Item(item)) {
+    return isOwnedV2SameSourceDisplayUrl(item: item, url: product);
   }
 
   return true;
@@ -84,12 +105,12 @@ WardrobeImagePick pickBestWardrobeImageUrl(Map<String, dynamic> item) {
   }
 
   final cutout = _getStr(item, 'cutoutImageUrl');
-  if (_isHttpUrl(cutout)) {
+  if (_allowOwnedV2DisplayUrl(item, cutout)) {
     return WardrobeImagePick(url: cutout, reason: 'cutout');
   }
 
   final clean = _getStr(item, 'cleanImageUrl');
-  if (_isHttpUrl(clean)) {
+  if (_allowOwnedV2DisplayUrl(item, clean)) {
     return WardrobeImagePick(url: clean, reason: 'clean');
   }
 
@@ -159,7 +180,7 @@ String? getHomeOutfitImageUrlOrNull(Map<String, dynamic> item) {
 
 WardrobeImagePick pickHomeOutfitImageUrl(Map<String, dynamic> item) {
   final cutout = _getStr(item, 'cutoutImageUrl');
-  if (_isHttpUrl(cutout)) {
+  if (_allowOwnedV2DisplayUrl(item, cutout)) {
     return WardrobeImagePick(url: cutout, reason: 'cutout');
   }
 
@@ -171,7 +192,7 @@ WardrobeImagePick pickHomeOutfitImageUrl(Map<String, dynamic> item) {
   }
 
   final clean = _getStr(item, 'cleanImageUrl');
-  if (_isHttpUrl(clean)) {
+  if (_allowOwnedV2DisplayUrl(item, clean)) {
     return WardrobeImagePick(url: clean, reason: 'clean');
   }
 
@@ -209,10 +230,14 @@ List<String> wardrobeImageUrlCandidates(Map<String, dynamic> item) {
   if (canUseProductImageUrl(item)) {
     add(_getStr(item, 'productImageUrl'));
   }
-  add(_getStr(item, 'cutoutImageUrl'));
-  add(_getStr(item, 'cleanImageUrl'));
+  final cutout = _getStr(item, 'cutoutImageUrl');
+  if (_allowOwnedV2DisplayUrl(item, cutout)) add(cutout);
+  final clean = _getStr(item, 'cleanImageUrl');
+  if (_allowOwnedV2DisplayUrl(item, clean)) add(clean);
   add(_getStr(item, 'imageUrl'));
   add(_getStr(item, 'originalImageUrl'));
-  add(_getStr(item, 'productLinkSeedImageUrl'));
+  if (!_isOwnedV2Item(item)) {
+    add(_getStr(item, 'productLinkSeedImageUrl'));
+  }
   return out;
 }

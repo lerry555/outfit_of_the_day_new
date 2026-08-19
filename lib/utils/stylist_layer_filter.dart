@@ -72,7 +72,8 @@ class StylistLayerFilter {
   };
 
   static int? parseWarmthLevel(Map<String, dynamic> item) {
-    final raw = item['warmth_level'] ?? item['warmthLevel'];
+    final raw =
+        item['warmth_level'] ?? item['warmthLevel'] ?? item['warmth'];
     if (raw == null) return null;
     final n = num.tryParse(raw.toString());
     if (n == null || !n.isFinite) return null;
@@ -136,17 +137,22 @@ class StylistLayerFilter {
   }
 
   static int inferWarmthLevel(Map<String, dynamic> item) {
-    if (isTankTopItem(item)) return 1;
-
     final stored = parseWarmthLevel(item);
     if (stored != null) return stored;
 
+    if (isTankTopItem(item)) return 1;
+
     final sub = _subKey(item);
+    final canonical = _normToken(
+      (item['canonical_type'] ?? item['canonicalType'] ?? '').toString(),
+    );
     if (sub == 'undershirt') return 1;
     if (_baseLayerSubKeys.contains(sub) || sub == 'tricko_dlhy_rukav') return 3;
     if (_midLayerSubKeys.contains(sub)) return 5;
     if (sub == 'bunda_zimna' || sub == 'kabat') return 9;
     if (sub == 'prsiplast' || sub == 'softshell_bunda') return 6;
+    if (canonical == 'denim_jacket' || sub == 'bunda_riflova') return 4;
+    if (canonical == 'track_jacket') return 5;
     if (subCategoryLayerRoles[sub] == 'outer_layer') return 7;
     if (subCategoryLayerRoles[sub] == 'main_top') return 3;
 
@@ -154,9 +160,6 @@ class StylistLayerFilter {
         (item['layer_role'] ?? item['layerRole'] ?? '').toString().trim();
     if (layer == 'main_top') return 2;
 
-    final canonical = _normToken(
-      (item['canonical_type'] ?? item['canonicalType'] ?? '').toString(),
-    );
     if (canonical.contains('tshirt') ||
         canonical.contains('t_shirt') ||
         canonical.contains('polo') ||

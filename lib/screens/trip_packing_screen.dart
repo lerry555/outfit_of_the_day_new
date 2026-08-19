@@ -3345,6 +3345,19 @@ class _PlaceholderResultView extends StatelessWidget {
                           height: 1.05,
                         ),
                       ),
+                      if (o.weatherSourceLabelSk != null &&
+                          o.weatherSourceLabelSk!.trim().isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Text(
+                          o.weatherSourceLabelSk!,
+                          style: TextStyle(
+                            color: HomeLuxuryPalette.textSecondary.withOpacity(0.82),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.05,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ],

@@ -5,7 +5,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../Services/calendar_outfit_service.dart';
+import '../Services/calendar_outfit_ownership.dart';
+import '../Services/calendar_weather_resolver.dart';
+import '../Services/calendar_weather_stale_policy.dart';
 import '../Services/date_weather_service.dart';
+import '../Services/user_location_service.dart';
 import '../models/calendar_outfit_models.dart';
 import 'premium_screen.dart';
 import '../widgets/calendar_day_detail_card.dart';
@@ -21,6 +25,7 @@ class CalendarOutfitScreen extends StatefulWidget {
 class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
   final _auth = FirebaseAuth.instance;
   final _service = CalendarOutfitService();
+  final _weatherResolver = CalendarWeatherResolver();
 
   late DateTime _focusedMonth;
   late DateTime _selectedDay;
@@ -40,9 +45,21 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
     _focusedMonth = DateTime.now();
     _selectedDay =
         DateTime(_focusedMonth.year, _focusedMonth.month, _focusedMonth.day);
-    _weatherFuture = Future.value(
-      DateWeatherService.getWeatherForDate(_selectedDay),
-    );
+    UserLocationService.instance.addListener(_onLocationCityChanged);
+    _weatherFuture = _weatherResolver.resolveForDate(_selectedDay);
+  }
+
+  @override
+  void dispose() {
+    UserLocationService.instance.removeListener(_onLocationCityChanged);
+    super.dispose();
+  }
+
+  void _onLocationCityChanged(String cityLabel) {
+    if (!mounted) return;
+    setState(() {
+      _weatherFuture = _weatherResolver.resolveForDate(_selectedDay);
+    });
   }
 
   String _monthLabel(DateTime month) {
@@ -72,18 +89,33 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
       _selectedDay = normalized;
       _selectedDayOverride = null;
       _isGenerating = false;
-      _weatherFuture = Future.value(
-        DateWeatherService.getWeatherForDate(_selectedDay),
-      );
+      _weatherFuture = _weatherResolver.resolveForDate(_selectedDay);
     });
   }
 
   Future<void> _onGeneratePressed({required bool isPremiumUser}) async {
+    await _generateForSelectedDay(
+      isPremiumUser: isPremiumUser,
+      countsTowardDailyLimit: true,
+    );
+  }
+
+  Future<void> _onRefreshStaleOutfit() async {
+    await _generateForSelectedDay(
+      isPremiumUser: true,
+      countsTowardDailyLimit: false,
+    );
+  }
+
+  Future<void> _generateForSelectedDay({
+    required bool isPremiumUser,
+    required bool countsTowardDailyLimit,
+  }) async {
     final user = _auth.currentUser;
     if (user == null) return;
     if (_isGenerating) return;
 
-    if (!isPremiumUser) {
+    if (countsTowardDailyLimit && !isPremiumUser) {
       if (_generatedOutfitsToday >= 3) {
         _showLimitBottomSheet();
         return;
@@ -107,7 +139,8 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
       );
 
       setState(() {
-        _selectedDayOverride = day;
+        _selectedDayOverride =
+            day.source == CalendarOutfitSource.homeDaily ? null : day;
         _optimisticOutfitKeys.add(_service.dateKey(_selectedDay));
         _isGenerating = false;
       });
@@ -386,7 +419,7 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
       );
     }
 
-    final monthKeysStream = _service.watchMonthOutfitDateKeys(
+    final monthKeysStream = _service.watchMonthVisibleOutfitDateKeys(
       uid: user.uid,
       month: DateTime(_focusedMonth.year, _focusedMonth.month, 1),
     );
@@ -605,23 +638,52 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
                           }
 
                           final weather = weatherSnap.data ??
-                              DateWeatherService.getWeatherForDate(_selectedDay);
+                              CalendarWeatherMapper.fromFallbackDate(
+                                _selectedDay,
+                                cityLabel:
+                                    UserLocationService.instance.cityLabel,
+                              );
 
-                          final dayStream = _service.watchDayOutfit(
+                          final dayStream = _service.watchResolvedDayOutfit(
                             uid: user.uid,
                             date: _selectedDay,
                           );
 
-                          return StreamBuilder<CalendarOutfitDay?>(
+                          return StreamBuilder<CalendarDayResolution>(
                             stream: dayStream,
                             builder: (context, outfitSnap) {
-                              final fromStream = outfitSnap.data;
-                              final effective =
-                                  _selectedDayOverride ?? fromStream;
+                              final fromStream =
+                                  outfitSnap.data ?? CalendarDayResolution.empty;
+                              final resolved = fromStream.source ==
+                                      CalendarOutfitSource.homeDaily
+                                  ? fromStream
+                                  : CalendarDayResolution(
+                                      source: (_selectedDayOverride ??
+                                                  fromStream.day) ==
+                                              null
+                                          ? CalendarOutfitSource.none
+                                          : CalendarOutfitSource.calendar,
+                                      day: _selectedDayOverride ?? fromStream.day,
+                                      calendarDocumentShadowed:
+                                          fromStream.calendarDocumentShadowed,
+                                    );
+                              final effective = resolved.day;
                               final isOutfitLoading =
                                   outfitSnap.connectionState ==
                                           ConnectionState.waiting &&
-                                      effective == null;
+                                      outfitSnap.data == null &&
+                                      _selectedDayOverride == null;
+                              final staleResult =
+                                  CalendarWeatherStalePolicy.evaluate(
+                                saved: effective?.generationWeather,
+                                current:
+                                    CalendarGenerationWeather.fromSnapshot(
+                                  weather,
+                                ),
+                              );
+                              final isWeatherStale =
+                                  resolved.allowsCalendarStaleRefresh &&
+                                  staleResult.isStale;
 
                               return CalendarDayDetailCard(
                                 date: _selectedDay,
@@ -630,11 +692,16 @@ class _CalendarOutfitScreenState extends State<CalendarOutfitScreen> {
                                 isOutfitLoading: isOutfitLoading,
                                 isGenerating: _isGenerating,
                                 isGenerationLocked: isPlanningLocked,
+                                isWeatherStale: isWeatherStale,
                                 onGenerate: () => _onGeneratePressed(
                                   isPremiumUser: isPremiumUser,
                                 ),
                                 onUnlockPlanning: _showPlanningPremiumSheet,
                                 onEditOutfit: _openEditOutfitSheet,
+                                onRefreshOutfit:
+                                    resolved.allowsCalendarStaleRefresh
+                                    ? _onRefreshStaleOutfit
+                                    : null,
                               );
                             },
                           );

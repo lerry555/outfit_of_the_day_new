@@ -9,6 +9,9 @@ import 'package:outfitofTheDay/utils/wardrobe_image_processing.dart';
 
 import '../constants/app_constants.dart';
 import 'add_clothing_screen.dart';
+import 'wardrobe_set_screens.dart';
+import '../domain/wardrobe_v2/wardrobe_set_v2.dart';
+import '../Services/wardrobe_set_repository.dart';
 
 class ClothingDetailScreen extends StatelessWidget {
   final String clothingItemId;
@@ -34,10 +37,10 @@ class ClothingDetailScreen extends StatelessWidget {
   }
 
   static List<String> _readList(
-      Map<String, dynamic> d,
-      String pluralKey,
-      String singularKey,
-      ) {
+    Map<String, dynamic> d,
+    String pluralKey,
+    String singularKey,
+  ) {
     final v = d[pluralKey] ?? d[singularKey];
     return _toStringList(v);
   }
@@ -75,6 +78,7 @@ class ClothingDetailScreen extends StatelessWidget {
           imageUrl: url,
           showSpinner: false,
           padding: wardrobeDetailImagePadding,
+          cacheWidth: kWardrobeDetailImageCacheWidth,
         ),
       ),
     );
@@ -85,8 +89,8 @@ class ClothingDetailScreen extends StatelessWidget {
 
     // kategórie / fallbacky
     final String mainGroup =
-    (d['mainGroupKey'] ?? d['mainGroup'] ?? d['mainCategory'] ?? '')
-        .toString();
+        (d['mainGroupKey'] ?? d['mainGroup'] ?? d['mainCategory'] ?? '')
+            .toString();
     final String categoryKey = (d['categoryKey'] ?? d['category'] ?? '')
         .toString();
     final String subLabel = _labelForSubCategory(d);
@@ -97,6 +101,15 @@ class ClothingDetailScreen extends StatelessWidget {
 
     final String brand = (d['brand'] ?? '').toString();
     final int wearCount = d['wearCount'] is int ? d['wearCount'] as int : 0;
+    final membership = d['setMembership'];
+    final setId = membership is Map
+        ? (membership['setId'] ?? '').toString()
+        : '';
+    final pendingRaw = d['pendingSetDraft'];
+    final pendingSet = pendingRaw is Map;
+    final pendingDraftId = pendingRaw is Map
+        ? (pendingRaw['draftId'] ?? '').toString()
+        : '';
 
     // dátumy (fallback na staré polia)
     final Timestamp? createdAtTs = d['createdAt'] as Timestamp?;
@@ -114,40 +127,119 @@ class ClothingDetailScreen extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _buildImage(d),
+        if (setId.isNotEmpty) ...[
+          const SizedBox(height: 16),
+          ListTile(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(
+                color: WardrobeSetPresentationV2.borderColor(setId),
+                width: 2,
+              ),
+            ),
+            leading: Icon(
+              WardrobeSetPresentationV2.icon(setId),
+              color: WardrobeSetPresentationV2.borderColor(setId),
+            ),
+            title: const Text('Súčasť setu'),
+            subtitle: const Text('Kúsok môžeš používať aj samostatne.'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => WardrobeSetDetailScreen(
+                  setId: setId,
+                  captureNewItem: (hostContext, trackRequest) =>
+                      AddClothingScreen.openFromPicker(
+                        hostContext,
+                        componentMode: true,
+                        onAnalyzerRequest: trackRequest,
+                      ),
+                ),
+              ),
+            ),
+          ),
+        ],
+        if (pendingSet) ...[
+          const SizedBox(height: 12),
+          ListTile(
+            leading: Icon(Icons.help_outline, color: Colors.amber),
+            title: const Text('Nedokončený set'),
+            subtitle: const Text(
+              'Tento kúsok bol uložený. Ďalší komponent môžeš doplniť neskôr.',
+            ),
+          ),
+          Wrap(
+            spacing: 8,
+            children: [
+              Semantics(
+                identifier: 'ootd_resume_set',
+                button: true,
+                child: FilledButton(
+                  key: const ValueKey('ootd_resume_set'),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => WardrobeSetCreationScreen(
+                        initialMemberIds: [clothingItemId],
+                        existingDraftId: pendingDraftId,
+                        captureNewItem: (hostContext, trackRequest) =>
+                            AddClothingScreen.openFromPicker(
+                              hostContext,
+                              componentMode: true,
+                              onAnalyzerRequest: trackRequest,
+                            ),
+                      ),
+                    ),
+                  ),
+                  child: const Text('Doplniť set'),
+                ),
+              ),
+              TextButton(
+                onPressed: () => WardrobeSetRepository().abandonPendingMember(
+                  pendingDraftId,
+                  clothingItemId,
+                ),
+                child: const Text('Už nechcem vytvoriť set'),
+              ),
+            ],
+          ),
+        ],
+
         const SizedBox(height: 16),
 
         Text(
           name,
-          style: Theme.of(context)
-              .textTheme
-              .headlineSmall
-              ?.copyWith(fontWeight: FontWeight.w800),
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
         ),
         const SizedBox(height: 6),
 
         if (brand.trim().isNotEmpty)
           Text(
             brand,
-            style: Theme.of(context)
-                .textTheme
-                .titleMedium
-                ?.copyWith(color: Colors.grey.shade800),
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(color: Colors.grey.shade800),
           ),
 
         if (categoryLine.isNotEmpty) ...[
           const SizedBox(height: 8),
           Row(
             children: [
-              Icon(Icons.category_outlined,
-                  size: 18, color: Colors.grey.shade700),
+              Icon(
+                Icons.category_outlined,
+                size: 18,
+                color: Colors.grey.shade700,
+              ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   categoryLine,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.grey.shade800),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade800),
                 ),
               ),
             ],
@@ -158,16 +250,14 @@ class ClothingDetailScreen extends StatelessWidget {
           const SizedBox(height: 8),
           Row(
             children: [
-              Icon(Icons.style_outlined,
-                  size: 18, color: Colors.grey.shade700),
+              Icon(Icons.style_outlined, size: 18, color: Colors.grey.shade700),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   stylePatternLine,
-                  style: Theme.of(context)
-                      .textTheme
-                      .bodyMedium
-                      ?.copyWith(color: Colors.grey.shade800),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodyMedium?.copyWith(color: Colors.grey.shade800),
                 ),
               ),
             ],
@@ -185,7 +275,9 @@ class ClothingDetailScreen extends StatelessWidget {
               if (mainGroup.isNotEmpty) const SizedBox(width: 8),
               Expanded(
                 child: _InfoChip(
-                    icon: Icons.grid_view_rounded, label: categoryKey),
+                  icon: Icons.grid_view_rounded,
+                  label: categoryKey,
+                ),
               ),
             ],
           ],
@@ -234,8 +326,11 @@ class ClothingDetailScreen extends StatelessWidget {
           if (wearCount > 0)
             Row(
               children: [
-                Icon(Icons.repeat_rounded,
-                    size: 18, color: Colors.grey.shade700),
+                Icon(
+                  Icons.repeat_rounded,
+                  size: 18,
+                  color: Colors.grey.shade700,
+                ),
                 const SizedBox(width: 8),
                 Text('Nosené: $wearCount×'),
               ],
@@ -244,11 +339,15 @@ class ClothingDetailScreen extends StatelessWidget {
             const SizedBox(height: 6),
             Row(
               children: [
-                Icon(Icons.calendar_today_outlined,
-                    size: 18, color: Colors.grey.shade700),
+                Icon(
+                  Icons.calendar_today_outlined,
+                  size: 18,
+                  color: Colors.grey.shade700,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                    'Pridané: ${createdAt.day}.${createdAt.month}.${createdAt.year}'),
+                  'Pridané: ${createdAt.day}.${createdAt.month}.${createdAt.year}',
+                ),
               ],
             ),
           ],
@@ -258,22 +357,64 @@ class ClothingDetailScreen extends StatelessWidget {
         const SizedBox(height: 16),
         ElevatedButton.icon(
           onPressed: () async {
+            final user = FirebaseAuth.instance.currentUser;
+            Map<String, dynamic> editData = d;
+            if (user != null) {
+              final authoritative = await FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .collection('wardrobe')
+                  .doc(clothingItemId)
+                  .get(const GetOptions(source: Source.server));
+              final authoritativeData = authoritative.data();
+              if (authoritativeData != null) {
+                editData = Map<String, dynamic>.from(authoritativeData);
+                // Presentation-only bridge for the existing form controls. The
+                // save builder strips these retired aliases, so they never
+                // cross the V2 persistence boundary again.
+                final projection = editData['uiProjection'];
+                if (projection is Map) {
+                  editData['mainGroupKey'] ??= projection['mainCategory'];
+                  editData['categoryKey'] ??= projection['category'];
+                  editData['subCategoryKey'] ??= projection['subcategory'];
+                }
+                final colorProfile = editData['colorProfile'];
+                if (colorProfile is Map && editData['colors'] == null) {
+                  final families = <String>[
+                    if (colorProfile['primary'] is Map)
+                      (colorProfile['primary'] as Map)['family']?.toString() ??
+                          '',
+                    if (colorProfile['secondary'] is Map)
+                      (colorProfile['secondary'] as Map)['family']
+                              ?.toString() ??
+                          '',
+                    if (colorProfile['accents'] is List)
+                      ...(colorProfile['accents'] as List).whereType<Map>().map(
+                        (entry) => entry['family']?.toString() ?? '',
+                      ),
+                  ].where((value) => value.isNotEmpty).toList();
+                  editData['colors'] = families;
+                }
+                editData['warmth_level'] ??= editData['warmth'];
+              }
+            }
+            if (!context.mounted) return;
             final result = await Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (_) => AddClothingScreen(
                   isEditing: true,
                   itemId: clothingItemId,
-                  imageUrl: _bestImageUrl(d),
-                  initialData: d,
+                  imageUrl: _bestImageUrl(editData),
+                  initialData: editData,
                 ),
               ),
             );
 
             if (result == true && context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Uložené.')),
-              );
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(const SnackBar(content: Text('Uložené.')));
             }
           },
           icon: const Icon(Icons.edit_outlined),
@@ -293,21 +434,21 @@ class ClothingDetailScreen extends StatelessWidget {
       body: (user == null)
           ? const Center(child: Text('Musíš byť prihlásený.'))
           : StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('users')
-            .doc(user.uid)
-            .collection('wardrobe')
-            .doc(clothingItemId)
-            .snapshots(),
-        builder: (context, snapshot) {
-          final data = snapshot.data?.data() ?? clothingItemData;
+              stream: FirebaseFirestore.instance
+                  .collection('users')
+                  .doc(user.uid)
+                  .collection('wardrobe')
+                  .doc(clothingItemId)
+                  .snapshots(),
+              builder: (context, snapshot) {
+                final data = snapshot.data?.data() ?? clothingItemData;
 
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: _buildContent(context, data),
-          );
-        },
-      ),
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: _buildContent(context, data),
+                );
+              },
+            ),
     );
   }
 }

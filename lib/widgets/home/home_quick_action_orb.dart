@@ -1,5 +1,4 @@
 import 'dart:math' as math;
-import 'dart:ui';
 
 import 'package:flutter/material.dart';
 
@@ -120,19 +119,11 @@ class _HomeQuickActionOrbState extends State<HomeQuickActionOrb>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: () => _closeMenu(),
-                    child: ClipRect(
-                      child: BackdropFilter(
-                        filter: ImageFilter.blur(
-                          sigmaX: 10 * tMove,
-                          sigmaY: 10 * tMove,
-                        ),
-                        child: Container(
-                          color: Color.lerp(
-                            Colors.transparent,
-                            const Color(0x99000000),
-                            tMove,
-                          ),
-                        ),
+                    child: Container(
+                      color: Color.lerp(
+                        Colors.transparent,
+                        const Color(0x99000000),
+                        tMove,
                       ),
                     ),
                   ),
@@ -385,9 +376,7 @@ class _OrbEmojiCircle extends StatelessWidget {
           ],
         ),
         child: ClipOval(
-          child: BackdropFilter(
-            filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-            child: Container(
+          child: Container(
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 border: Border.all(
@@ -408,7 +397,6 @@ class _OrbEmojiCircle extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontSize: 22, height: 1),
               ),
-            ),
           ),
         ),
       ),

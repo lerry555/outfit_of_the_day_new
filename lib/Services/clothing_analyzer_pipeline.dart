@@ -1,13 +1,14 @@
 import 'dart:convert';
 
+import 'package:firebase_app_check/firebase_app_check.dart';
 import 'package:http/http.dart' as http;
 
-import '../constants/app_constants.dart';
-import '../data/clothing_knowledge_base.dart';
-import '../utils/ai_clothing_parser.dart';
-import '../utils/slovak_display_name.dart';
+import 'add_clothing_analyzer_mapper.dart';
+import 'firebase_app_check_bootstrap.dart';
 
-/// Result of the Add Clothing analysis + KB + category mapping pipeline.
+/// Shared interpretation of a `wardrobe-analyzer-v2` response for debug
+/// reanalyze review. Identity fields here are interpretive only and must not
+/// be persisted by metadata apply.
 class ClothingAnalyzerPipelineResult {
   const ClothingAnalyzerPipelineResult({
     required this.suggestedName,
@@ -25,12 +26,18 @@ class ClothingAnalyzerPipelineResult {
     this.identityConfidence,
   });
 
+  /// Review/display only. Debug apply must not persist this.
   final String suggestedName;
+  /// Review/display only. Debug apply must not persist this.
   final String canonicalType;
+  /// Review/display only. Debug apply must not persist this.
   final String layerRole;
+  /// Review/display only. Debug apply must not persist this.
   final String categoryKey;
+  /// Review/display only. Debug apply must not persist this.
   final String subCategoryKey;
   final int? analyzerConfidence;
+  /// Interpreted display colors. Review only; apply must not write colorProfile.
   final List<String> detectedColors;
   final bool kbMatched;
   final List<String> patterns;
@@ -39,270 +46,210 @@ class ClothingAnalyzerPipelineResult {
   final String visualIdentity;
   final int? identityConfidence;
 
-  static const ClothingAnalyzerPipelineResult empty = ClothingAnalyzerPipelineResult(
-    suggestedName: '',
-    canonicalType: '',
-    layerRole: '',
-    categoryKey: '',
-    subCategoryKey: '',
-  );
+  static const ClothingAnalyzerPipelineResult empty =
+      ClothingAnalyzerPipelineResult(
+        suggestedName: '',
+        canonicalType: '',
+        layerRole: '',
+        categoryKey: '',
+        subCategoryKey: '',
+      );
 }
 
-/// Shared clothing image analysis used by Add Clothing (HTTP + KB + parser).
+/// Debug/gated reanalyze HTTP + shared Add Clothing interpretation.
+/// Persistence authority stays in [WardrobeReanalyzeApplyService].
 abstract final class ClothingAnalyzerPipeline {
   static const String analyzeEndpoint =
       'https://us-east1-outfitoftheday-4d401.cloudfunctions.net/analyzeClothingImage';
+  static const String contractVersion = 'wardrobe-analyzer-v2';
 
+  /// Owned original under `wardrobe/{uid}/...`. Rejects `wardrobe_product/`.
+  static String requireOwnedAnalyzerStoragePath(String? storagePath) {
+    final path = (storagePath ?? '').trim();
+    if (path.isEmpty) {
+      throw Exception('analyzeClothingImage requires owned storagePath');
+    }
+    if (path.startsWith('wardrobe_product/') ||
+        path.contains('/wardrobe_product/') ||
+        path.contains('..') ||
+        !path.startsWith('wardrobe/') ||
+        path.split('/').length < 3) {
+      throw Exception(
+        'analyzeClothingImage storagePath must be under wardrobe/',
+      );
+    }
+    return path;
+  }
+
+  static bool isOwnedAnalyzerStoragePath(String? storagePath) {
+    try {
+      requireOwnedAnalyzerStoragePath(storagePath);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Map<String, dynamic> buildAnalyzeRequestBody({
+    required String storagePath,
+    String? imageUrl,
+  }) {
+    final path = requireOwnedAnalyzerStoragePath(storagePath);
+    final trimmedUrl = (imageUrl ?? '').trim();
+    final urlPath = storagePathFromFirebaseUrl(trimmedUrl);
+    final includeOwnedImageUrl =
+        trimmedUrl.isNotEmpty && isOwnedAnalyzerStoragePath(urlPath);
+    return <String, dynamic>{
+      'contractVersion': contractVersion,
+      'storagePath': path,
+      if (includeOwnedImageUrl) 'imageUrl': trimmedUrl,
+    };
+  }
+
+  /// Calls production [analyzeClothingImage].
+  ///
+  /// Requires Firebase ID token and owned wardrobe [storagePath].
+  /// [imageUrl] is optional supporting context; server authorizes via storagePath.
   static Future<ClothingAnalyzerPipelineResult> analyzeImageUrl(
     String imageUrl, {
-    Duration timeout = const Duration(seconds: 30),
+    required String idToken,
+    required String storagePath,
+    String? appCheckToken,
+    Duration timeout = const Duration(seconds: 45),
   }) async {
+    final decoded = await analyzeRaw(
+      idToken: idToken,
+      imageUrl: imageUrl,
+      storagePath: storagePath,
+      appCheckToken: appCheckToken,
+      timeout: timeout,
+    );
+    return analyzeResponse(decoded);
+  }
+
+  /// Raw JSON helper for callers that need analyzer metadata fields.
+  static Future<Map<String, dynamic>> analyzeRaw({
+    required String idToken,
+    required String storagePath,
+    String? imageUrl,
+    String? appCheckToken,
+    Duration timeout = const Duration(seconds: 45),
+  }) async {
+    final path = requireOwnedAnalyzerStoragePath(storagePath);
+
+    final headers = <String, String>{
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $idToken',
+    };
+    var check = (appCheckToken ?? '').trim();
+    if (check.isEmpty) {
+      try {
+        if (FirebaseAppCheckBootstrap.instance.isReady) {
+          check = (await FirebaseAppCheck.instance.getToken())?.trim() ?? '';
+        }
+      } catch (_) {
+        check = '';
+      }
+    }
+    if (check.isNotEmpty) {
+      headers['X-Firebase-AppCheck'] = check;
+    }
+
+    final body = buildAnalyzeRequestBody(
+      storagePath: path,
+      imageUrl: imageUrl,
+    );
     final resp = await http
         .post(
           Uri.parse(analyzeEndpoint),
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({'imageUrl': imageUrl}),
+          headers: headers,
+          body: jsonEncode(body),
         )
         .timeout(timeout);
-
     if (resp.statusCode != 200) {
       throw Exception('analyzeClothingImage ${resp.statusCode}: ${resp.body}');
     }
-
     final decoded = jsonDecode(resp.body);
     if (decoded is! Map<String, dynamic>) {
       throw Exception('analyzeClothingImage response is not a JSON object');
     }
-
-    return analyzeResponse(decoded);
+    return decoded;
   }
 
-  /// Maps raw [analyzeClothingImage] JSON through KB + [AiClothingParser] (Add Clothing path).
-  static ClothingAnalyzerPipelineResult analyzeResponse(Map<String, dynamic> m) {
-    final prettyType = (m['type_pretty'] ?? m['type'] ?? '').toString().trim();
-    final rawType = (m['type'] ?? '').toString().trim();
-    var canonical = (m['canonical_type'] ?? '').toString().trim();
-    final typeEvidence = '$rawType $prettyType'.toLowerCase();
-    final canonicalLower = canonical.toLowerCase();
-
-    if (canonicalLower == 'jacket') {
-      final saysMikina = typeEvidence.contains('mikina') ||
-          typeEvidence.contains('hoodie') ||
-          typeEvidence.contains('sweatshirt');
-      final saysHood =
-          typeEvidence.contains('kapuc') || typeEvidence.contains('hood');
-      if (saysMikina && saysHood) {
-        canonical = 'hoodie';
-      } else if (saysMikina) {
-        canonical = 'sweatshirt';
-      }
+  /// Derive owned Firebase Storage object path from a download URL.
+  /// Returns null for external / unparseable URLs.
+  static String? storagePathFromFirebaseUrl(String? imageUrl) {
+    final raw = (imageUrl ?? '').trim();
+    if (raw.isEmpty) return null;
+    final Uri url;
+    try {
+      url = Uri.parse(raw);
+    } catch (_) {
+      return null;
     }
 
-    final colorsFromAi = _toStringList(m['colors'] ?? m['color']);
-    final seasonsFromAi = _toStringList(m['season'] ?? m['seasons']);
-    final brandFromAi = (m['brand'] ?? '').toString().trim();
-    final primaryTypeFromAi = (m['primary_type'] ?? '').toString().trim();
-    final secondaryTypeFromAi = (m['secondary_type'] ?? '').toString().trim();
-    final materialFeelFromAi = (m['material_feel'] ?? '').toString().trim();
-    final vibeFromAi = (m['vibe'] ?? '').toString().trim();
-    final visualDescFromAi = (m['visual_description'] ?? '').toString().trim();
-    var layerRoleFromAi = (m['layer_role'] ?? '').toString().trim();
-
-    final kbItem = ClothingKnowledgeBase.resolveClothingType(
-      canonicalType: canonical,
-      type: rawType,
-      typePretty: prettyType,
-      primaryType: primaryTypeFromAi,
-    );
-    if (kbItem != null) {
-      ClothingKnowledgeBase.logMatch(kbItem);
-      layerRoleFromAi = kbItem.layerRole;
-    } else {
-      ClothingKnowledgeBase.logNoMatch(
-        canonicalType: canonical,
-        primaryType: primaryTypeFromAi,
-        type: rawType,
-        typePretty: prettyType,
-      );
+    if (url.host == 'firebasestorage.googleapis.com') {
+      final m = RegExp(r'^/v0/b/([^/]+)/o/(.+)$').firstMatch(url.path);
+      if (m == null) return null;
+      return Uri.decodeComponent(m.group(2)!);
     }
-
-    String? nextCat;
-    String? nextSub;
-    String? nextLayerRole;
-    String? kbDisplayName = kbItem?.skName;
-
-    final aiLayerForMapping =
-        kbItem == null && layerRoleFromAi.isNotEmpty ? layerRoleFromAi : null;
-
-    if (canonical.isNotEmpty &&
-        canonical != 'sneakers' &&
-        canonical != 'sneaker') {
-      final mapped = AiClothingParser.fromCanonicalType(
-        canonical,
-        aiLayerRole: aiLayerForMapping,
-      );
-      if (mapped != null) {
-        nextCat = mapped.categoryKey;
-        nextSub = mapped.subCategoryKey;
-        nextLayerRole = mapped.layerRole;
-      }
-    }
-
-    if (nextCat == null || nextSub == null) {
-      final mapped = AiClothingParser.mapType(
-        AiParserInput(
-          rawType: rawType,
-          aiName: prettyType,
-          userName: '',
-          seasons: seasonsFromAi,
-          brand: brandFromAi,
-        ),
-      );
-      if (mapped != null) {
-        nextCat = mapped.categoryKey;
-        nextSub = mapped.subCategoryKey;
-        if (kbItem == null) {
-          nextLayerRole = AiClothingParser.resolveLayerRole(
-            subCategoryKey: mapped.subCategoryKey,
-            aiLayerRole: aiLayerForMapping,
-          );
-        }
-      }
-    }
-
-    if (JacketV2Classifier.shouldClassify(
-      currentSub: nextSub,
-      canonicalType: canonical,
-      primaryType: primaryTypeFromAi,
-      rawType: rawType,
-      prettyType: prettyType,
-    )) {
-      final jacketV2 = JacketV2Classifier.classify(
-        primaryType: primaryTypeFromAi,
-        secondaryType: secondaryTypeFromAi,
-        warmthLevel: null,
-        materialFeel: materialFeelFromAi,
-        vibe: vibeFromAi,
-        visualDescription: visualDescFromAi,
-        rawType: rawType,
-        prettyType: prettyType,
-      );
-      if (jacketV2 != null) {
-        nextSub = jacketV2.subCategoryKey;
-        nextCat = _findCategoryForSubKey(jacketV2.subCategoryKey);
-        if (kbItem == null) {
-          nextLayerRole = AiClothingParser.resolveLayerRole(
-            subCategoryKey: jacketV2.subCategoryKey,
-            aiLayerRole: aiLayerForMapping,
-          );
-        }
-      }
-    }
-
-    if (kbItem != null) {
-      nextLayerRole = kbItem.layerRole;
-    } else if (nextSub != null) {
-      nextLayerRole = AiClothingParser.resolveLayerRole(
-        subCategoryKey: nextSub,
-        aiLayerRole: aiLayerForMapping,
-      );
-    }
-
-    final subKey = nextSub ?? '';
-    final suggestedName = _computeSuggestedName(
-      colors: colorsFromAi,
-      subCategoryKey: subKey,
-      kbDisplayName: kbDisplayName,
-      canonicalType: canonical,
-      prettyType: prettyType,
-      rawType: rawType,
-    );
-
-    final confidenceRaw = m['confidence'];
-    int? analyzerConfidence;
-    if (confidenceRaw != null) {
-      final n = num.tryParse(confidenceRaw.toString());
-      if (n != null && n.isFinite) {
-        analyzerConfidence = n.round().clamp(0, 100);
-      }
-    }
-
-    final patternsFromAi = _toStringList(m['patterns'] ?? m['pattern']);
-    final logoProminence =
-        (m['logo_prominence'] ?? m['logoProminence'] ?? '').toString().trim();
-    final visualIdentity =
-        (m['visual_identity'] ?? m['visualIdentity'] ?? '').toString().trim();
-    int? identityConfidence;
-    final idConfRaw = m['identity_confidence'] ?? m['identityConfidence'];
-    if (idConfRaw != null) {
-      final n = num.tryParse(idConfRaw.toString());
-      if (n != null && n.isFinite) {
-        identityConfidence = n.round().clamp(0, 100);
-      }
-    }
-
-    return ClothingAnalyzerPipelineResult(
-      suggestedName: suggestedName,
-      canonicalType: canonical,
-      layerRole: nextLayerRole ?? layerRoleFromAi,
-      categoryKey: nextCat ?? '',
-      subCategoryKey: subKey,
-      analyzerConfidence: analyzerConfidence,
-      detectedColors: colorsFromAi,
-      kbMatched: kbItem != null,
-      patterns: patternsFromAi,
-      logoProminence: logoProminence,
-      visualDescription: visualDescFromAi,
-      visualIdentity: visualIdentity,
-      identityConfidence: identityConfidence,
-    );
-  }
-
-  static String? _findCategoryForSubKey(String subKey) {
-    for (final entry in subCategoryTree.entries) {
-      if (entry.value.contains(subKey)) return entry.key;
+    if (url.host == 'storage.googleapis.com') {
+      final parts = url.path.replaceFirst(RegExp(r'^/+'), '').split('/');
+      if (parts.length < 2) return null;
+      return parts.sublist(1).join('/');
     }
     return null;
   }
 
-  static String _computeSuggestedName({
-    required List<String> colors,
-    required String subCategoryKey,
-    required String? kbDisplayName,
-    required String canonicalType,
-    required String prettyType,
-    required String rawType,
+  /// Prefer explicit [storagePath], else parse from Firebase download URL.
+  static String? resolveOwnedStoragePath({
+    String? storagePath,
+    String? imageUrl,
   }) {
-    final subLabelRaw =
-        (kbDisplayName ?? subCategoryLabels[subCategoryKey] ?? '').trim();
-    if (subLabelRaw.isEmpty) {
-      if (prettyType.isNotEmpty) return _upperFirst(prettyType);
-      if (rawType.isNotEmpty) return _upperFirst(rawType);
-      return '';
-    }
+    final direct = (storagePath ?? '').trim();
+    if (direct.isNotEmpty) return direct;
+    return storagePathFromFirebaseUrl(imageUrl);
+  }
 
-    final baseColor = colors.isNotEmpty ? colors.first.trim() : '';
-    if (baseColor.isEmpty) return _upperFirst(subLabelRaw);
+  /// Interprets analyzer JSON through [AddClothingAnalyzerMapper].
+  /// Callers must not persist identity fields from this result.
+  static ClothingAnalyzerPipelineResult analyzeResponse(Map<String, dynamic> m) {
+    return fromMapper(AddClothingAnalyzerMapper.map(m));
+  }
 
-    return buildSlovakDisplayName(
-      baseColor: baseColor,
-      clothingLabel: subLabelRaw,
-      canonicalType: canonicalType.isNotEmpty ? canonicalType : null,
-      subCategoryKey: subCategoryKey.isNotEmpty ? subCategoryKey : null,
+  static ClothingAnalyzerPipelineResult fromMapper(
+    AddClothingAnalyzerMapperResult mapped,
+  ) {
+    final hidden = mapped.hiddenAiMetadata;
+    return ClothingAnalyzerPipelineResult(
+      suggestedName: mapped.suggestedName,
+      canonicalType: mapped.mappedCanonicalType,
+      layerRole: mapped.layerRole ?? mapped.aiStylingLayerRole ?? '',
+      categoryKey: mapped.categoryKey ?? '',
+      subCategoryKey: mapped.subCategoryKey ?? '',
+      analyzerConfidence: _asConfidence(mapped.confidenceRaw),
+      detectedColors: List<String>.from(mapped.displayColors),
+      kbMatched: mapped.kbMatched,
+      patterns: List<String>.from(mapped.patterns),
+      logoProminence:
+          (hidden['logo_prominence'] ?? hidden['logoProminence'] ?? '')
+              .toString()
+              .trim(),
+      visualDescription: mapped.visualDescription,
+      visualIdentity:
+          (hidden['visual_identity'] ?? hidden['visualIdentity'] ?? '')
+              .toString()
+              .trim(),
+      identityConfidence: _asConfidence(
+        hidden['identity_confidence'] ?? hidden['identityConfidence'],
+      ),
     );
   }
 
-  static String _upperFirst(String s) =>
-      s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
-
-  static List<String> _toStringList(dynamic v) {
-    if (v is List) {
-      return v
-          .map((e) => e.toString().trim())
-          .where((s) => s.isNotEmpty)
-          .toList();
-    }
-    if (v is String && v.trim().isNotEmpty) return [v.trim()];
-    return const [];
+  static int? _asConfidence(dynamic raw) {
+    if (raw == null) return null;
+    final n = num.tryParse(raw.toString());
+    if (n == null || !n.isFinite) return null;
+    return n.round().clamp(0, 100);
   }
 }

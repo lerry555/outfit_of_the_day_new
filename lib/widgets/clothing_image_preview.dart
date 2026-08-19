@@ -1,5 +1,3 @@
-import 'dart:ui';
-
 import 'package:flutter/material.dart';
 
 /// Shared wardrobe photo preview — same layout on AI processing and Add Clothing form.
@@ -19,27 +17,24 @@ class ClothingImagePreview extends StatelessWidget {
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(22),
-            color: Colors.white.withOpacity(0.06),
-            border: Border.all(color: Colors.white10),
-          ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: Container(
-              height: height,
-              width: double.infinity,
-              color: Colors.white.withOpacity(0.04),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          color: Colors.white.withOpacity(0.06),
+          border: Border.all(color: Colors.white10),
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(18),
+          child: Container(
+            height: height,
+            width: double.infinity,
+            color: Colors.white.withOpacity(0.04),
+            alignment: Alignment.center,
+            child: Stack(
               alignment: Alignment.center,
-              child: Stack(
-                alignment: Alignment.center,
-                children: [image],
-              ),
+              children: [image],
             ),
           ),
         ),

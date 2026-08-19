@@ -19,6 +19,16 @@ class DateWeatherSnapshot {
   final bool forecastAvailable;
   final String sourceLabel; // Predpoveď / Odhad
   final String summarySubtitle; // "Jar • 12°C • vietor ..."
+  /// Open-Meteo provenance when known. Null on legacy Calendar documents.
+  final bool? fromOpenMeteo;
+  /// Resolved city/location used when this snapshot was produced.
+  final String? cityLabel;
+  /// When this snapshot was resolved. Not used as a stale criterion.
+  final DateTime? fetchedAt;
+  /// Selected Calendar date as `yyyy-MM-dd`.
+  final String? dateKey;
+  /// Later-day temperature from HourlyWeatherService when known.
+  final int? eveningTempC;
 
   const DateWeatherSnapshot({
     required this.tempC,
@@ -29,6 +39,11 @@ class DateWeatherSnapshot {
     required this.forecastAvailable,
     required this.sourceLabel,
     required this.summarySubtitle,
+    this.fromOpenMeteo,
+    this.cityLabel,
+    this.fetchedAt,
+    this.dateKey,
+    this.eveningTempC,
   });
 
   Map<String, dynamic> toJson() => {
@@ -40,6 +55,13 @@ class DateWeatherSnapshot {
         'forecastAvailable': forecastAvailable,
         'sourceLabel': sourceLabel,
         'summarySubtitle': summarySubtitle,
+        if (fromOpenMeteo != null) 'fromOpenMeteo': fromOpenMeteo,
+        if (cityLabel != null && cityLabel!.trim().isNotEmpty)
+          'cityLabel': cityLabel!.trim(),
+        if (fetchedAt != null) 'fetchedAt': fetchedAt!.toUtc().toIso8601String(),
+        if (dateKey != null && dateKey!.trim().isNotEmpty)
+          'dateKey': dateKey!.trim(),
+        if (eveningTempC != null) 'eveningTempC': eveningTempC,
       };
 
   factory DateWeatherSnapshot.fromJson(Map<String, dynamic> json) {
@@ -57,6 +79,16 @@ class DateWeatherSnapshot {
     final forecastAvailable = asBool(json['forecastAvailable']);
     final sourceLabel = asStr(json['sourceLabel']);
     final summarySubtitle = asStr(json['summarySubtitle']);
+    final cityLabel = asStr(json['cityLabel']).trim();
+    final dateKey = asStr(json['dateKey']).trim();
+    bool? fromOpenMeteo;
+    if (json.containsKey('fromOpenMeteo')) {
+      fromOpenMeteo = asBool(json['fromOpenMeteo']);
+    }
+    int? eveningTempC;
+    if (json.containsKey('eveningTempC') && json['eveningTempC'] != null) {
+      eveningTempC = asInt(json['eveningTempC']);
+    }
 
     return DateWeatherSnapshot(
       tempC: tempC,
@@ -81,7 +113,26 @@ class DateWeatherSnapshot {
               isRainy,
             )
           : summarySubtitle,
+      fromOpenMeteo: fromOpenMeteo,
+      cityLabel: cityLabel.isEmpty ? null : cityLabel,
+      fetchedAt: _parseFetchedAt(json['fetchedAt']),
+      dateKey: dateKey.isEmpty ? null : dateKey,
+      eveningTempC: eveningTempC,
     );
+  }
+
+  static DateTime? _parseFetchedAt(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is String) return DateTime.tryParse(value);
+    try {
+      final toDate = (value as dynamic).toDate;
+      if (toDate is Function) {
+        final parsed = toDate();
+        if (parsed is DateTime) return parsed;
+      }
+    } catch (_) {}
+    return null;
   }
 
   static String _seasonLabelForSeasonKey(String seasonKey) {

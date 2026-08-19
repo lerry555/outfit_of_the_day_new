@@ -100,6 +100,9 @@ class HourlyWeatherService {
       <String, _WeatherSnapshotCacheEntry>{};
   static final Map<String, Future<OutfitWeatherDaySnapshot>> _inFlightByCacheKey =
       <String, Future<OutfitWeatherDaySnapshot>>{};
+  static final Map<String, Future<Map<String, OutfitWeatherDaySnapshot>>>
+  _coordRangeInFlight =
+      <String, Future<Map<String, OutfitWeatherDaySnapshot>>>{};
 
   static String _snapshotCacheKey(String cityKey, DateTime date) {
     return '$cityKey|${_dateLabelStatic(date)}';
@@ -168,6 +171,80 @@ class HourlyWeatherService {
     _inFlightByCacheKey[cacheKey] = future;
     future.whenComplete(() => _inFlightByCacheKey.remove(cacheKey));
     return future;
+  }
+
+  /// Real Open-Meteo days for explicit coordinates. One HTTP window per call.
+  /// Days without hourly data are omitted so callers can apply their own fallback.
+  /// Never geocodes a city name and never substitutes Home/Martin seasonal fallback.
+  Future<Map<String, OutfitWeatherDaySnapshot>> getOpenMeteoForCoordinatesAndDates({
+    required double latitude,
+    required double longitude,
+    required Iterable<DateTime> dates,
+    String locationLabel = '',
+  }) async {
+    final wanted = <DateTime>{
+      for (final date in dates) DateTime(date.year, date.month, date.day),
+    }.toList()
+      ..sort();
+    if (wanted.isEmpty) return const {};
+    final start = wanted.first;
+    final end = wanted.last;
+    final rangeKey =
+        '${latitude.toStringAsFixed(4)},${longitude.toStringAsFixed(4)}|'
+        '${_dateLabelStatic(start)}|${_dateLabelStatic(end)}';
+    final inFlight = _coordRangeInFlight[rangeKey];
+    if (inFlight != null) return inFlight;
+    final future = _fetchOpenMeteoForCoordinatesAndDatesImpl(
+      latitude: latitude,
+      longitude: longitude,
+      wanted: wanted,
+      start: start,
+      end: end,
+      locationLabel: locationLabel,
+    );
+    _coordRangeInFlight[rangeKey] = future;
+    future.whenComplete(() => _coordRangeInFlight.remove(rangeKey));
+    return future;
+  }
+
+  Future<Map<String, OutfitWeatherDaySnapshot>>
+  _fetchOpenMeteoForCoordinatesAndDatesImpl({
+    required double latitude,
+    required double longitude,
+    required List<DateTime> wanted,
+    required DateTime start,
+    required DateTime end,
+    required String locationLabel,
+  }) async {
+    final payload = await _fetchHourlyWeatherForDateRange(
+      latitude: latitude,
+      longitude: longitude,
+      startDate: start,
+      endDate: end,
+    );
+    if (payload == null || payload.points.isEmpty) return const {};
+    final byDay = <String, List<_HourlyPoint>>{};
+    for (final point in payload.points) {
+      final time = point.time;
+      if (time == null) continue;
+      final key = _dateLabelStatic(time);
+      (byDay[key] ??= <_HourlyPoint>[]).add(point);
+    }
+    final label = locationLabel.trim().isEmpty
+        ? '${latitude.toStringAsFixed(2)},${longitude.toStringAsFixed(2)}'
+        : locationLabel.trim();
+    final out = <String, OutfitWeatherDaySnapshot>{};
+    for (final date in wanted) {
+      final key = _dateLabelStatic(date);
+      final points = byDay[key];
+      if (points == null || points.isEmpty) continue;
+      out[key] = _snapshotForDestinationDay(
+        locationLabel: label,
+        date: date,
+        points: points,
+      );
+    }
+    return Map<String, OutfitWeatherDaySnapshot>.unmodifiable(out);
   }
 
   Future<OutfitWeatherDaySnapshot> _fetchWeatherForCityAndDateImpl({
@@ -722,8 +799,30 @@ class HourlyWeatherService {
     required double latitude,
     required double longitude,
     required DateTime date,
+  }) {
+    return _fetchHourlyWeatherForDateRange(
+      latitude: latitude,
+      longitude: longitude,
+      startDate: date,
+      endDate: date,
+    );
+  }
+
+  Future<_HourlyWeatherPayload?> _fetchHourlyWeatherForDateRange({
+    required double latitude,
+    required double longitude,
+    required DateTime startDate,
+    required DateTime endDate,
   }) async {
-    final day = _dateLabel(date);
+    var start = DateTime(startDate.year, startDate.month, startDate.day);
+    var end = DateTime(endDate.year, endDate.month, endDate.day);
+    if (end.isBefore(start)) {
+      final swap = start;
+      start = end;
+      end = swap;
+    }
+    final startLabel = _dateLabel(start);
+    final endLabel = _dateLabel(end);
     // Do NOT combine `forecast_days` with `start_date`/`end_date` — Open-Meteo returns 400.
     final uri = Uri.https('api.open-meteo.com', '/v1/forecast', {
       'latitude': latitude.toString(),
@@ -732,8 +831,8 @@ class HourlyWeatherService {
       'hourly':
           'temperature_2m,precipitation_probability,precipitation,wind_speed_10m,weather_code',
       'timezone': 'auto',
-      'start_date': day,
-      'end_date': day,
+      'start_date': startLabel,
+      'end_date': endLabel,
     });
     logVerboseHome('WEATHER API URL: $uri');
     final response = await http.get(uri);
@@ -780,8 +879,19 @@ class HourlyWeatherService {
 
     final len = times.length;
     final points = <_HourlyPoint>[];
-    final wantedDay = _dateLabel(date);
-    final anchor = DateTime(date.year, date.month, date.day);
+
+    bool inWindow(String ymd) =>
+        ymd.compareTo(startLabel) >= 0 && ymd.compareTo(endLabel) <= 0;
+
+    DateTime? wallFromYmd(String ymd, int hh, int mm) {
+      final parts = ymd.split('-');
+      if (parts.length != 3) return null;
+      final y = int.tryParse(parts[0]);
+      final mo = int.tryParse(parts[1]);
+      final d = int.tryParse(parts[2]);
+      if (y == null || mo == null || d == null) return null;
+      return DateTime(y, mo, d, hh, mm);
+    }
 
     void addPoint(int i, DateTime wall) {
       points.add(
@@ -798,31 +908,35 @@ class HourlyWeatherService {
     }
 
     for (var i = 0; i < len; i++) {
-      final raw = times[i].trim();
-      final m = _openMeteoHourlyTime.firstMatch(raw);
+      final rawTime = times[i].trim();
+      final m = _openMeteoHourlyTime.firstMatch(rawTime);
       if (m == null) continue;
-      if (m.group(1) != wantedDay) continue;
+      final ymd = m.group(1)!;
+      if (!inWindow(ymd)) continue;
       final hh = int.tryParse(m.group(2)!) ?? 0;
       final mm = int.tryParse(m.group(3) ?? '0') ?? 0;
-      addPoint(i, DateTime(anchor.year, anchor.month, anchor.day, hh, mm));
+      final wall = wallFromYmd(ymd, hh, mm);
+      if (wall == null) continue;
+      addPoint(i, wall);
     }
 
     if (points.isEmpty) {
       logVerboseHome(
-        'WEATHER hourly_parse: prefix_match_empty wantedDay=$wantedDay rawLen=$len — trying legacy local-date filter',
+        'WEATHER hourly_parse: prefix_match_empty start=$startLabel end=$endLabel rawLen=$len — trying legacy local-date filter',
       );
-      final selectedLocalDate = DateTime(date.year, date.month, date.day);
       for (var i = 0; i < len; i++) {
         final time = DateTime.tryParse(times[i]);
         if (time == null) continue;
         final localHourDate = DateTime(time.year, time.month, time.day);
-        if (localHourDate != selectedLocalDate) continue;
+        if (localHourDate.isBefore(start) || localHourDate.isAfter(end)) {
+          continue;
+        }
         addPoint(i, time);
       }
     }
 
     logVerboseHome(
-      'WEATHER API_OK day=$wantedDay rawHourly=$len pointsParsed=${points.length} '
+      'WEATHER API_OK start=$startLabel end=$endLabel rawHourly=$len pointsParsed=${points.length} '
       'currentTemp=${currentTemperatureC?.toStringAsFixed(1)}',
     );
 
@@ -971,6 +1085,91 @@ class HourlyWeatherService {
       if ((p.windSpeedKmh ?? 0) >= kmh) return true;
     }
     return false;
+  }
+
+  OutfitWeatherDaySnapshot _snapshotForDestinationDay({
+    required String locationLabel,
+    required DateTime date,
+    required List<_HourlyPoint> points,
+  }) {
+    var minMaxSource = _pointsLocalHourBetween(points, 6, 21);
+    if (minMaxSource.isEmpty) minMaxSource = points;
+    final temps = minMaxSource
+        .map((h) => h.temperatureC)
+        .whereType<double>()
+        .toList(growable: false);
+    final minTempC = temps.isEmpty
+        ? null
+        : temps.reduce((a, b) => a < b ? a : b).round();
+    final maxTempC = temps.isEmpty
+        ? null
+        : temps.reduce((a, b) => a > b ? a : b).round();
+    final morning = _meanTempInHourRange(points, 7, 9) ?? _tempAtHour(points, 8);
+    final afternoon =
+        _meanTempInHourRange(points, 12, 15) ?? _tempAtHour(points, 13);
+    final evening =
+        _meanTempInHourRange(points, 18, 21) ?? _tempAtHour(points, 19);
+    final rainMorning = _firstRainInLocalHourRange(minMaxSource, 5, 11);
+    final rainAfternoon = _firstRainInLocalHourRange(minMaxSource, 12, 17);
+    final rainEvening = _firstRainInLocalHourRange(minMaxSource, 18, 23);
+    final willRain =
+        rainMorning != null || rainAfternoon != null || rainEvening != null;
+    final isWindy = minMaxSource.any((h) => (h.windSpeedKmh ?? 0) >= 25);
+    final morningRainSeg = rainMorning != null && rainMorning.hasData;
+    final afternoonRainSeg = rainAfternoon != null && rainAfternoon.hasData;
+    final eveningRainSeg = rainEvening != null && rainEvening.hasData;
+    final windMorning = _windStrongInRange(minMaxSource, 5, 11);
+    final windAfternoon = _windStrongInRange(minMaxSource, 12, 17);
+    final windEvening = _windStrongInRange(minMaxSource, 18, 23);
+    final briefingAfternoonCondition = BriefingWeatherCondition.briefingUiSk(
+      BriefingWeatherCondition.label(
+        wmoCode: _dominantWeatherCodeInRange(points, 12, 15),
+        segmentRain: afternoonRainSeg,
+        segmentWindy: windAfternoon,
+        segment: BriefingDaySegment.afternoon,
+      ),
+    );
+    final mainChip = afternoon ?? maxTempC ?? morning ?? evening ?? 15;
+    return OutfitWeatherDaySnapshot(
+      cityName: locationLabel,
+      date: date,
+      morningTempC: morning ?? afternoon ?? mainChip,
+      noonTempC: afternoon ?? morning ?? mainChip,
+      eveningTempC: evening ?? afternoon ?? mainChip,
+      minTempC: minTempC,
+      maxTempC: maxTempC,
+      willRain: willRain,
+      rainTimeText: _rainWindowsText(minMaxSource),
+      outfitWhyWeatherNote: '',
+      morningRainSegment: morningRainSeg,
+      afternoonRainSegment: afternoonRainSeg,
+      eveningRainSegment: eveningRainSeg,
+      isWindy: isWindy,
+      summaryText: briefingAfternoonCondition,
+      fromOpenMeteo: true,
+      mainChipTempC: mainChip,
+      mainChipBasis: 'destination_window',
+      mainChipHour: afternoon != null ? 14 : null,
+      openMeteoFailureNote: null,
+      briefingMorningCondition: BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.label(
+          wmoCode: _dominantWeatherCodeInRange(points, 7, 9),
+          segmentRain: morningRainSeg,
+          segmentWindy: windMorning,
+          segment: BriefingDaySegment.morning,
+        ),
+      ),
+      briefingAfternoonCondition: briefingAfternoonCondition,
+      briefingEveningCondition: BriefingWeatherCondition.briefingUiSk(
+        BriefingWeatherCondition.label(
+          wmoCode: _dominantWeatherCodeInRange(points, 18, 21),
+          segmentRain: eveningRainSeg,
+          segmentWindy: windEvening,
+          segment: BriefingDaySegment.evening,
+        ),
+      ),
+      hourlyTempCByLocalHour: _hourlyTempMap(points),
+    );
   }
 
   OutfitWeatherDaySnapshot _fallbackSnapshot({

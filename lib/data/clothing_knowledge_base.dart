@@ -125,7 +125,12 @@ abstract final class ClothingKnowledgeBase {
         .trim();
     if (direct.isNotEmpty) return direct;
 
-    for (final key in ['aiMetadata', 'hiddenAiMetadata', 'metadata']) {
+    for (final key in [
+      'uiProjection',
+      'aiMetadata',
+      'hiddenAiMetadata',
+      'metadata',
+    ]) {
       final nested = item[key];
       if (nested is Map) {
         final v = (nested['canonical_type'] ?? nested['canonicalType'] ?? '')
@@ -152,7 +157,13 @@ abstract final class ClothingKnowledgeBase {
     );
     if (kbFromLabels != null) return kbFromLabels.category;
 
-    return (item['categoryKey'] ?? item['category'] ?? '').toString().trim();
+    final projected = item['uiProjection'];
+    final projectedCategory = projected is Map
+        ? (projected['category'] ?? '').toString().trim()
+        : '';
+    return (item['categoryKey'] ?? item['category'] ?? projectedCategory)
+        .toString()
+        .trim();
   }
 
   /// Subcategory chip filter for wardrobe category screen (optional KB override).
@@ -734,6 +745,7 @@ abstract final class ClothingKnowledgeBase {
     aliases: [
       'raincoat',
       'rain jacket',
+      'macintosh',
     ],
   );
 
@@ -924,6 +936,7 @@ abstract final class ClothingKnowledgeBase {
     aliases: [
       'trench coat',
       'trenchcoat',
+      'trench',
     ],
   );
 
@@ -1783,6 +1796,7 @@ abstract final class ClothingKnowledgeBase {
     aliases: [
       'crossbody',
       'shoulder bag',
+      'cross-body bag',
     ],
   );
 
@@ -1798,6 +1812,7 @@ abstract final class ClothingKnowledgeBase {
     aliases: [
       'belt bag',
       'bum bag',
+      'fannypack',
     ],
   );
 

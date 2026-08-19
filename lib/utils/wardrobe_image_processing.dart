@@ -4,6 +4,19 @@ import '../Services/product_link_image_cleanup.dart';
 import '../widgets/wardrobe_processing_spinner.dart';
 import 'wardrobe_image_url_priority.dart';
 
+/// Decode budget for wardrobe grid/preview tiles (~3-across on a phone).
+const int kWardrobeTileImageCacheWidth = 384;
+
+/// Decode budget for Home hero tiles. Bounded; never full camera resolution.
+const int kHomeHeroImageCacheWidth = 720;
+
+/// Decode budget for the clothing-detail hero (bounded, not full camera resolution).
+const int kWardrobeDetailImageCacheWidth = 1080;
+
+/// Visible preview tiles per category row. Only three tiles are on screen;
+/// decoding extra network images on the UI thread caused wardrobe ANRs.
+const int kWardrobeCategoryPreviewTileCount = 3;
+
 /// Single light well — matches typical clean/cutout PNG canvas (pure white).
 const Color wardrobeItemImageBackground = Color(0xFFFFFFFF);
 
@@ -74,6 +87,8 @@ Widget _networkImage({
   required Map<String, dynamic> data,
   required bool showSpinner,
   required BoxFit fit,
+  int? cacheWidth,
+  int? cacheHeight,
 }) {
   return Image.network(
     url,
@@ -82,6 +97,8 @@ Widget _networkImage({
     height: double.infinity,
     alignment: Alignment.center,
     gaplessPlayback: true,
+    cacheWidth: cacheWidth,
+    cacheHeight: cacheHeight,
     errorBuilder: (context, error, stackTrace) {
       if (showSpinner) {
         return const Center(
@@ -99,6 +116,8 @@ Widget _networkImage({
         height: double.infinity,
         alignment: Alignment.center,
         gaplessPlayback: true,
+        cacheWidth: cacheWidth,
+        cacheHeight: cacheHeight,
         errorBuilder: (_, __, ___) => const SizedBox.expand(),
       );
     },
@@ -113,6 +132,8 @@ Widget wardrobeItemImage({
   BoxFit fit = BoxFit.contain,
   EdgeInsets padding = wardrobeTileImagePadding,
   Color backgroundColor = wardrobeItemImageBackground,
+  int? cacheWidth,
+  int? cacheHeight,
 }) {
   final trimmed = imageUrl.trim();
 
@@ -129,6 +150,8 @@ Widget wardrobeItemImage({
       data: data,
       showSpinner: showSpinner,
       fit: fit,
+      cacheWidth: cacheWidth,
+      cacheHeight: cacheHeight,
     );
     child = padding == EdgeInsets.zero
         ? image

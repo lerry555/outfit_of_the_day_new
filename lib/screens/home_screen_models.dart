@@ -29,9 +29,7 @@ class _HeroOutfitItem {
 class _HeroBannerVM {
   final String description;
 
-  const _HeroBannerVM({
-    required this.description,
-  });
+  const _HeroBannerVM({required this.description});
 }
 
 class _HeroTodayState {
@@ -61,15 +59,13 @@ class _HeroOutfitRecommendation {
   final List<_HeroOutfitItem> items;
   final String reason;
 
-  const _HeroOutfitRecommendation({
-    required this.items,
-    required this.reason,
-  });
+  const _HeroOutfitRecommendation({required this.items, required this.reason});
 }
 
 class _StylistFinalReviewSelection {
   final int finalSelectedIndex;
-  final OutfitPreview finalSelectedCandidate;
+  final OutfitPreview? finalSelectedCandidate;
+  final V2FlexibleOutfitResult? flexibleOutfit;
   final String finalSelectedSignature;
   final List<String> finalSelectedItemIds;
   final List<_HeroOutfitItem> heroItems;
@@ -78,6 +74,7 @@ class _StylistFinalReviewSelection {
   const _StylistFinalReviewSelection({
     required this.finalSelectedIndex,
     required this.finalSelectedCandidate,
+    this.flexibleOutfit,
     required this.finalSelectedSignature,
     required this.finalSelectedItemIds,
     required this.heroItems,
@@ -185,6 +182,7 @@ class _HomeDayHeroCacheEntry {
   final _HeroTodayState state;
   final String weatherSignature;
   final String wardrobeSignature;
+  final String stylePreferenceFingerprint;
   final bool userModified;
   final String? persistSource;
   final DateTime? updatedAt;
@@ -193,6 +191,7 @@ class _HomeDayHeroCacheEntry {
     required this.state,
     required this.weatherSignature,
     required this.wardrobeSignature,
+    this.stylePreferenceFingerprint = '',
     this.userModified = false,
     this.persistSource,
     this.updatedAt,
@@ -211,6 +210,7 @@ class _HomeDayCacheSnapshot {
   final DateTime updatedAt;
   final String weatherSignature;
   final String wardrobeSignature;
+  final String stylePreferenceFingerprint;
   final String? likedOutfitKey;
 
   const _HomeDayCacheSnapshot({
@@ -225,6 +225,7 @@ class _HomeDayCacheSnapshot {
     required this.updatedAt,
     this.weatherSignature = '',
     this.wardrobeSignature = '',
+    this.stylePreferenceFingerprint = '',
     this.likedOutfitKey,
   });
 }

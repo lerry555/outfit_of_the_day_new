@@ -976,7 +976,8 @@ abstract final class HomeWardrobeNormalizer {
 
   static int? _parseWarmth(Map<String, dynamic> raw) {
     final n = num.tryParse(
-      (raw['warmth_level'] ?? raw['warmthLevel'] ?? '').toString(),
+      (raw['warmth_level'] ?? raw['warmthLevel'] ?? raw['warmth'] ?? '')
+          .toString(),
     );
     if (n == null || !n.isFinite) return null;
     return n.round().clamp(1, 10);

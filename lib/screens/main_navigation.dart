@@ -1,11 +1,22 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
 import 'add_clothing_screen.dart';
 import 'stylist_chat_screen.dart';
+import '../Services/app_notification_router.dart';
+import '../Services/fcm_service.dart';
 import '../Services/share_intent_service.dart';
+import '../Services/stylist_notification_intent.dart';
 import '../utils/wardrobe_image_url_priority.dart';
+
+/// IndexedStack index of [StylistChatScreen] inside [MainNavigation].
+const int kStylistIndexedStackIndex = 2;
+
+/// Bottom-bar index of the AI Stylist item (Add is 2 and does not switch stack).
+const int kStylistBottomBarIndex = 3;
 
 class MainNavigation extends StatefulWidget {
   const MainNavigation({Key? key}) : super(key: key);
@@ -36,9 +47,24 @@ class _MainNavigationState extends State<MainNavigation> {
 
     setWardrobeCardImageLoggingEnabled(false);
 
+    AppNotificationRouter.instance.attachStylistTabSink(
+      _selectStylistFromNotification,
+    );
+    unawaited(FcmService.instance.init());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ShareIntentService.start(context);
+      AppNotificationRouter.instance.flushPending();
     });
+  }
+
+  @override
+  void dispose() {
+    AppNotificationRouter.instance.detachStylistTabSink();
+    super.dispose();
+  }
+
+  void _selectStylistFromNotification(StylistNotificationIntent intent) {
+    unawaited(_onTabTapped(kStylistBottomBarIndex));
   }
 
   Future<void> _onTabTapped(int index) async {
@@ -47,7 +73,9 @@ class _MainNavigationState extends State<MainNavigation> {
       return;
     }
 
-    final screenIndex = index == 3 ? 2 : index;
+    final screenIndex = index == kStylistBottomBarIndex
+        ? kStylistIndexedStackIndex
+        : index;
     setWardrobeCardImageLoggingEnabled(screenIndex == 1);
     setState(() {
       _currentIndex = screenIndex;

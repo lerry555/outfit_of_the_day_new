@@ -16,20 +16,19 @@ String canonicalProductLinkUrl(String url) {
   if (trimmed.isEmpty) return trimmed;
   try {
     final uri = Uri.parse(trimmed.contains('://') ? trimmed : 'https://$trimmed');
-    if (uri.queryParameters.isEmpty) {
-      return uri.replace(fragment: null).toString();
-    }
     final kept = <String, String>{};
     for (final entry in uri.queryParameters.entries) {
       if (_isTrackingQueryKey(entry.key)) continue;
       kept[entry.key] = entry.value;
     }
-    return uri
-        .replace(
-          queryParameters: kept.isEmpty ? null : kept,
-          fragment: null,
-        )
-        .toString();
+    return Uri(
+      scheme: uri.scheme,
+      userInfo: uri.userInfo.isEmpty ? null : uri.userInfo,
+      host: uri.host,
+      port: uri.hasPort ? uri.port : null,
+      path: uri.path,
+      queryParameters: kept.isEmpty ? null : kept,
+    ).toString();
   } catch (_) {
     return trimmed;
   }

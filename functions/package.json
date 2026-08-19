@@ -9,7 +9,29 @@
   "scripts": {
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test:trusted-vision-handoff": "node --test trusted_vision_qualification_input.test.js",
+    "test:live-parser-runtime": "node --test live_parser_backend_qualification_orchestrator.test.js live_parser_backend_qualification_runtime_parity.test.js",
+    "test:live-shadow-runtime": "node --test wardrobe_live_shadow_runtime_wiring.test.js",
+    "test:openai-secret-binding": "node --test openai_secret_binding.test.js",
+    "test:clothing-vision": "node --test clothing_vision/clothing_vision.test.js",
+    "test:blind-benchmark-foundation": "node --test benchmark_blind_vision/benchmark_blind_vision.test.js",
+    "test:blind-benchmark-gemini": "node --test benchmark_blind_vision/gemini_provider_adapter.test.js",
+    "test:blind-benchmark-anthropic": "node --test benchmark_blind_vision/anthropic_provider_adapter.test.js",
+    "test:blind-benchmark-openai": "node --test benchmark_blind_vision/openai_provider_adapter.test.js",
+    "test:blind-benchmark-full-run": "node --test benchmark_blind_vision/full_run.test.js",
+    "test:blind-benchmark-opaque-id": "node --test benchmark_blind_vision/opaque_sample_id.test.js",
+    "test:blind-benchmark-checkpoint": "node --test benchmark_blind_vision/checkpoint_store.test.js",
+    "test:blind-benchmark-anthropic-normalize": "node --test benchmark_blind_vision/anthropic_transport_normalize.test.js",
+    "test:blind-benchmark-all": "node --test benchmark_blind_vision/benchmark_blind_vision.test.js benchmark_blind_vision/gemini_provider_adapter.test.js benchmark_blind_vision/gemini_error_diagnostics.test.js benchmark_blind_vision/anthropic_provider_adapter.test.js benchmark_blind_vision/openai_provider_adapter.test.js benchmark_blind_vision/full_run.test.js benchmark_blind_vision/anthropic_transport_normalize.test.js benchmark_blind_vision/opaque_sample_id.test.js benchmark_blind_vision/checkpoint_store.test.js",
+    "test:blind-benchmark-gemini-error-diagnostics": "node --test benchmark_blind_vision/gemini_error_diagnostics.test.js",
+    "test:controlled-shadow-policy": "node --test controlled_shadow_policy_foundation.test.js",
+    "test:controlled-shadow-configuration": "node --test controlled_shadow_configuration.test.js",
+    "test:qualification-contract": "node --test backend_qualification_parity.test.js backend_provider_dependency_graph.test.js backend_migration_candidate_ranking.test.js vision_observation_evidence_provider.test.js wardrobe_capability_inference_provider.test.js vision_framing_attestor.test.js vision_property_applicability_qualifier.test.js vision_visibility_trust_qualifier.test.js vision_negative_claim_corroborator.test.js observation_absence_qualifier.test.js canonical_observation_consistency_validator.test.js prepare_vision_identity_qualification_input.test.js vision_identity_qualifier.test.js prepare_vision_family_identity_input.test.js vision_family_identity_resolver.test.js prepare_vision_knowledge_base_prior_input.test.js clothing_knowledge_base_prior_loader.test.js wardrobe_knowledge_base_prior_provider.test.js prepare_wardrobe_profile_resolver_input.test.js prepare_qualified_vision_persistence_mapper_input.test.js qualified_vision_persistence_mapper.test.js wardrobe_qualification_revision_contract.test.js wardrobe_profile_firestore_repository.test.js wardrobe_controlled_write_runtime_wiring.test.js controlled_write_canary_foundation.test.js wardrobe_backend_boundary_rules.test.js trusted_storage_metadata_adapter.test.js wardrobe_revision_lifecycle_mutation_service.test.js wardrobe_offline_endpoint_boundary.test.js wardrobe_production_runtime_wiring.test.js wardrobe_async_firestore_read_boundary.test.js trusted_vision_result_provenance.test.js wardrobe_firestore_rules_baseline_discovery.test.js wardrobe_authority_shadow_export.test.js wardrobe_authority_deployment_preflight.test.js wardrobe_authority_deploy_package_boundary.test.js wardrobe_profile_resolver.test.js vision_parser_fixture_capture.test.js vision_adversarial_asset_dataset.test.js wardrobe_image_inventory.test.js wardrobe_runtime_inventory_export.test.js wardrobe_asset_materialization.test.js capture_auth_handoff.test.js",
+    "test:shopping-search": "node --test shopping/catalog_sync_service.test.js shopping/catalog_search_service.test.js shopping/public_shopping_dto.test.js shopping/wishlist_v2_service.test.js shopping/monitoring/wishlist_monitoring_engine.test.js shopping/monitoring/wishlist_catalog_facts.test.js shopping/monitoring/wishlist_tracking_parity.test.js shopping/monitoring/wishlist_monitoring_service.test.js shopping/notifications/wishlist_notification_templates.test.js shopping/partners/partner_foundation.test.js shopping/partners/reserved_cj_onboarding.test.js",
+    "test:shopping-partners": "node --test shopping/partners/partner_foundation.test.js shopping/partners/reserved_cj_onboarding.test.js",
+    "test:shopping-session-emulator": "firebase emulators:exec --only firestore --project demo-ootd-rules-9cr \"node --test shopping/shopping_session_firestore_emulator.test.js\"",
+    "test:firestore-rules": "firebase emulators:exec --only firestore --project demo-ootd-rules-9cr \"node --test wardrobe_firestore_rules_emulator.test.js && node --test shopping/catalog_firestore_rules_emulator.test.js && node --test shopping/shopping_session_firestore_emulator.test.js && node --test shopping/wishlist_v2_firestore_emulator.test.js\""
   },
   "dependencies": {
     "firebase-admin": "^12.7.0",
@@ -17,6 +39,8 @@
     "sharp": "^0.33.5"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
+    "firebase": "^12.17.0",
     "firebase-functions-test": "^3.1.0"
   }
 }

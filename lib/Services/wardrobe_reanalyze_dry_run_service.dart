@@ -95,8 +95,38 @@ abstract final class WardrobeReanalyzeDryRunService {
         }
 
         final old = WardrobeReanalyzeFields.fromStored(data);
+        final idToken = await user.getIdToken();
+        if (idToken == null || idToken.isEmpty) {
+          throw Exception('Nepodarilo sa získať auth token.');
+        }
+        final storagePath = ClothingAnalyzerPipeline.resolveOwnedStoragePath(
+          storagePath: (data['storagePath'] ?? '').toString(),
+          imageUrl: imageUrl,
+        );
+        if (storagePath == null ||
+            storagePath.isEmpty ||
+            !storagePath.startsWith('wardrobe/')) {
+          failed++;
+          items.add(
+            WardrobeReanalyzeReviewItem.failed(
+              documentId: doc.id,
+              itemId: storedItemId,
+              brand: brand,
+              imageUrl: imageUrl,
+              old: WardrobeReanalyzeFields.fromStored(data),
+              error: 'no_owned_storage_path',
+            ),
+          );
+          debugPrint(
+            '[WARDROBE_REANALYZE] itemId=${doc.id} FAILED '
+            'reason=no_owned_storage_path',
+          );
+          continue;
+        }
         final pipeline = await ClothingAnalyzerPipeline.analyzeImageUrl(
           imageUrl,
+          idToken: idToken,
+          storagePath: storagePath,
           timeout: itemTimeout,
         );
         final neu = WardrobeReanalyzeFields.fromPipeline(pipeline);

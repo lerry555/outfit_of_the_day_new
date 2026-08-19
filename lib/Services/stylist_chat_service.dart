@@ -5,7 +5,40 @@ import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
+import '../domain/style_preferences/style_preferences_runtime.dart';
+import 'stylist_job_consumer.dart';
+import 'user_style_preferences_reader.dart';
+
 class StylistChatService {
+  StylistChatService({
+    FirebaseFirestore? firestore,
+    FirebaseAuth? auth,
+    StylistJobConsumer? jobConsumer,
+    UserStylePreferencesReader? stylePreferences,
+  }) : _firestoreOverride = firestore,
+       _authOverride = auth,
+       _injectedJobConsumer = jobConsumer,
+       _stylePreferences = stylePreferences ??
+           UserStylePreferencesReader(firestore: firestore, auth: auth);
+
+  final FirebaseFirestore? _firestoreOverride;
+  final FirebaseAuth? _authOverride;
+  final StylistJobConsumer? _injectedJobConsumer;
+  final UserStylePreferencesReader _stylePreferences;
+
+  FirebaseFirestore get _firestore =>
+      _firestoreOverride ?? FirebaseFirestore.instance;
+  FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
+
+  StylistJobConsumer? _cachedJobs;
+
+  StylistJobConsumer get jobs =>
+      _injectedJobConsumer ??
+      (_cachedJobs ??= StylistJobConsumer(
+        watch: _watchJob,
+        delete: _deleteJob,
+        normalize: normalizeJobResult,
+      ));
   static const _genericErrorReply =
       'Niečo sa pokazilo 😅 Skús to prosím ešte raz.';
 
@@ -49,6 +82,8 @@ class StylistChatService {
     String? improveHint,
     String? notifyJobId,
     String? chatId,
+    Map<String, dynamic>? shoppingContext,
+    Map<String, dynamic>? shoppingWardrobeSignal,
   }) async {
     try {
       final callable = FirebaseFunctions.instanceFor(
@@ -80,12 +115,19 @@ class StylistChatService {
       if (chatId != null && chatId.trim().isNotEmpty) {
         payload['chatId'] = chatId.trim();
       }
+      if (shoppingContext != null && shoppingContext.isNotEmpty) {
+        payload['shoppingContext'] = shoppingContext;
+      }
+      if (shoppingWardrobeSignal != null && shoppingWardrobeSignal.isNotEmpty) {
+        payload['shoppingWardrobeSignal'] = shoppingWardrobeSignal;
+      }
       if (eventContext != null && eventContext.isNotEmpty) {
         payload['eventContext'] = eventContext;
       }
       if (selectedOutfitItems.isNotEmpty) {
-        payload['selectedOutfitItems'] =
-            slimOutfitItemsForApi(selectedOutfitItems);
+        payload['selectedOutfitItems'] = slimOutfitItemsForApi(
+          selectedOutfitItems,
+        );
       }
       if (occasionContext != null && occasionContext.isNotEmpty) {
         payload['occasionContext'] = occasionContext;
@@ -102,6 +144,10 @@ class StylistChatService {
       if (stylistOpinion != null && stylistOpinion.isNotEmpty) {
         payload['stylistOpinion'] = stylistOpinion;
       }
+      final stylePayload = await _stylePreferencesPayload();
+      if (stylePayload != null) {
+        payload['userStylePreferences'] = stylePayload;
+      }
       // Analýza fotky (OpenAI Vision) + čítanie šatníka trvá dlhšie, preto
       // pre rate_photo dávame väčší časový limit.
       final callTimeout = mode == 'rate_photo'
@@ -111,7 +157,7 @@ class StylistChatService {
       // dokáže zhodiť request. Skúsime ho preto raz/dvakrát zopakovať.
       final result = await _callWithRetry(
         callable,
-        payload,
+        jsonSafeMapForCallable(payload),
         callTimeout,
         maxAttempts: 3,
       );
@@ -125,9 +171,9 @@ class StylistChatService {
           'reply': reply is String ? reply : _genericErrorReply,
           'suggestedItems': suggestedItems is List
               ? suggestedItems
-                  .whereType<Map>()
-                  .map((item) => Map<String, dynamic>.from(item))
-                  .toList(growable: false)
+                    .whereType<Map>()
+                    .map((item) => Map<String, dynamic>.from(item))
+                    .toList(growable: false)
               : const <Map<String, dynamic>>[],
           'action': (data['action'] ?? 'chat').toString(),
           'offerWardrobe': data['offerWardrobe'] == true,
@@ -137,10 +183,11 @@ class StylistChatService {
               : null,
           'excludeItemKeywords': data['excludeItemKeywords'] is List
               ? (data['excludeItemKeywords'] as List)
-                  .map((v) => v.toString().trim())
-                  .where((v) => v.isNotEmpty)
-                  .toList(growable: false)
+                    .map((v) => v.toString().trim())
+                    .where((v) => v.isNotEmpty)
+                    .toList(growable: false)
               : const <String>[],
+          ..._shoppingFieldsFromData(Map<String, dynamic>.from(data)),
           ..._outfitDecisionFieldsFromData(Map<String, dynamic>.from(data)),
         };
       }
@@ -173,50 +220,93 @@ class StylistChatService {
   /// spojenie (appka šla na pozadie). Výsledok si vtedy vie klient dotiahnuť
   /// z `users/{uid}/stylistJobs/{jobId}`, kam ho funkcia zapísala. Počúva na
   /// tento dokument až kým sa neobjaví hotový výsledok (alebo do timeoutu).
+  ///
+  /// Does not delete the job. Callers must persist the chat first, then
+  /// [deleteJob].
   Future<Map<String, dynamic>?> awaitJobResult(
     String jobId, {
     Duration timeout = const Duration(minutes: 3),
   }) async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null || jobId.trim().isEmpty) return null;
-    final ref = FirebaseFirestore.instance
+    if (jobId.trim().isEmpty) return null;
+    if (_injectedJobConsumer == null && _auth.currentUser?.uid == null) {
+      return null;
+    }
+    final snapshot = await jobs.waitUntilSettled(
+      jobId,
+      timeout: timeout,
+      treatMissingAsPending: true,
+    );
+    if (snapshot.status != StylistJobStatus.done) return null;
+    return snapshot.response;
+  }
+
+  Future<void> deleteJob(String jobId) => jobs.deleteJob(jobId);
+
+  Future<Map<String, dynamic>?> _stylePreferencesPayload() {
+    return resolveStylePreferencesPayload(
+      _stylePreferences,
+      _auth.currentUser?.uid,
+    );
+  }
+
+  /// Loads taste-only Stylist context. Missing docs, empty lists, and
+  /// transient read failures all resolve to `null` (omit the payload field).
+  /// Saved taste is also omitted when [StylePreferencesRuntime] is disabled.
+  @visibleForTesting
+  static Future<Map<String, dynamic>?> resolveStylePreferencesPayload(
+    UserStylePreferencesReader reader,
+    String? uid,
+  ) async {
+    if (!StylePreferencesRuntime.enabled) return null;
+    try {
+      final prefs = await reader.loadForUid(uid);
+      return StylePreferencesRuntime.stylistPayload(prefs);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Stream<StylistJobRaw> _watchJob(String jobId) {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null) {
+      return Stream<StylistJobRaw>.value(const StylistJobRaw.missing());
+    }
+    return _firestore
         .collection('users')
         .doc(uid)
         .collection('stylistJobs')
-        .doc(jobId.trim());
+        .doc(jobId.trim())
+        .snapshots()
+        .map((snap) {
+          if (!snap.exists) return const StylistJobRaw.missing();
+          final data = snap.data() ?? const <String, dynamic>{};
+          final rawResult = data['result'];
+          return StylistJobRaw(
+            exists: true,
+            status: (data['status'] ?? '').toString(),
+            result: rawResult is Map
+                ? Map<String, dynamic>.from(rawResult)
+                : null,
+          );
+        });
+  }
 
-    final completer = Completer<Map<String, dynamic>?>();
-    StreamSubscription? sub;
-    Timer? timer;
-
-    void finish(Map<String, dynamic>? value) {
-      if (completer.isCompleted) return;
-      sub?.cancel();
-      timer?.cancel();
-      completer.complete(value);
-    }
-
-    timer = Timer(timeout, () => finish(null));
-    sub = ref.snapshots().listen((snap) {
-      final data = snap.data();
-      if (data == null) return;
-      if ((data['status'] ?? '').toString() != 'done') return;
-      final rawResult = data['result'];
-      if (rawResult is! Map) return;
-      finish(_normalizeResult(Map<String, dynamic>.from(rawResult)));
-    }, onError: (_) => finish(null));
-
-    final value = await completer.future;
-    // Po prevzatí výsledok zmažeme, nech sa job dokumenty nehromadia.
-    if (value != null) {
-      unawaited(ref.delete().catchError((_) {}));
-    }
-    return value;
+  Future<void> _deleteJob(String jobId) async {
+    final uid = _auth.currentUser?.uid;
+    if (uid == null || jobId.trim().isEmpty) return;
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .collection('stylistJobs')
+          .doc(jobId.trim())
+          .delete();
+    } catch (_) {}
   }
 
   /// Prevedie surový `result` z Firestore do rovnakého tvaru, aký vracia
   /// `sendMessage`, aby ho klient vedel spracovať rovnakou cestou.
-  Map<String, dynamic> _normalizeResult(Map<String, dynamic> data) {
+  static Map<String, dynamic> normalizeJobResult(Map<String, dynamic> data) {
     final reply = data['reply'];
     final suggestedItems = data['suggestedItems'];
     return <String, dynamic>{
@@ -224,9 +314,9 @@ class StylistChatService {
       'reply': reply is String ? reply : _genericErrorReply,
       'suggestedItems': suggestedItems is List
           ? suggestedItems
-              .whereType<Map>()
-              .map((item) => Map<String, dynamic>.from(item))
-              .toList(growable: false)
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: false)
           : const <Map<String, dynamic>>[],
       'action': (data['action'] ?? 'chat').toString(),
       'offerWardrobe': data['offerWardrobe'] == true,
@@ -236,10 +326,11 @@ class StylistChatService {
           : null,
       'excludeItemKeywords': data['excludeItemKeywords'] is List
           ? (data['excludeItemKeywords'] as List)
-              .map((v) => v.toString().trim())
-              .where((v) => v.isNotEmpty)
-              .toList(growable: false)
+                .map((v) => v.toString().trim())
+                .where((v) => v.isNotEmpty)
+                .toList(growable: false)
           : const <String>[],
+      ..._shoppingFieldsFromData(data),
       ..._outfitDecisionFieldsFromData(data),
     };
   }
@@ -255,18 +346,39 @@ class StylistChatService {
         'decisionRisk': data['decisionRisk'].toString(),
       'assumptions': data['assumptions'] is List
           ? (data['assumptions'] as List)
-              .map((v) => v.toString().trim())
-              .where((v) => v.isNotEmpty)
-              .toList(growable: false)
+                .map((v) => v.toString().trim())
+                .where((v) => v.isNotEmpty)
+                .toList(growable: false)
           : const <String>[],
       if (data['clarifyReason'] != null)
         'clarifyReason': data['clarifyReason'].toString(),
       'impactFields': impactRaw is List
           ? impactRaw
-              .map((v) => v.toString().trim())
-              .where((v) => v.isNotEmpty)
-              .toList(growable: false)
+                .map((v) => v.toString().trim())
+                .where((v) => v.isNotEmpty)
+                .toList(growable: false)
           : const <String>[],
+    };
+  }
+
+  static Map<String, dynamic> _shoppingFieldsFromData(
+    Map<String, dynamic> data,
+  ) {
+    return <String, dynamic>{
+      'messageAttachments': data['messageAttachments'] is List
+          ? (data['messageAttachments'] as List)
+                .whereType<Map>()
+                .map((item) => Map<String, dynamic>.from(item))
+                .toList(growable: false)
+          : const <Map<String, dynamic>>[],
+      'shoppingContextPatch': data['shoppingContextPatch'] is Map
+          ? Map<String, dynamic>.from(data['shoppingContextPatch'] as Map)
+          : const <String, dynamic>{},
+      'clearShoppingContext': data['clearShoppingContext'] == true,
+      if (data['zeroResultDiagnostics'] is Map)
+        'zeroResultDiagnostics': Map<String, dynamic>.from(
+          data['zeroResultDiagnostics'] as Map,
+        ),
     };
   }
 
@@ -315,5 +427,35 @@ class StylistChatService {
         text.contains('network') ||
         text.contains('timed out') ||
         text.contains('timeout');
+  }
+
+  static Map<String, dynamic> jsonSafeMapForCallable(
+    Map<String, dynamic> input,
+  ) {
+    final out = _jsonSafe(input);
+    return out is Map<String, dynamic>
+        ? out
+        : Map<String, dynamic>.from(out as Map);
+  }
+
+  static dynamic _jsonSafe(dynamic value) {
+    if (value == null || value is num || value is bool || value is String) {
+      return value;
+    }
+    if (value is Timestamp) {
+      return value.millisecondsSinceEpoch;
+    }
+    if (value is DateTime) {
+      return value.toIso8601String();
+    }
+    if (value is Map) {
+      return value.map(
+        (key, child) => MapEntry(key.toString(), _jsonSafe(child)),
+      );
+    }
+    if (value is Iterable) {
+      return value.map(_jsonSafe).toList(growable: false);
+    }
+    return value.toString();
   }
 }

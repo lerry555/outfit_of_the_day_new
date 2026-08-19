@@ -18,6 +18,32 @@ List<_HeroOutfitItem> _orderedHeroOutfitItems(List<_HeroOutfitItem> items) {
   return orderedItems;
 }
 
+bool _isEmptyHeroEditSlot(_HeroOutfitItem item) {
+  return (item.wardrobeItemId ?? '').trim().isEmpty &&
+      (item.imageUrl ?? '').trim().isEmpty;
+}
+
+/// Edit-only optional outerwear tile. Not persisted; filling it does not force
+/// a layer outside weather/context ranking.
+List<_HeroOutfitItem> _heroEditDisplayItems({
+  required List<_HeroOutfitItem> items,
+  required bool editMode,
+}) {
+  final ordered = _orderedHeroOutfitItems(items);
+  if (!editMode) return ordered;
+  if (ordered.any((item) => item.type == _HeroWearType.outerwear)) {
+    return ordered;
+  }
+  return [
+    const _HeroOutfitItem(
+      type: _HeroWearType.outerwear,
+      icon: Icons.add,
+      label: 'Pridať vrstvu',
+    ),
+    ...ordered,
+  ];
+}
+
 String _heroOutfitVisualSlotKey(String dayPrefix, _HeroWearType type) {
   switch (type) {
     case _HeroWearType.top:
@@ -158,7 +184,7 @@ class _HeroOutfitTilesGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final ordered = _orderedHeroOutfitItems(items);
+    final ordered = _heroEditDisplayItems(items: items, editMode: editMode);
     final display = ordered.length > 6 ? ordered.sublist(0, 6) : ordered;
     final n = display.length;
 
