@@ -69,6 +69,19 @@ abstract final class V2FlexibleCandidateMatrix {
                   .intersection(context.requiredOccasions)
                   .isNotEmpty,
         )
+        // Candidate IDs are frozen after this matrix is built, so physically
+        // unsuitable footwear must be removed before any model sees it.
+        .where(
+          (value) =>
+              !value.item.bodySlots.contains('feet') ||
+              !OutfitSuitabilityPolicyV2.isFootwearPhysicallyUnsuitableForConditions(
+                value.item,
+                tempC: OutfitSuitabilityPolicyV2.effectiveTempC(
+                  tempC: context.tempC,
+                  feelsLikeC: context.feelsLikeC,
+                ),
+              ),
+        )
         .toList(growable: false);
     if (eligible.isEmpty) return const [];
     final results = <V2FlexibleCandidate>[], seen = <String>{};

@@ -97,6 +97,10 @@ abstract final class OutfitSuitabilityPolicyV2 {
   }) {
     final temp = tempC;
     final type = item.canonicalType.toLowerCase();
+    if (item.bodySlots.contains('feet') &&
+        isFootwearPhysicallyUnsuitableForConditions(item, tempC: temp)) {
+      return true;
+    }
     if (temp != null &&
         temp >= 24 &&
         item.warmth >= 7 &&
@@ -113,6 +117,56 @@ abstract final class OutfitSuitabilityPolicyV2 {
       return true;
     }
     return false;
+  }
+
+  /// Rejects only footwear whose V2 thermal/season facts make it plainly
+  /// unsuitable. Rain can improve a suitable closed shoe's rank, but may not
+  /// rescue winter-only or heavily insulated boots in warm weather.
+  static bool isFootwearPhysicallyUnsuitableForConditions(
+    WardrobeItemV2 item, {
+    int? tempC,
+  }) {
+    if (!item.bodySlots.contains('feet') &&
+        item.canonicalFamily.toLowerCase() != 'footwear') {
+      return false;
+    }
+    if (tempC == null) return false;
+
+    final type = item.canonicalType.toLowerCase();
+    final seasons = item.seasons.map(_normalizedSeason).toSet();
+    final winterOnly =
+        seasons.isNotEmpty && seasons.every((season) => season == 'winter');
+    final supportsWarmSeason = seasons.any(
+      (season) => const {'summer', 'all_season'}.contains(season),
+    );
+    final isBoot = isBootFootwear(type);
+    final winterType = type.contains('winter') || type.contains('snow');
+
+    if (tempC >= 18 && winterOnly) return true;
+    if (tempC >= 18 && isBoot && winterType && item.warmth >= 7) {
+      return true;
+    }
+    // At true warm-weather temperatures, very insulating boots are still
+    // unsuitable unless their explicit season data says they are all-season.
+    if (tempC >= 22 && isBoot && item.warmth >= 8 && !supportsWarmSeason) {
+      return true;
+    }
+    return false;
+  }
+
+  static String _normalizedSeason(String value) {
+    final season = value.trim().toLowerCase();
+    return switch (season) {
+      'zima' || 'winter' => 'winter',
+      'leto' || 'summer' => 'summer',
+      'celoročne' ||
+      'celorocne' ||
+      'all_season' ||
+      'all-season' => 'all_season',
+      'jar' || 'spring' => 'spring',
+      'jeseň' || 'jesen' || 'autumn' || 'fall' => 'autumn',
+      _ => season,
+    };
   }
 
   static bool isOpenFootwear(String canonicalType) {
@@ -155,7 +209,11 @@ abstract final class OutfitSuitabilityPolicyV2 {
     required String activityType,
     required int formalityFloorValue,
     required bool isRainy,
+    int? tempC,
   }) {
+    if (isFootwearPhysicallyUnsuitableForConditions(item, tempC: tempC)) {
+      return 1000;
+    }
     final type = item.canonicalType.toLowerCase();
     if (isTerrainActivity(activityType)) {
       if (isBootFootwear(type) && !type.contains('chelsea')) return 0;

@@ -189,7 +189,12 @@ abstract final class NativeOutfitEngineV2 {
         activityType: request.activityType,
         formalityFloorValue: request.resolvedFormalityFloor,
         isRainy: request.weatherProtectionRequired,
+        tempC: request.effectiveTempC,
       ),
+      // A footwear thermal/season rejection is not eligible for the legacy
+      // fallback pass. Returning no composition is safer than silently
+      // restoring a physically unsuitable boot.
+      allowUnsafeFallback: false,
     );
     final useOnePiece =
         onePiece != null &&
