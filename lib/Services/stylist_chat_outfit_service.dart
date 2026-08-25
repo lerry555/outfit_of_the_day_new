@@ -70,6 +70,22 @@ class StylistChatOutfitResult {
   final List<String> rejectAllReasonCodes;
 }
 
+/// Explicit swap requests must either return their validated replacement or
+/// leave the displayed outfit unchanged. They must never fall back to an
+/// unrelated matrix candidate.
+V2FlexibleOutfitResult requireExplicitStylistSwapReplacementV1(
+  V2FlexibleOutfitResult? replacement,
+) {
+  if (replacement == null || replacement.validate().isNotEmpty) {
+    throw const StylistFrozenDecisionRejectedExceptionV1(
+      <String>['swap_replacement_unavailable'],
+      explanation:
+          'Nenašiel som bezpečnú a vhodnú náhradu pre požadovanú výmenu, preto pôvodný outfit nemením.',
+    );
+  }
+  return replacement;
+}
+
 class StylistChatEventContext {
   final DateTime date;
   final int? hourLocal;
@@ -338,15 +354,17 @@ class StylistChatOutfitService {
       final target = current == null
           ? null
           : _swapTargetForV2(current, requestedSwap);
-      if (current != null && target != null) {
-        selected =
-            V2FlexibleSwapOrchestrator.replace(
-              current: current,
-              itemId: target.itemId,
-              wardrobe: resolved,
-              context: context,
-            ) ??
-            matrix.first.outfit;
+      if (current == null || target == null) {
+        selected = requireExplicitStylistSwapReplacementV1(null);
+      } else {
+        selected = requireExplicitStylistSwapReplacementV1(
+          V2FlexibleSwapOrchestrator.replace(
+            current: current,
+            itemId: target.itemId,
+            wardrobe: resolved,
+            context: context,
+          ),
+        );
       }
     } else {
       final decision = await const StylistFrozenCandidateDecisionServiceV1()
