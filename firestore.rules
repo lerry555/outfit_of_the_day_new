@@ -1,0 +1,247 @@
+rules_version = '2';
+
+// =============================================================================
+// M11.1 Phase 5.3B-9C-R — Production baseline + wardrobe backend boundary merge
+// =============================================================================
+//
+// Authoritative recovered production baseline (local firestore.rules) with the
+// minimal wardrobe backend-owned field boundary merged in.
+//
+// Backend-owned (client create/update denied; Admin SDK bypasses Rules):
+//   - qualificationAuthority (and all nested fields)
+//   - wardrobeProfile (and all nested fields, incl. machineEvidence,
+//     userCorrections envelope, mapper provenance, revisions)
+//
+// All other existing client UX under users/{uid}/... remains owner-allowed.
+// Do NOT deploy from this phase without explicit approval.
+// =============================================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Internal controlled-shadow control plane. Admin SDK bypasses Rules;
+    // every client identity is denied explicitly.
+    match /wardrobeAuthorityShadowLeases/{leaseId} {
+      allow read, create, update, delete: if false;
+    }
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return signedIn() && request.auth.uid == userId;
+    }
+
+    function wardrobeBackendOwnedKeys() {
+      return ['qualificationAuthority', 'wardrobeProfile'];
+    }
+
+    function wardrobeBackendFieldsAbsentOnCreate() {
+      return !request.resource.data.keys().hasAny(wardrobeBackendOwnedKeys());
+    }
+
+    // Full-document equality via affectedKeys covers add, change, remove, and
+    // nested mutations (machineEvidence, userCorrections, revisions, …).
+    function wardrobeBackendFieldsUnchangedOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(wardrobeBackendOwnedKeys());
+    }
+
+    // Shopping catalog truth is written only by trusted backend services.
+    // Public catalog projections are readable to signed-in users; partner
+    // credentials, raw sync state, and identity indexes are never client data.
+    match /catalogPartners/{partnerId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /catalogProducts/{productId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /catalogVariants/{variantId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /catalogOffers/{offerId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /catalogOffers/{offerId}/sizes/{sizeKey} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /catalogSearchVariants/{variantId} {
+      allow read: if signedIn();
+      allow create, update, delete: if false;
+    }
+
+    match /partnerIntegrations/{partnerId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /catalogSyncStates/{partnerId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /catalogSyncRuns/{runId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /catalogIdentityIndex/{indexId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /wishlistSubscriptions/{variantId}/subscribers/{subscriptionId} {
+      allow read, create, update, delete: if false;
+    }
+
+    // Wishlist transition receipts and refresh leases are server-only. They
+    // contain delivery state and fanout metadata, never user-writable intent.
+    match /wishlistEvents/{eventId} {
+      allow read, create, update, delete: if false;
+    }
+
+    match /wishlistRefreshLeases/{userId} {
+      allow read, create, update, delete: if false;
+    }
+
+    // Active Shopping orchestration state is server-owned. Clients receive
+    // sanitized callable responses only; opaque IDs are not direct access.
+    match /shoppingSessions/{sessionId} {
+      allow read, create, update, delete: if false;
+    }
+
+    // Server-only START_SEARCH idempotency mapping. It intentionally lives
+    // outside a user-writable hierarchy and never authorizes session access.
+    match /shoppingSessionIdempotency/{mappingId} {
+      allow read, create, update, delete: if false;
+    }
+
+    // ✅ TRY-ON JOBS (A architektúra)
+    // Firestore: users/{uid}/tryon_jobs/{jobId}
+    // - klient môže iba čítať
+    // - zapisuje iba backend (Cloud Functions cez Admin SDK obchádza rules)
+    match /users/{userId}/tryon_jobs/{jobId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
+    }
+
+    // ✅ WARDROBE ITEMS — owner UX + backend-owned field boundary
+    // users/{userId}/wardrobe/{itemId}
+    match /users/{userId}/wardrobe/{itemId} {
+      allow read: if isOwner(userId);
+
+      allow create: if isOwner(userId)
+        && wardrobeBackendFieldsAbsentOnCreate();
+
+      allow update: if isOwner(userId)
+        && wardrobeBackendFieldsUnchangedOnUpdate();
+
+      // Whole-document delete remains owner-allowed (existing product behavior).
+      allow delete: if isOwner(userId);
+    }
+
+    // ✅ User profile document
+    match /users/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // Future Wishlist tracking is backend-owned. Legacy intent documents
+    // remain owner-editable, but clients can never forge evaluated states,
+    // notifications, or highlights.
+    function wishlistTrackingKeys() {
+      return [
+        'trackingState',
+        'evaluatedPriceState',
+        'evaluatedSizeStates',
+        'lastKnownGood',
+        'lastEventIds',
+        'notificationState',
+        'highlightState',
+        'catalogRevision',
+        'catalogFreshness'
+      ];
+    }
+
+    function wishlistTrackingFieldsAbsentOnCreate() {
+      return !request.resource.data.keys().hasAny(wishlistTrackingKeys());
+    }
+
+    function wishlistTrackingFieldsUnchangedOnUpdate() {
+      return !request.resource.data.diff(resource.data).affectedKeys()
+          .hasAny(wishlistTrackingKeys());
+    }
+
+    match /users/{userId}/wishlist/{wishlistItemId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && wishlistTrackingFieldsAbsentOnCreate();
+      allow update: if isOwner(userId) && wishlistTrackingFieldsUnchangedOnUpdate();
+      allow delete: if isOwner(userId);
+    }
+
+    // Shopping Wishlist V2 is callable-mediated. Both user intent and the
+    // evaluated baseline are written atomically by the trusted server so a
+    // client can never forge price, availability, event, or highlight state.
+    match /users/{userId}/wishlistV2/{wishlistItemId} {
+      allow read, create, update, delete: if false;
+    }
+
+    // ✅ Remaining user subcollections (trips, stylistChats, …)
+    // Wardrobe writes are NOT granted here — firstSegment != 'wardrobe' so the
+    // OR-match cannot bypass the wardrobe-specific boundary above.
+    // tryon_jobs remains readable via its specific match; client writes stay
+    // denied there (specific allow false). Broad write still excludes wardrobe
+    // only, matching prior catch-all scope for other collections.
+    match /users/{userId}/{firstSegment}/{document=**} {
+      allow read: if isOwner(userId)
+        && firstSegment != 'wishlistV2';
+      allow write: if isOwner(userId)
+        && firstSegment != 'wardrobe'
+        && firstSegment != 'wishlist'
+        && firstSegment != 'wishlistV2';
+    }
+
+    // ✅ STARŠIA ŠTRUKTÚRA ŠATNÍKA (ak ju ešte používaš)
+    // /wardrobe/{userId}/items/{itemId}
+    match /wardrobe/{userId}/items/{itemId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ✅ KALENDÁR mimo /users
+    match /calendarEvents/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    match /calendarEvents/{userId}/events/{eventId} {
+      allow read, write: if isOwner(userId);
+    }
+
+    // ✅ PRIATELSTVÁ – dokument v kolekcii "friendships"
+    // Strážime, aby k friendstvu mali prístup len tí dvaja, čo sú v "participants".
+    match /friendships/{friendshipId} {
+      // čítanie, update, delete
+      allow read, update, delete: if signedIn()
+                                  && request.auth.uid in resource.data.participants;
+
+      // vytvorenie
+      allow create: if signedIn()
+                    && request.auth.uid in request.resource.data.participants;
+    }
+
+    // ✅ ŽIADOSTI O ZLADENIE OUTFITOV – kolekcia "matchRequests"
+    match /matchRequests/{requestId} {
+      // čítanie, update, delete
+      allow read, update, delete: if signedIn()
+                                  && request.auth.uid in resource.data.participants;
+
+      // vytvorenie
+      allow create: if signedIn()
+                    && request.auth.uid in request.resource.data.participants;
+    }
+  }
+}

@@ -1,0 +1,8281 @@
+{
+  "artifactId": "WardrobeOntologyV2",
+  "taxonomyVersion": "2.0.0",
+  "ontologyVersion": "2.0.0",
+  "kbVersion": "2.0.0",
+  "generatedFrom": {
+    "artifact": "ClothingKnowledgeBasePriorArtifact",
+    "itemCount": 131
+  },
+  "enums": {
+    "bodySlots": [
+      "upper_body",
+      "lower_body",
+      "full_body",
+      "feet",
+      "head",
+      "face_eyes",
+      "neck",
+      "ears",
+      "wrist",
+      "hands",
+      "fingers",
+      "waist",
+      "ankle",
+      "hair",
+      "lapel",
+      "chest",
+      "pocket",
+      "carried",
+      "shoulder_carried",
+      "back_carried"
+    ],
+    "layerPositions": [
+      "skin_base",
+      "base",
+      "mid",
+      "outer",
+      "shell",
+      "not_applicable"
+    ],
+    "compositionRoles": [
+      "core",
+      "conditional",
+      "functional",
+      "finishing",
+      "accent"
+    ],
+    "metalTones": [
+      "gold",
+      "silver",
+      "rose_gold",
+      "gunmetal",
+      "bronze",
+      "mixed_metal",
+      "none",
+      "unknown"
+    ],
+    "dressCodeFit": [
+      "casual",
+      "smart_casual",
+      "business_casual",
+      "business_formal",
+      "cocktail",
+      "formal",
+      "black_tie",
+      "active",
+      "outdoor"
+    ],
+    "outfitFunctions": [
+      "coverage",
+      "thermal",
+      "weather_protection",
+      "foot_support",
+      "carrying",
+      "dress_code",
+      "waist_definition",
+      "color_accent",
+      "jewelry_accent",
+      "functional_accessory"
+    ]
+  },
+  "items": [
+    {
+      "canonicalType": "anklet",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "retiazka_na_clenok"
+      },
+      "defaultBodySlots": [
+        "ankle"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "anklet",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "backpack",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "back pack"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "ruksak"
+      },
+      "defaultBodySlots": [
+        "back_carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "bangle",
+      "canonicalFamily": "jewelry",
+      "parentType": "bracelet",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "pevny_naramanok"
+      },
+      "defaultBodySlots": [
+        "wrist"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "bracelets",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "baseball_cap",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "baseball cap",
+        "snapback"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "siltovka"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "basketball_jersey",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "basketball jersey"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "basketball_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "basketball sneakers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "tenisky",
+        "subcategory": "tenisky_sportove"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "beanie",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "knit hat",
+        "wool hat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "ciapka"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "belt",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "opasok"
+      },
+      "defaultBodySlots": [
+        "waist"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "waist_definition",
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "belt",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.widthClass",
+        "accessory.buckleTone"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "bikini_bottom",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "bikini bottom"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "plavky",
+        "subcategory": "plavky_spodok"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "bikini_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "bikini top"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "plavky",
+        "subcategory": "plavky_vrch"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "blazer",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "blejzer"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "sako"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "blouse",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "bluzka",
+        "halenka"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "bluzka"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "bomber_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "bomber"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_bomber"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "boots",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "boot"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "cizmy",
+        "subcategory": "cizmy_vysoke"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "bow_tie",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "bow tie",
+        "bowtie"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "motylik"
+      },
+      "defaultBodySlots": [
+        "neck"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "neckwear",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [
+          "neckwear"
+        ],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "bra",
+      "canonicalFamily": "undergarment",
+      "parentType": null,
+      "aliases": [
+        "brassiere"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "podprsenka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "bracelet",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "naramanok"
+      },
+      "defaultBodySlots": [
+        "wrist"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "bracelets",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "briefcase",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "business_case"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "aktovka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "brooch",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [
+        "pin_brooch"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "brozna"
+      },
+      "defaultBodySlots": [
+        "lapel",
+        "chest"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "bracelets",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "bucket_hat",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "fishing hat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "bucket_hat"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "canvas_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "canvas sneakers",
+        "plátěnky"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "tenisky",
+        "subcategory": "tenisky_fashion"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "cap",
+      "canonicalFamily": "headwear",
+      "parentType": null,
+      "aliases": [
+        "cap_generic"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "ciapka"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "headwear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "card_holder",
+      "canonicalFamily": "small_leather_good",
+      "parentType": null,
+      "aliases": [
+        "cardholder"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "puzdro_na_karty"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "cardigan",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "kardigan"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "svetre",
+        "subcategory": "sveter_kardigan"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "cargo_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "cargo trousers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_cargo"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "cargo_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "cargo shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "casual_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "casual shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "kosele",
+        "subcategory": "kosela_oversize"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base",
+        "mid"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "clutch",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "clutch_bag"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "listova_kabelka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "cocktail_dress",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "cocktail dress"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "saty_midi"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "compression_tights",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "compression leggings"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_leginy"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "compression_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "compression shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "corduroy_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "corduroy trousers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_klasicke"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "crewneck_sweatshirt",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "crew neck sweatshirt",
+        "crewneck"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_klasicka"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "crop_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "croptop"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "crop_top"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "crossbody_bag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "cross-body bag",
+        "crossbody"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "taska_crossbody"
+      },
+      "defaultBodySlots": [
+        "shoulder_carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "cufflinks",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [
+        "cuff_links"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "manzetove_gombiky"
+      },
+      "defaultBodySlots": [
+        "wrist"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "bracelets",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "cycling_jersey",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "bike jersey",
+        "cycling jersey"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "cycling_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "bike shorts",
+        "cycling bib shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky_sportove"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "denim_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "denim jacket",
+        "jean jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_riflova"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "denim_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "jean shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "dress",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "saty"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "saty"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "dress_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "button up shirt",
+        "formal shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "kosele",
+        "subcategory": "kosela_klasicka"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base",
+        "mid"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "dress_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "formal shoes"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "elegantna_obuv",
+        "subcategory": "poltopanky"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "drop_earrings",
+      "canonicalFamily": "jewelry",
+      "parentType": "earrings",
+      "aliases": [
+        "dangle_earrings"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "visiace_nausnice"
+      },
+      "defaultBodySlots": [
+        "ears"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "earrings",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "duffel_bag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "gym_bag"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "cestovna_taska"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "earrings",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [
+        "earring pair"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "nausnice"
+      },
+      "defaultBodySlots": [
+        "ears"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "earrings",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "evening_bag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "vecerna_kabelka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "evening_dress",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "evening gown",
+        "gala dress"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "saty_maxi"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "fanny_pack",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "belt bag",
+        "bum bag",
+        "fannypack"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "ladvinka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "fedora",
+      "canonicalFamily": "headwear",
+      "parentType": "hat",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "klobuk"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "headwear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "flannel_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "flannel shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "kosele",
+        "subcategory": "kosela_flanelova"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "fleece",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "fleece pullover",
+        "fleece top"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_klasicka"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "flip_flops",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "flip flops",
+        "thongs"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "letna_obuv",
+        "subcategory": "zabky"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "football_boots",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "football cleats",
+        "soccer cleats"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "tenisky",
+        "subcategory": "tenisky_sportove"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "football_jersey",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "football shirt",
+        "soccer jersey"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "glasses",
+      "canonicalFamily": "eyewear",
+      "parentType": null,
+      "aliases": [
+        "eyeglasses",
+        "spectacles"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_okuliare",
+        "subcategory": "dioptricke_okuliare"
+      },
+      "defaultBodySlots": [
+        "face_eyes"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "eyewear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.frameStyle",
+        "accessory.lensTint"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "gloves",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "glove"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_saly_rukavice",
+        "subcategory": "rukavice"
+      },
+      "defaultBodySlots": [
+        "hands"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "hair_clip",
+      "canonicalFamily": "hair_accessory",
+      "parentType": null,
+      "aliases": [
+        "barrette"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "sponka"
+      },
+      "defaultBodySlots": [
+        "hair"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "handbag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "hand bag",
+        "purse"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "kabelka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "hat",
+      "canonicalFamily": "headwear",
+      "parentType": null,
+      "aliases": [
+        "hat_generic"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "klobuk"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "headwear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "headband",
+      "canonicalFamily": "hair_accessory",
+      "parentType": null,
+      "aliases": [
+        "hair_band"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "čelenka"
+      },
+      "defaultBodySlots": [
+        "hair"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "heels",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "high heels",
+        "pumps"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "elegantna_obuv",
+        "subcategory": "lodicky"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "henley",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "henley shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "tricko_dlhy_rukav"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "hiking_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "hiking jacket",
+        "outdoor jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "softshell_bunda"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "hiking_outfit",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "hiking set",
+        "outdoor outfit"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_suprava"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "hiking_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "hiking trousers",
+        "outdoor pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_leginy"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "hiking_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "hiking boots",
+        "trail shoes"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "sport_obuv_doplnky",
+        "subcategory": "obuv_turisticka"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "hoodie",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "hooded sweatshirt",
+        "kapucnova mikina"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_s_kapucnou"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "hoop_earrings",
+      "canonicalFamily": "jewelry",
+      "parentType": "earrings",
+      "aliases": [
+        "hoops"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "kruhove_nausnice"
+      },
+      "defaultBodySlots": [
+        "ears"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "earrings",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "chelsea_boots",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "ankle boots",
+        "chelsea boot"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "cizmy",
+        "subcategory": "cizmy_clenkove"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "chinos",
+      "canonicalFamily": "top",
+      "parentType": "trousers",
+      "aliases": [
+        "chino pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_chino"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "jeans",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "denim jeans"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "rifle"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "jewelry",
+      "canonicalFamily": "jewelry",
+      "parentType": null,
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "sperk"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "bracelets",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "joggers",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "jogger pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_joggery"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "jumpsuit",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "jump suit"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "overal"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "knit_sweater",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "knit sweater",
+        "knitted sweater"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "svetre",
+        "subcategory": "sveter_pleteny"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "knitted_vest",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "knit vest",
+        "sweater vest"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "svetre",
+        "subcategory": "sveter_pleteny"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "leather_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "biker jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_kozena"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "leggings",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "leginy"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "leginy"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "light_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "light jacket",
+        "spring jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_prechodna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "linen_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "linen trousers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_klasicke"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "linen_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "linen shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "loafers",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "loafer"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "elegantna_obuv",
+        "subcategory": "mokasiny"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "long_sleeve_t_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "long sleeve t shirt",
+        "longsleeve"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "tricko_dlhy_rukav"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "maxi_skirt",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "long skirt",
+        "maxi skirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sukna_maxi"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "messenger_bag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "messenger_taska"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "midi_skirt",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "midi skirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sukna_midi"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "mini_skirt",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "mini skirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sukna_mini"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "necklace",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "nahrdelnik"
+      },
+      "defaultBodySlots": [
+        "neck"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "necklace",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "overcoat",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "long coat",
+        "over coat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "kabat"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "warmthRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "overshirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "shacket",
+        "shirt jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "kosele",
+        "subcategory": "kosela_oversize"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base",
+        "mid"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "oxford_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "oxford",
+        "oxfords"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "elegantna_obuv",
+        "subcategory": "poltopanky"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "parka",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "parka coat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_zimna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "pendant_necklace",
+      "canonicalFamily": "jewelry",
+      "parentType": "necklace",
+      "aliases": [
+        "pendant"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "nahrdelnik_s_priveskom"
+      },
+      "defaultBodySlots": [
+        "neck"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "necklace",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "pocket_square",
+      "canonicalFamily": "neckwear",
+      "parentType": null,
+      "aliases": [
+        "handkerchief_square"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "vreckovka_do_saka"
+      },
+      "defaultBodySlots": [
+        "pocket"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "polo_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "polo"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "polo_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "puffer_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "down jacket",
+        "puffer"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_zimna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "puffer_vest",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "down vest",
+        "puffer vest"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "vesta"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "quarter_zip_pullover",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "1/4 zip",
+        "quarter zip"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_na_zips"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "rain_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "macintosh",
+        "rain jacket",
+        "raincoat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "prsiplast"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "rain_shell",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "waterproof_shell"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "nepremokava_shell_bunda"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "shell",
+      "supportedLayerPositions": [
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "ring",
+      "canonicalFamily": "jewelry",
+      "parentType": "jewelry",
+      "aliases": [],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "prsten"
+      },
+      "defaultBodySlots": [
+        "fingers"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "rings",
+      "multiplicity": {
+        "maxPerGroup": 3,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": true,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "romper",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "playsuit",
+        "short jumpsuit"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "overal"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "running_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "running jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "softshell_bunda"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "running_leggings",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "running tights"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_leginy"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "running_shoes",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "runners",
+        "running shoes"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "tenisky",
+        "subcategory": "tenisky_bezecke"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "running_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "run shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky_sportove"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "sandals",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "sandal"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "letna_obuv",
+        "subcategory": "sandale"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "scarf",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "scarf"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_saly_rukavice",
+        "subcategory": "sal"
+      },
+      "defaultBodySlots": [
+        "neck"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "scarf",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "scrunchie",
+      "canonicalFamily": "hair_accessory",
+      "parentType": null,
+      "aliases": [
+        "hair_scrunchie"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "gumička"
+      },
+      "defaultBodySlots": [
+        "hair"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "kratasy",
+        "short pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "shoulder_bag",
+      "canonicalFamily": "bag",
+      "parentType": null,
+      "aliases": [
+        "shoulder purse"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "taska_na_rameno"
+      },
+      "defaultBodySlots": [
+        "shoulder_carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": "primary_bag",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.sizeClass",
+        "accessory.carryMode",
+        "accessory.capacityClass",
+        "accessory.hardwareTone"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "ski_gloves",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "ski gloves",
+        "snow gloves"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_saly_rukavice",
+        "subcategory": "rukavice"
+      },
+      "defaultBodySlots": [
+        "hands"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "ski_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "ski jacket",
+        "snow jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_zimna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "ski_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "ski trousers",
+        "snow pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_leginy"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "skinny_jeans",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "skinny jeans"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "rifle_skinny"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "skirt",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "sukna"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sukna"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "slides",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "pool slides",
+        "slide sandals"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "letna_obuv",
+        "subcategory": "slapky"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "slim_jeans",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "slim fit jeans",
+        "slim jeans"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "rifle"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "slip",
+      "canonicalFamily": "undergarment",
+      "parentType": null,
+      "aliases": [
+        "under_dress"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "spodnicka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "sneakers",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "sneaker",
+        "trainers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "tenisky",
+        "subcategory": "tenisky_fashion"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "softshell",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "softshell jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "softshell_bunda"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "sport_coat",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "sport coat",
+        "sport jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "sako"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "sport_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "athletic shorts",
+        "gym shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky_sportove"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "straight_jeans",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "straight jeans",
+        "straight leg jeans"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "rifle"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "stud_earrings",
+      "canonicalFamily": "jewelry",
+      "parentType": "earrings",
+      "aliases": [
+        "studs"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_sperky",
+        "subcategory": "napichovacie_nausnice"
+      },
+      "defaultBodySlots": [
+        "ears"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "jewelry_accent",
+        "dress_code"
+      ],
+      "accessoryGroup": "earrings",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.jewelryForm",
+        "accessory.visualScale",
+        "accessory.stoneColors"
+      ],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "suit",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "business suit",
+        "two piece suit"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "sako"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "suit_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "suit jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "sako"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "suit_trousers",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "dress trousers",
+        "slacks",
+        "suit pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_elegantne"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "suit_vest",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "suit vest"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "vesta"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "summer_dress",
+      "canonicalFamily": "one_piece",
+      "parentType": null,
+      "aliases": [
+        "sun dress",
+        "sundress"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "saty_overaly",
+        "subcategory": "saty_kratke"
+      },
+      "defaultBodySlots": [
+        "full_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "sun_hat",
+      "canonicalFamily": "headwear",
+      "parentType": "hat",
+      "aliases": [
+        "sunhat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "klobuk"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "headwear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "sunglasses",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "sunglass"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "slnecne_okuliare"
+      },
+      "defaultBodySlots": [
+        "face_eyes"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "eyewear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "sweat_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "jersey shorts",
+        "sweat shorts"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sortky_sukne",
+        "subcategory": "sortky_sportove"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "sweater",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "jumper",
+        "pullover"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "svetre",
+        "subcategory": "sveter_klasicky"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "sweatpants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "sweat pants",
+        "track sweatpants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_teplakove"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "sweatshirt",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "pullover sweatshirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_klasicka"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "swim_shorts",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "board shorts",
+        "swim trunks"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "plavky",
+        "subcategory": "plavecke_sortky"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "swimsuit",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "bathing suit",
+        "one piece swimsuit"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "plavky",
+        "subcategory": "plavky_jednodielne"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "t_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "t shirt",
+        "tee",
+        "tshirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "tank_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "sleeveless",
+        "tank"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "tielko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "thermal_bottom",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "base layer bottom",
+        "thermal leggings"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "undershirt"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "thermal_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "base layer top",
+        "thermal shirt"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "undershirt"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "thermal_underwear_bottom",
+      "canonicalFamily": "undergarment",
+      "parentType": "underwear",
+      "aliases": [
+        "thermal_bottom"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "termopradlo_spodok"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "thermal_underwear_top",
+      "canonicalFamily": "undergarment",
+      "parentType": "undershirt",
+      "aliases": [
+        "thermal_top"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "termopradlo_vrch"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "tie",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "necktie"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "kravata"
+      },
+      "defaultBodySlots": [
+        "neck"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "neckwear",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [
+          "neckwear"
+        ],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "tote_bag",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "tote",
+        "tote bag"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "kabelka_listova"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "track_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "track jacket",
+        "treningova bunda"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_na_zips"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "track_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "track pants",
+        "training pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_suprava"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "training_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "sport training jacket",
+        "training jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_na_zips"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "training_shoes",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "gym shoes",
+        "training shoes"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "sport_obuv_doplnky",
+        "subcategory": "obuv_treningova"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "training_top",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "training shirt",
+        "workout top"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "sport_oblecenie",
+        "subcategory": "sport_tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "trench_coat",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "trench",
+        "trench coat",
+        "trenchcoat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "trenchcoat"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 5,
+        "max": 9,
+        "typical": 7
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "trousers",
+      "canonicalFamily": "bottom",
+      "parentType": null,
+      "aliases": [
+        "classic_trousers",
+        "classic_pants",
+        "formal_pants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "nohavice_klasicke"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "turtleneck",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "rolak",
+        "turtle neck"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "svetre",
+        "subcategory": "sveter_rolak"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "undershirt",
+      "canonicalFamily": "undergarment",
+      "parentType": null,
+      "aliases": [
+        "vest_underwear"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "spodne_tricko"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "underwear",
+      "canonicalFamily": "undergarment",
+      "parentType": null,
+      "aliases": [
+        "underpants"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "spodne_pradlo",
+        "subcategory": "spodne_pradlo"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "skin_base",
+      "supportedLayerPositions": [
+        "skin_base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "v_neck_t_shirt",
+      "canonicalFamily": "top",
+      "parentType": null,
+      "aliases": [
+        "v neck t shirt",
+        "vneck"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "tricka_topy",
+        "subcategory": "tricko"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "base",
+      "supportedLayerPositions": [
+        "base"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "base_layer"
+      }
+    },
+    {
+      "canonicalType": "varsity_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "letterman jacket",
+        "varsity"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_prechodna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "vest",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "gilet",
+        "waistcoat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "vesta"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "visor",
+      "canonicalFamily": "headwear",
+      "parentType": "hat",
+      "aliases": [
+        "sun_visor"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "silt"
+      },
+      "defaultBodySlots": [
+        "head"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "headwear",
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "waistcoat",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "dress vest",
+        "waistcoat"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "vesta"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    },
+    {
+      "canonicalType": "wallet",
+      "canonicalFamily": "small_leather_good",
+      "parentType": null,
+      "aliases": [
+        "billfold"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_tasky",
+        "subcategory": "penazenka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "carrying",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {}
+    },
+    {
+      "canonicalType": "watch",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "wristwatch"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_ostatne",
+        "subcategory": "hodinky"
+      },
+      "defaultBodySlots": [
+        "wrist"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": "watch",
+      "multiplicity": {
+        "maxPerGroup": 1,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 3,
+        "typical": 1
+      },
+      "allowedAttributes": [
+        "accessory.watchStyle",
+        "accessory.caseSizeClass",
+        "accessory.strapAppearance"
+      ],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "wide_leg_pants",
+      "canonicalFamily": "bottom",
+      "parentType": "trousers",
+      "aliases": [
+        "wide leg pants",
+        "wide leg trousers"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "nohavice_rifle",
+        "subcategory": "rifle_wide_leg"
+      },
+      "defaultBodySlots": [
+        "lower_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "warmthRange": {
+        "min": 2,
+        "max": 6,
+        "typical": 4
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "bottom"
+      }
+    },
+    {
+      "canonicalType": "windbreaker",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "wind breaker",
+        "windbreaker jacket"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_prechodna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "winter_boots",
+      "canonicalFamily": "footwear",
+      "parentType": null,
+      "aliases": [
+        "snow boots",
+        "winter boot"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "obuv",
+        "category": "cizmy",
+        "subcategory": "snehule"
+      },
+      "defaultBodySlots": [
+        "feet"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "foot_support",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 6,
+        "max": 10,
+        "typical": 8
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "footwear"
+      }
+    },
+    {
+      "canonicalType": "winter_hat",
+      "canonicalFamily": "accessory",
+      "parentType": null,
+      "aliases": [
+        "tuque",
+        "winter beanie"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "doplnky",
+        "category": "dopl_hlava",
+        "subcategory": "ciapka"
+      },
+      "defaultBodySlots": [
+        "carried"
+      ],
+      "defaultLayerPosition": "not_applicable",
+      "supportedLayerPositions": [
+        "not_applicable"
+      ],
+      "outfitFunctions": [
+        "functional_accessory",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 4,
+        "max": 8,
+        "typical": 6
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "accessory"
+      }
+    },
+    {
+      "canonicalType": "winter_jacket",
+      "canonicalFamily": "outerwear",
+      "parentType": null,
+      "aliases": [
+        "winter jacket",
+        "zimna bunda"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "bundy_kabaty",
+        "subcategory": "bunda_zimna"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "outer",
+      "supportedLayerPositions": [
+        "outer",
+        "shell"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "weather_protection",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 5,
+        "typical": 3
+      },
+      "warmthRange": {
+        "min": 7,
+        "max": 10,
+        "typical": 9
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "outer_layer"
+      }
+    },
+    {
+      "canonicalType": "zip_hoodie",
+      "canonicalFamily": "mid_layer",
+      "parentType": null,
+      "aliases": [
+        "zip hoodie",
+        "zip up hoodie"
+      ],
+      "deprecatedAliases": [],
+      "uiProjection": {
+        "mainCategory": "oblecenie",
+        "category": "mikiny",
+        "subcategory": "mikina_na_zips"
+      },
+      "defaultBodySlots": [
+        "upper_body"
+      ],
+      "defaultLayerPosition": "mid",
+      "supportedLayerPositions": [
+        "mid",
+        "outer"
+      ],
+      "outfitFunctions": [
+        "coverage",
+        "thermal",
+        "dress_code"
+      ],
+      "accessoryGroup": null,
+      "multiplicity": {
+        "maxPerGroup": null,
+        "exclusiveWithGroups": [],
+        "visualWeight": 1,
+        "stackable": false,
+        "occasionSpecificLimit": null
+      },
+      "formalityRange": {
+        "min": 1,
+        "max": 4,
+        "typical": 2
+      },
+      "warmthRange": {
+        "min": 3,
+        "max": 7,
+        "typical": 5
+      },
+      "allowedAttributes": [],
+      "legacyMapping": {
+        "layerRole": "mid_layer"
+      }
+    }
+  ]
+}

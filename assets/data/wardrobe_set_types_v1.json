@@ -1,0 +1,18 @@
+{
+  "artifactId": "wardrobe-set-types-v1",
+  "schemaVersion": "1.0.0",
+  "types": [
+    {"id": "suit", "labelSk": "Oblek"},
+    {"id": "tracksuit", "labelSk": "Tepláková súprava"},
+    {"id": "matching_set", "labelSk": "Zladený set"},
+    {"id": "pajama_set", "labelSk": "Pyžamový set"},
+    {"id": "swim_set", "labelSk": "Plavkový set"},
+    {"id": "underwear_set", "labelSk": "Set spodnej bielizne"},
+    {"id": "accessory_set", "labelSk": "Set doplnkov"},
+    {"id": "other", "labelSk": "Iný set"}
+  ],
+  "relationshipSources": [
+    {"id": "manufacturer_matching", "labelSk": "Pôvodná zladená súprava"},
+    {"id": "user_curated", "labelSk": "Moja obľúbená kombinácia"}
+  ]
+}
