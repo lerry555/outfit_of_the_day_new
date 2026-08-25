@@ -34,7 +34,10 @@ test("chatWithStylist alone binds and resolves OpenWeather without legacy fallba
     /exports\.chatWithStylist\s*=([\s\S]*?)\.https\.onRequest/,
   );
   assert.ok(chatWithStylist);
-  assert.match(chatWithStylist[1], /secrets:\s*\[OPENWEATHER_API_KEY_SECRET\]/);
+  assert.match(
+    chatWithStylist[1],
+    /secrets:\s*\[[^\]]*OPENWEATHER_API_KEY_SECRET/,
+  );
   assert.equal(
     [...indexSource.matchAll(/fetchWeatherFromOpenWeather\(/g)].length,
     2,

@@ -330,11 +330,7 @@ function getConfigValue(pathArray) {
 }
 
 function getOpenAiKey() {
-  return (
-    process.env.OPENAI_API_KEY ||
-    getConfigValue(["openai", "api_key"]) ||
-    getConfigValue(["openai", "key"])
-  );
+  return resolveOpenAISecret();
 }
 
 // Stylist context is a benchmark-backed production responsibility. Its
@@ -1625,7 +1621,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
     .runWith({
       timeoutSeconds: 120,
       memory: "512MB",
-      secrets: [GEMINI_API_KEY_SECRET],
+      secrets: [GEMINI_API_KEY_SECRET, OPENAI_API_KEY_SECRET],
     })
     .region("us-east1")
     .https.onRequest(createAnalyzeClothingImageHandler({
@@ -1640,6 +1636,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
   // dependency and cannot mutate a wardrobe item.
   exports.analyzeClothingImageV2Shadow = functions
     .region("us-east1")
+    .runWith({secrets: [OPENAI_API_KEY_SECRET]})
     .https.onRequest(createVisionV2ShadowHandler({
       fetchImpl: fetch,
       getApiKey: getOpenAiKey,
@@ -2087,6 +2084,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
   exports.generateHomeOutfit = functions
     .region("us-east1")
+    .runWith({secrets: [OPENAI_API_KEY_SECRET]})
     .https.onCall(async (data, context) => {
       const uid = context.auth?.uid || null;
       if (!uid) {
@@ -2317,6 +2315,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
   // ---------------------------------------------------------------------------
   exports.finalReviewHomeOutfitCandidates = functions
     .region("us-east1")
+    .runWith({secrets: [OPENAI_API_KEY_SECRET]})
     .https.onCall(async (data, context) => {
       const uid = context.auth?.uid || null;
       if (!uid) {
@@ -2565,6 +2564,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
   // ---------------------------------------------------------------------------
   exports.generateHomeOutfitExplanation = functions
     .region("us-east1")
+    .runWith({secrets: [OPENAI_API_KEY_SECRET]})
     .https.onCall(async (data, context) => {
       const uid = context.auth?.uid || null;
       if (!uid) {
@@ -4176,7 +4176,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
   exports.chatWithStylist = functions
     .region("us-east1")
-    .runWith({secrets: [OPENWEATHER_API_KEY_SECRET]})
+    .runWith({secrets: [OPENAI_API_KEY_SECRET, OPENWEATHER_API_KEY_SECRET]})
     .https.onRequest(async (req, res) => {
       if (req.method !== "POST") {
         return res.status(405).send("Metóda nie je povolená. Použite POST.");
@@ -4460,7 +4460,7 @@ aby user mal pocit, že si píše s reálnym stylistom.
 // print(json['strengths']);
 exports.analyzeWardrobeSmart = functions
   .region("us-east1")
-  .runWith({ timeoutSeconds: 60, memory: "512MB" })
+  .runWith({ timeoutSeconds: 60, memory: "512MB", secrets: [OPENAI_API_KEY_SECRET] })
   .https.onCall(async (data, context) => {
     const uid = context?.auth?.uid;
     if (!uid) {
@@ -8877,7 +8877,7 @@ function mergeWithHeuristics(parsed, signals, pickAllowedKey) {
 // Deploy: firebase deploy --only functions:analyzeClothingProductUrl
 exports.analyzeClothingProductUrl = functions
   .region("us-east1")
-  .runWith({ timeoutSeconds: 300, memory: "1GB" })
+  .runWith({ timeoutSeconds: 300, memory: "1GB", secrets: [OPENAI_API_KEY_SECRET] })
   .https.onCall(async (data, context) => {
     if (!context.auth || !context.auth.uid) {
       throw new functions.https.HttpsError(
@@ -9562,7 +9562,7 @@ async function executeProductLinkImageCleanup({
 // Deploy: firebase deploy --only functions:prepareProductLinkImage
 exports.prepareProductLinkImage = functions
   .region("us-east1")
-  .runWith({ timeoutSeconds: 300, memory: "2GB" })
+  .runWith({ timeoutSeconds: 300, memory: "2GB", secrets: [OPENAI_API_KEY_SECRET] })
   .https.onCall(async (data, context) => {
     if (!context.auth || !context.auth.uid) {
       throw new functions.https.HttpsError(
@@ -9628,7 +9628,7 @@ function logWardrobeImageProcessState(data, uid, itemId) {
 // ---------------------------------------------------------------------------
 exports.processWardrobeProductLinkImage = functions
   .region("us-central1")
-  .runWith({ timeoutSeconds: 300, memory: "2GB" })
+  .runWith({ timeoutSeconds: 300, memory: "2GB", secrets: [OPENAI_API_KEY_SECRET] })
   .firestore.document("users/{uid}/wardrobe/{itemId}")
   .onWrite(async (change, context) => {
     const uid = context.params.uid;
