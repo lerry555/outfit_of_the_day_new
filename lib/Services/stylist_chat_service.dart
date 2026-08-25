@@ -159,7 +159,10 @@ class StylistChatService {
         callable,
         jsonSafeMapForCallable(payload),
         callTimeout,
-        maxAttempts: 3,
+        // GPT-4o context/clarification is authoritative. A transport failure
+        // must surface as a failure rather than silently create extra model
+        // attempts that could produce a different clarification state.
+        maxAttempts: mode == 'chat' ? 1 : 3,
       );
 
       final data = result.data;

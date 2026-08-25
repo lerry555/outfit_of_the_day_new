@@ -18,6 +18,7 @@ import '../Services/fcm_service.dart';
 import '../Services/hourly_weather_service.dart';
 import '../Services/outfit_generation_service.dart';
 import '../Services/stylist_chat_outfit_service.dart';
+import '../Services/stylist_frozen_candidate_decision_service.dart';
 import '../Services/stylist_chat_service.dart';
 import '../Services/stylist_chat_store.dart';
 import '../Services/stylist_job_consumer.dart';
@@ -1381,10 +1382,20 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     _mergeOutfitContextFromResponse(response);
 
     var effectiveAction = action;
-    if (_outfitContextState.clarifyRoundUsed && effectiveAction == 'clarify') {
-      debugPrint(
-        'STYLIST CHAT clarify_round_exhausted forcing generate_outfit',
-      );
+    final requestedImpactFields = response['impactFields'] is List
+        ? (response['impactFields'] as List)
+              .map((value) => value.toString().trim().toLowerCase())
+              .where((value) => value.isNotEmpty)
+              .toSet()
+        : <String>{};
+    final alreadyAsked = _outfitContextState.clarifiedMaterialFields
+        .map((value) => value.trim().toLowerCase())
+        .toSet();
+    if (effectiveAction == 'clarify' &&
+        (requestedImpactFields.isEmpty ||
+            requestedImpactFields.every(alreadyAsked.contains))) {
+      // Local fail-safe complements the server state machine: repeated questions
+      // cannot become an interview loop if a malformed response slips through.
       effectiveAction = 'generate_outfit';
     }
 
@@ -1397,7 +1408,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         'impactFields=${response['impactFields']}',
       );
       setState(() {
-        _outfitContextState = _outfitContextState.withClarifyRoundUsed(true);
+        _outfitContextState = _outfitContextState.withClarificationAsked(
+          requestedImpactFields,
+        );
         _messages.add(
           StylistChatMessage(
             text: _sanitizeStylistReplyForDisplay(reply),
@@ -1803,25 +1816,37 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     if (mounted) {
       setState(() => _sendingStatusLabel = 'Hľadám vhodný outfit…');
     }
-    final outfitResult = await _stylistChatOutfitService.generateForEvent(
-      event: event,
-      excludeItemKeywords: excludeKeywords,
-      previousOutfitItemIds: _lastOutfitItemIds,
-      forceDifferentOutfit: forceDifferent,
-      conversationHint: _conversationHintText(),
-      requestedBottomFamily: requestedBottomFamily,
-      requestedSwap: requestedSwap,
-    );
+    StylistChatOutfitResult? outfitResult;
+    List<String> rejectAllReasons = const <String>[];
+    String rejectAllExplanation = '';
+    try {
+      outfitResult = await _stylistChatOutfitService.generateForEvent(
+        event: event,
+        excludeItemKeywords: excludeKeywords,
+        previousOutfitItemIds: _lastOutfitItemIds,
+        forceDifferentOutfit: forceDifferent,
+        conversationHint: _conversationHintText(),
+        requestedBottomFamily: requestedBottomFamily,
+        requestedSwap: requestedSwap,
+      );
+    } on StylistFrozenDecisionRejectedExceptionV1 catch (error) {
+      rejectAllReasons = error.reasonCodes;
+      rejectAllExplanation = error.explanation;
+    }
     if (!mounted) return;
 
     _resetClarifyRound();
 
     if (outfitResult == null) {
+      final rejectAll = rejectAllReasons.isNotEmpty;
       setState(() {
         _messages.add(
-          const StylistChatMessage(
-            text:
-                'V šatníku nemám dosť kusov na celý outfit. Skús pridať viac oblečenia.',
+          StylistChatMessage(
+            text: rejectAll
+                ? (rejectAllExplanation.isNotEmpty
+                    ? rejectAllExplanation
+                    : 'Z dostupných možností ti teraz nechcem nasilu potvrdiť outfit, ktorý by neprešiel podmienkami.')
+                : 'V šatníku nemám dosť kusov na celý outfit. Skús pridať viac oblečenia.',
             isUser: false,
           ),
         );
@@ -1915,49 +1940,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       seasonKey: _seasonKeyFromDate(event.date),
     );
     final stylistOpinion = outfitResult.stylistOpinion;
-    final explainPayload = <String, dynamic>{
-      'occasionContext': <String, dynamic>{
-        'label': occasionProfile.label,
-        'isElevated': occasionProfile.isElevated,
-        'weather': <String, dynamic>{
-          'tempC': outfitWeather.tempC,
-          'isRainy': outfitWeather.isRainy,
-          'isWindy': outfitWeather.isWindy,
-        },
-        'template': outfitResult.flexibleOutfit.template.name,
-        'items': outfitResult.flexibleOutfit.items
-            .map((item) => item.toMap())
-            .toList(growable: false),
-      },
-      'bottomGuidance': <String, dynamic>{'source': 'v2_composition'},
-      'footwearGuidance': <String, dynamic>{'source': 'v2_composition'},
-      'wardrobeAnalysis': wardrobeAnalysis.toPayload(),
-      if (stylistOpinion != null) 'stylistOpinion': stylistOpinion.toPayload(),
-    };
-    final explainResponse = await _stylistChatService.sendMessage(
-      userText,
-      history: history,
-      weatherContext: explainWeather.context,
-      clientContext: clientContext,
-      mode: 'explain_outfit',
-      eventContext: _eventContextToMap(event),
-      selectedOutfitItems: suggestedItems,
-      occasionContext: Map<String, dynamic>.from(
-        explainPayload['occasionContext'] as Map,
-      ),
-      bottomGuidance: Map<String, dynamic>.from(
-        explainPayload['bottomGuidance'] as Map,
-      ),
-      footwearGuidance: Map<String, dynamic>.from(
-        explainPayload['footwearGuidance'] as Map,
-      ),
-      wardrobeAnalysis: explainPayload['wardrobeAnalysis'] is Map
-          ? Map<String, dynamic>.from(explainPayload['wardrobeAnalysis'] as Map)
-          : wardrobeAnalysis.toPayload(),
-      stylistOpinion: explainPayload['stylistOpinion'] is Map
-          ? Map<String, dynamic>.from(explainPayload['stylistOpinion'] as Map)
-          : null,
-    );
+    // The authoritative frozen decision callable already produced a validated
+    // explanation. It is deliberately preferred over the historical
+    // `stylistChat/explain_outfit` route, which had authority to reconsider
+    // the displayed outfit.
+    final frozenExplanation = outfitResult.finalExplanation;
+    final explainResponse = frozenExplanation == null || frozenExplanation.isEmpty
+        ? <String, dynamic>{'ok': false, 'reply': ''}
+        : <String, dynamic>{'ok': true, 'reply': frozenExplanation};
     debugPrint(
       'STYLIST CHAT timing explainMs=${explainTiming.elapsedMilliseconds}',
     );
@@ -2663,25 +2653,6 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     if (m >= 6 && m <= 8) return 'let';
     if (m >= 9 && m <= 11) return 'jese';
     return 'zim';
-  }
-
-  Map<String, dynamic> _eventContextToMap(StylistChatEventContext event) {
-    final y = event.date.year.toString().padLeft(4, '0');
-    final m = event.date.month.toString().padLeft(2, '0');
-    final d = event.date.day.toString().padLeft(2, '0');
-    final window = event.effectiveTripWindow;
-    return <String, dynamic>{
-      'dateKey': '$y-$m-$d',
-      if (event.hourLocal != null) 'hourLocal': event.hourLocal,
-      if (window.eventStartHour != null)
-        'eventStartHour': window.eventStartHour,
-      ...window.toJson(),
-      if (event.locationLabel.isNotEmpty) 'locationLabel': event.locationLabel,
-      if (event.occasion != null) 'occasion': event.occasion,
-      if (event.performer != null) 'performer': event.performer,
-      if (event.dressCode != null && event.dressCode!.isNotEmpty)
-        'dressCode': event.dressCode,
-    };
   }
 
   String _resolveHybridExplainReply({

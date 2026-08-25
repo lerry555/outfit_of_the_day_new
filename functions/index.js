@@ -72,6 +72,18 @@ const {
 const {
   createClaimFcmTokenHandler,
 } = require("./claim_fcm_token");
+const {
+  createFrozenStylistAuthority,
+} = require("./stylist/frozen_stylist_authority_v1");
+const {
+  OPENAI_API_KEY_SECRET,
+  ANTHROPIC_API_KEY_SECRET,
+  resolveOpenAISecret,
+  resolveAnthropicSecret,
+} = require("./stylist/ai_stylist_role_secret_binding_v1");
+const {
+  createNoRetryFetchExecutor,
+} = require("./stylist/ai_stylist_no_retry_fetch_v1");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -88,6 +100,9 @@ const stylistShoppingOrchestrator = createShoppingOrchestrator({
 const shoppingCatalogRepository = createFirestoreCatalogSearchRepository(db);
 const shoppingWishlistV2Repository = createFirestoreWishlistV2Repository(db);
 const shoppingWishlistEventStore = createFirestoreWishlistEventStore(db);
+// This executor has no retry, repair, fallback or credential serialization
+// path. It is shared with the preflighted benchmark transport.
+const frozenStylistNoRetryExecutor = createNoRetryFetchExecutor();
 const shoppingWishlistNotificationService = createWishlistNotificationService({
   messaging: admin.messaging(),
   tokenStore: createFirestoreWishlistTokenStore(db),
@@ -318,6 +333,17 @@ function getOpenAiKey() {
   );
 }
 
+// Stylist context is a benchmark-backed production responsibility. Its
+// credential is bound to the callable through Firebase Secret Manager; the
+// legacy config fallback is retained only for older non-Stylist callables.
+function getBoundStylistOpenAiKey() {
+  try {
+    return resolveOpenAISecret();
+  } catch (_) {
+    return getOpenAiKey();
+  }
+}
+
 function getGeminiKey() {
   if (process.env.GEMINI_API_KEY && String(process.env.GEMINI_API_KEY).trim()) {
     return String(process.env.GEMINI_API_KEY).trim();
@@ -345,6 +371,30 @@ function getOpenWeatherKey() {
     getConfigValue(["openweather", "api_key"]) ||
     getConfigValue(["openweather", "key"])
   );
+}
+
+// An LLM may interpret known context but never becomes a source of new
+// resolved facts. This keeps GPT-4o's Track-U authority limited to
+// ask/proceed/action framing; deterministic app state remains fact authority.
+function sanitizeStylistAiEventContext(eventContext, outfitContextState) {
+  if (!eventContext || typeof eventContext !== "object" ||
+      !outfitContextState || typeof outfitContextState !== "object") return null;
+  const sanitized = {};
+  const known = [
+    ["dateKey", "dateKey"],
+    ["hourLocal", "hourLocal"],
+    ["locationLabel", "activityLocationLabel"],
+    ["occasion", "occasion"],
+  ];
+  for (const [outputKey, stateKey] of known) {
+    const supplied = eventContext[outputKey];
+    const authoritative = outfitContextState[stateKey];
+    if (authoritative == null || supplied == null) continue;
+    if (String(supplied).trim() === String(authoritative).trim()) {
+      sanitized[outputKey] = authoritative;
+    }
+  }
+  return Object.keys(sanitized).length ? sanitized : null;
 }
 
 // sem si neskôr môžeš dať config, ak by si menil URL servera
@@ -1657,7 +1707,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
   }
 
   async function callStylistChatOpenAi(messages, options = {}) {
-    const apiKey = getOpenAiKey();
+    const apiKey = getBoundStylistOpenAiKey();
     if (!apiKey) {
       logger.error("Chýba OPENAI_API_KEY v prostredí!");
       throw new Error("Server nemá nastavený OPENAI_API_KEY.");
@@ -3566,9 +3616,68 @@ exports.attachCleanImageOnWardrobeWrite = functions
     return parts.length > 0 ? parts.join(", ") : JSON.stringify(clientContext);
   }
 
+  // -------------------------------------------------------------------------
+  // resolveStylistFrozenCandidatesV1 – authoritative Track D/R production
+  // seam.  This is intentionally separate from the Home candidate-index
+  // callable: Stylist receives an ID-only, fail-closed decision contract.
+  // -------------------------------------------------------------------------
+  exports.resolveStylistFrozenCandidatesV1 = functions
+    .region("us-east1")
+    .runWith({
+      timeoutSeconds: 120,
+      memory: "512MB",
+      secrets: [OPENAI_API_KEY_SECRET, ANTHROPIC_API_KEY_SECRET],
+    })
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid;
+      if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "auth_required");
+      }
+
+      // The ownership snapshot is authoritative server state. The client may
+      // describe a frozen candidate, but cannot make an unowned item eligible.
+      let ownedItemIds;
+      try {
+        const wardrobe = await db.collection("users").doc(uid)
+          .collection("wardrobe").select().get();
+        ownedItemIds = new Set(wardrobe.docs.map((doc) => String(doc.id || "").trim()).filter(Boolean));
+      } catch (error) {
+        logger.warn("resolveStylistFrozenCandidatesV1 wardrobe snapshot unavailable", {
+          uid, code: String(error?.code || "wardrobe_snapshot_failed").slice(0, 80),
+        });
+        throw new functions.https.HttpsError("unavailable", "wardrobe_snapshot_unavailable");
+      }
+
+      try {
+        const authority = createFrozenStylistAuthority({
+          resolveOpenAISecret,
+          resolveAnthropicSecret,
+          execute: frozenStylistNoRetryExecutor,
+        });
+        const resolved = await authority.resolve({data, ownedItemIds});
+        // Provider diagnostics, telemetry and raw response material never
+        // leave this callable. The returned envelope is enough for the client
+        // to map an immutable candidate ID or render reject_all safely.
+        return resolved;
+      } catch (error) {
+        const code = String(error?.code || "");
+        if (code === "invalid-argument") {
+          throw new functions.https.HttpsError("invalid-argument", "invalid_frozen_stylist_request");
+        }
+        logger.error("resolveStylistFrozenCandidatesV1 failed", {
+          uid, code: code.slice(0, 80) || "frozen_stylist_authority_failed",
+        });
+        throw new functions.https.HttpsError("internal", "frozen_stylist_authority_failed");
+      }
+    });
+
   exports.stylistChat = functions
     .region("us-east1")
-    .runWith({timeoutSeconds: 120, memory: "512MB"})
+    .runWith({
+      timeoutSeconds: 120,
+      memory: "512MB",
+      secrets: [OPENAI_API_KEY_SECRET],
+    })
     .https.onCall(async (data, context) => {
       const uid = context.auth?.uid || null;
       let message = String(data?.message || "").trim();
@@ -3705,14 +3814,6 @@ exports.attachCleanImageOnWardrobeWrite = functions
         }
         clearShoppingContext = shoppingTurn.clearShoppingContext === true;
       }
-
-      const eventContextInput =
-        data?.eventContext && typeof data.eventContext === "object" ?
-          data.eventContext :
-          null;
-      const selectedOutfitItemsInput = Array.isArray(data?.selectedOutfitItems) ?
-        data.selectedOutfitItems :
-        [];
 
       if (isRatePhoto) {
         if (!photoImageUrl) {
@@ -3910,94 +4011,12 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
 
       if (mode === "explain_outfit") {
-        const outfitLines = selectedOutfitItemsInput
-          .map((item) => {
-            if (!item || typeof item !== "object") return null;
-            const name = String(item.name || "Neznámy kúsok").trim();
-            const category = String(item.category || item.categoryKey || "").trim();
-            const colors = Array.isArray(item.colors) ?
-              item.colors.map((v) => String(v).trim()).filter(Boolean).join(", ") :
-              "";
-            const parts = [name];
-            if (category) parts.push(`kategória: ${category}`);
-            if (colors) parts.push(`farby: ${colors}`);
-            return `- ${parts.join(" | ")}`;
-          })
-          .filter(Boolean);
-        const occasionContext =
-          data?.occasionContext && typeof data.occasionContext === "object" ?
-            data.occasionContext :
-            null;
-        const bottomGuidance =
-          data?.bottomGuidance && typeof data.bottomGuidance === "object" ?
-            data.bottomGuidance :
-            null;
-        const footwearGuidance =
-          data?.footwearGuidance && typeof data.footwearGuidance === "object" ?
-            data.footwearGuidance :
-            null;
-        const wardrobeAnalysis =
-          data?.wardrobeAnalysis && typeof data.wardrobeAnalysis === "object" ?
-            data.wardrobeAnalysis :
-            null;
-        const stylistOpinion =
-          data?.stylistOpinion && typeof data.stylistOpinion === "object" ?
-            data.stylistOpinion :
-            null;
-        const explainPrompt = buildStylistChatExplainOutfitPrompt();
-        const explainMessages = [
-          {role: "system", content: explainPrompt},
-          ...historyFromClient,
-          {
-            role: "user",
-            content: appendStylePreferencesSection(
-              `Najnovšia správa používateľa:\n${message}\n\n` +
-              `Event context:\n${JSON.stringify(eventContextInput || {})}\n\n` +
-              `Occasion context:\n${JSON.stringify(occasionContext || {})}\n\n` +
-              `Weather context:\n${JSON.stringify(weatherContext)}\n\n` +
-              `Bottom guidance:\n${JSON.stringify(bottomGuidance || {})}\n\n` +
-              `Footwear guidance:\n${JSON.stringify(footwearGuidance || {})}\n\n` +
-              `Wardrobe analysis:\n${JSON.stringify(wardrobeAnalysis || {})}\n\n` +
-              `Stylist opinion (tvoj strop pre optimizmus):\n${JSON.stringify(stylistOpinion || {})}\n\n` +
-              `Vybraný outfit na zhodnotenie vhodnosti:\n${outfitLines.join("\n") || "- (prázdny outfit)"}`,
-              userStylePreferences,
-            ),
-          },
-        ];
-        try {
-          const explainRouting = routeStylistRequest({
-            message,
-            history: historyFromClient,
-            mode: "explain_outfit",
-            weatherContext,
-            clientContext,
-          });
-          logger.info("stylistChat: ai_router", {
-            tier: explainRouting.tier,
-            modelId: explainRouting.modelId,
-            pipeline: "explain",
-            reason: explainRouting.reason,
-          });
-          const raw = await callStylistChatOpenAi(explainMessages, {
-            model: explainRouting.modelId,
-            max_tokens: explainRouting.maxTokens,
-            temperature: explainRouting.temperature,
-          });
-          const parsed = extractFirstJsonObject(raw);
-          const replyRaw = String(parsed?.reply || raw || "").trim();
-          const reply = sanitizeStylistChatReply(replyRaw);
-          return await finalizeStylistResult(uid, notifyJobId, chatId, {
-            reply,
-            suggestedItems: selectedOutfitItemsInput.slice(0, 6),
-            action: "explain_outfit",
-          });
-        } catch (error) {
-          logger.error("stylistChat explain_outfit error:", error);
-          throw new functions.https.HttpsError(
-            "internal",
-            "Stylist chat momentálne nie je dostupný."
-          );
-        }
+        // Explanations now originate exclusively in
+        // resolveStylistFrozenCandidatesV1 after a deterministic decision
+        // validation. This legacy route had no immutable decision envelope.
+        throw new functions.https.HttpsError(
+          "failed-precondition", "frozen_decision_explanation_required",
+        );
       }
 
       const routing = routeStylistRequest({
@@ -4067,13 +4086,11 @@ exports.attachCleanImageOnWardrobeWrite = functions
           }
         }
 
-        const clarifyRoundUsed =
-          outfitContextState?.clarifyRoundUsed === true;
         const decision = parseOutfitDecisionFields(parsed);
         let action = resolveOutfitAction(
           String(parsed?.action || "chat").trim() || "chat",
           decision,
-          clarifyRoundUsed,
+          outfitContextState,
         );
         const {
           confidence,
@@ -4091,9 +4108,9 @@ exports.attachCleanImageOnWardrobeWrite = functions
             assumptions,
             clarifyReason,
             impactFields,
-            clarifyRoundUsed,
+            clarifiedMaterialFields: outfitContextState?.clarifiedMaterialFields || [],
             tier: routing.tier,
-            actionOverridden: clarifyRoundUsed &&
+            actionOverridden: action !== String(parsed?.action || "").trim() &&
               String(parsed?.action || "").trim() === "clarify",
           });
         }
@@ -4109,10 +4126,10 @@ exports.attachCleanImageOnWardrobeWrite = functions
             "Prepáč, trochu som sa pri tom zamotal 😅 " +
               "Skús mi to prosím napísať ešte raz.";
         }
-        const eventContext =
-          parsed?.eventContext && typeof parsed.eventContext === "object" ?
-            parsed.eventContext :
-            null;
+        const eventContext = sanitizeStylistAiEventContext(
+          parsed?.eventContext,
+          outfitContextState,
+        );
         const excludeItemKeywords = Array.isArray(parsed?.excludeItemKeywords) ?
           parsed.excludeItemKeywords
             .map((v) => String(v || "").trim())
