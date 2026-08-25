@@ -84,6 +84,10 @@ const {
 const {
   createNoRetryFetchExecutor,
 } = require("./stylist/ai_stylist_no_retry_fetch_v1");
+const {
+  OPENWEATHER_API_KEY_SECRET,
+  resolveOpenWeatherSecret,
+} = require("./weather/openweather_secret_binding");
 
 if (!admin.apps.length) {
   admin.initializeApp();
@@ -337,11 +341,7 @@ function getOpenAiKey() {
 // credential is bound to the callable through Firebase Secret Manager; the
 // legacy config fallback is retained only for older non-Stylist callables.
 function getBoundStylistOpenAiKey() {
-  try {
-    return resolveOpenAISecret();
-  } catch (_) {
-    return getOpenAiKey();
-  }
+  return resolveOpenAISecret();
 }
 
 function getGeminiKey() {
@@ -366,11 +366,7 @@ function getGeminiKey() {
 }
 
 function getOpenWeatherKey() {
-  return (
-    process.env.OPENWEATHER_API_KEY ||
-    getConfigValue(["openweather", "api_key"]) ||
-    getConfigValue(["openweather", "key"])
-  );
+  return resolveOpenWeatherSecret();
 }
 
 // An LLM may interpret known context but never becomes a source of new
@@ -4180,6 +4176,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
 
   exports.chatWithStylist = functions
     .region("us-east1")
+    .runWith({secrets: [OPENWEATHER_API_KEY_SECRET]})
     .https.onRequest(async (req, res) => {
       if (req.method !== "POST") {
         return res.status(405).send("Metóda nie je povolená. Použite POST.");

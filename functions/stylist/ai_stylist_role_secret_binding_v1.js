@@ -17,12 +17,12 @@ function resolve(secret, failureCode) {
   throw error;
 }
 
-function resolveOpenAISecret() {
-  return resolve(OPENAI_API_KEY_SECRET, "openai_secret_unavailable");
+function resolveOpenAISecret(secret = OPENAI_API_KEY_SECRET) {
+  return resolve(secret, "openai_secret_unavailable");
 }
 
-function resolveAnthropicSecret() {
-  return resolve(ANTHROPIC_API_KEY_SECRET, "anthropic_secret_unavailable");
+function resolveAnthropicSecret(secret = ANTHROPIC_API_KEY_SECRET) {
+  return resolve(secret, "anthropic_secret_unavailable");
 }
 
 module.exports = {
