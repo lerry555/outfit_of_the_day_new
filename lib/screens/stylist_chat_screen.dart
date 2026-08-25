@@ -19,6 +19,7 @@ import '../Services/hourly_weather_service.dart';
 import '../Services/outfit_generation_service.dart';
 import '../Services/stylist_chat_outfit_service.dart';
 import '../Services/stylist_frozen_candidate_decision_service.dart';
+import '../Services/stylist_udr_client_routing_v1.dart';
 import '../Services/stylist_chat_service.dart';
 import '../Services/stylist_chat_store.dart';
 import '../Services/stylist_job_consumer.dart';
@@ -740,7 +741,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             _shoppingState,
           );
       debugPrint('STYLIST CHAT conversation_gate_enter');
-      if (!useShoppingTransport &&
+      // The production U/D/R context authority (GPT-4o) owns semantic
+      // clarification. Keep this legacy gate available only for a disabled
+      // compatibility flow; it must not preempt the context callable.
+      if (!_useAiClarifyFlow &&
+          !useShoppingTransport &&
           _blockIfConversationNeedsClarification(
             sourceText: text,
             blockWeatherAndAi: true,
@@ -809,6 +814,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // dobehla a výsledok zapísala do Firestore – dotiahneme ho odtiaľ.
       response = await _recoverIfOffline(response, jobId);
       debugPrint('STYLIST CHAT timing apiMs=${timing.elapsedMilliseconds}');
+      debugPrint('STYLIST UDR context_source=gpt4o');
       if (!mounted) {
         _inFlightJobId = null;
         return;
@@ -1353,7 +1359,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     required Map<String, dynamic> weatherContext,
     required Map<String, dynamic> clientContext,
   }) async {
-    final action = (response['action'] ?? 'chat').toString();
+    final action = StylistUdrClientRoutingV1.normalizeContextAction(
+      response['action'],
+    );
     if (response['clearShoppingContext'] == true) {
       _shoppingState = const StylistShoppingSessionState();
     }
@@ -1401,6 +1409,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
     if (effectiveAction == 'clarify') {
       final reply = (response['reply'] ?? '').toString();
+      debugPrint('STYLIST UDR clarification_source=gpt4o');
       debugPrint(
         'STYLIST CHAT outfit_decision action=clarify '
         'confidence=${response['confidence']} '
@@ -1423,6 +1432,24 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return;
     }
 
+    if (effectiveAction == 'stop') {
+      final reply = (response['reply'] ?? '').toString().trim();
+      setState(() {
+        _messages.add(
+          StylistChatMessage(
+            text: reply.isNotEmpty
+                ? reply
+                : 'Tento outfit teraz nechcem navrhovať bez bezpečného '
+                      'podkladu.',
+            isUser: false,
+          ),
+        );
+        _isSending = false;
+      });
+      _scrollToBottom();
+      return;
+    }
+
     // Univerzálna skratka „vymeň len tento kus“ má prednosť PRED akciou modelu:
     // keď už outfit visí a používateľ chce vymeniť KTORÝKOĽVEK kus (vrch / spodok
     // / obuv / vrstvu), preskladáme HNEĎ len ten kus — bez ohľadu na to, či model
@@ -1434,7 +1461,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         rawEvent: response['eventContext'] as Map<String, dynamic>?,
         fallbackLocation: UserLocationService.instance.cityLabel,
       );
-      if (_askForCityIfMissing(event)) return;
+      if (_shouldUseLegacyClarifyGates(response) &&
+          _askForCityIfMissing(event)) {
+        return;
+      }
       debugPrint(
         'STYLIST CHAT auto_generate_outfit reason=explicit_swap '
         'slot=${swapRequest.slot.name} '
@@ -1812,7 +1842,12 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
   }) async {
-    if (_blockIfConversationNeedsClarification(sourceText: userText)) return;
+    // Semantic clarification has already been decided by the GPT-4o context
+    // callable. Do not re-run the legacy conversation gate here.
+    if (!_useAiClarifyFlow &&
+        _blockIfConversationNeedsClarification(sourceText: userText)) {
+      return;
+    }
     if (mounted) {
       setState(() => _sendingStatusLabel = 'Hľadám vhodný outfit…');
     }
@@ -1835,6 +1870,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
     if (!mounted) return;
 
+    debugPrint('STYLIST UDR decision_source=frozen_candidate_authority');
     _resetClarifyRound();
 
     if (outfitResult == null) {
@@ -1868,8 +1904,6 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         .map((e) => (e['id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
         .toSet();
-
-    final explainWeather = await _weatherContextForOutfitExplain(event);
 
     // Keď si používateľ výslovne vypýtal výmenu jedného kusu, nechceme znova
     // opísať CELÝ outfit tými istými vetami (pôsobí to ako copy-paste). Dáme
@@ -1908,63 +1942,15 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       }
     }
 
-    if (mounted) {
-      setState(() => _sendingStatusLabel = 'Stylista píše');
-    }
-    final explainTiming = Stopwatch()..start();
-    final conversation = _conversationHintText();
-    final occasionProfile = StylistOccasionGuidance.profileFor(
-      occasion: event.occasion,
-      conversationText: conversation,
-      tempC: (explainWeather.context['outfitTempC'] as num?)?.toInt(),
-      dressCodeFromAi: event.dressCode,
+    final displayReply = StylistUdrClientRoutingV1.frozenExplanationForDisplay(
+      outfitResult.finalExplanation,
     );
-    final terrain = StylistActivityTerrainClassifier.classify(
-      conversationText: conversation,
-      occasion: event.occasion,
-    );
-    final wetGroundMuddy =
-        StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
-          snapshot: explainWeather.snapshot,
-          now: DateTime.now(),
-          terrain: terrain,
-          eventHour: event.hourLocal,
-        );
-    final outfitWeather = OutfitWeatherSnapshot(
-      tempC:
-          (explainWeather.context['outfitTempC'] as num?)?.toInt() ??
-          explainWeather.snapshot.noonTempC ??
-          20,
-      isRainy: explainWeather.snapshot.willRain,
-      isWindy: explainWeather.snapshot.isWindy,
-      seasonKey: _seasonKeyFromDate(event.date),
-    );
-    final stylistOpinion = outfitResult.stylistOpinion;
-    // The authoritative frozen decision callable already produced a validated
-    // explanation. It is deliberately preferred over the historical
-    // `stylistChat/explain_outfit` route, which had authority to reconsider
-    // the displayed outfit.
-    final frozenExplanation = outfitResult.finalExplanation;
-    final explainResponse = frozenExplanation == null || frozenExplanation.isEmpty
-        ? <String, dynamic>{'ok': false, 'reply': ''}
-        : <String, dynamic>{'ok': true, 'reply': frozenExplanation};
+    final hasFrozenExplanation = displayReply != null;
     debugPrint(
-      'STYLIST CHAT timing explainMs=${explainTiming.elapsedMilliseconds}',
+      'STYLIST UDR explanation_source='
+      '${hasFrozenExplanation ? 'frozen_authority' : 'unavailable'}',
     );
-
-    final displayReply = _resolveHybridExplainReply(
-      explainResponse: explainResponse,
-      suggestedItems: suggestedItems,
-      event: event,
-      weatherContext: explainWeather.context,
-      weatherSnapshot: explainWeather.snapshot,
-      wardrobeAnalysis: wardrobeAnalysis,
-      occasionProfile: occasionProfile,
-      stylistOpinion: stylistOpinion,
-      weatherIsRainy: outfitWeather.isRainy,
-      wetGroundMuddy: wetGroundMuddy,
-      tempC: outfitWeather.tempC,
-    );
+    debugPrint('STYLIST UDR legacy_fallback_invoked=false');
     debugPrint(
       'STYLIST CHAT hybrid outfit ids='
       '${suggestedItems.map((e) => e['id']).join(",")}',
@@ -1972,12 +1958,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     setState(() {
       _messages.add(
         StylistChatMessage(
-          text: _sanitizeStylistReplyForDisplay(
-            displayReply,
-            isOutfitReply: true,
-            outfitHasOuterwear: _outfitContainsOuterwear(suggestedItems),
-            stripRainAdvice: _userDeclinedRainAdvice(),
-          ),
+          text: displayReply ??
+              'Outfit som vybral, ale potvrdené vysvetlenie zo Stylist '
+                  'autority teraz nie je dostupné. Skús to prosím znova.',
           isUser: false,
           suggestedItems: suggestedItems,
         ),
@@ -2163,10 +2146,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   /// Poistka: EventClarification ostáva, ale pri AI clarify flow ho používame
   /// len keď AI ešte nemá dostatočnú istotu (confidence).
   bool _shouldUseLegacyClarifyGates(Map<String, dynamic> response) {
-    if (!_useAiClarifyFlow) return true;
-    final confidence = response['confidence'] ?? response['readiness'];
-    if (confidence is num && confidence >= 0.70) return false;
-    return true;
+    // U/D/R routes every semantic clarification through GPT-4o. Local
+    // city/time gates remain only for the disabled compatibility flow.
+    return !_useAiClarifyFlow;
   }
 
   void _resetClarifyRound() {
