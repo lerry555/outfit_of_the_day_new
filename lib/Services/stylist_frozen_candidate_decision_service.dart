@@ -1,6 +1,7 @@
 import 'package:cloud_functions/cloud_functions.dart';
 
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
+import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 
 /// Client transport for the authoritative Stylist Track-D/R seam.
 ///
@@ -109,6 +110,19 @@ class StylistFrozenCandidateDecisionServiceV1 {
           .map((item) => item.itemId)
           .where((id) => id.trim().isNotEmpty)
           .toList(growable: false),
+      // Presentation data is an immutable description of this same frozen
+      // candidate. The authority validates itemId membership before using it
+      // to build the Claude-only, user-facing explanation snapshot.
+      'presentationItems': candidate.outfit.items
+          .map(
+            (item) => <String, dynamic>{
+              'itemId': item.itemId,
+              'name': _presentationName(item),
+              'canonicalType': item.item.canonicalType,
+              'primaryColor': item.item.colorProfile.primary.family,
+            },
+          )
+          .toList(growable: false),
       'hardConstraintEvidence': <String, dynamic>{
         'deterministicPassed': validationErrors.isEmpty,
         'violationCodes': validationErrors,
@@ -118,5 +132,14 @@ class StylistFrozenCandidateDecisionServiceV1 {
         'reasonCodes': <String>[],
       },
     };
+  }
+
+  static String _presentationName(V2FlexibleOutfitItem item) {
+    final display = item.display;
+    for (final key in const ['name', 'displayName', 'title']) {
+      final value = display[key]?.toString().trim() ?? '';
+      if (value.isNotEmpty) return value;
+    }
+    return item.item.canonicalType;
   }
 }

@@ -242,7 +242,16 @@ function anthropicBody({canonicalPayload}) {
     output_config: {format: {
       type: "json_schema", schema: simplifyAnthropicSchema(EXPLANATION_SCHEMA),
     }, effort: "low"},
-    system: "Explain only the supplied immutable decision in natural Slovak.",
+    system: [
+      "Si osobný stylist a píšeš priamo používateľovi prirodzenou slovenčinou.",
+      "Vysvetli LEN už vybraný outfit alebo reject_all; outfit nikdy nemeň ani nedopĺňaj.",
+      "Pri vybranom outfite napíš zvyčajne 2–4 stručné vety: pomenuj len kusy z userFacingSelectedOutfit a vysvetli, prečo sa hodia k príležitosti, počasiu alebo kontextu.",
+      "Ak internalCaveat naznačuje kompromis, prelož ho do bežnej stylistickej rady; neuvádzaj interný názov klasifikácie.",
+      "Pri reject_all krátko a ľudsky vysvetli, že z dostupných možností nie je vhodný outfit; môžeš pomenovať potrebný typ kúsku, ale nikdy netvrď, že ho používateľ vlastní.",
+      "NIKDY nespomínaj candidate ID, outfit ID, item ID, frozen kandidáta alebo frozen rozhodnutie, validátor, deterministické pravidlá, hard constraints, hard checks, violation codes, compromiseClassification, reason codes, autoritu, pipeline, model, providera, skóre ani confidence.",
+      "Nevymýšľaj ani nenahrádzaj kusy, nevypisuj validačné kroky a nevysvetľuj systémové rozhodovanie.",
+      "Vráť iba používateľský text v poli explanation.",
+    ].join(" "),
     messages: [{role: "user", content: safeJson(canonicalPayload)}],
   });
 }

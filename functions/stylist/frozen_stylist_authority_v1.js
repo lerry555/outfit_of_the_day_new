@@ -49,6 +49,8 @@ function normalizeCandidate(value, ownedItemIds) {
   const candidateId = cleanText(value.candidateId, 100);
   const itemIds = cleanStringList(value.itemIds, MAX_ITEMS_PER_CANDIDATE, 100);
   if (!candidateId || !itemIds.length) return null;
+  const presentationItems = normalizePresentationItems(value.presentationItems, itemIds);
+  if (presentationItems === null) return null;
   const suppliedEvidence = value.hardConstraintEvidence && typeof value.hardConstraintEvidence === "object" ?
     value.hardConstraintEvidence : {};
   const deterministicPassed = suppliedEvidence.deterministicPassed === true;
@@ -62,6 +64,7 @@ function normalizeCandidate(value, ownedItemIds) {
   return Object.freeze({
     candidateId,
     itemIds,
+    presentationItems,
     hardConstraintEvidence: Object.freeze({
       deterministicPassed,
       ownershipPassed: owned,
@@ -78,6 +81,26 @@ function normalizeCandidate(value, ownedItemIds) {
     }),
     eligible,
   });
+}
+
+// This snapshot is immutable and must describe precisely the frozen item set.
+// It is retained server-side with IDs for correlation, then IDs are removed
+// before the payload reaches the user-facing explanation model.
+function normalizePresentationItems(value, itemIds) {
+  if (value == null) return Object.freeze([]); // Allows already-released clients.
+  if (!Array.isArray(value) || value.length !== itemIds.length) return null;
+  const byId = new Map();
+  for (const raw of value) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const itemId = cleanText(raw.itemId, 100);
+    const name = cleanText(raw.name, 120);
+    const canonicalType = cleanText(raw.canonicalType, 80);
+    const primaryColor = cleanText(raw.primaryColor, 80);
+    if (!itemId || !name || !canonicalType || !primaryColor || byId.has(itemId)) return null;
+    byId.set(itemId, Object.freeze({itemId, name, canonicalType, primaryColor}));
+  }
+  if (itemIds.some((id) => !byId.has(id))) return null;
+  return Object.freeze(itemIds.map((id) => byId.get(id)));
 }
 
 function normalizeRequest(data, ownedItemIds) {
@@ -129,20 +152,37 @@ function explanationPayload(normalized, decision) {
   return Object.freeze({
     contractVersion: "FrozenOutfitExplanationRequestV1",
     effectiveAction: decision.action,
-    effectiveSelectedCandidateId: decision.selectedCandidateId,
-    selectedFrozenItemIds: selected ? selected.itemIds : [],
-    hardConstraintEvidence: selected ? selected.hardConstraintEvidence : null,
-    compromiseClassification: selected ? selected.compromiseClassification :
-      {level: "reject_all", reasonCodes: decision.reasonCodes},
-    decisionReasons: decision.reasonCodes,
-    resolvedContext: normalized.resolvedContext,
+    // Never transmit candidate or item IDs to Claude. It receives only this
+    // presentation-safe description of the immutable selected set.
+    userFacingSelectedOutfit: selected ? selected.presentationItems.map((item) => ({
+      name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,
+    })) : [],
+    userFacingContext: normalized.resolvedContext,
+    // This is deliberately separate from the outfit description. It is a
+    // caveat signal, not vocabulary for the end-user response.
+    internalCaveat: selected ? selected.compromiseClassification.level : "reject_all",
   });
 }
 
 function deterministicExplanation(decision) {
   return decision.action === "reject_all" ?
     "Z dostupných možností teraz neviem bezpečne potvrdiť vhodný outfit." :
-    "Vybraný outfit prešiel kontrolou známych podmienok.";
+    "Tento outfit sa hodí k tvojej príležitosti aj podmienkam, ktoré si uviedol.";
+}
+
+// Prompting is the primary UX control, but do not display an explanation that
+// nevertheless leaks a recognisable implementation term. This guard cannot
+// change the already validated decision; it only selects the safe prose
+// fallback for that same decision.
+function isUserFacingExplanationSafe(value) {
+  const lower = cleanText(value, 1200).toLowerCase();
+  if (!lower) return false;
+  return ![
+    /candidate\s*id|outfit\s*id|item\s*id|selectedcandidateid/,
+    /frozen|validátor|validator|determinist|hard\s*(constraint|check)|violation/,
+    /compromiseclassification|reason\s*code|authority|pipeline|confidence|skóre|score/,
+    /openai|anthropic|claude|gpt[-\s]?\d/,
+  ].some((pattern) => pattern.test(lower));
 }
 
 function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecret, execute}) {
@@ -179,7 +219,9 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
         }
       }
       const explanationResult = await explanationClient.run(explanationPayload(normalized, decision));
-      const explanation = explanationResult.ok ? explanationResult.value.explanation : deterministicExplanation(decision);
+      const explanationValid = explanationResult.ok &&
+        isUserFacingExplanationSafe(explanationResult.value.explanation);
+      const explanation = explanationValid ? explanationResult.value.explanation : deterministicExplanation(decision);
       return Object.freeze({
         contractVersion: CONTRACT_VERSION,
         action: decision.action,
@@ -187,9 +229,11 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
         reasonCodes: decision.reasonCodes,
         requestedDecisionAccepted: decision.requestedDecisionAccepted,
         explanation,
-        explanationFallback: !explanationResult.ok,
+        explanationFallback: !explanationValid,
         decisionProviderFailure,
-        explanationProviderFailure: explanationResult.ok ? null : explanationResult.failureCode || "explanation_provider_failure",
+        explanationProviderFailure: explanationValid ? null :
+          explanationResult.ok ? "explanation_user_facing_contract_invalid" :
+            explanationResult.failureCode || "explanation_provider_failure",
       });
     },
   });
@@ -197,5 +241,6 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
 
 module.exports = {
   CONTRACT_VERSION, normalizeRequest, validateDecision, explanationPayload,
+  deterministicExplanation, isUserFacingExplanationSafe,
   createFrozenStylistAuthority,
 };
