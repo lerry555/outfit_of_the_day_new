@@ -302,8 +302,6 @@ abstract final class EventDressCodeCatalog {
         'hory',
         'hor',
         'turist',
-        'vylet',
-        'výlet',
         'trek',
         'hiking',
         'do hory',

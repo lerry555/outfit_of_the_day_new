@@ -46,6 +46,7 @@ import '../utils/stylist_wardrobe_context_need.dart';
 import '../utils/stylist_conversation_signals.dart';
 import '../utils/stylist_weather_tip.dart';
 import '../utils/stylist_weather_adjustment.dart';
+import '../utils/stylist_chat_entitlement.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../models/outfit_context_state.dart';
 import '../models/shopping_ui_feature_flags.dart';
@@ -199,7 +200,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       'hotová, pošlem ti upozornenie. 🔔';
 
   int _userMessageCount = 0;
-  bool _isPremium = false;
+  StylistChatEntitlement _entitlement = StylistChatEntitlement.unknown;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>?
+  _entitlementSubscription;
   bool _sendingFlag = false;
   bool get _isSending => _sendingFlag;
 
@@ -353,10 +356,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       if (mounted) {
         setState(() {
           _messages.add(
-            const StylistChatMessage(
-              text: _jobUnavailableText,
-              isUser: false,
-            ),
+            const StylistChatMessage(text: _jobUnavailableText, isUser: false),
           );
           _isSending = false;
         });
@@ -399,10 +399,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         apply: _applyNormalizedJobResponse,
         persistChat: () async {
           _stampMessagesWithJobId(start, jobId);
-          return _persistNow(
-            awaitWrite: true,
-            allowWithoutUserMessages: true,
-          );
+          return _persistNow(awaitWrite: true, allowWithoutUserMessages: true);
         },
         deleteJob: _stylistChatService.deleteJob,
       );
@@ -443,7 +440,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
   }
 
-  Future<void> _applyNormalizedJobResponse(Map<String, dynamic> response) async {
+  Future<void> _applyNormalizedJobResponse(
+    Map<String, dynamic> response,
+  ) async {
     final lastUser = _messages.lastWhere(
       (m) => m.isUser && m.text.trim().isNotEmpty,
       orElse: () => const StylistChatMessage(text: '', isUser: true),
@@ -484,6 +483,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   void dispose() {
     _saveTimer?.cancel();
     _awayHintTimer?.cancel();
+    unawaited(_entitlementSubscription?.cancel());
     StylistNotificationIntentStore.instance.removeListener(
       _onStylistNotificationIntent,
     );
@@ -614,6 +614,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _pendingImage = null;
       _isSending = false;
       _lastOutfitItemIds = const {};
+      _outfitContextState = const OutfitContextState();
+      _lastResolvedEventTempC = null;
+      _unresolvableDestinations.clear();
     });
     _controller.clear();
   }
@@ -674,6 +677,21 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : data!['photoImproveHint'].toString();
         _pendingImage = null;
         _isSending = false;
+        _outfitContextState = OutfitContextState.buildFrom(
+          conversation: _conversationHintText(),
+          gpsCityLabel: UserLocationService.instance.cityLabel,
+          latestUserText: _messages
+              .lastWhere(
+                (message) => message.isUser,
+                orElse: () => const StylistChatMessage(
+                  text: '',
+                  isUser: true,
+                ),
+              )
+              .text,
+        );
+        _lastResolvedEventTempC = null;
+        _unresolvableDestinations.clear();
       });
       _scrollToBottom();
     } catch (_) {
@@ -685,21 +703,39 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   Future<void> _loadPremiumState() async {
     final user = _auth.currentUser;
+    await _entitlementSubscription?.cancel();
+    _entitlementSubscription = null;
+    if (!mounted) return;
+    setState(() => _entitlement = StylistChatEntitlement.unknown);
     if (user == null) return;
 
-    try {
-      final snap = await _firestore.collection('users').doc(user.uid).get();
-      final data = snap.data();
-      final status = (data?['subscriptionStatus'] ?? '')
-          .toString()
-          .toLowerCase();
-      final isPremium = data?['isPremium'] == true || status == 'premium';
-      if (!mounted) return;
-      setState(() => _isPremium = isPremium);
-    } catch (_) {
-      // Keep free defaults on error.
-    }
+    _entitlementSubscription = _firestore
+        .collection('users')
+        .doc(user.uid)
+        .snapshots()
+        .listen(
+          (snap) {
+            if (!mounted) return;
+            setState(() {
+              _entitlement = StylistChatEntitlementPolicy.fromUserDocument(
+                snap.data(),
+              );
+            });
+          },
+          onError: (_) {
+            // UNKNOWN is intentionally fail-open for chat access. A transient
+            // entitlement read must never masquerade as an authoritative FREE.
+            if (!mounted) return;
+            setState(() => _entitlement = StylistChatEntitlement.unknown);
+          },
+        );
   }
+
+  bool get _freeLimitReached => StylistChatEntitlementPolicy.blocksMessage(
+    entitlement: _entitlement,
+    userMessageCount: _userMessageCount,
+    freeMessageLimit: _freeMessageLimit,
+  );
 
   Future<void> _sendMessage() async {
     if (_isSending) return;
@@ -715,7 +751,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
     if (text.isEmpty) return;
 
-    if (!_isPremium && _userMessageCount >= _freeMessageLimit) {
+    if (_freeLimitReached) {
       _showPremiumBottomSheet();
       return;
     }
@@ -950,7 +986,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     final image = _pendingImage;
     if (image == null) return;
 
-    if (!_isPremium && _userMessageCount >= _freeMessageLimit) {
+    if (_freeLimitReached) {
       _showPremiumBottomSheet();
       return;
     }
@@ -1081,7 +1117,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   /// Ďalšie správy, kým prebieha rozhovor o fotke. Riadi sa podľa fázy.
   Future<void> _continuePhotoConversation(String text) async {
-    if (!_isPremium && _userMessageCount >= _freeMessageLimit) {
+    if (_freeLimitReached) {
       _showPremiumBottomSheet();
       return;
     }
@@ -1412,27 +1448,42 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     // deterministic material event fact remains unknown.
     if (_outfitContextState.groundingStatus == 'needs_grounding' &&
         effectiveAction != 'stop') {
-      final modelAlreadyClarifying = effectiveAction == 'clarify';
       effectiveAction = 'clarify';
       requestedImpactFields = {
         ...requestedImpactFields,
         ..._outfitContextState.unresolvedMaterialFields,
       };
       response['impactFields'] = requestedImpactFields.toList(growable: false);
-      // Keep GPT-4o's natural clarification if it has already chosen the
-      // correct non-decisive action. The deterministic text is only the
-      // fail-closed fallback for a model that attempted to proceed.
-      if (!modelAlreadyClarifying ||
-          _outfitContextState.userCorrectionDetected) {
-        response['reply'] = _groundingClarificationText(
-          _outfitContextState.unresolvedMaterialFields,
-          correction: _outfitContextState.userCorrectionDetected,
-        );
-      }
+      // GPT-4o still owns the semantic context decision, while deterministic
+      // grounding owns the exact unresolved material delta. Render that delta
+      // directly so an otherwise good model reply cannot re-ask a resolved
+      // field (or add a low-impact time question) before the destination and
+      // activity are actually grounded.
+      response['reply'] = _groundingClarificationText(
+        _outfitContextState.unresolvedMaterialFields,
+        correction: _outfitContextState.userCorrectionDetected,
+      );
       debugPrint(
         'STYLIST CHAT grounding_blocked_generation '
         'fields=${_outfitContextState.unresolvedMaterialFields}',
       );
+    }
+    if (_outfitContextState.groundingStatus == 'sufficient' &&
+        _outfitContextState.userCorrectionDetected &&
+        _conversationAlreadyHasOutfitCards() &&
+        effectiveAction != 'stop') {
+      effectiveAction = 'generate_outfit';
+      debugPrint('STYLIST CHAT material_correction_refresh=true');
+    }
+    if (effectiveAction == 'generate_outfit' &&
+        OutfitContextState.isMultiDayPackingRequest(
+          _conversationHintText(),
+        )) {
+      // Packing spans several situations and must not be collapsed into one
+      // frozen outfit. GPT-4o can give scoped packing advice; D/R remains the
+      // authority only when the user actually asks for one outfit.
+      effectiveAction = 'chat';
+      debugPrint('STYLIST CHAT multi_day_packing_kept_conversational=true');
     }
     final alreadyAsked = _outfitContextState.clarifiedMaterialFields
         .map((value) => value.trim().toLowerCase())
@@ -1901,6 +1952,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         previousOutfitItemIds: _lastOutfitItemIds,
         forceDifferentOutfit: forceDifferent,
         conversationHint: _conversationHintText(),
+        groundedActivityType: _outfitContextState.activityHint,
         requestedBottomFamily: requestedBottomFamily,
         requestedSwap: requestedSwap,
       );
@@ -1920,8 +1972,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           StylistChatMessage(
             text: rejectAll
                 ? (rejectAllExplanation.isNotEmpty
-                    ? rejectAllExplanation
-                    : 'Z dostupných možností ti teraz nechcem nasilu potvrdiť outfit, ktorý by neprešiel podmienkami.')
+                      ? rejectAllExplanation
+                      : 'Z dostupných možností ti teraz nechcem nasilu potvrdiť outfit, ktorý by neprešiel podmienkami.')
                 : 'V šatníku nemám dosť kusov na celý outfit. Skús pridať viac oblečenia.',
             isUser: false,
           ),
@@ -1998,7 +2050,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     setState(() {
       _messages.add(
         StylistChatMessage(
-          text: displayReply ??
+          text:
+              displayReply ??
               'Outfit som vybral, ale potvrdené vysvetlenie zo Stylist '
                   'autority teraz nie je dostupné. Skús to prosím znova.',
           isUser: false,
@@ -2354,21 +2407,20 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
     final mayUseGpsAsEventLocation =
         !_outfitContextState.remoteActivityPlanned ||
-            _outfitContextState.routineLocalOutfit;
+        _outfitContextState.routineLocalOutfit;
     if (location.isEmpty && mayUseGpsAsEventLocation) {
       location = fallbackLocation.split(',').first.trim();
     }
 
     var date = base.date;
     final tripParsed = StylistTripParser.parseFromConversation(conversation);
-    // Dátum z AI (dateKey) má prednosť; lokálny parser len ak AI dátum nedala.
-    final aiDateKey = (rawEvent?['dateKey'] ?? '')
-        .toString()
-        .trim()
-        .toLowerCase();
+    // Explicitný dátum z user-grounded state má prednosť pred starým
+    // modelovým eventContextom. Oprava "nie zajtra, v sobotu" musí zrušiť
+    // starú predpoveď, aj keď GPT vráti predchádzajúci dateKey.
     final stateDate = DateTime.tryParse(_outfitContextState.dateKey ?? '');
-    final explicitDate = stateDate ?? StylistDayParser.resolveDate(conversation);
-    if (explicitDate != null && aiDateKey.isEmpty) {
+    final explicitDate =
+        stateDate ?? StylistDayParser.resolveDate(conversation);
+    if (explicitDate != null) {
       date = explicitDate;
     }
 
@@ -2415,11 +2467,46 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     if (normalized.contains('destination') && normalized.contains('activity')) {
       return '${prefix}Kam sa chystáte a čo tam budete približne robiť?';
     }
+    if (normalized.contains('activity') && normalized.contains('date')) {
+      final weekend = RegExp(
+        r'\b(?:víkend|vikend|weekend)\b',
+        caseSensitive: false,
+      ).hasMatch(_conversationHintText());
+      return weekend
+          ? '${prefix}Čo budete po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.'
+          : '${prefix}Čo budete počas pobytu približne robiť a kedy cestujete?';
+    }
     if (normalized.contains('destination')) {
+      final activity = _outfitContextState.activityHint;
+      if (activity == 'city_walk') {
+        final country = RegExp(
+          r'\b(?:usa|spojen(?:e|é)\s+štáty|united\s+states)\b',
+          caseSensitive: false,
+        ).hasMatch(_conversationHintText());
+        return country
+            ? '${prefix}Prechádzku po meste mám. Ktoré mesto v USA? Počasie sa tam môže dosť líšiť.'
+            : '${prefix}Prechádzku po meste mám. Ešte kam sa chystáte? Podľa miesta vyberiem správne počasie.';
+      }
       return '${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.';
     }
-    if (normalized.contains('activity') || normalized.contains('trip_scope')) {
-      return '${prefix}Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?';
+    if (normalized.contains('trip_scope') &&
+        !normalized.contains('activity')) {
+      return '${prefix}Chceš jeden konkrétny outfit, alebo plán, čo si zbaliť na celý pobyt?';
+    }
+    if (normalized.contains('activity')) {
+      if (_outfitContextState.activityHint == 'travel') {
+        return '${prefix}Cestu mám. Čo budete po príchode približne robiť? To rozhodne, či má byť outfit hlavne pohodlný, alebo aj upravenejší.';
+      }
+      if (RegExp(
+        r'\b(?:\d+|jeden|jedna|dva|dve|tri|štyri|styri|päť|pat)\s+dni?\b',
+        caseSensitive: false,
+      ).hasMatch(_conversationHintText())) {
+        return '${prefix}Čo máte počas pobytu v pláne? Na celodenné chodenie po meste a na lepšiu večeru sa balí trochu inak.';
+      }
+      return '${prefix}Čo tam budete približne robiť?';
+    }
+    if (normalized.contains('date')) {
+      return '${prefix}Kedy cestujete? Podľa termínu overím správne počasie.';
     }
     return '${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.';
   }
@@ -4742,8 +4829,7 @@ class _ShoppingAttachmentTile extends StatelessWidget {
               .whereType<Map>()
               .map(Map<String, dynamic>.from)
               .where(
-                (item) =>
-                    item['label'] is String && item['message'] is String,
+                (item) => item['label'] is String && item['message'] is String,
               )
               .toList(growable: false);
       return _ShoppingPanel(
@@ -4786,10 +4872,7 @@ class _ShoppingAttachmentTile extends StatelessWidget {
               wishlistCandidate.isUsable
                   ? 'Nastav cieľovú cenu a veľkosti.'
                   : 'Vyber konkrétny produkt pre Wishlist.',
-              style: const TextStyle(
-                color: Color(0xFFF1F0EC),
-                fontSize: 12,
-              ),
+              style: const TextStyle(color: Color(0xFFF1F0EC), fontSize: 12),
             ),
           ),
           if (isWishlist)

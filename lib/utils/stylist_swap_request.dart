@@ -98,6 +98,11 @@ class StylistSwapRequest {
     final norm = _norm(text);
     if (norm.isEmpty) return null;
 
+    // Mentioning a garment family inside an explanation/follow-up question is
+    // not a request to replace it. Family detection is intentionally broad,
+    // so this semantic guard must run before the family-only swap shortcut.
+    if (_asksAboutExistingChoice(norm)) return null;
+
     final hasChangeIntent = _containsAny(norm, _changeWords);
     final bottomFamily = StylistBottomRequest.parse(text);
     final shoeFamily = _shoeFamilyFromText(norm);
@@ -124,7 +129,8 @@ class StylistSwapRequest {
     if (!hasChangeIntent) return null;
 
     // Poradie: obuv → vrchná vrstva → vrch → spodok (najšpecifickejšie najprv).
-    if (mentionsShoes) return const StylistSwapRequest(slot: StylistSwapSlot.shoes);
+    if (mentionsShoes)
+      return const StylistSwapRequest(slot: StylistSwapSlot.shoes);
     if (mentionsOuter) {
       return const StylistSwapRequest(slot: StylistSwapSlot.outerwear);
     }
@@ -133,6 +139,13 @@ class StylistSwapRequest {
       return const StylistSwapRequest(slot: StylistSwapSlot.bottom);
     }
     return null;
+  }
+
+  static bool _asksAboutExistingChoice(String norm) {
+    return RegExp(
+      r'(^|\s)(preco|z akeho dovodu|ako to|ako sa|hodi|hodia|pasuje|pasuju|'
+      r'vhodne|vhodna|vhodny|zmysel)(\s|$)',
+    ).hasMatch(norm);
   }
 
   static FootwearFamily? _shoeFamilyFromText(String norm) {

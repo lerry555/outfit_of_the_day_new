@@ -10,7 +10,20 @@ class StylistIntentResolver {
     String? conversationText,
     Map<String, dynamic>? aiDressCode,
     int? tempC,
+    String? groundedActivityType,
   }) {
+    final grounded = _resolveGroundedActivityType(groundedActivityType);
+    if (grounded != null) {
+      final profile = StylistIntentCatalog.intentFor(grounded);
+      if (profile.activityType == grounded) return profile;
+      return StylistIntent(
+        activityType: grounded,
+        primaryImpressions: profile.primaryImpressions,
+        secondaryImpressions: profile.secondaryImpressions,
+        avoidImpressions: profile.avoidImpressions,
+        impressionSummarySk: profile.impressionSummarySk,
+      );
+    }
     final activityType = _resolveActivityType(
       occasion: occasion,
       conversationText: conversationText,
@@ -18,6 +31,32 @@ class StylistIntentResolver {
       tempC: tempC,
     );
     return StylistIntentCatalog.intentFor(activityType);
+  }
+
+  static String? _resolveGroundedActivityType(String? value) {
+    final normalized = (value ?? '').trim().toLowerCase();
+    if (normalized.isEmpty) return null;
+    if (normalized == 'city_walk' || normalized == 'mesto' || normalized == 'zoo') {
+      return 'city_walk';
+    }
+    if (normalized.contains('hory') ||
+        normalized.contains('turist') ||
+        normalized == 'hike' ||
+        normalized == 'hiking') {
+      return 'hike';
+    }
+    if (normalized.contains('les') ||
+        normalized.contains('prírod') ||
+        normalized.contains('prirod')) {
+      return 'nature_walk';
+    }
+    if (normalized == 'dinner' || normalized == 'work' || normalized == 'travel') {
+      return normalized;
+    }
+    // Generic trip words deliberately remain unresolved upstream and must not
+    // acquire an outdoor/hiking identity here.
+    if (normalized.contains('vylet') || normalized.contains('výlet')) return null;
+    return normalized;
   }
 
   static String _resolveActivityType({

@@ -59,8 +59,12 @@ class StylistOccasionGuidance {
     String? conversationText,
     int? tempC,
     Map<String, dynamic>? dressCodeFromAi,
+    String? groundedActivityType,
   }) {
-    final dressCode = DressCodeResolver.resolve(
+    final dressCode = DressCodeResolver.resolveGroundedActivity(
+          groundedActivityType,
+        ) ??
+        DressCodeResolver.resolve(
       occasion: occasion,
       conversationText: conversationText,
       aiDressCode: dressCodeFromAi,

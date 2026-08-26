@@ -105,9 +105,14 @@ class OutfitContextState {
     final correctionChangesPlaceOrActivity =
         correction && _changesPlaceOrActivity(latest);
     final gps = gpsCityLabel.split(',').first.trim();
+    final latestInferred = StylistDestinationParser.inferFromConversation(
+      latest,
+    );
     final inferred = correctionChangesPlaceOrActivity
         ? null
-        : StylistDestinationParser.inferFromConversation(conversation);
+        : latestInferred ??
+              previous?.activityLocationLabel ??
+              StylistDestinationParser.inferFromConversation(conversation);
     final inferredOk =
         inferred != null &&
         inferred.trim().isNotEmpty &&
@@ -150,14 +155,16 @@ class OutfitContextState {
     }
 
     final activityLocationKnown = inferredOk || (routine && gps.isNotEmpty);
+    final latestActivityHint = _extractActivityHint(latest.toLowerCase());
     final activityHint = correctionChangesPlaceOrActivity
-        ? _extractActivityHint(latest.toLowerCase())
-        : _extractActivityHint(blob);
+        ? latestActivityHint
+        : latestActivityHint ?? previous?.activityHint ?? _extractActivityHint(blob);
     final unresolved = _materialUnknowns(
       remote: remote,
       routine: routine,
       locationKnown: inferredOk,
       activityHint: activityHint,
+      dateKnown: dateKey != null,
       conversation: conversation,
       latest: latest,
     );
@@ -328,13 +335,18 @@ class OutfitContextState {
     if (blob.contains('zoo')) return 'zoo';
     if (blob.contains('reštaur') ||
         blob.contains('restaur') ||
-        blob.contains('večer') ||
-        blob.contains('vecer')) {
+        blob.contains('večeru') ||
+        blob.contains('veceru')) {
       return 'dinner';
     }
     if (blob.contains('centrum') ||
         blob.contains('centre') ||
-        blob.contains('meste')) {
+        blob.contains('centra') ||
+        blob.contains('centrom') ||
+        blob.contains('pamiat') ||
+        blob.contains('meste') ||
+        RegExp(r'\bpo\s+mete\b').hasMatch(blob) ||
+        RegExp(r'\bpopozer\w*\s+mest').hasMatch(blob)) {
       return 'city_walk';
     }
     if (blob.contains('autom') ||
@@ -367,17 +379,34 @@ class OutfitContextState {
     required bool routine,
     required bool locationKnown,
     required String? activityHint,
+    required bool dateKnown,
     required String conversation,
     required String latest,
   }) {
     if (routine && !remote) return const [];
     final result = <String>[];
+    final travelDayExplicit = RegExp(
+      r'\b(?:outfit\w*\s+na\s+cest|na\s+cestu|cestovn\w*\s+(?:deň|den)|presun)\b',
+      caseSensitive: false,
+    ).hasMatch(conversation);
     final genericActivity =
         activityHint == null ||
+        (activityHint == 'travel' && !travelDayExplicit) ||
         _genericTripHints.any((hint) => activityHint.contains(hint));
     if (remote && !locationKnown) result.add('destination');
     if (remote && genericActivity) result.add('activity');
-    if (_isMultiDay(conversation) && remote) result.add('trip_scope');
+    if (remote &&
+        !dateKnown &&
+        (_isMultiDay(conversation) ||
+            RegExp(
+              r'\b(?:víkend|vikend|weekend)\b',
+              caseSensitive: false,
+            ).hasMatch(conversation))) {
+      result.add('date');
+    }
+    if (_isMultiDay(conversation) && remote && !_tripScopeResolved(conversation)) {
+      result.add('trip_scope');
+    }
     if (_isCorrectionOrChallenge(latest) && result.isEmpty && !locationKnown) {
       result.addAll(const ['destination', 'activity']);
     }
@@ -389,6 +418,24 @@ class OutfitContextState {
     caseSensitive: false,
   ).hasMatch(value);
 
+  static bool _tripScopeResolved(String value) => RegExp(
+    r'\b(?:zobrat|zobrať|zbalit|zbaliť|balen|packing|jeden\s+outfit|konkrétny\s+outfit|outfit\s+na\s+(?:cestu|večeru|veceru|deň|den))\b',
+    caseSensitive: false,
+  ).hasMatch(value);
+
+  static bool isMultiDayPackingRequest(String value) {
+    if (!_isMultiDay(value)) return false;
+    final explicitSingleOutfit = RegExp(
+      r'\b(?:jeden|konkrétny|konkretny)\s+outfit\b|\boutfit\s+na\s+(?:jeden\s+)?(?:deň|den|večeru|veceru|cestu)\b',
+      caseSensitive: false,
+    ).hasMatch(value);
+    if (explicitSingleOutfit) return false;
+    return RegExp(
+      r'(?:zobrat|zobrať|zbalit|zbaliť|balen|packing)',
+      caseSensitive: false,
+    ).hasMatch(value);
+  }
+
   static bool _isCorrectionOrChallenge(String value) {
     final text = value.toLowerCase().trim();
     return text.contains('kde som tvrdil') ||
@@ -396,6 +443,9 @@ class OutfitContextState {
         text.contains('to som nehovor') ||
         text.contains('ja nejdem') ||
         text.contains('nejdeme ') ||
+        text.contains('nie zajtra') ||
+        text.contains('nie dnes') ||
+        text.startsWith('pardon nie') ||
         text.startsWith('nie,') ||
         text.startsWith('nie ');
   }

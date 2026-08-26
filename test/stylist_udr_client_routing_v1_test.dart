@@ -43,19 +43,29 @@ void main() {
   });
 
   test('production screen keeps local semantic gates off the UDR route', () {
-    final source = File('lib/screens/stylist_chat_screen.dart').readAsStringSync();
-    expect(source, contains('StylistUdrClientRoutingV1.normalizeContextAction'));
+    final source = File(
+      'lib/screens/stylist_chat_screen.dart',
+    ).readAsStringSync().replaceAll('\r\n', '\n');
+    expect(
+      source,
+      contains('StylistUdrClientRoutingV1.normalizeContextAction'),
+    );
     expect(
       source,
       contains("if (!_useAiClarifyFlow &&\n          !useShoppingTransport &&"),
     );
     expect(
       source,
-      contains("if (!_useAiClarifyFlow &&\n        _blockIfConversationNeedsClarification"),
+      contains(
+        "if (!_useAiClarifyFlow &&\n        _blockIfConversationNeedsClarification",
+      ),
     );
     expect(source, contains("if (effectiveAction == 'generate_outfit')"));
     expect(source, contains('await _runHybridOutfitGeneration('));
-    expect(source, contains('StylistUdrClientRoutingV1.frozenExplanationForDisplay'));
+    expect(
+      source,
+      contains('StylistUdrClientRoutingV1.frozenExplanationForDisplay'),
+    );
     expect(source, contains('STYLIST UDR legacy_fallback_invoked=false'));
   });
 }

@@ -21,6 +21,7 @@ class StylistDayParser {
     'piatok': DateTime.friday,
     'piatka': DateTime.friday,
     'sobota': DateTime.saturday,
+    'soboty': DateTime.saturday,
     'sobotu': DateTime.saturday,
     'sobotou': DateTime.saturday,
     'nedela': DateTime.sunday,
@@ -33,35 +34,34 @@ class StylistDayParser {
     final base = now ?? DateTime.now();
     final today = DateTime(base.year, base.month, base.day);
     final blob = _fold(conversation.toLowerCase());
+    DateTime? resolved;
+    var resolvedAt = -1;
 
-    // Relatívne výrazy – od najkonkrétnejšieho.
-    if (_hasWord(blob, 'pozajtra')) {
-      return today.add(const Duration(days: 2));
-    }
-    if (_hasWord(blob, 'zajtra') || _hasWord(blob, 'tomorrow')) {
-      return today.add(const Duration(days: 1));
-    }
-    if (_hasWord(blob, 'dnes') ||
-        _hasWord(blob, 'dneska') ||
-        _hasWord(blob, 'today')) {
-      return today;
+    void consider(String word, DateTime date) {
+      final matches = RegExp('\\b${RegExp.escape(word)}\\b').allMatches(blob);
+      if (matches.isEmpty) return;
+      final at = matches.last.start;
+      if (at >= resolvedAt) {
+        resolvedAt = at;
+        resolved = date;
+      }
     }
 
-    final weekday = _weekdayFromText(blob);
-    if (weekday != null) {
-      var diff = (weekday - today.weekday) % 7;
-      if (diff < 0) diff += 7;
-      // „v stredu“, keď je práve streda, bežne znamená dnes (diff 0).
-      return today.add(Duration(days: diff));
-    }
-    return null;
-  }
-
-  static int? _weekdayFromText(String foldedBlob) {
+    // The latest explicit temporal fact wins. This is important for natural
+    // corrections such as "nie zajtra, až v sobotu"; an earlier relative day
+    // must not eclipse the later correction.
+    consider('pozajtra', today.add(const Duration(days: 2)));
+    consider('zajtra', today.add(const Duration(days: 1)));
+    consider('tomorrow', today.add(const Duration(days: 1)));
+    consider('dnes', today);
+    consider('dneska', today);
+    consider('today', today);
     for (final entry in _weekdayWords.entries) {
-      if (_hasWord(foldedBlob, entry.key)) return entry.value;
+      var diff = (entry.value - today.weekday) % 7;
+      if (diff < 0) diff += 7;
+      consider(entry.key, today.add(Duration(days: diff)));
     }
-    return null;
+    return resolved;
   }
 
   /// Hľadá celé slovo (so slovnými hranicami), aby „stredu“ nepadlo na

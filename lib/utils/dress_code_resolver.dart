@@ -4,6 +4,43 @@ import '../data/event_dress_code.dart';
 class DressCodeResolver {
   const DressCodeResolver._();
 
+  static EventDressCodeSpec? resolveGroundedActivity(String? value) {
+    final activity = (value ?? '').trim().toLowerCase();
+    if (activity.isEmpty) return null;
+    if (activity == 'city_walk' || activity == 'mesto' || activity == 'zoo') {
+      return EventDressCodeSpec.casual;
+    }
+    if (activity.contains('hory') ||
+        activity.contains('turist') ||
+        activity == 'hike' ||
+        activity == 'hiking') {
+      return EventDressCodeCatalog.archetypes
+          .firstWhere((item) => item.id == 'hike')
+          .spec;
+    }
+    if (activity.contains('les') ||
+        activity.contains('prírod') ||
+        activity.contains('prirod')) {
+      return const EventDressCodeSpec(
+        id: 'nature_walk',
+        labelSk: 'prechádzka v prírode',
+        formalityTarget: 2,
+        venue: EventVenueType.outdoor,
+      );
+    }
+    if (activity == 'dinner') {
+      return EventDressCodeCatalog.archetypes
+          .firstWhere((item) => item.id == 'restaurant_evening')
+          .spec;
+    }
+    if (activity == 'work') {
+      return EventDressCodeCatalog.archetypes
+          .firstWhere((item) => item.id == 'work')
+          .spec;
+    }
+    return null;
+  }
+
   static EventDressCodeSpec resolve({
     String? occasion,
     String? conversationText,

@@ -193,6 +193,7 @@ class StylistChatOutfitService {
     Set<String> previousOutfitItemIds = const {},
     bool forceDifferentOutfit = false,
     String? conversationHint,
+    String? groundedActivityType,
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
     StylistChatOutfitDebugCollector? debugCollector,
@@ -216,6 +217,7 @@ class StylistChatOutfitService {
     final terrain = StylistActivityTerrainClassifier.classify(
       conversationText: conversationHint,
       occasion: event.occasion,
+      groundedActivityType: groundedActivityType,
     );
     // Fetch antecedent precipitation only when terrain makes it material. A
     // dry-looking start time must not erase yesterday's rain from a forest or
@@ -248,12 +250,14 @@ class StylistChatOutfitService {
       conversationText: conversationHint,
       tempC: weather.tempC,
       dressCodeFromAi: event.dressCode,
+      groundedActivityType: groundedActivityType,
     );
     final stylistIntent = StylistIntentResolver.resolve(
       occasion: event.occasion,
       conversationText: conversationHint,
       aiDressCode: event.dressCode,
       tempC: weather.tempC,
+      groundedActivityType: groundedActivityType,
     );
     final footwearGuidance = StylistOccasionGuidance.footwearGuidanceFor(
       weather: weather,
@@ -287,9 +291,7 @@ class StylistChatOutfitService {
     final context = V2CandidateMatrixContext(
       weatherProtectionRequired: weather.isRainy || weather.isWindy || wetGroundMuddy,
       minimumFormality: occasionProfile.isElevated ? 5 : 1,
-      requiredOccasions: event.occasion == null
-          ? const {}
-          : {event.occasion!.trim().toLowerCase()},
+      requiredOccasions: {occasionProfile.dressCode.id},
       maxCandidates: 6,
       tempC: weather.tempC,
       seasonKey: weather.seasonKey,
@@ -406,12 +408,21 @@ class StylistChatOutfitService {
             candidates: matrix,
             resolvedContext: <String, dynamic>{
               'activity': outfitIntent.activityType,
-              'occasion': event.occasion,
+              'occasion': occasionProfile.label,
               'environment': event.locationLabel,
               'weather': '${weather.tempC}C rain=${weather.isRainy} '
                   'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
                   'antecedentRain=$antecedentPrecipitation',
               'formality': occasionProfile.dressCode.id,
+              'relevantKnownTimingFacts': <String, String>{
+                'eventDate':
+                    '${event.date.year.toString().padLeft(4, '0')}-'
+                    '${event.date.month.toString().padLeft(2, '0')}-'
+                    '${event.date.day.toString().padLeft(2, '0')}',
+                'dayRelation': _dayRelation(event.date),
+                if (event.eventStartHour != null)
+                  'eventStartHourLocal': event.eventStartHour.toString(),
+              },
             },
           );
       final selectedId = decision.selectedCandidateId;
@@ -461,6 +472,16 @@ class StylistChatOutfitService {
       BottomFamily.joggers => type == 'sweatpants' || type == 'joggers',
       BottomFamily.other || null => true,
     };
+  }
+
+  static String _dayRelation(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final target = DateTime(date.year, date.month, date.day);
+    final days = target.difference(today).inDays;
+    if (days == 0) return 'today';
+    if (days == 1) return 'tomorrow';
+    return 'future_date';
   }
 
   static V2FlexibleOutfitItem? _swapTargetForV2(

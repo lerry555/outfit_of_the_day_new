@@ -2,6 +2,7 @@ import '../data/parsed_destination.dart';
 import 'dress_code_resolver.dart';
 import 'slovak_city_locative.dart';
 import 'stylist_destination_intelligence.dart';
+import 'stylist_known_city_typo_resolver.dart';
 
 /// Cieľové mesto/ miesto z konverzácie v stylist chate (nie GPS usera).
 class StylistDestinationParser {
@@ -518,6 +519,8 @@ class StylistDestinationParser {
       'košic': 'Košice',
       'kosic': 'Košice',
       'martin': 'Martin',
+      'martine': 'Martin',
+      'martina': 'Martin',
       'bratislav': 'Bratislava',
       'tatry': 'Tatry',
       'tatier': 'Tatry',
@@ -717,11 +720,31 @@ class StylistDestinationParser {
     bool isExcluded(String value) =>
         excludeLower.contains(value.toLowerCase().trim());
 
+    MapEntry<String, String>? latestKnownCity;
+    var latestKnownCityIndex = -1;
     for (final entry in _knownCityShortcuts.entries) {
-      if (blob.contains(entry.key) && !isExcluded(entry.value)) {
-        return entry.value;
+      if (isExcluded(entry.value)) continue;
+      final matches = RegExp(
+        r'(?:^|[^0-9a-záäčďéíĺľňóôřšťúýž])' +
+            RegExp.escape(entry.key) +
+            r'(?![0-9a-záäčďéíĺľňóôřšťúýž])',
+        caseSensitive: false,
+      ).allMatches(blob);
+      if (matches.isEmpty) continue;
+      final index = matches.last.start;
+      if (index > latestKnownCityIndex) {
+        latestKnownCity = entry;
+        latestKnownCityIndex = index;
       }
     }
+    if (latestKnownCity != null) return latestKnownCity.value;
+
+    final fuzzyCity = StylistKnownCityTypoResolver.resolve(
+      blob,
+      _knownCityShortcuts,
+      exclude: exclude,
+    );
+    if (fuzzyCity != null) return fuzzyCity;
 
     // Holá odpoveď používateľa: keď je celá správa len názov mesta (bez „do/v“),
     // napr. ako reakcia na otázku „v ktorom meste to je?“. Berieme 1–2 slová.

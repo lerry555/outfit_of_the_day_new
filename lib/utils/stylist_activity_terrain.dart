@@ -71,7 +71,18 @@ class StylistActivityTerrainClassifier {
   static StylistActivityTerrain classify({
     String? conversationText,
     String? occasion,
+    String? groundedActivityType,
   }) {
+    final grounded = _norm(groundedActivityType ?? '');
+    if (grounded == 'city_walk' || grounded == 'mesto' || grounded == 'zoo') {
+      return StylistActivityTerrain.urban;
+    }
+    if (_containsAny(grounded, _wetGroundHints) ||
+        grounded == 'nature_walk' ||
+        grounded == 'hike' ||
+        grounded == 'hiking') {
+      return StylistActivityTerrain.wetGround;
+    }
     final blob = _norm('${conversationText ?? ''} ${occasion ?? ''}');
     if (blob.isEmpty) return StylistActivityTerrain.urban;
 

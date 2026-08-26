@@ -786,6 +786,15 @@ void main() {
   });
 
   group('Dress code archetypy (DressCodeResolver)', () {
+    test('generic trip does not become hiking after city context is supplied', () {
+      final spec = DressCodeResolver.resolve(
+        conversationText:
+            'zajtra ideme na vylet Wasntom a prechadzka po meste',
+      );
+
+      expect(spec.id, isNot('hike'));
+    });
+
     test('„čo si mám obliecť dnes do práce“ → work / formality >= 5', () {
       final spec = DressCodeResolver.resolve(
         conversationText: 'čo si mám obliecť dnes do práce',
