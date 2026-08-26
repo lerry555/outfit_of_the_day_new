@@ -768,6 +768,13 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         previous: _outfitContextState,
         latestUserText: text,
       );
+      debugPrint(
+        'STYLIST CHAT grounding_state '
+        'status=${_outfitContextState.groundingStatus} '
+        'remote=${_outfitContextState.remoteActivityPlanned} '
+        'location=${_outfitContextState.activityLocationLabel ?? '-'} '
+        'correction=${_outfitContextState.userCorrectionDetected}',
+      );
       final timing = Stopwatch()..start();
       final weatherContext = await _resolveWeatherContextForRequest(
         lightweight: !needsWardrobe,
@@ -1415,7 +1422,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // Keep GPT-4o's natural clarification if it has already chosen the
       // correct non-decisive action. The deterministic text is only the
       // fail-closed fallback for a model that attempted to proceed.
-      if (!modelAlreadyClarifying) {
+      if (!modelAlreadyClarifying ||
+          _outfitContextState.userCorrectionDetected) {
         response['reply'] = _groundingClarificationText(
           _outfitContextState.unresolvedMaterialFields,
           correction: _outfitContextState.userCorrectionDetected,

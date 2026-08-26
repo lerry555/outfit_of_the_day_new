@@ -26,6 +26,7 @@ const {
   requiresGroundingClarification,
   groundingFields,
 } = require("./stylist/outfit_decision");
+const {groundingClarificationReply} = require("./stylist/grounding_reply");
 const {
   appendStylePreferencesSection,
   sanitizeUserStylePreferences,
@@ -389,22 +390,6 @@ function sanitizeStylistAiEventContext(eventContext, outfitContextState) {
     }
   }
   return Object.keys(sanitized).length ? sanitized : null;
-}
-
-function groundingClarificationReply(fields, wasCorrection) {
-  const wanted = new Set((fields || []).map((value) => String(value || "")
-    .trim().toLowerCase()));
-  const prefix = wasCorrection ? "Máš pravdu, to som si nemal domýšľať. " : "";
-  if (wanted.has("destination") && wanted.has("activity")) {
-    return `${prefix}Kam sa chystáte a čo tam budete približne robiť?`;
-  }
-  if (wanted.has("destination")) {
-    return `${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.`;
-  }
-  if (wanted.has("activity") || wanted.has("trip_scope")) {
-    return `${prefix}Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?`;
-  }
-  return `${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.`;
 }
 
 // sem si neskôr môžeš dať config, ak by si menil URL servera
@@ -4121,6 +4106,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
         ])];
         const actionForcedByGrounding = groundingRequired && action === "clarify" &&
           requestedAction !== "clarify";
+        const correctionGrounding = groundingRequired &&
+          outfitContextState?.userCorrectionDetected === true;
 
         if (action === "clarify" || action === "generate_outfit") {
           logger.info("stylistChat: outfit_decision", {
@@ -4142,7 +4129,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         let reply = sanitizeStylistChatReply(replyRaw);
         const replyLooksLikeGarbage =
           !reply || /^[\s{}[\]"',.:;]*$/.test(reply);
-        if (actionForcedByGrounding) {
+        if (actionForcedByGrounding || correctionGrounding) {
           reply = groundingClarificationReply(
             effectiveImpactFields,
             outfitContextState?.userCorrectionDetected === true,
