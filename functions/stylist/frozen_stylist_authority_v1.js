@@ -60,6 +60,7 @@ function normalizeCandidate(value, ownedItemIds) {
     value.compromiseClassification : {};
   const level = ["none", "acceptable_compromise", "material_compromise", "reject_all"].includes(compromise.level) ?
     compromise.level : "material_compromise";
+  const compromiseDetails = normalizeCompromiseDetails(value.compromiseDetails);
   const eligible = deterministicPassed && owned && violationCodes.length === 0 && level !== "reject_all";
   return Object.freeze({
     candidateId,
@@ -79,8 +80,27 @@ function normalizeCandidate(value, ownedItemIds) {
       level,
       reasonCodes: cleanStringList(compromise.reasonCodes, 16, 80),
     }),
+    compromiseDetails,
     eligible,
   });
+}
+
+function normalizeCompromiseDetails(value) {
+  if (!Array.isArray(value)) return Object.freeze([]);
+  const allowedTiers = new Set(["acceptableCompromise", "strongCompromise"]);
+  return Object.freeze(value.slice(0, MAX_ITEMS_PER_CANDIDATE).map((raw) => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+    const itemName = cleanText(raw.itemName, 120);
+    const tier = cleanText(raw.tier, 40);
+    if (!itemName || !allowedTiers.has(tier)) return null;
+    return Object.freeze({
+      itemName,
+      tier,
+      reasons: cleanStringList(raw.reasonCodes, 8, 100),
+      missingCapabilities: cleanStringList(raw.missingCapabilities, 8, 80),
+      idealReplacementDescription: cleanText(raw.idealReplacementDescription, 180) || null,
+    });
+  }).filter(Boolean));
 }
 
 // This snapshot is immutable and must describe precisely the frozen item set.
@@ -161,13 +181,14 @@ function explanationPayload(normalized, decision) {
     // This is deliberately separate from the outfit description. It is a
     // caveat signal, not vocabulary for the end-user response.
     internalCaveat: selected ? selected.compromiseClassification.level : "reject_all",
+    userFacingCompromises: selected ? selected.compromiseDetails : [],
   });
 }
 
 function deterministicExplanation(decision) {
   return decision.action === "reject_all" ?
-    "Z dostupných možností teraz neviem bezpečne potvrdiť vhodný outfit." :
-    "Tento outfit sa hodí k tvojej príležitosti aj podmienkam, ktoré si uviedol.";
+    "Z toho, čo máš, teraz neviem poskladať outfit, ktorý by som ti s čistým svedomím odporučil. Radšej ti poviem, čo v ňom chýba, než aby som predstieral, že je všetko v poriadku." :
+    "Toto je z tvojho šatníka najsilnejšia dostupná kombinácia. Ak je niektorý kúsok kompromis, ber ho ako najlepšiu aktuálnu možnosť, nie ako ideálne riešenie.";
 }
 
 // Prompting is the primary UX control, but do not display an explanation that
@@ -206,8 +227,17 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
           resolvedContext: normalized.resolvedContext,
           frozenCandidates: normalized.frozenCandidates.map((candidate) => ({
             candidateId: candidate.candidateId, itemIds: candidate.itemIds,
+            items: candidate.presentationItems.map((item) => ({
+              canonicalType: item.canonicalType,
+              primaryColor: item.primaryColor,
+            })),
             deterministicEvidence: candidate.hardConstraintEvidence,
             compromiseClassification: candidate.compromiseClassification,
+            functionalCompromises: candidate.compromiseDetails.map((detail) => ({
+              tier: detail.tier,
+              reasons: detail.reasons,
+              missingCapabilities: detail.missingCapabilities,
+            })),
           })),
           allowedActions: ["select_candidate", "reject_all"],
         });

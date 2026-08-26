@@ -4,6 +4,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
+import '../domain/style_preferences/styling_presentation.dart';
+
 class StylePreferencesScreen extends StatefulWidget {
   const StylePreferencesScreen({super.key});
 
@@ -76,7 +78,8 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
 
   final TextEditingController _brandController = TextEditingController();
   final TextEditingController _topSizeController = TextEditingController();
-  final TextEditingController _outerwearSizeController = TextEditingController();
+  final TextEditingController _outerwearSizeController =
+      TextEditingController();
   final TextEditingController _pantsSizeController = TextEditingController();
   final TextEditingController _shortsSizeController = TextEditingController();
   final TextEditingController _shoeSizeController = TextEditingController();
@@ -85,6 +88,7 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
   final Set<String> _avoidedColors = <String>{};
   final Set<String> _preferredStyles = <String>{};
   final List<String> _favoriteBrands = <String>[];
+  StylingPresentation _stylingPresentation = StylingPresentation.noPreference;
 
   bool _isLoading = true;
   bool _isSaving = false;
@@ -144,6 +148,9 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
         _favoriteBrands
           ..clear()
           ..addAll(_stringList(data['favoriteBrands']));
+        _stylingPresentation = StylingPresentation.parse(
+          data['stylingPresentation'] ?? data['wardrobeTarget'],
+        );
         _avoidedColors.removeWhere((color) => _favoriteColors.contains(color));
 
         final topSize = _stringValue(data['topSize']);
@@ -152,17 +159,16 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
 
         _topSizeController.text = topSize;
         _outerwearSizeController.text = _stringValue(data['outerwearSize']);
-        _pantsSizeController.text =
-            pantsSize.isNotEmpty ? pantsSize : legacyBottomSize;
+        _pantsSizeController.text = pantsSize.isNotEmpty
+            ? pantsSize
+            : legacyBottomSize;
         _shortsSizeController.text = _stringValue(data['shortsSize']);
         _shoeSizeController.text = _stringValue(data['shoeSize']);
       }
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Nepodarilo sa načítať preferencie.'),
-        ),
+        const SnackBar(content: Text('Nepodarilo sa načítať preferencie.')),
       );
     } finally {
       if (!mounted) return;
@@ -238,8 +244,9 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
     return _commonBrands
         .where((brand) => brand.toLowerCase().contains(query))
         .where(
-          (brand) =>
-              !_favoriteBrands.any((saved) => saved.toLowerCase() == brand.toLowerCase()),
+          (brand) => !_favoriteBrands.any(
+            (saved) => saved.toLowerCase() == brand.toLowerCase(),
+          ),
         )
         .take(6)
         .toList();
@@ -267,28 +274,27 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
           .collection('stylePreferences')
           .doc('main')
           .set({
-        'favoriteColors': _favoriteColors.toList(),
-        'avoidedColors': _avoidedColors.toList(),
-        'preferredStyles': _preferredStyles.toList(),
-        'favoriteBrands': _favoriteBrands,
-        'topSize': _topSizeController.text.trim(),
-        'outerwearSize': _outerwearSizeController.text.trim(),
-        'pantsSize': _pantsSizeController.text.trim(),
-        'shortsSize': _shortsSizeController.text.trim(),
-        'shoeSize': _shoeSizeController.text.trim(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
+            'favoriteColors': _favoriteColors.toList(),
+            'avoidedColors': _avoidedColors.toList(),
+            'preferredStyles': _preferredStyles.toList(),
+            'favoriteBrands': _favoriteBrands,
+            'stylingPresentation': _stylingPresentation.wireName,
+            'topSize': _topSizeController.text.trim(),
+            'outerwearSize': _outerwearSizeController.text.trim(),
+            'pantsSize': _pantsSizeController.text.trim(),
+            'shortsSize': _shortsSizeController.text.trim(),
+            'shoeSize': _shoeSizeController.text.trim(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          }, SetOptions(merge: true));
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Preferencie uložené')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Preferencie uložené')));
     } catch (_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Nepodarilo sa uložiť preferencie.'),
-        ),
+        const SnackBar(content: Text('Nepodarilo sa uložiť preferencie.')),
       );
     } finally {
       if (!mounted) return;
@@ -362,281 +368,374 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
                   ),
                 )
               : user == null
-                  ? const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(24),
-                        child: Text(
-                          'Táto sekcia je dostupná len pre prihlásených používateľov.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: _textPrimary),
+              ? const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Text(
+                      'Táto sekcia je dostupná len pre prihlásených používateľov.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: _textPrimary),
+                    ),
+                  ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                  children: [
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 2),
+                      child: Text(
+                        'Nastav si svoje štýlové preferencie.',
+                        style: TextStyle(
+                          color: _textSecondary,
+                          fontSize: 13,
+                          height: 1.35,
                         ),
                       ),
-                    )
-                  : ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                      children: [
-                        const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 2),
-                          child: Text(
-                            'Nastav si svoje štýlové preferencie.',
+                    ),
+                    const SizedBox(height: 10),
+                    _SectionCard(
+                      title: 'Ako ťa má Stylist obliekať',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Vyber typ šatníka, z ktorého chceš skladať svoje outfity. Nejde o pohlavie a nastavenie môžeš kedykoľvek zmeniť.',
                             style: TextStyle(
                               color: _textSecondary,
-                              fontSize: 13,
+                              fontSize: 12.5,
                               height: 1.35,
                             ),
                           ),
-                        ),
-                        const SizedBox(height: 10),
-                        _ExpandableSectionCard(
-                          isExpanded: _expandedSectionKey == 'favoriteColors',
-                          onTap: () => _toggleExpandedSection('favoriteColors'),
-                          title: 'Obľúbené farby',
-                          preview: _setPreview(_favoriteColors),
-                          child: _ChipsWrap(
-                            options: _colorOptions,
-                            selected: _favoriteColors,
-                            onToggle: _toggleFavoriteColor,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _ExpandableSectionCard(
-                          isExpanded: _expandedSectionKey == 'avoidedColors',
-                          onTap: () => _toggleExpandedSection('avoidedColors'),
-                          title: 'Farby, ktorým sa chceš vyhýbať',
-                          preview: _setPreview(_avoidedColors),
-                          child: _ChipsWrap(
-                            options: _colorOptions,
-                            selected: _avoidedColors,
-                            onToggle: _toggleAvoidedColor,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _ExpandableSectionCard(
-                          isExpanded: _expandedSectionKey == 'preferredStyles',
-                          onTap: () => _toggleExpandedSection('preferredStyles'),
-                          title: 'Preferovaný štýl',
-                          preview: _setPreview(_preferredStyles),
-                          child: _ChipsWrap(
-                            options: _styleOptions,
-                            selected: _preferredStyles,
-                            onToggle: (value) =>
-                                _toggleSelection(_preferredStyles, value),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _SectionCard(
-                          title: 'Obľúbené značky',
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: _brandController,
-                                      style: const TextStyle(color: _textPrimary),
-                                      decoration: _fieldDecoration(
-                                        hint: 'Pridaj značku, napr. Zara, Nike...',
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children:
+                                <(StylingPresentation, String)>[
+                                      (
+                                        StylingPresentation.menswear,
+                                        'Pánsky štýl',
                                       ),
-                                      onSubmitted: (_) => _addBrand(),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  IconButton(
-                                    onPressed: _addBrand,
-                                    style: IconButton.styleFrom(
-                                      backgroundColor:
-                                          const Color(0x26C8A36A),
-                                      foregroundColor: _accent,
-                                    ),
-                                    icon: const Icon(Icons.add),
-                                  ),
-                                ],
-                              ),
-                              if (_brandSuggestions.isNotEmpty) ...[
-                                const SizedBox(height: 8),
-                                Container(
-                                  width: double.infinity,
-                                  padding: const EdgeInsets.all(8),
-                                  decoration: BoxDecoration(
-                                    color: const Color(0xFF17171A),
-                                    borderRadius: BorderRadius.circular(12),
-                                    border: Border.all(color: _border),
-                                  ),
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: _brandSuggestions
-                                        .map(
-                                          (brand) => ActionChip(
-                                            label: Text(brand),
-                                            onPressed: () {
-                                              _brandController.text = brand;
-                                              _addBrand();
-                                            },
-                                            labelStyle: const TextStyle(
-                                              color: _textPrimary,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                            backgroundColor: const Color(0xFF222227),
-                                            side: const BorderSide(
-                                              color: Color(0x44C8A36A),
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                  ),
-                                ),
-                              ],
-                              if (_favoriteBrands.isNotEmpty) ...[
-                                const SizedBox(height: 10),
-                                Wrap(
-                                  spacing: 8,
-                                  runSpacing: 8,
-                                  children: _favoriteBrands
-                                      .map(
-                                        (brand) => Chip(
-                                          label: Text(brand),
-                                          labelStyle: const TextStyle(
-                                            color: _textPrimary,
-                                          ),
-                                          deleteIconColor: _accent,
-                                          onDeleted: () => _removeBrand(brand),
-                                          backgroundColor: const Color(0xFF222227),
-                                          side: const BorderSide(
-                                            color: Color(0x44C8A36A),
-                                          ),
+                                      (
+                                        StylingPresentation.womenswear,
+                                        'Dámsky štýl',
+                                      ),
+                                      (
+                                        StylingPresentation.mixed,
+                                        'Kombinovaný',
+                                      ),
+                                      (
+                                        StylingPresentation.noPreference,
+                                        'Bez preferencie',
+                                      ),
+                                    ]
+                                    .map((option) {
+                                      final selected =
+                                          _stylingPresentation == option.$1;
+                                      return ChoiceChip(
+                                        label: Text(option.$2),
+                                        selected: selected,
+                                        onSelected: (_) => setState(
+                                          () =>
+                                              _stylingPresentation = option.$1,
                                         ),
-                                      )
-                                      .toList(),
-                                ),
-                              ],
-                            ],
+                                        labelStyle: TextStyle(
+                                          color: selected
+                                              ? Colors.black
+                                              : _textPrimary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        selectedColor: _accent,
+                                        backgroundColor: const Color(
+                                          0xFF222227,
+                                        ),
+                                        side: BorderSide(
+                                          color: selected ? _accent : _border,
+                                        ),
+                                      );
+                                    })
+                                    .toList(growable: false),
                           ),
-                        ),
-                        const SizedBox(height: 12),
-                        _ExpandableSectionCard(
-                          isExpanded: _expandedSectionKey == 'sizes',
-                          onTap: () => _toggleExpandedSection('sizes'),
-                          title: 'Veľkosti',
-                          preview: _sizesPreview(),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ExpandableSectionCard(
+                      isExpanded: _expandedSectionKey == 'favoriteColors',
+                      onTap: () => _toggleExpandedSection('favoriteColors'),
+                      title: 'Obľúbené farby',
+                      preview: _setPreview(_favoriteColors),
+                      child: _ChipsWrap(
+                        options: _colorOptions,
+                        selected: _favoriteColors,
+                        onToggle: _toggleFavoriteColor,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ExpandableSectionCard(
+                      isExpanded: _expandedSectionKey == 'avoidedColors',
+                      onTap: () => _toggleExpandedSection('avoidedColors'),
+                      title: 'Farby, ktorým sa chceš vyhýbať',
+                      preview: _setPreview(_avoidedColors),
+                      child: _ChipsWrap(
+                        options: _colorOptions,
+                        selected: _avoidedColors,
+                        onToggle: _toggleAvoidedColor,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ExpandableSectionCard(
+                      isExpanded: _expandedSectionKey == 'preferredStyles',
+                      onTap: () => _toggleExpandedSection('preferredStyles'),
+                      title: 'Preferovaný štýl',
+                      preview: _setPreview(_preferredStyles),
+                      child: _ChipsWrap(
+                        options: _styleOptions,
+                        selected: _preferredStyles,
+                        onToggle: (value) =>
+                            _toggleSelection(_preferredStyles, value),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _SectionCard(
+                      title: 'Obľúbené značky',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
                             children: [
-                              _SizePreferenceCard(
-                                title: 'Vrch / tričká / mikiny',
-                                helper: 'Najčastejšia veľkosť pre tričká, mikiny a svetre.',
-                                controller: _topSizeController,
-                                options: const ['XS', 'S', 'M', 'L', 'XL', 'XXL'],
-                                onChipTap: (value) =>
-                                    _setSizeFromChip(_topSizeController, value),
-                                isSelected: (chip) =>
-                                    _isChipSelected(_topSizeController, chip),
-                                onChanged: () => setState(() {}),
-                              ),
-                              const SizedBox(height: 10),
-                              _SizePreferenceCard(
-                                title: 'Bundy / kabáty',
-                                helper: 'Ak nosíš bundu cez mikinu, pokojne zvoľ väčšiu veľkosť.',
-                                controller: _outerwearSizeController,
-                                options: const ['XS', 'S', 'M', 'L', 'XL', 'XXL'],
-                                onChipTap: (value) =>
-                                    _setSizeFromChip(_outerwearSizeController, value),
-                                isSelected: (chip) =>
-                                    _isChipSelected(_outerwearSizeController, chip),
-                                onChanged: () => setState(() {}),
-                              ),
-                              const SizedBox(height: 10),
-                              _SizePreferenceCard(
-                                title: 'Nohavice / rifle',
-                                helper:
-                                    'Môžeš zvoliť písmenovú veľkosť alebo rifľové číslovanie ako 33/32.',
-                                controller: _pantsSizeController,
-                                options: const [
-                                  'S',
-                                  'M',
-                                  'L',
-                                  'XL',
-                                  '30/32',
-                                  '31/32',
-                                  '32/32',
-                                  '33/32',
-                                  '34/32',
-                                ],
-                                onChipTap: (value) =>
-                                    _setSizeFromChip(_pantsSizeController, value),
-                                isSelected: (chip) =>
-                                    _isChipSelected(_pantsSizeController, chip),
-                                onChanged: () => setState(() {}),
-                              ),
-                              const SizedBox(height: 10),
-                              _SizePreferenceCard(
-                                title: 'Kraťasy / tepláky',
-                                helper:
-                                    'Pri voľnejších spodkoch často stačí písmenová veľkosť.',
-                                controller: _shortsSizeController,
-                                options: const ['S', 'M', 'L', 'XL', '30', '31', '32', '33', '34'],
-                                onChipTap: (value) =>
-                                    _setSizeFromChip(_shortsSizeController, value),
-                                isSelected: (chip) =>
-                                    _isChipSelected(_shortsSizeController, chip),
-                                onChanged: () => setState(() {}),
-                              ),
-                              const SizedBox(height: 10),
-                              _SizePreferenceCard(
-                                title: 'Obuv',
-                                helper: 'Zadaj najčastejšiu EU veľkosť, ktorú nosíš.',
-                                controller: _shoeSizeController,
-                                options: const ['38', '39', '40', '41', '42', '43', '44', '45', '46'],
-                                onChipTap: (value) =>
-                                    _setSizeFromChip(_shoeSizeController, value),
-                                isSelected: (chip) =>
-                                    _isChipSelected(_shoeSizeController, chip),
-                                onChanged: () => setState(() {}),
-                              ),
-                              const SizedBox(height: 10),
-                              const Text(
-                                'Pri spodkoch môžeš zadať napr. M, L alebo 33/32 podľa toho, ako daný typ oblečenia nosíš.',
-                                style: TextStyle(
-                                  color: _textSecondary,
-                                  fontSize: 12.5,
-                                  height: 1.35,
+                              Expanded(
+                                child: TextField(
+                                  controller: _brandController,
+                                  style: const TextStyle(color: _textPrimary),
+                                  decoration: _fieldDecoration(
+                                    hint: 'Pridaj značku, napr. Zara, Nike...',
+                                  ),
+                                  onSubmitted: (_) => _addBrand(),
                                 ),
+                              ),
+                              const SizedBox(width: 8),
+                              IconButton(
+                                onPressed: _addBrand,
+                                style: IconButton.styleFrom(
+                                  backgroundColor: const Color(0x26C8A36A),
+                                  foregroundColor: _accent,
+                                ),
+                                icon: const Icon(Icons.add),
                               ),
                             ],
                           ),
-                        ),
-                        const SizedBox(height: 18),
-                        SizedBox(
-                          height: 48,
-                          child: ElevatedButton(
-                            onPressed: _isSaving ? null : _savePreferences,
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _accent,
-                              foregroundColor: const Color(0xFF191512),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(14),
+                          if (_brandSuggestions.isNotEmpty) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.all(8),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF17171A),
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: _border),
+                              ),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: _brandSuggestions
+                                    .map(
+                                      (brand) => ActionChip(
+                                        label: Text(brand),
+                                        onPressed: () {
+                                          _brandController.text = brand;
+                                          _addBrand();
+                                        },
+                                        labelStyle: const TextStyle(
+                                          color: _textPrimary,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        backgroundColor: const Color(
+                                          0xFF222227,
+                                        ),
+                                        side: const BorderSide(
+                                          color: Color(0x44C8A36A),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
                               ),
                             ),
-                            child: _isSaving
-                                ? const SizedBox(
-                                    width: 18,
-                                    height: 18,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                        Color(0xFF191512),
+                          ],
+                          if (_favoriteBrands.isNotEmpty) ...[
+                            const SizedBox(height: 10),
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: _favoriteBrands
+                                  .map(
+                                    (brand) => Chip(
+                                      label: Text(brand),
+                                      labelStyle: const TextStyle(
+                                        color: _textPrimary,
+                                      ),
+                                      deleteIconColor: _accent,
+                                      onDeleted: () => _removeBrand(brand),
+                                      backgroundColor: const Color(0xFF222227),
+                                      side: const BorderSide(
+                                        color: Color(0x44C8A36A),
                                       ),
                                     ),
                                   )
-                                : const Text(
-                                    'Uložiť preferencie',
-                                    style: TextStyle(fontWeight: FontWeight.w700),
-                                  ),
+                                  .toList(),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    _ExpandableSectionCard(
+                      isExpanded: _expandedSectionKey == 'sizes',
+                      onTap: () => _toggleExpandedSection('sizes'),
+                      title: 'Veľkosti',
+                      preview: _sizesPreview(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _SizePreferenceCard(
+                            title: 'Vrch / tričká / mikiny',
+                            helper:
+                                'Najčastejšia veľkosť pre tričká, mikiny a svetre.',
+                            controller: _topSizeController,
+                            options: const ['XS', 'S', 'M', 'L', 'XL', 'XXL'],
+                            onChipTap: (value) =>
+                                _setSizeFromChip(_topSizeController, value),
+                            isSelected: (chip) =>
+                                _isChipSelected(_topSizeController, chip),
+                            onChanged: () => setState(() {}),
+                          ),
+                          const SizedBox(height: 10),
+                          _SizePreferenceCard(
+                            title: 'Bundy / kabáty',
+                            helper:
+                                'Ak nosíš bundu cez mikinu, pokojne zvoľ väčšiu veľkosť.',
+                            controller: _outerwearSizeController,
+                            options: const ['XS', 'S', 'M', 'L', 'XL', 'XXL'],
+                            onChipTap: (value) => _setSizeFromChip(
+                              _outerwearSizeController,
+                              value,
+                            ),
+                            isSelected: (chip) =>
+                                _isChipSelected(_outerwearSizeController, chip),
+                            onChanged: () => setState(() {}),
+                          ),
+                          const SizedBox(height: 10),
+                          _SizePreferenceCard(
+                            title: 'Nohavice / rifle',
+                            helper:
+                                'Môžeš zvoliť písmenovú veľkosť alebo rifľové číslovanie ako 33/32.',
+                            controller: _pantsSizeController,
+                            options: const [
+                              'S',
+                              'M',
+                              'L',
+                              'XL',
+                              '30/32',
+                              '31/32',
+                              '32/32',
+                              '33/32',
+                              '34/32',
+                            ],
+                            onChipTap: (value) =>
+                                _setSizeFromChip(_pantsSizeController, value),
+                            isSelected: (chip) =>
+                                _isChipSelected(_pantsSizeController, chip),
+                            onChanged: () => setState(() {}),
+                          ),
+                          const SizedBox(height: 10),
+                          _SizePreferenceCard(
+                            title: 'Kraťasy / tepláky',
+                            helper:
+                                'Pri voľnejších spodkoch často stačí písmenová veľkosť.',
+                            controller: _shortsSizeController,
+                            options: const [
+                              'S',
+                              'M',
+                              'L',
+                              'XL',
+                              '30',
+                              '31',
+                              '32',
+                              '33',
+                              '34',
+                            ],
+                            onChipTap: (value) =>
+                                _setSizeFromChip(_shortsSizeController, value),
+                            isSelected: (chip) =>
+                                _isChipSelected(_shortsSizeController, chip),
+                            onChanged: () => setState(() {}),
+                          ),
+                          const SizedBox(height: 10),
+                          _SizePreferenceCard(
+                            title: 'Obuv',
+                            helper:
+                                'Zadaj najčastejšiu EU veľkosť, ktorú nosíš.',
+                            controller: _shoeSizeController,
+                            options: const [
+                              '38',
+                              '39',
+                              '40',
+                              '41',
+                              '42',
+                              '43',
+                              '44',
+                              '45',
+                              '46',
+                            ],
+                            onChipTap: (value) =>
+                                _setSizeFromChip(_shoeSizeController, value),
+                            isSelected: (chip) =>
+                                _isChipSelected(_shoeSizeController, chip),
+                            onChanged: () => setState(() {}),
+                          ),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Pri spodkoch môžeš zadať napr. M, L alebo 33/32 podľa toho, ako daný typ oblečenia nosíš.',
+                            style: TextStyle(
+                              color: _textSecondary,
+                              fontSize: 12.5,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 18),
+                    SizedBox(
+                      height: 48,
+                      child: ElevatedButton(
+                        onPressed: _isSaving ? null : _savePreferences,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _accent,
+                          foregroundColor: const Color(0xFF191512),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
                           ),
                         ),
-                      ],
+                        child: _isSaving
+                            ? const SizedBox(
+                                width: 18,
+                                height: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  valueColor: AlwaysStoppedAnimation<Color>(
+                                    Color(0xFF191512),
+                                  ),
+                                ),
+                              )
+                            : const Text(
+                                'Uložiť preferencie',
+                                style: TextStyle(fontWeight: FontWeight.w700),
+                              ),
+                      ),
                     ),
+                  ],
+                ),
         ),
       ),
     );
@@ -662,10 +761,7 @@ class _StylePreferencesScreenState extends State<StylePreferencesScreen> {
 }
 
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({
-    required this.title,
-    required this.child,
-  });
+  const _SectionCard({required this.title, required this.child});
 
   final String title;
   final Widget child;
@@ -775,7 +871,8 @@ class _ExpandableSectionCard extends StatelessWidget {
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
-                                  color: _StylePreferencesScreenState._textSecondary,
+                                  color: _StylePreferencesScreenState
+                                      ._textSecondary,
                                   fontSize: 12.5,
                                 ),
                               ),
@@ -940,21 +1037,32 @@ class _SizePreferenceCard extends StatelessWidget {
           TextField(
             controller: controller,
             onChanged: (_) => onChanged(),
-            style: const TextStyle(color: _StylePreferencesScreenState._textPrimary),
+            style: const TextStyle(
+              color: _StylePreferencesScreenState._textPrimary,
+            ),
             decoration: InputDecoration(
               hintText: 'Vlastná hodnota (voliteľné)',
-              hintStyle: const TextStyle(color: _StylePreferencesScreenState._textSecondary),
+              hintStyle: const TextStyle(
+                color: _StylePreferencesScreenState._textSecondary,
+              ),
               filled: true,
               fillColor: const Color(0xFF222227),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _StylePreferencesScreenState._border),
+                borderSide: const BorderSide(
+                  color: _StylePreferencesScreenState._border,
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: _StylePreferencesScreenState._accent),
+                borderSide: const BorderSide(
+                  color: _StylePreferencesScreenState._accent,
+                ),
               ),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 10,
+              ),
             ),
           ),
         ],

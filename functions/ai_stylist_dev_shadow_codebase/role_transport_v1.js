@@ -201,7 +201,10 @@ function openAiBody({role, canonicalPayload}) {
     messages: [
       {role: "system", content: role === "contextClarification" ?
         "Interpret only supplied context facts and obey the strict response schema." :
-        "Select only from the frozen candidate IDs or reject_all; never use an index."},
+        "Select only from the frozen candidate IDs or reject_all; never use an index. " +
+        "Judge the supplied item facts and functional compromises against resolvedContext. " +
+        "Prefer the candidate with the strongest physical, activity, weather and dress-code fit. " +
+        "A material_compromise remains selectable as the best owned option when deterministic checks passed and no critical safety constraint is violated; reject_all only when no frozen candidate is responsibly usable."},
       {role: "user", content: safeJson(canonicalPayload)},
     ],
   };
@@ -247,6 +250,9 @@ function anthropicBody({canonicalPayload}) {
       "Vysvetli LEN už vybraný outfit alebo reject_all; outfit nikdy nemeň ani nedopĺňaj.",
       "Pri vybranom outfite napíš zvyčajne 2–4 stručné vety: pomenuj len kusy z userFacingSelectedOutfit a vysvetli, prečo sa hodia k príležitosti, počasiu alebo kontextu.",
       "Ak internalCaveat naznačuje kompromis, prelož ho do bežnej stylistickej rady; neuvádzaj interný názov klasifikácie.",
+      "Ak userFacingCompromises nie je prázdne, pomenuj kompromis pravdivo a taktne: povedz, že ide o najlepšiu vlastnenú možnosť, prečo nie je ideálna a aký typ náhrady by bol lepší. Nikdy kompromis neoznač za perfektný alebo ideálny.",
+      "Buď teplý, všímavý a prirodzený: reaguj ako dobrý osobný stylista, nie ako validačný formulár. Použi stručné konkrétne vety a nanajvýš jeden prirodzený emoji.",
+      "Ak používateľov gramatický rod nie je explicitne známy, nepoužívaj rodové tvary ako potreboval/potrebovala; formuluj vetu neutrálne.",
       "Pri reject_all krátko a ľudsky vysvetli, že z dostupných možností nie je vhodný outfit; môžeš pomenovať potrebný typ kúsku, ale nikdy netvrď, že ho používateľ vlastní.",
       "NIKDY nespomínaj candidate ID, outfit ID, item ID, frozen kandidáta alebo frozen rozhodnutie, validátor, deterministické pravidlá, hard constraints, hard checks, violation codes, compromiseClassification, reason codes, autoritu, pipeline, model, providera, skóre ani confidence.",
       "Nevymýšľaj ani nenahrádzaj kusy, nevypisuj validačné kroky a nevysvetľuj systémové rozhodovanie.",

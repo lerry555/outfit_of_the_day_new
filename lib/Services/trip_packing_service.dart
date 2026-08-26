@@ -8,6 +8,9 @@ import 'package:flutter/foundation.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../domain/trip/trip_intent_policy.dart';
 import '../domain/trip/trip_packing_coverage.dart';
+import '../domain/style_preferences/style_preferences_runtime.dart';
+import '../domain/style_preferences/styling_presentation.dart';
+import '../domain/wardrobe_v2/functional_suitability_v1.dart';
 import '../domain/wardrobe_v2/wardrobe_ontology_v2.dart';
 import '../domain/wardrobe_v2/wardrobe_v2_adapters.dart';
 import '../domain/wardrobe_v2/wardrobe_item_v2.dart';
@@ -16,6 +19,7 @@ import 'destination_search_service.dart';
 import 'trip_flight_models.dart';
 import 'calendar_weather_resolver.dart';
 import 'trip_destination_weather.dart';
+import 'user_style_preferences_reader.dart';
 
 enum TripKind { holiday, cityBreak, business, hiking, beach, festival }
 
@@ -566,7 +570,15 @@ abstract final class TripPackingService {
   static Future<TripPackingPlaceholderResult> generatePlaceholderPlan(
     TripPlanInput input,
   ) async {
-    final candidates = await _loadCandidates(input.userId);
+    final preferences = await UserStylePreferencesReader().loadForUid(
+      input.userId,
+    );
+    final candidates = await _loadCandidates(
+      input.userId,
+      stylingPresentation: StylePreferencesRuntime.effectivePresentation(
+        preferences,
+      ),
+    );
     final destinationWeather = await _resolveDestinationWeather(input);
     return _composePlaceholderPlan(
       input,
@@ -582,10 +594,15 @@ abstract final class TripPackingService {
     required List<Map<String, dynamic>> wardrobeDocs,
     WardrobeOntologyV2? ontology,
     List<TripResolvedDayWeather>? destinationWeather,
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
   }) {
     return _composePlaceholderPlan(
       input,
-      _candidatesFromRaws(wardrobeDocs, ontology: ontology),
+      _candidatesFromRaws(
+        wardrobeDocs,
+        ontology: ontology,
+        stylingPresentation: stylingPresentation,
+      ),
       destinationWeather: destinationWeather,
     );
   }
@@ -598,6 +615,7 @@ abstract final class TripPackingService {
     required List<Map<String, dynamic>> wardrobeDocs,
     required TripDestinationWeatherSource weatherSource,
     WardrobeOntologyV2? ontology,
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
   }) async {
     final destinationWeather = await _resolveDestinationWeather(
       input,
@@ -605,7 +623,11 @@ abstract final class TripPackingService {
     );
     return _composePlaceholderPlan(
       input,
-      _candidatesFromRaws(wardrobeDocs, ontology: ontology),
+      _candidatesFromRaws(
+        wardrobeDocs,
+        ontology: ontology,
+        stylingPresentation: stylingPresentation,
+      ),
       destinationWeather: destinationWeather,
     );
   }
@@ -622,7 +644,8 @@ abstract final class TripPackingService {
       cityTrip: input.tripKinds.contains(TripKind.cityBreak),
       destinationWeather: destinationWeather,
     );
-    final workTrip = input.tripKinds.contains(TripKind.business) ||
+    final workTrip =
+        input.tripKinds.contains(TripKind.business) ||
         _hasWorkEvent(input.activityNotes);
     final hikingTrip = input.tripKinds.contains(TripKind.hiking);
     if (candidates.isEmpty) {
@@ -805,11 +828,7 @@ abstract final class TripPackingService {
       for (final item in candidates) item.piece.id: item.v2,
     };
     final coverage = dates.isEmpty
-        ? const TripCoverageResult(
-            assignment: {},
-            packedIds: {},
-            uncovered: [],
-          )
+        ? const TripCoverageResult(assignment: {}, packedIds: {}, uncovered: [])
         : TripPackingCoverage.plan(days: dayNeeds, catalog: catalog);
     _addCoverageMissing(
       missing,
@@ -843,9 +862,11 @@ abstract final class TripPackingService {
       warmBeach: warmBeach,
       workTrip: workTrip,
       hikingTrip: hikingTrip,
-      highTempC: weather.outboundRoute?.tempToC ??
+      highTempC:
+          weather.outboundRoute?.tempToC ??
           weather.destinationStayDays.firstOrNull?.highTempC,
-      lowTempC: weather.destinationStayDays.firstOrNull?.lowTempC ??
+      lowTempC:
+          weather.destinationStayDays.firstOrNull?.lowTempC ??
           weather.outboundRoute?.tempFromC,
       isRainy: weather.destinationStayDays.firstOrNull?.isRainy ?? false,
       isWindy: weather.destinationStayDays.firstOrNull?.isWindy ?? false,
@@ -992,7 +1013,9 @@ abstract final class TripPackingService {
     int styleOf(_WardrobeCandidate c) =>
         TripIntentPolicy.travelStyleScore(c.v2, signals, slot);
     final maxStyle = suitable.map(styleOf).reduce((a, b) => a >= b ? a : b);
-    return suitable.where((c) => styleOf(c) == maxStyle).toList(growable: false);
+    return suitable
+        .where((c) => styleOf(c) == maxStyle)
+        .toList(growable: false);
   }
 
   static _WardrobeCandidate? _pickIntentAware({
@@ -1056,9 +1079,7 @@ abstract final class TripPackingService {
   }) {
     bool hasName(String name) => missing.any((item) => item.nameSk == name);
     for (final pair in uncovered) {
-      final signals = pair.$1 < daySignals.length
-          ? daySignals[pair.$1]
-          : null;
+      final signals = pair.$1 < daySignals.length ? daySignals[pair.$1] : null;
       switch (pair.$2) {
         case TripIntentSlot.footwear:
           if (signals?.hiking == true &&
@@ -1083,8 +1104,7 @@ abstract final class TripPackingService {
           }
         case TripIntentSlot.upper:
         case TripIntentSlot.full:
-          if (signals?.business == true &&
-              !hasName('pracovne vhodný vrch')) {
+          if (signals?.business == true && !hasName('pracovne vhodný vrch')) {
             missing.add(
               const TripMissingItemSuggestion(
                 nameSk: 'pracovne vhodný vrch',
@@ -1094,8 +1114,7 @@ abstract final class TripPackingService {
             );
           }
         case TripIntentSlot.lower:
-          if (signals?.business == true &&
-              !hasName('pracovne vhodný spodok')) {
+          if (signals?.business == true && !hasName('pracovne vhodný spodok')) {
             missing.add(
               const TripMissingItemSuggestion(
                 nameSk: 'pracovne vhodný spodok',
@@ -1116,14 +1135,20 @@ abstract final class TripPackingService {
     required List<_WardrobeCandidate> full,
     required List<_WardrobeCandidate> footwear,
   }) {
-    final hasTop = full.any(
+    final hasTop =
+        full.any(
           (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
         ) ||
-        upper.any((item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2));
-    final hasBottom = full.any(
+        upper.any(
+          (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
+        );
+    final hasBottom =
+        full.any(
           (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
         ) ||
-        lower.any((item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2));
+        lower.any(
+          (item) => TripIntentPolicy.isBusinessAppropriateCore(item.v2),
+        );
     return hasTop && hasBottom;
   }
 
@@ -2568,8 +2593,9 @@ abstract final class TripPackingService {
   }
 
   static Future<List<_WardrobeCandidate>> _loadCandidates(
-    String? userId,
-  ) async {
+    String? userId, {
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
+  }) async {
     if (userId == null || userId.isEmpty) return const [];
     try {
       final snap = await FirebaseFirestore.instance
@@ -2579,7 +2605,7 @@ abstract final class TripPackingService {
           .get();
       return _candidatesFromRaws([
         for (final d in snap.docs) <String, dynamic>{...d.data(), 'id': d.id},
-      ]);
+      ], stylingPresentation: stylingPresentation);
     } catch (_) {
       return const [];
     }
@@ -2588,6 +2614,7 @@ abstract final class TripPackingService {
   static List<_WardrobeCandidate> _candidatesFromRaws(
     Iterable<Map<String, dynamic>> docs, {
     WardrobeOntologyV2? ontology,
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
   }) {
     final out = <_WardrobeCandidate>[];
     for (final d in docs) {
@@ -2597,6 +2624,12 @@ abstract final class TripPackingService {
         raw,
       ], ontology: ontology);
       if (resolved.isEmpty) continue;
+      if (!FunctionalSuitabilityEvaluatorV1.presentationAllowed(
+        resolved.single,
+        stylingPresentation,
+      )) {
+        continue;
+      }
       final itemV2 = resolved.single.item;
       final name = (raw['name'] ?? raw['title'] ?? raw['displayName'] ?? '')
           .toString()
@@ -5032,7 +5065,8 @@ abstract final class TripPackingService {
   }
 
   @visibleForTesting
-  static (int high, int low, String conditionSk) syntheticWeatherForContextForTest({
+  static (int high, int low, String conditionSk)
+  syntheticWeatherForContextForTest({
     required bool warmBeach,
     required bool cityTrip,
     required String destinationText,

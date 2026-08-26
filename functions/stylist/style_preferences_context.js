@@ -25,11 +25,21 @@ function sanitizeUserStylePreferences(raw) {
   const avoidedColors = asStringList(raw.avoidedColors);
   const preferredStyles = asStringList(raw.preferredStyles);
   const favoriteBrands = asStringList(raw.favoriteBrands);
+  const stylingPresentation = ["menswear", "womenswear", "mixed", "no_preference"]
+    .includes(String(raw.stylingPresentation || "").trim().toLowerCase()) ?
+    String(raw.stylingPresentation).trim().toLowerCase() : "no_preference";
   if (!favoriteColors.length && !avoidedColors.length &&
-      !preferredStyles.length && !favoriteBrands.length) {
+      !preferredStyles.length && !favoriteBrands.length &&
+      stylingPresentation === "no_preference") {
     return null;
   }
-  return {favoriteColors, avoidedColors, preferredStyles, favoriteBrands};
+  return {
+    favoriteColors,
+    avoidedColors,
+    preferredStyles,
+    favoriteBrands,
+    ...(stylingPresentation === "no_preference" ? {} : {stylingPresentation}),
+  };
 }
 
 const STYLE_PREFERENCE_RULES =
@@ -72,6 +82,12 @@ function formatStylePreferencesBlock(prefs) {
     lines.push(
       `favoriteBrands: ${clean.favoriteBrands.join(", ")} ` +
       `(weak preference only when a wardrobe item actually has that brand).`,
+    );
+  }
+  if (clean.stylingPresentation && clean.stylingPresentation !== "no_preference") {
+    lines.push(
+      `stylingPresentation: ${clean.stylingPresentation} ` +
+      `(authoritative outfit-presentation preference; wardrobe contents do not override it).`,
     );
   }
   lines.push("Do not invent owned items. Do not mention preferences unless they materially influenced the outfit.");

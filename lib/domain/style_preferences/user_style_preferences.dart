@@ -1,3 +1,5 @@
+import 'styling_presentation.dart';
+
 /// Authoritative user-taste document: `users/{uid}/stylePreferences/main`.
 class UserStylePreferences {
   const UserStylePreferences({
@@ -10,6 +12,7 @@ class UserStylePreferences {
     this.pantsSize = '',
     this.shortsSize = '',
     this.shoeSize = '',
+    this.stylingPresentation = StylingPresentation.noPreference,
   });
 
   static const empty = UserStylePreferences();
@@ -26,12 +29,14 @@ class UserStylePreferences {
   final String pantsSize;
   final String shortsSize;
   final String shoeSize;
+  final StylingPresentation stylingPresentation;
 
   bool get isEmpty =>
       favoriteColors.isEmpty &&
       avoidedColors.isEmpty &&
       preferredStyles.isEmpty &&
-      favoriteBrands.isEmpty;
+      favoriteBrands.isEmpty &&
+      stylingPresentation == StylingPresentation.noPreference;
 
   bool get isNotEmpty => !isEmpty;
 
@@ -44,11 +49,12 @@ class UserStylePreferences {
       favoriteBrands: _stringList(data['favoriteBrands']),
       topSize: _stringValue(data['topSize']),
       outerwearSize: _stringValue(data['outerwearSize']),
-      pantsSize: _stringValue(
-        data['pantsSize'] ?? data['bottomSize'],
-      ),
+      pantsSize: _stringValue(data['pantsSize'] ?? data['bottomSize']),
       shortsSize: _stringValue(data['shortsSize']),
       shoeSize: _stringValue(data['shoeSize']),
+      stylingPresentation: StylingPresentation.parse(
+        data['stylingPresentation'] ?? data['wardrobeTarget'],
+      ),
     );
   }
 
@@ -64,6 +70,8 @@ class UserStylePreferences {
         'preferredStyles': canonicalStyles(preferredStyles),
       if (favoriteBrands.isNotEmpty)
         'favoriteBrands': List<String>.from(favoriteBrands),
+      if (stylingPresentation != StylingPresentation.noPreference)
+        'stylingPresentation': stylingPresentation.wireName,
     };
   }
 
@@ -210,5 +218,4 @@ class UserStylePreferences {
         .replaceAll('ť', 't')
         .replaceAll('ž', 'z');
   }
-
 }

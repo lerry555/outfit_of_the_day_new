@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/Services/trip_packing_service.dart';
+import 'package:outfitofTheDay/domain/style_preferences/styling_presentation.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/wardrobe_item_v2.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/wardrobe_ontology_v2.dart';
 
@@ -85,16 +86,68 @@ void main() {
   TripPackingPlaceholderResult generate({
     required TripPlanInput input,
     required List<Map<String, dynamic>> wardrobe,
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
   }) {
     return TripPackingService.composePlaceholderPlanForTest(
       input: input,
       wardrobeDocs: wardrobe,
       ontology: ontology,
+      stylingPresentation: stylingPresentation,
     );
   }
 
   Set<String> idsOn(TripPackingPlaceholderResult result, int day) =>
       result.destinationDailyPlans[day].pieces.map((p) => p.id).toSet();
+
+  test('trip composition respects explicit outfit presentation authority', () {
+    final wardrobe = coreSeparates(
+      upper: doc(
+        id: 'tee',
+        name: 'Tričko',
+        canonicalType: 't_shirt',
+        formality: 2,
+        warmth: 2,
+      ),
+      lower: doc(
+        id: 'skirt',
+        name: 'Maxi sukňa',
+        canonicalType: 'maxi_skirt',
+        formality: 4,
+        warmth: 3,
+      ),
+      shoes: [
+        doc(
+          id: 'shoes',
+          name: 'Tenisky',
+          canonicalType: 'sneakers',
+          formality: 2,
+          warmth: 3,
+        ),
+      ],
+    );
+    final unrestricted = generate(
+      input: plan(kinds: {TripKind.cityBreak}),
+      wardrobe: wardrobe,
+    );
+    final menswear = generate(
+      input: plan(kinds: {TripKind.cityBreak}),
+      wardrobe: wardrobe,
+      stylingPresentation: StylingPresentation.menswear,
+    );
+
+    expect(
+      unrestricted.destinationDailyPlans
+          .expand((day) => day.pieces)
+          .map((piece) => piece.id),
+      contains('skirt'),
+    );
+    expect(
+      menswear.destinationDailyPlans
+          .expand((day) => day.pieces)
+          .map((piece) => piece.id),
+      isNot(contains('skirt')),
+    );
+  });
 
   test('hiking prefers ontology outdoor footwear over fashion sneakers', () {
     final result = generate(
@@ -138,49 +191,52 @@ void main() {
     expect(result.luggageItems.map((p) => p.id), contains('shoe-hike'));
   });
 
-  test('hiking fallback uses closed shoes and surfaces missing outdoor footwear', () {
-    final result = generate(
-      input: plan(kinds: {TripKind.hiking}),
-      wardrobe: coreSeparates(
-        upper: doc(
-          id: 'tee',
-          name: 'Tričko',
-          canonicalType: 't_shirt',
-          formality: 2,
-          warmth: 2,
-        ),
-        lower: doc(
-          id: 'jeans',
-          name: 'Rifle',
-          canonicalType: 'jeans',
-          formality: 3,
-          warmth: 4,
-        ),
-        shoes: [
-          doc(
-            id: 'shoe-open',
-            name: 'Sandále',
-            canonicalType: 'sandals',
+  test(
+    'hiking fallback uses closed shoes and surfaces missing outdoor footwear',
+    () {
+      final result = generate(
+        input: plan(kinds: {TripKind.hiking}),
+        wardrobe: coreSeparates(
+          upper: doc(
+            id: 'tee',
+            name: 'Tričko',
+            canonicalType: 't_shirt',
             formality: 2,
             warmth: 2,
           ),
-          doc(
-            id: 'shoe-fashion',
-            name: 'Tenisky',
-            canonicalType: 'sneakers',
-            formality: 2,
-            warmth: 3,
+          lower: doc(
+            id: 'jeans',
+            name: 'Rifle',
+            canonicalType: 'jeans',
+            formality: 3,
+            warmth: 4,
           ),
-        ],
-      ),
-    );
-    expect(idsOn(result, 0), contains('shoe-fashion'));
-    expect(idsOn(result, 0), isNot(contains('shoe-open')));
-    expect(
-      result.missingItems.map((m) => m.nameSk),
-      contains('turistická / outdoorová obuv'),
-    );
-  });
+          shoes: [
+            doc(
+              id: 'shoe-open',
+              name: 'Sandále',
+              canonicalType: 'sandals',
+              formality: 2,
+              warmth: 2,
+            ),
+            doc(
+              id: 'shoe-fashion',
+              name: 'Tenisky',
+              canonicalType: 'sneakers',
+              formality: 2,
+              warmth: 3,
+            ),
+          ],
+        ),
+      );
+      expect(idsOn(result, 0), contains('shoe-fashion'));
+      expect(idsOn(result, 0), isNot(contains('shoe-open')));
+      expect(
+        result.missingItems.map((m) => m.nameSk),
+        contains('turistická / outdoorová obuv'),
+      );
+    },
+  );
 
   test('business prefers V2 formality-appropriate pieces over casual ones', () {
     final result = generate(
@@ -242,16 +298,85 @@ void main() {
     expect(ids, isNot(contains('jeans')));
   });
 
-  test('warm beach prefers hot-weather pieces and skips a heavy outer layer', () {
-    final result = generate(
-      input: plan(kinds: {TripKind.beach}, destination: 'Malaga'),
-      wardrobe: coreSeparates(
+  test(
+    'warm beach prefers hot-weather pieces and skips a heavy outer layer',
+    () {
+      final result = generate(
+        input: plan(kinds: {TripKind.beach}, destination: 'Malaga'),
+        wardrobe: coreSeparates(
+          upper: doc(
+            id: 'parka',
+            name: 'Zimná bunda',
+            canonicalType: 'winter_jacket',
+            formality: 3,
+            warmth: 9,
+          ),
+          lower: doc(
+            id: 'jeans',
+            name: 'Rifle',
+            canonicalType: 'jeans',
+            formality: 3,
+            warmth: 4,
+          ),
+          shoes: [
+            doc(
+              id: 'boots',
+              name: 'Čižmy',
+              canonicalType: 'boots',
+              formality: 4,
+              warmth: 7,
+            ),
+            doc(
+              id: 'sandals',
+              name: 'Sandále',
+              canonicalType: 'sandals',
+              formality: 2,
+              warmth: 2,
+            ),
+          ],
+          extra: [
+            doc(
+              id: 'tee',
+              name: 'Tričko',
+              canonicalType: 't_shirt',
+              formality: 2,
+              warmth: 2,
+            ),
+            doc(
+              id: 'shorts',
+              name: 'Kraťasy',
+              canonicalType: 'shorts',
+              formality: 2,
+              warmth: 2,
+            ),
+          ],
+        ),
+      );
+      final ids = idsOn(result, 0);
+      expect(ids, contains('tee'));
+      expect(ids, contains('shorts'));
+      expect(ids, contains('sandals'));
+      expect(ids, isNot(contains('parka')));
+      expect(ids, isNot(contains('boots')));
+      expect(
+        result.destinationDailyPlans.every(
+          (day) => !day.pieces.any((p) => p.id == 'parka'),
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  test(
+    'trip-local elegant travel style ranks a more formal valid alternative',
+    () {
+      final wardrobe = coreSeparates(
         upper: doc(
-          id: 'parka',
-          name: 'Zimná bunda',
-          canonicalType: 'winter_jacket',
-          formality: 3,
-          warmth: 9,
+          id: 'tee',
+          name: 'Tričko',
+          canonicalType: 't_shirt',
+          formality: 2,
+          warmth: 3,
         ),
         lower: doc(
           id: 'jeans',
@@ -262,111 +387,45 @@ void main() {
         ),
         shoes: [
           doc(
-            id: 'boots',
-            name: 'Čižmy',
-            canonicalType: 'boots',
-            formality: 4,
-            warmth: 7,
-          ),
-          doc(
-            id: 'sandals',
-            name: 'Sandále',
-            canonicalType: 'sandals',
+            id: 'sneakers',
+            name: 'Tenisky',
+            canonicalType: 'sneakers',
             formality: 2,
-            warmth: 2,
+            warmth: 3,
           ),
         ],
         extra: [
           doc(
-            id: 'tee',
-            name: 'Tričko',
-            canonicalType: 't_shirt',
-            formality: 2,
-            warmth: 2,
-          ),
-          doc(
-            id: 'shorts',
-            name: 'Kraťasy',
-            canonicalType: 'shorts',
-            formality: 2,
-            warmth: 2,
+            id: 'shirt',
+            name: 'Košeľa',
+            canonicalType: 'dress_shirt',
+            formality: 7,
+            warmth: 3,
           ),
         ],
-      ),
-    );
-    final ids = idsOn(result, 0);
-    expect(ids, contains('tee'));
-    expect(ids, contains('shorts'));
-    expect(ids, contains('sandals'));
-    expect(ids, isNot(contains('parka')));
-    expect(ids, isNot(contains('boots')));
-    expect(
-      result.destinationDailyPlans.every(
-        (day) => !day.pieces.any((p) => p.id == 'parka'),
-      ),
-      isTrue,
-    );
-  });
-
-  test('trip-local elegant travel style ranks a more formal valid alternative', () {
-    final wardrobe = coreSeparates(
-      upper: doc(
-        id: 'tee',
-        name: 'Tričko',
-        canonicalType: 't_shirt',
-        formality: 2,
-        warmth: 3,
-      ),
-      lower: doc(
-        id: 'jeans',
-        name: 'Rifle',
-        canonicalType: 'jeans',
-        formality: 3,
-        warmth: 4,
-      ),
-      shoes: [
-        doc(
-          id: 'sneakers',
-          name: 'Tenisky',
-          canonicalType: 'sneakers',
-          formality: 2,
-          warmth: 3,
+      );
+      final elegant = generate(
+        input: plan(
+          kinds: {TripKind.cityBreak},
+          styles: {TripTravelStyle.elegant},
         ),
-      ],
-      extra: [
-        doc(
-          id: 'shirt',
-          name: 'Košeľa',
-          canonicalType: 'dress_shirt',
-          formality: 7,
-          warmth: 3,
+        wardrobe: wardrobe,
+      );
+      final comfy = generate(
+        input: plan(
+          kinds: {TripKind.cityBreak},
+          styles: {TripTravelStyle.comfy},
         ),
-      ],
-    );
-    final elegant = generate(
-      input: plan(
-        kinds: {TripKind.cityBreak},
-        styles: {TripTravelStyle.elegant},
-      ),
-      wardrobe: wardrobe,
-    );
-    final comfy = generate(
-      input: plan(
-        kinds: {TripKind.cityBreak},
-        styles: {TripTravelStyle.comfy},
-      ),
-      wardrobe: wardrobe,
-    );
-    expect(idsOn(elegant, 0), contains('shirt'));
-    expect(idsOn(comfy, 0), contains('tee'));
-  });
+        wardrobe: wardrobe,
+      );
+      expect(idsOn(elegant, 0), contains('shirt'));
+      expect(idsOn(comfy, 0), contains('tee'));
+    },
+  );
 
   test('hiking suitability beats elegant travel style on footwear', () {
     final result = generate(
-      input: plan(
-        kinds: {TripKind.hiking},
-        styles: {TripTravelStyle.elegant},
-      ),
+      input: plan(kinds: {TripKind.hiking}, styles: {TripTravelStyle.elegant}),
       wardrobe: coreSeparates(
         upper: doc(
           id: 'shirt',
@@ -529,9 +588,13 @@ void main() {
     expect(tops.toSet(), hasLength(3));
   });
 
-  test('live trip files stay isolated from global Style Preferences', () {
-    const files = [
+  test('Trip consumes presentation authority without soft taste coupling', () {
+    final service = File(
       'lib/Services/trip_packing_service.dart',
+    ).readAsStringSync();
+    expect(service.contains('UserStylePreferencesReader'), isTrue);
+    expect(service.contains('effectivePresentation'), isTrue);
+    const files = [
       'lib/domain/trip/trip_intent_policy.dart',
       'lib/domain/trip/trip_packing_coverage.dart',
       'lib/screens/trip_packing_screen.dart',
@@ -548,5 +611,7 @@ void main() {
       );
       expect(src.contains('stylePreferences/main'), isFalse, reason: path);
     }
+    expect(service.contains('StylePreferenceTasteScorer'), isFalse);
+    expect(service.contains('stylePreferences/main'), isFalse);
   });
 }

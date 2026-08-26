@@ -78,6 +78,7 @@ part 'home_screen_hero_grid_widgets.dart';
 /// Hero outfit tiles — transparent PNG on dark canvas ([getHomeOutfitImageUrlOrNull]).
 final Map<String, String?> _heroImagePickByItemVersion = <String, String?>{};
 final Set<String> _heroImagePickLoggedMissKeys = <String>{};
+
 /// Network images already displayed on Home hero — avoids placeholder flash on resume.
 final Set<String> _homeHeroNetworkImageLoadedUrls = <String>{};
 final Set<String> _homeHeroImagePrecacheScheduled = <String>{};
@@ -86,12 +87,10 @@ const int _homeDailyOutfitCacheSchemaVersion = 3;
 String _heroImagePickVersionKey(Map<String, dynamic> raw) {
   final id = OutfitGenerationService.wardrobeItemId(raw);
   if (id.isEmpty) return '';
-  final updatedAt = (raw['updatedAt'] ??
-          raw['updatedAtMs'] ??
-          raw['imageVersion'] ??
-          '')
-      .toString()
-      .trim();
+  final updatedAt =
+      (raw['updatedAt'] ?? raw['updatedAtMs'] ?? raw['imageVersion'] ?? '')
+          .toString()
+          .trim();
   final processing = [
     _processingStatusForCache(raw, 'product'),
     _processingStatusForCache(raw, 'cutout'),
@@ -104,7 +103,8 @@ String? _heroWardrobeDisplayImageUrl(
   bool allowPick = true,
 }) {
   final versionKey = _heroImagePickVersionKey(raw);
-  if (versionKey.isNotEmpty && _heroImagePickByItemVersion.containsKey(versionKey)) {
+  if (versionKey.isNotEmpty &&
+      _heroImagePickByItemVersion.containsKey(versionKey)) {
     return _heroImagePickByItemVersion[versionKey];
   }
   if (!allowPick) return null;
@@ -159,6 +159,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
   bool _stylePreferencesLoadInFlight = false;
   List<Map<String, dynamic>> _lastWardrobeForCache = const [];
+
   /// KB-normalized wardrobe maps — sole clothing metadata source for Home outfit generation.
   List<Map<String, dynamic>> _normalizedWardrobeForHomeBrain = const [];
   bool _persistedDailyHydrationDone = false;
@@ -174,11 +175,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<int, String> _lastSourceSignatureByDay = {};
   final Map<int, bool> _editedManuallyByDay = {};
   final Map<int, Set<String>> _swapRejectedReplacementItemIdsByDay = {};
-  final Map<int, Map<_HeroWearType, String>> _swapOriginalItemIdByTypeByDay = {};
-  final Map<int, Map<_HeroWearType, String>> _swapLastSuggestedItemIdByTypeByDay = {};
+  final Map<int, Map<_HeroWearType, String>> _swapOriginalItemIdByTypeByDay =
+      {};
+  final Map<int, Map<_HeroWearType, String>>
+  _swapLastSuggestedItemIdByTypeByDay = {};
   final Map<String, _HomeDayHeroCacheEntry> _homeDayHeroCacheByDateKey = {};
   final Map<String, DateTime> _homeDayCacheUpdatedAtByDateKey = {};
   final Map<String, List<String>> _lastSavedNewOutfitIdsByDateKey = {};
+
   /// Kombinácie outfitov, ktoré používateľ už odmietol („Nový outfit“).
   final Map<int, Set<String>> _rejectedOutfitCombinationKeysByDay = {};
   final Map<String, _HomeAiCacheEntry> _homeAiCacheBySignature = {};
@@ -207,11 +211,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, String> _lastHeroRenderLogKeyByDayLabel = {};
   String? _lastHomeRebuildLogKey;
   final Map<int, String> _cachedHeroPanelContentSigByDayIndex = {};
-  final Map<int, ({
-    List<_HeroOutfitItem> displayItems,
-    List<_HeroOutfitItem> effectiveItems,
-    String renderHeroSource,
-  })> _cachedHeroPanelContentByDayIndex = {};
+  final Map<
+    int,
+    ({
+      List<_HeroOutfitItem> displayItems,
+      List<_HeroOutfitItem> effectiveItems,
+      String renderHeroSource,
+    })
+  >
+  _cachedHeroPanelContentByDayIndex = {};
   String? _lastHomeAiOutfitLogKey;
   String? _lastPreservedDateKey;
   String? _lastPreservedOutfitSignature;
@@ -232,7 +240,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final Map<String, _HeroTodayState> _stickyVisibleHeroByDateKey = {};
   final Map<String, String> _lastVisibleHomeImageUrlByItemId = {};
   final Map<String, Map<String, String>> _homeImageUrlByDateKeyAndItemId = {};
-  final Map<String, List<_HeroOutfitItem>> _homeHydratedOutfitItemsByDateKey = {};
+  final Map<String, List<_HeroOutfitItem>> _homeHydratedOutfitItemsByDateKey =
+      {};
   final Map<String, _HeroTodayState> _daySwitchPinnedHeroByDateKey = {};
   final Map<String, String> _homeOutfitIdsSignatureByDateKey = {};
   String? _currentHeroBuildDateKey;
@@ -280,8 +289,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     final gpsCity = UserLocationService.instance.cityShortLabel;
     final cachedCity = _weatherSnapToday?.cityName.split(',').first.trim();
-    final cityMismatch = cachedCity != null &&
-        cachedCity.toLowerCase() != gpsCity.toLowerCase();
+    final cityMismatch =
+        cachedCity != null && cachedCity.toLowerCase() != gpsCity.toLowerCase();
     await _loadWeather(force: cityMismatch || !_weatherLoaded);
   }
 
@@ -295,7 +304,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (_sharedWeatherSnapToday == null || _sharedWeatherSnapTomorrow == null) {
       return false;
     }
-    final alreadySynced = _weatherLoaded &&
+    final alreadySynced =
+        _weatherLoaded &&
         _weatherSnapToday == _sharedWeatherSnapToday &&
         _weatherSnapTomorrow == _sharedWeatherSnapTomorrow;
     if (alreadySynced) return true;
@@ -389,7 +399,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       unawaited(_reloadStylePreferencesAndInvalidateIfNeeded());
       if (_weatherLoaded &&
           _lastWeatherFetchAt != null &&
-          DateTime.now().difference(_lastWeatherFetchAt!) < _weatherFreshDuration) {
+          DateTime.now().difference(_lastWeatherFetchAt!) <
+              _weatherFreshDuration) {
         logVerboseHome('[HOME_WEATHER] skip reason=fresh');
       }
       _tryScheduleHomeOutfitPreload();
@@ -407,7 +418,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _weatherSnapToday != null &&
         _weatherSnapTomorrow != null &&
         _lastWeatherFetchAt != null &&
-        DateTime.now().difference(_lastWeatherFetchAt!) < _weatherFreshDuration) {
+        DateTime.now().difference(_lastWeatherFetchAt!) <
+            _weatherFreshDuration) {
       logVerboseHome('[HOME_WEATHER] skip reason=fresh');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -503,6 +515,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         _weatherUpdatedAt = failedAt;
         _lastWeatherFetchAt = failedAt;
       }
+
       if (mounted) {
         setState(applyError);
       } else {
@@ -551,7 +564,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return null;
   }
 
-  void _scheduleHomeWeatherDebugLogAfterFrame(DateTime today, DateTime tomorrow) {
+  void _scheduleHomeWeatherDebugLogAfterFrame(
+    DateTime today,
+    DateTime tomorrow,
+  ) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       _logHomeWeatherDebug(contextTag: 'fetch_done', selectedDate: today);
@@ -579,7 +595,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required DateTime selectedDate,
   }) {
     final city = UserLocationService.instance.cityShortLabel;
-    final norm = DateTime(selectedDate.year, selectedDate.month, selectedDate.day);
+    final norm = DateTime(
+      selectedDate.year,
+      selectedDate.month,
+      selectedDate.day,
+    );
     final snap = _weatherSnapForNormalizedDate(norm);
     final w = _weatherForDate(selectedDate);
 
@@ -658,7 +678,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (_lastWardrobeForCache.isNotEmpty && _weatherLoaded) {
         _refreshMissingHomeImageUrlsInBackground(
           dateKey: dateKey,
-          items: _homeHydratedOutfitItemsByDateKey[dateKey] ??
+          items:
+              _homeHydratedOutfitItemsByDateKey[dateKey] ??
               _daySwitchPinnedHeroByDateKey[dateKey]?.outfitItems ??
               const <_HeroOutfitItem>[],
           wardrobe: _lastWardrobeForCache,
@@ -683,7 +704,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return true;
     }
     final pinned = _daySwitchPinnedHeroByDateKey[dateKey];
-    return pinned != null && _heroOutfitTilesHaveVisibleImages(pinned.outfitItems);
+    return pinned != null &&
+        _heroOutfitTilesHaveVisibleImages(pinned.outfitItems);
   }
 
   bool _allowHomeImagePickForBuild(String dateKey) {
@@ -800,9 +822,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   List<String> _heroOutfitItemNames(List<_HeroOutfitItem> items) {
-    return items.map((e) => e.label.trim()).where((e) => e.isNotEmpty).toList(
-          growable: false,
-        );
+    return items
+        .map((e) => e.label.trim())
+        .where((e) => e.isNotEmpty)
+        .toList(growable: false);
   }
 
   bool _sameStringList(List<String> a, List<String> b) {
@@ -838,7 +861,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   DateTime _homeDayCacheUpdatedAtFor(String dateKey) {
-    return _homeDayCacheUpdatedAtByDateKey[dateKey] ?? DateTime.fromMillisecondsSinceEpoch(0);
+    return _homeDayCacheUpdatedAtByDateKey[dateKey] ??
+        DateTime.fromMillisecondsSinceEpoch(0);
   }
 
   int _homeDayCacheSourcePriority(String persistSource) {
@@ -906,10 +930,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final patched = <Map<String, dynamic>>[];
     for (var i = 0; i < slotMaps.length; i++) {
-      patched.add(<String, dynamic>{
-        ...slotMaps[i],
-        'wardrobeItemId': ids[i],
-      });
+      patched.add(<String, dynamic>{...slotMaps[i], 'wardrobeItemId': ids[i]});
     }
     return _heroItemsFromPersistedMaps(patched, wardrobe);
   }
@@ -1119,7 +1140,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           chosenSource: 'hydrated_outfit',
           itemIds: _heroOutfitItemIds(hydrated),
           heroItems: List<_HeroOutfitItem>.from(hydrated),
-          reasonText: cache?.state.vm.description ?? sticky?.vm.description ?? '',
+          reasonText:
+              cache?.state.vm.description ?? sticky?.vm.description ?? '',
           reasonItemIds: _heroOutfitItemIds(hydrated),
           userModified: cache?.userModified ?? editedManual,
           persistSource: cache?.persistSource ?? 'hydrated',
@@ -1159,10 +1181,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         continue;
       }
       if (HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
-            userPinned: isUserPinnedOutfit,
-            cachedFingerprint: snapshot.stylePreferenceFingerprint,
-            currentFingerprint: _stylePreferenceFingerprint,
-          )) {
+        userPinned: isUserPinnedOutfit,
+        cachedFingerprint: snapshot.stylePreferenceFingerprint,
+        currentFingerprint: _stylePreferenceFingerprint,
+      )) {
         continue;
       }
       if (isUserPinnedOutfit &&
@@ -1184,8 +1206,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ..sort((a, b) {
         final cmp = b.updatedAt.compareTo(a.updatedAt);
         if (cmp != 0) return cmp;
-        return _homeDayCacheSourcePriority(b.persistSource)
-            .compareTo(_homeDayCacheSourcePriority(a.persistSource));
+        return _homeDayCacheSourcePriority(
+          b.persistSource,
+        ).compareTo(_homeDayCacheSourcePriority(a.persistSource));
       });
     return sorted.first;
   }
@@ -1227,7 +1250,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final existing = _editedOutfitByDay[dayIndex];
     final wasManual = _editedManuallyByDay[dayIndex] ?? false;
     final lastSourceSig = _lastSourceSignatureByDay[dayIndex];
-    final shouldReplace = existing == null || (!wasManual && lastSourceSig != sourceSig);
+    final shouldReplace =
+        existing == null || (!wasManual && lastSourceSig != sourceSig);
     if (shouldReplace) {
       _editedOutfitByDay[dayIndex] = List<_HeroOutfitItem>.from(source);
       _lastSourceSignatureByDay[dayIndex] = sourceSig;
@@ -1440,8 +1464,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (items.isEmpty) {
       return const OutfitExplanationResult(items: []);
     }
-    final wardrobeForGen =
-        _wardrobeForOutfitGeneration(wardrobe, logNormalization: false);
+    final wardrobeForGen = _wardrobeForOutfitGeneration(
+      wardrobe,
+      logNormalization: false,
+    );
     final preview = _outfitPreviewForFootwearScoring(
       items: items,
       wardrobe: wardrobeForGen,
@@ -1552,8 +1578,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     String labelFor(Map<String, dynamic> raw, String fallback) {
       final name = (raw['name'] ?? '').toString().trim();
       if (name.isNotEmpty) return name;
-      final sub =
-          (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+      final sub = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '')
+          .toString()
+          .trim();
       if (sub.isNotEmpty) return sub;
       return fallback;
     }
@@ -1641,8 +1668,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (cached != null && cached.isNotEmpty) {
         resolvedUrl = cached;
       } else {
-        final wardrobeNorm =
-            _wardrobeForOutfitGeneration(wardrobe, logNormalization: false);
+        final wardrobeNorm = _wardrobeForOutfitGeneration(
+          wardrobe,
+          logNormalization: false,
+        );
         for (final raw in wardrobeNorm) {
           if (OutfitGenerationService.wardrobeItemId(raw) == id) {
             resolvedUrl = getHomeOutfitImageUrlOrNull(raw);
@@ -1677,11 +1706,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return _heroItemWithDisplayImageUrl(replacementShoe, resolvedUrl);
   }
 
-  ({
-    List<_HeroOutfitItem> items,
-    bool replaced,
-    bool abortedDueToMissingImage,
-  }) _validateAndReplaceRestoredFootwear({
+  ({List<_HeroOutfitItem> items, bool replaced, bool abortedDueToMissingImage})
+  _validateAndReplaceRestoredFootwear({
     required DateTime date,
     required String dateKey,
     required String dayLabel,
@@ -1690,17 +1716,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     final shoesIdx = items.indexWhere((it) => it.type == _HeroWearType.shoes);
     if (shoesIdx < 0) {
-      return (
-        items: items,
-        replaced: false,
-        abortedDueToMissingImage: false,
-      );
+      return (items: items, replaced: false, abortedDueToMissingImage: false);
     }
 
     final snap = _outfitWeatherSnapshotForDate(date);
     final guidance = computeFootwearFamilyGuidance(weather: snap);
-    final wardrobeNorm =
-        _wardrobeForOutfitGeneration(wardrobe, logNormalization: false);
+    final wardrobeNorm = _wardrobeForOutfitGeneration(
+      wardrobe,
+      logNormalization: false,
+    );
     final inventory = footwearFamilyInventoryFromWardrobe(wardrobeNorm);
 
     final shoeItem = items[shoesIdx];
@@ -1714,18 +1738,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     if (!guidance.isDiscouraged(family)) {
-      return (
-        items: items,
-        replaced: false,
-        abortedDueToMissingImage: false,
-      );
+      return (items: items, replaced: false, abortedDueToMissingImage: false);
     }
     if (!inventory.hasPreferred(guidance)) {
-      return (
-        items: items,
-        replaced: false,
-        abortedDueToMissingImage: false,
-      );
+      return (items: items, replaced: false, abortedDueToMissingImage: false);
     }
 
     final bestRaw = _bestPreferredFootwearForRestore(
@@ -1737,18 +1753,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       currentShoeId: shoeItem.wardrobeItemId,
     );
     if (bestRaw == null) {
-      return (
-        items: items,
-        replaced: false,
-        abortedDueToMissingImage: false,
-      );
+      return (items: items, replaced: false, abortedDueToMissingImage: false);
     }
 
     final prevBuildDateKey = _currentHeroBuildDateKey;
     _currentHeroBuildDateKey = dateKey;
     try {
-      final newShoe =
-          _heroItemFromWardrobe(raw: bestRaw, type: _HeroWearType.shoes);
+      final newShoe = _heroItemFromWardrobe(
+        raw: bestRaw,
+        type: _HeroWearType.shoes,
+      );
       final hydratedShoe = _hydrateRestoredFootwearReplacementImage(
         dateKey: dateKey,
         dayLabel: dayLabel,
@@ -1757,11 +1771,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       if (hydratedShoe == null) {
         debugPrint('[HOME_RESTORE_FOOTWEAR_ABORT] reason=missing_image_url');
-        return (
-          items: items,
-          replaced: false,
-          abortedDueToMissingImage: true,
-        );
+        return (items: items, replaced: false, abortedDueToMissingImage: true);
       }
 
       final updated = List<_HeroOutfitItem>.from(items);
@@ -1860,7 +1870,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     if (wardrobe.isEmpty || items.length < 3) return items;
 
-    final validationKey = '$dateKey|${_homeWeatherSignature(_weatherForDate(date))}';
+    final validationKey =
+        '$dateKey|${_homeWeatherSignature(_weatherForDate(date))}';
     if (_restoredFootwearValidatedKeys.contains(validationKey)) return items;
 
     final result = _validateAndReplaceRestoredFootwear(
@@ -1980,8 +1991,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (wearType == _HeroWearType.shoes &&
         _shouldBlockDiscouragedFootwearSwap(newItem)) {
-      final family =
-          classifyFootwearFamily(_footwearMapFromHeroItem(newItem)).wireName;
+      final family = classifyFootwearFamily(
+        _footwearMapFromHeroItem(newItem),
+      ).wireName;
       debugPrint(
         '[HOME_SWAP_BLOCKED] reason=discouraged_footwear_family '
         'oldId=$oldId newId=$newId family=$family',
@@ -2012,9 +2024,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Tento spodný diel sa dnes veľmi nehodí k teplote.',
-            ),
+            content: Text('Tento spodný diel sa dnes veľmi nehodí k teplote.'),
           ),
         );
       }
@@ -2060,7 +2070,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       vm: _HeroBannerVM(
         description: reason.isNotEmpty
             ? reason
-            : (existing?.state.vm.description ?? 'Upravený outfit pre tento deň.'),
+            : (existing?.state.vm.description ??
+                  'Upravený outfit pre tento deň.'),
       ),
       outfitItems: normalized,
       source: markManual ? 'edited' : (existing?.state.source ?? 'local'),
@@ -2088,7 +2099,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         heroState: heroState,
       );
       if (_focusedEditType != null &&
-          !_editedOutfitByDay[_dayIndex]!.any((it) => it.type == _focusedEditType)) {
+          !_editedOutfitByDay[_dayIndex]!.any(
+            (it) => it.type == _focusedEditType,
+          )) {
         _focusedEditType = null;
       }
     });
@@ -2162,7 +2175,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     final out = <_HeroOutfitItem>[];
     for (final m in maps) {
-      final type = _heroWearTypeFromName((m['type'] ?? '').toString()) ??
+      final type =
+          _heroWearTypeFromName((m['type'] ?? '').toString()) ??
           _HeroWearType.top;
       final wid = (m['wardrobeItemId'] ?? m['id'] ?? '').toString().trim();
       final raw = wid.isNotEmpty ? byId[wid] : null;
@@ -2180,7 +2194,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             imageUrl: (m['imageUrl'] as String?)?.trim().isNotEmpty == true
                 ? (m['imageUrl'] as String).trim()
                 : null,
-            categoryKey: (m['categoryKey'] as String?)?.trim().isNotEmpty == true
+            categoryKey:
+                (m['categoryKey'] as String?)?.trim().isNotEmpty == true
                 ? (m['categoryKey'] as String).trim()
                 : null,
             subCategoryKey:
@@ -2262,10 +2277,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       likedOutfitKey: likedOutfitKey,
       updatedAt: savedAt,
       clientUpdatedAtMs: clientUpdatedAtMs,
-      lastNewOutfitItemIds:
-          persistSource == 'manual_new_outfit' ? itemIds : null,
-      lastNewOutfitSavedAtMs:
-          persistSource == 'manual_new_outfit' ? clientUpdatedAtMs : null,
+      lastNewOutfitItemIds: persistSource == 'manual_new_outfit'
+          ? itemIds
+          : null,
+      lastNewOutfitSavedAtMs: persistSource == 'manual_new_outfit'
+          ? clientUpdatedAtMs
+          : null,
       cacheSchemaVersion: _homeDailyOutfitCacheSchemaVersion,
     );
     await _dailyOutfitCacheService.save(
@@ -2343,7 +2360,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
     final tomorrow = today.add(const Duration(days: 1));
-    final weatherReady = _weatherLoaded &&
+    final weatherReady =
+        _weatherLoaded &&
         _weatherSnapToday != null &&
         _weatherSnapTomorrow != null;
     logVerboseHome(
@@ -2380,7 +2398,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         final dayLabel = _dayIndexForDate(date) == 0 ? 'today' : 'tomorrow';
         if (_hydratedDailyOutfitWithWardrobeDateKeys.contains(dateKey)) {
           final cached = _homeDayHeroCacheByDateKey[dateKey];
-          final pinned = cached != null &&
+          final pinned =
+              cached != null &&
               HomeTasteCachePolicy.isUserPinned(
                 userModified: cached.userModified,
                 persistSource: cached.persistSource ?? '',
@@ -2491,7 +2510,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
         String? correctedReasonText;
         var restoredFromLastNewOutfit = false;
-        final savedNewOutfitIds = doc?.lastNewOutfitItemIds ??
+        final savedNewOutfitIds =
+            doc?.lastNewOutfitItemIds ??
             _lastSavedNewOutfitIdsByDateKey[dateKey];
         if (savedNewOutfitIds != null &&
             savedNewOutfitIds.isNotEmpty &&
@@ -2523,8 +2543,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           }
         }
 
-        var effectiveUserModified =
-            restoredFromLastNewOutfit ? true : chosen.userModified;
+        var effectiveUserModified = restoredFromLastNewOutfit
+            ? true
+            : chosen.userModified;
         var effectivePersistSource = restoredFromLastNewOutfit
             ? 'manual_new_outfit'
             : chosen.persistSource;
@@ -2555,7 +2576,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ? doc?.reasonItemIds
             : chosen.reasonItemIds;
         final restoredItemIds = _heroOutfitItemIds(items);
-        final cachedReasonItemIdsMismatch = cachedReason.isNotEmpty &&
+        final cachedReasonItemIdsMismatch =
+            cachedReason.isNotEmpty &&
             !_reasonItemIdsMatchOutfit(
               reasonItemIds: restoredReasonItemIds,
               outfitItemIds: restoredItemIds,
@@ -2567,12 +2589,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             'outfitIds=${restoredItemIds.join(",")}',
           );
         }
-        final cachedReasonWasStale = cachedReason.isEmpty ||
+        final cachedReasonWasStale =
+            cachedReason.isEmpty ||
             _isStaleHomeReason(cachedReason) ||
             cachedReasonItemIdsMismatch;
-        var reason = cachedReasonWasStale
-            ? ''
-            : cachedReason;
+        var reason = cachedReasonWasStale ? '' : cachedReason;
         if (cachedReasonWasStale) {
           final preview = _outfitPreviewForFootwearScoring(
             items: items,
@@ -2582,10 +2603,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
           if (preview != null) {
-            reason = (await _generateAiStylistReasonForPreview(
+            reason =
+                (await _generateAiStylistReasonForPreview(
                   preview: preview,
                   weather: _weatherForDate(date),
-                  selectedReason: 'Obnov uložený outfit a napíš nové vysvetlenie podľa vizuálnych metadata.',
+                  selectedReason:
+                      'Obnov uložený outfit a napíš nové vysvetlenie podľa vizuálnych metadata.',
                 )) ??
                 '';
           }
@@ -2632,7 +2655,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _lastSourceSignatureByDay[dayIdx] = _heroRenderSignature(items);
           _logHomeCacheRestoreIfNeeded(dateKey: dateKey, items: items);
         }
-        if (chosen.likedOutfitKey != null && chosen.likedOutfitKey!.isNotEmpty) {
+        if (chosen.likedOutfitKey != null &&
+            chosen.likedOutfitKey!.isNotEmpty) {
           _likedOutfitKeyByDay[dayIdx] = chosen.likedOutfitKey!;
         }
 
@@ -2640,7 +2664,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           state: nextState,
           weatherSignature: weatherSig,
           wardrobeSignature: wardrobeSig,
-          stylePreferenceFingerprint: chosen.stylePreferenceFingerprint.isNotEmpty
+          stylePreferenceFingerprint:
+              chosen.stylePreferenceFingerprint.isNotEmpty
               ? chosen.stylePreferenceFingerprint
               : _stylePreferenceFingerprint,
           userModified: effectiveUserModified,
@@ -2778,7 +2803,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         reason = await _generateAiStylistReasonForPreview(
           preview: preview,
           weather: _weatherForDate(date),
-          selectedReason: selectedReason ??
+          selectedReason:
+              selectedReason ??
               'Napíš stylistické vysvetlenie podľa vizuálnych metadata vybraného outfitu.',
           timeout: Duration(seconds: 12 + (attempt * 4)),
         );
@@ -2793,7 +2819,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (reason == null || reason.trim().isEmpty || !mounted) return;
 
       final cache = _homeDayHeroCacheByDateKey[dateKey];
-      final currentItems = _editedOutfitByDay[dayIdx] ??
+      final currentItems =
+          _editedOutfitByDay[dayIdx] ??
           cache?.state.outfitItems ??
           const <_HeroOutfitItem>[];
       if (!_sameHeroItemsById(currentItems, outfitItems)) {
@@ -2970,11 +2997,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final date = _dayIndex == 1 ? today.add(const Duration(days: 1)) : today;
     final dateKey = _dateKey(date);
     final cache = _homeDayHeroCacheByDateKey[dateKey];
-    final persistSource = cache?.persistSource ??
+    final persistSource =
+        cache?.persistSource ??
         (_editedManuallyByDay[_dayIndex] == true
             ? 'manual_replaced'
             : 'ai_generated');
-    final reason = cache?.state.vm.description ??
+    final reason =
+        cache?.state.vm.description ??
         _regenerateStylistReason(
           date: date,
           outfitItems: items,
@@ -3018,9 +3047,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _focusedEditType = null;
       _swapRejectedReplacementItemIdsByDay[_dayIndex] = <String>{};
       _swapOriginalItemIdByTypeByDay[_dayIndex] = originals;
-      _swapLastSuggestedItemIdByTypeByDay[_dayIndex] = <_HeroWearType, String>{};
+      _swapLastSuggestedItemIdByTypeByDay[_dayIndex] =
+          <_HeroWearType, String>{};
     });
-    WidgetsBinding.instance.addPostFrameCallback((_) => _captureEditSpotlightSize());
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _captureEditSpotlightSize(),
+    );
   }
 
   void _exitOutfitEditMode() {
@@ -3051,7 +3083,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     try {
       final snap = await _firestore.collection('users').doc(user.uid).get();
       final data = snap.data();
-      final status = (data?['subscriptionStatus'] ?? '').toString().toLowerCase();
+      final status = (data?['subscriptionStatus'] ?? '')
+          .toString()
+          .toLowerCase();
       final isPremium = data?['isPremium'] == true;
       return isPremium || status == 'premium';
     } catch (_) {
@@ -3060,12 +3094,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   String _heroOutfitSignatureFromItems(List<_HeroOutfitItem> items) {
-    final ids = items
-        .map((e) => e.wardrobeItemId)
-        .whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .toList()
-      ..sort();
+    final ids =
+        items
+            .map((e) => e.wardrobeItemId)
+            .whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList()
+          ..sort();
     return ids.join('|');
   }
 
@@ -3098,7 +3133,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return '$dateKey|$weatherSignature|$wardrobeSignature|t=$_stylePreferenceFingerprint|p=${isPremiumUser ? 1 : 0}';
   }
 
-  int _countChangedHeroPieces(List<_HeroOutfitItem> oldList, List<_HeroOutfitItem> newList) {
+  int _countChangedHeroPieces(
+    List<_HeroOutfitItem> oldList,
+    List<_HeroOutfitItem> newList,
+  ) {
     final oldByType = {for (final o in oldList) o.type: o};
     var changes = 0;
     for (final n in newList) {
@@ -3163,7 +3201,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final now = DateTime.now();
     final todayDate = DateTime(now.year, now.month, now.day);
-    final activeDate = _isTomorrow ? todayDate.add(const Duration(days: 1)) : todayDate;
+    final activeDate = _isTomorrow
+        ? todayDate.add(const Duration(days: 1))
+        : todayDate;
     final activeDateKey = _dateKey(activeDate);
     _clearDaySwitchPinnedHero(activeDateKey);
 
@@ -3177,8 +3217,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     String? reviewBlockKey;
     try {
-      final wardrobeSnap =
-          await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+      final wardrobeSnap = await _firestore
+          .collection('users')
+          .doc(user.uid)
+          .collection('wardrobe')
+          .get();
       final wardrobe = wardrobeSnap.docs.map((d) {
         final m = Map<String, dynamic>.from(d.data());
         m['id'] = d.id;
@@ -3214,17 +3257,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         activeDate,
         clothingOnly: true,
       );
-      final effectiveExcluded = <String>{
-        ...excluded,
-        ...peerClothingItemIds,
-      };
+      final effectiveExcluded = <String>{...excluded, ...peerClothingItemIds};
       final effectivePreviousItemIds = <String>{
         ...excluded,
         ..._peerDayOutfitItemIdsForDate(activeDate),
       };
 
-      final rejectedSigs =
-          Set<String>.from(_rejectedOutfitCombinationKeysByDay[_dayIndex] ?? {});
+      final rejectedSigs = Set<String>.from(
+        _rejectedOutfitCombinationKeysByDay[_dayIndex] ?? {},
+      );
       final prevSig = _heroOutfitSignatureFromItems(effectiveItems);
       if (prevSig.isNotEmpty) {
         rejectedSigs.add(prevSig);
@@ -3261,8 +3302,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
 
       final newIds = selection.finalSelectedItemIds;
-      final changed =
-          _countChangedHeroPieces(effectiveItems, selection.heroItems);
+      final changed = _countChangedHeroPieces(
+        effectiveItems,
+        selection.heroItems,
+      );
       final newSig = selection.finalSelectedSignature;
 
       debugPrint(
@@ -3272,11 +3315,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         'finalSelectedIndex=${selection.finalSelectedIndex}',
       );
 
-      final identical = effectiveItems.isNotEmpty &&
+      final identical =
+          effectiveItems.isNotEmpty &&
           (changed == 0 || (prevSig.isNotEmpty && prevSig == newSig));
 
       if (identical) {
-        debugPrint('[NEW_OUTFIT] WARNING identical or zero-change outfit — UI neprepísané');
+        debugPrint(
+          '[NEW_OUTFIT] WARNING identical or zero-change outfit — UI neprepísané',
+        );
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
@@ -3375,18 +3421,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (bytes.isEmpty) return null;
     final decoded = img.decodeImage(bytes);
     if (decoded == null) return null;
-    final resized = img.copyResize(decoded, width: 72, height: 72, interpolation: img.Interpolation.average);
+    final resized = img.copyResize(
+      decoded,
+      width: 72,
+      height: 72,
+      interpolation: img.Interpolation.average,
+    );
     final analysis = _analyzeInspirationImage(resized);
 
-    final snap = await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+    final snap = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('wardrobe')
+        .get();
     final wardrobe = snap.docs.map((d) => d.data()).toList();
     if (wardrobe.isEmpty) return null;
 
-    final composition = _buildVibeInspiredOutfit(wardrobe: wardrobe, analysis: analysis);
-    final pools = _buildVibeCandidatePools(wardrobe: wardrobe, analysis: analysis);
+    final composition = _buildVibeInspiredOutfit(
+      wardrobe: wardrobe,
+      analysis: analysis,
+    );
+    final pools = _buildVibeCandidatePools(
+      wardrobe: wardrobe,
+      analysis: analysis,
+    );
     final picks = composition.picks;
     final items = _orderedHeroOutfitItems(
-      picks.map((p) => _heroItemFromWardrobe(raw: p.item, type: p.type)).toList(),
+      picks
+          .map((p) => _heroItemFromWardrobe(raw: p.item, type: p.type))
+          .toList(),
     );
     return _VibeRecreationResult(
       items: items,
@@ -3433,13 +3496,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     dominant.sort((a, b) => bins[b].compareTo(bins[a]));
     final layeringScore = (contrast * 1.4 + avgSat * 0.35).clamp(0.0, 1.0);
     final layering = layeringScore > 0.42 ? 4 : 3;
-    final layeredOutfit = layering >= 4 || contrast > 0.17 || (avgLum < 0.50 && avgSat > 0.18);
+    final layeredOutfit =
+        layering >= 4 || contrast > 0.17 || (avgLum < 0.50 && avgSat > 0.18);
     final redAccentImportant = bins[1] > total * 0.14;
     final denimLightImportant = bins[4] > total * 0.12 && avgLum > 0.36;
     final darkBottomImportant = avgLum < 0.50 || bins[0] > total * 0.20;
     final style = avgSat > 0.48
         ? _VibeStyle.sporty
-        : (avgLum < 0.34 && contrast > 0.24 ? _VibeStyle.street : _VibeStyle.clean);
+        : (avgLum < 0.34 && contrast > 0.24
+              ? _VibeStyle.street
+              : _VibeStyle.clean);
     return _VibeImageAnalysis(
       avgLuminance: avgLum,
       avgSaturation: avgSat,
@@ -3523,7 +3589,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _ScoredRaw(raw: best.$2, score: bestScore);
     }
 
-    final layeredStreet = analysis.style == _VibeStyle.street || analysis.layeredOutfit;
+    final layeredStreet =
+        analysis.style == _VibeStyle.street || analysis.layeredOutfit;
 
     // Real vibe slots for layered composition.
     final outerwear = layeredStreet
@@ -3538,7 +3605,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
               'blazer',
               'bomber',
             ],
-            discouraged: const ['hoodie', 'mikina', 'sweatshirt', 'sveter', 'winter', 'puffer', 'parka'],
+            discouraged: const [
+              'hoodie',
+              'mikina',
+              'sweatshirt',
+              'sveter',
+              'winter',
+              'puffer',
+              'parka',
+            ],
             minScore: 1.15,
           )
         : null;
@@ -3546,13 +3621,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final innerTop = pickType(
       _HeroWearType.top,
       preferred: layeredStreet
-          ? const [
-              'hoodie',
-              'mikina',
-              'sweatshirt',
-              'sveter',
-              'crewneck',
-            ]
+          ? const ['hoodie', 'mikina', 'sweatshirt', 'sveter', 'crewneck']
           : const ['shirt', 'tricko', 'tričko', 'top'],
       discouraged: [
         if (layeredStreet) ...const ['tank', 'tielko'],
@@ -3565,7 +3634,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _HeroWearType.bottom,
       preferred: const ['jeans', 'rifle', 'pants', 'nohav'],
       preferDarkBottom: analysis.darkBottomImportant,
-      discouraged: analysis.darkBottomImportant ? const ['blue jeans', 'modre rifle', 'light blue'] : const [],
+      discouraged: analysis.darkBottomImportant
+          ? const ['blue jeans', 'modre rifle', 'light blue']
+          : const [],
       minScore: analysis.darkBottomImportant ? 1.00 : 0.75,
     );
 
@@ -3576,23 +3647,36 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
 
     if (innerTop != null) {
-      results.add(_TypedWardrobePick(type: _HeroWearType.top, item: innerTop.raw));
+      results.add(
+        _TypedWardrobePick(type: _HeroWearType.top, item: innerTop.raw),
+      );
     } else if (analysis.redAccentImportant) {
       missing.add('Červená mikina');
       fillers.add('Červená mikina');
     }
     if (bottom != null) {
-      results.add(_TypedWardrobePick(type: _HeroWearType.bottom, item: bottom.raw));
+      results.add(
+        _TypedWardrobePick(type: _HeroWearType.bottom, item: bottom.raw),
+      );
     } else if (analysis.darkBottomImportant) {
       missing.add('Čierne nohavice');
       fillers.add('Čierne slim jeans');
     }
-    if (shoes != null) results.add(_TypedWardrobePick(type: _HeroWearType.shoes, item: shoes.raw));
+    if (shoes != null)
+      results.add(
+        _TypedWardrobePick(type: _HeroWearType.shoes, item: shoes.raw),
+      );
     if (outerwear != null) {
-      results.add(_TypedWardrobePick(type: _HeroWearType.outerwear, item: outerwear.raw));
+      results.add(
+        _TypedWardrobePick(type: _HeroWearType.outerwear, item: outerwear.raw),
+      );
     } else if (layeredStreet) {
-      missing.add(analysis.denimLightImportant ? 'Svetlá denim bunda' : 'Ľahká bunda');
-      fillers.add(analysis.denimLightImportant ? 'Svetlá denim bunda' : 'Ľahká bunda');
+      missing.add(
+        analysis.denimLightImportant ? 'Svetlá denim bunda' : 'Ľahká bunda',
+      );
+      fillers.add(
+        analysis.denimLightImportant ? 'Svetlá denim bunda' : 'Ľahká bunda',
+      );
     }
 
     // If inspiration is layered, strongly prefer 4-piece composition.
@@ -3603,7 +3687,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         minScore: 1.25,
       );
       if (emergencyOuter != null) {
-        results.add(_TypedWardrobePick(type: _HeroWearType.outerwear, item: emergencyOuter.raw));
+        results.add(
+          _TypedWardrobePick(
+            type: _HeroWearType.outerwear,
+            item: emergencyOuter.raw,
+          ),
+        );
         missing.remove('Svetlá denim bunda');
         missing.remove('Ľahká bunda');
       }
@@ -3611,7 +3700,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (analysis.redAccentImportant && innerTop != null) {
       final topBlob = _normalizedClothingToken(_heroBlob(innerTop.raw));
-      final topIsRedish = _containsAnyNormalized(topBlob, ['red', 'cerven', 'bordo', 'wine']);
+      final topIsRedish = _containsAnyNormalized(topBlob, [
+        'red',
+        'cerven',
+        'bordo',
+        'wine',
+      ]);
       if (!topIsRedish) {
         missing.add('Červená mikina');
         fillers.add('Červená mikina');
@@ -3619,10 +3713,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (analysis.denimLightImportant && outerwear != null) {
       final outerBlob = _normalizedClothingToken(_heroBlob(outerwear.raw));
-      final denimLight = _containsAnyNormalized(
-        outerBlob,
-        ['denim', 'light blue', 'svetla bunda', 'modra denim', 'riflova bunda'],
-      );
+      final denimLight = _containsAnyNormalized(outerBlob, [
+        'denim',
+        'light blue',
+        'svetla bunda',
+        'modra denim',
+        'riflova bunda',
+      ]);
       if (!denimLight) {
         missing.add('Svetlá denim bunda');
         fillers.add('Svetlá denim bunda');
@@ -3630,7 +3727,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (analysis.darkBottomImportant && bottom != null) {
       final bottomBlob = _normalizedClothingToken(_heroBlob(bottom.raw));
-      final bottomDark = _containsAnyNormalized(bottomBlob, ['black', 'cier', 'tmav', 'navy']);
+      final bottomDark = _containsAnyNormalized(bottomBlob, [
+        'black',
+        'cier',
+        'tmav',
+        'navy',
+      ]);
       if (!bottomDark) {
         missing.add('Čierne nohavice');
         fillers.add('Čierne slim jeans');
@@ -3657,7 +3759,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final scored = <(Map<String, dynamic>, double)>[];
       for (final raw in wardrobe) {
         if (!_heroWardrobeMatchesType(raw, type)) continue;
-        final score = _scoreWardrobeForVibe(raw: raw, type: type, analysis: analysis);
+        final score = _scoreWardrobeForVibe(
+          raw: raw,
+          type: type,
+          analysis: analysis,
+        );
         scored.add((raw, score));
       }
       scored.sort((a, b) => b.$2.compareTo(a.$2));
@@ -3672,7 +3778,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         if (result.length >= 8) break;
       }
       if (result.isNotEmpty) {
-        pools[type] = _orderedHeroOutfitItems(result.where((i) => i.type == type).toList());
+        pools[type] = _orderedHeroOutfitItems(
+          result.where((i) => i.type == type).toList(),
+        );
       }
     }
     return pools;
@@ -3691,38 +3799,82 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     var styleScore = 0.0;
     switch (analysis.style) {
       case _VibeStyle.sporty:
-        if (_containsAnyNormalized(blob, ['sneaker', 'tenis', 'hoodie', 'mikina', 'jogger', 'track'])) {
+        if (_containsAnyNormalized(blob, [
+          'sneaker',
+          'tenis',
+          'hoodie',
+          'mikina',
+          'jogger',
+          'track',
+        ])) {
           styleScore += 0.9;
         }
         break;
       case _VibeStyle.clean:
-        if (_containsAnyNormalized(blob, ['shirt', 'kosela', 'koše', 'blazer', 'sako', 'coat', 'kabat'])) {
+        if (_containsAnyNormalized(blob, [
+          'shirt',
+          'kosela',
+          'koše',
+          'blazer',
+          'sako',
+          'coat',
+          'kabat',
+        ])) {
           styleScore += 0.85;
         }
         break;
       case _VibeStyle.street:
-        if (_containsAnyNormalized(blob, ['oversize', 'hoodie', 'mikina', 'jacket', 'bunda', 'jeans'])) {
+        if (_containsAnyNormalized(blob, [
+          'oversize',
+          'hoodie',
+          'mikina',
+          'jacket',
+          'bunda',
+          'jeans',
+        ])) {
           styleScore += 0.88;
         }
         break;
     }
     final darknessPref = analysis.avgLuminance < 0.45;
-    final hasDark = _containsAnyNormalized(blob, ['black', 'cier', 'tmav', 'navy', 'antracit']);
-    final hasLight = _containsAnyNormalized(blob, ['white', 'biel', 'beige', 'krem', 'cream']);
+    final hasDark = _containsAnyNormalized(blob, [
+      'black',
+      'cier',
+      'tmav',
+      'navy',
+      'antracit',
+    ]);
+    final hasLight = _containsAnyNormalized(blob, [
+      'white',
+      'biel',
+      'beige',
+      'krem',
+      'cream',
+    ]);
     var toneScore = 0.0;
     if (darknessPref && hasDark) toneScore = 0.55;
     if (!darknessPref && hasLight) toneScore = 0.55;
-    if (type == _HeroWearType.outerwear && analysis.layeringCount >= 4) toneScore += 0.35;
+    if (type == _HeroWearType.outerwear && analysis.layeringCount >= 4)
+      toneScore += 0.35;
     var keywordScore = 0.0;
-    if (preferredKeywords.isNotEmpty && _containsAnyNormalized(blob, preferredKeywords)) {
+    if (preferredKeywords.isNotEmpty &&
+        _containsAnyNormalized(blob, preferredKeywords)) {
       keywordScore += 0.75;
     }
-    if (discouragedKeywords.isNotEmpty && _containsAnyNormalized(blob, discouragedKeywords)) {
+    if (discouragedKeywords.isNotEmpty &&
+        _containsAnyNormalized(blob, discouragedKeywords)) {
       keywordScore -= 0.40;
     }
     if (preferDarkBottom &&
         type == _HeroWearType.bottom &&
-        _containsAnyNormalized(blob, ['black', 'cier', 'tmav', 'dark', 'navy', 'antracit'])) {
+        _containsAnyNormalized(blob, [
+          'black',
+          'cier',
+          'tmav',
+          'dark',
+          'navy',
+          'antracit',
+        ])) {
       keywordScore += 0.55;
     }
     if (type == _HeroWearType.shoes &&
@@ -3732,7 +3884,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return colorScore * 1.1 + styleScore + toneScore + keywordScore;
   }
 
-  double _colorMatchScore({required String blob, required _VibeImageAnalysis analysis}) {
+  double _colorMatchScore({
+    required String blob,
+    required _VibeImageAnalysis analysis,
+  }) {
     final dominantNames = analysis.dominantHueBins
         .map((b) => _hueBinKeywords(b))
         .expand((x) => x)
@@ -3744,11 +3899,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       }
     }
     if (analysis.avgLuminance < 0.38 &&
-        _containsAnyNormalized(blob, ['black', 'cier', 'tmav', 'dark', 'navy'])) {
+        _containsAnyNormalized(blob, [
+          'black',
+          'cier',
+          'tmav',
+          'dark',
+          'navy',
+        ])) {
       score += 0.34;
     }
     if (analysis.avgLuminance > 0.60 &&
-        _containsAnyNormalized(blob, ['white', 'biel', 'cream', 'beige', 'light'])) {
+        _containsAnyNormalized(blob, [
+          'white',
+          'biel',
+          'cream',
+          'beige',
+          'light',
+        ])) {
       score += 0.30;
     }
     return score;
@@ -3811,7 +3978,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Stream<QuerySnapshot<Map<String, dynamic>>> _wardrobeStream(String uid) {
-    return _firestore.collection('users').doc(uid).collection('wardrobe').snapshots();
+    return _firestore
+        .collection('users')
+        .doc(uid)
+        .collection('wardrobe')
+        .snapshots();
   }
 
   Stream<DocumentSnapshot<Map<String, dynamic>>> _userDocStream(String uid) {
@@ -3892,13 +4063,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         .where((it) => (it.wardrobeItemId ?? '').trim().isNotEmpty)
         .length;
     if (withId >= 3) return true;
-    return items
-            .where((it) => (it.imageUrl ?? '').trim().isNotEmpty)
-            .length >=
+    return items.where((it) => (it.imageUrl ?? '').trim().isNotEmpty).length >=
         3;
   }
 
-  _HeroOutfitRecommendation? _validAiRecommendationForSignature(String signature) {
+  _HeroOutfitRecommendation? _validAiRecommendationForSignature(
+    String signature,
+  ) {
     final rec = _homeAiCacheBySignature[signature]?.recommendation;
     if (rec == null || rec.items.length < 3) return null;
     return rec;
@@ -4004,7 +4175,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _tryScheduleHomeOutfitPreloadAfterPrefs() async {
     await _reloadStylePreferencesAndInvalidateIfNeeded();
     if (!_weatherLoaded) return;
-    unawaited(_ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache));
+    unawaited(
+      _ensurePersistedDailyOutfitsHydrated(wardrobe: _lastWardrobeForCache),
+    );
     if (_lastWardrobeForCache.isEmpty) return;
     _scheduleHomeOutfitPreloadOnce(
       wardrobe: _lastWardrobeForCache,
@@ -4195,13 +4368,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   void _logHomeHeroImageMemoryHitOnce(String dayLabel, String itemId) {
     final key = '$dayLabel|$itemId';
     if (!_loggedHomeHeroImageMemoryHits.add(key)) return;
-    logVerboseHome('[HOME_HERO_IMAGE] memory_url_hit day=$dayLabel item=$itemId');
+    logVerboseHome(
+      '[HOME_HERO_IMAGE] memory_url_hit day=$dayLabel item=$itemId',
+    );
   }
 
   void _logHomeHeroImageMemoryMissOnce(String dayLabel, String itemId) {
     final key = '$dayLabel|$itemId';
     if (!_loggedHomeHeroImageMemoryMisses.add(key)) return;
-    logVerboseHome('[HOME_HERO_IMAGE] memory_url_miss day=$dayLabel item=$itemId');
+    logVerboseHome(
+      '[HOME_HERO_IMAGE] memory_url_miss day=$dayLabel item=$itemId',
+    );
   }
 
   void _logHomeHeroUsingCachedImagesOnce(String dayLabel) {
@@ -4283,7 +4460,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       if (id.isNotEmpty) byId[id] = raw;
     }
 
-    final pending = <({ _HeroOutfitItem item, String id, String url })>[];
+    final pending = <({_HeroOutfitItem item, String id, String url})>[];
     var allOk = true;
 
     for (final item in items) {
@@ -4346,7 +4523,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   _HeroTodayState? _renderHeroStateForDateKey(String dateKey, String dayLabel) {
     final pinned = _daySwitchPinnedHeroByDateKey[dateKey];
-    if (pinned != null && _heroOutfitTilesHaveVisibleImages(pinned.outfitItems)) {
+    if (pinned != null &&
+        _heroOutfitTilesHaveVisibleImages(pinned.outfitItems)) {
       _logHomeDayCacheMemoryHitOnce(dayLabel);
       _logHomeHeroUsingCachedImagesOnce(dayLabel);
       return pinned;
@@ -4360,7 +4538,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final cache = _homeDayHeroCacheByDateKey[dateKey];
       final sticky = _stickyVisibleHeroByDateKey[dateKey];
       return _HeroTodayState(
-        vm: cache?.state.vm ??
+        vm:
+            cache?.state.vm ??
             sticky?.vm ??
             const _HeroBannerVM(description: ''),
         outfitItems: List<_HeroOutfitItem>.from(hydrated),
@@ -4368,7 +4547,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
     final sticky = _stickyVisibleHeroByDateKey[dateKey];
-    if (sticky != null && _heroOutfitTilesHaveVisibleImages(sticky.outfitItems)) {
+    if (sticky != null &&
+        _heroOutfitTilesHaveVisibleImages(sticky.outfitItems)) {
       _logHomeDayCacheMemoryHitOnce(dayLabel);
       _logHomeHeroUsingCachedImagesOnce(dayLabel);
       return sticky;
@@ -4388,13 +4568,18 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     final trimmed = url.trim();
     if (trimmed.isEmpty) return;
-    _homeImageUrlByDateKeyAndItemId.putIfAbsent(dateKey, () => <String, String>{})[itemId] =
-        trimmed;
+    _homeImageUrlByDateKeyAndItemId.putIfAbsent(
+      dateKey,
+      () => <String, String>{},
+    )[itemId] = trimmed;
     _lastVisibleHomeImageUrlByItemId[itemId] = trimmed;
     _homeHeroNetworkImageLoadedUrls.add(trimmed);
   }
 
-  void _syncHomeImageCacheForDateKey(String dateKey, List<_HeroOutfitItem> items) {
+  void _syncHomeImageCacheForDateKey(
+    String dateKey,
+    List<_HeroOutfitItem> items,
+  ) {
     final ids = <String>[
       for (final it in items)
         if ((it.wardrobeItemId ?? '').trim().isNotEmpty)
@@ -4425,8 +4610,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }) {
     final id = (item.wardrobeItemId ?? '').trim();
     final byItem = _homeImageUrlByDateKeyAndItemId[dateKey];
-    final memory =
-        id.isNotEmpty && byItem != null ? byItem[id]?.trim() : null;
+    final memory = id.isNotEmpty && byItem != null ? byItem[id]?.trim() : null;
 
     final current = item.imageUrl?.trim();
     if (current != null && current.isNotEmpty) {
@@ -4574,7 +4758,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (hydrated != null && hydrated.length >= 3) {
       final cache = _homeDayHeroCacheByDateKey[dateKey];
       return _HeroTodayState(
-        vm: cache?.state.vm ??
+        vm:
+            cache?.state.vm ??
             sticky?.vm ??
             const _HeroBannerVM(description: ''),
         outfitItems: hydrated,
@@ -4590,8 +4775,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   bool _heroOutfitTilesHaveVisibleImages(List<_HeroOutfitItem> items) {
     if (items.isEmpty) return false;
-    final withUrl =
-        items.where((i) => (i.imageUrl?.trim().isNotEmpty ?? false)).length;
+    final withUrl = items
+        .where((i) => (i.imageUrl?.trim().isNotEmpty ?? false))
+        .length;
     return withUrl >= 3 || withUrl == items.length;
   }
 
@@ -4737,7 +4923,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     var manualItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
-    final isManual = (_editedManuallyByDay[dayIdx] ?? false) && manualItems.isNotEmpty;
+    final isManual =
+        (_editedManuallyByDay[dayIdx] ?? false) && manualItems.isNotEmpty;
     if (isManual) {
       if (dataReady && wardrobe.isNotEmpty) {
         manualItems = _applyRestoredFootwearValidationIfNeeded(
@@ -4757,8 +4944,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       final state = _HeroTodayState(
         vm: _HeroBannerVM(
-          description:
-              reason.isNotEmpty ? reason : 'Upravený outfit pre tento deň.',
+          description: reason.isNotEmpty
+              ? reason
+              : 'Upravený outfit pre tento deň.',
         ),
         outfitItems: manualItems,
         source: 'edited',
@@ -4773,10 +4961,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return _finalizeHeroState(dateKey: dateKey, state: state);
     }
-    final swapVisibleItems = _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
+    final swapVisibleItems =
+        _editedOutfitByDay[dayIdx] ?? const <_HeroOutfitItem>[];
     if (_isOutfitEditMode && swapVisibleItems.isNotEmpty) {
       final state = _HeroTodayState(
-        vm: const _HeroBannerVM(description: 'Vyber kúsok, ktorý chceš vymeniť.'),
+        vm: const _HeroBannerVM(
+          description: 'Vyber kúsok, ktorý chceš vymeniť.',
+        ),
         outfitItems: swapVisibleItems,
         source: 'edited',
       );
@@ -4792,8 +4983,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
     if (_isRestoringHomeCache) {
       final restoringCache = _homeDayHeroCacheByDateKey[dateKey];
-      if (restoringCache != null && _heroStateHasValidOutfit(restoringCache.state)) {
-        return _finalizeHeroState(dateKey: dateKey, state: restoringCache.state);
+      if (restoringCache != null &&
+          _heroStateHasValidOutfit(restoringCache.state)) {
+        return _finalizeHeroState(
+          dateKey: dateKey,
+          state: restoringCache.state,
+        );
       }
     }
     if (!dataReady) {
@@ -4809,7 +5004,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return _finalizeHeroState(
           dateKey: dateKey,
           state: _HeroTodayState(
-            vm: const _HeroBannerVM(description: 'Pripravujem dnešný outfit...'),
+            vm: const _HeroBannerVM(
+              description: 'Pripravujem dnešný outfit...',
+            ),
             outfitItems: const <_HeroOutfitItem>[],
             source: 'loading',
             loadingReason: 'wardrobe_or_weather_pending',
@@ -4828,8 +5025,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
     }
     final latestAiSignature = _homeAiLatestSignatureByDateKey[dateKey];
-    final aiEntry =
-        latestAiSignature == null ? null : _homeAiCacheBySignature[latestAiSignature];
+    final aiEntry = latestAiSignature == null
+        ? null
+        : _homeAiCacheBySignature[latestAiSignature];
     final aiCachedRec = aiEntry?.recommendation;
     final aiPendingForDate = _homeAiRequestInFlight.any(
       (sig) => sig.startsWith('$dateKey|'),
@@ -4911,7 +5109,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final fallbackLogKey = '$dateKey|$latestAiSignature|$localReason';
     if (_lastFallbackReasonLoggedKey != fallbackLogKey) {
       _lastFallbackReasonLoggedKey = fallbackLogKey;
-      debugPrint('[HOME_AI_OUTFIT] local_fallback_applied reason=ai_failed_or_timeout');
+      debugPrint(
+        '[HOME_AI_OUTFIT] local_fallback_applied reason=ai_failed_or_timeout',
+      );
     }
     final localRec = _recommendOutfitForWeatherCached(
       dateKey: dateKey,
@@ -5014,28 +5214,37 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       );
       return;
     }
-    final existing = _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
+    final existing =
+        _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
     if (_isOutfitEditMode && existing.isNotEmpty) {
-      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=swap_mode_existing_outfit');
+      _logHomeAiOutfitOnce(
+        '[HOME_AI_OUTFIT] skip reason=swap_mode_existing_outfit',
+      );
       return;
     }
     final forceDifferent =
         (_homeAiForceDifferentNextByDateKey[dateKey] ?? false) == true;
     if (_generatingDateKeys.contains(dateKey)) {
-      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=generation_in_progress');
+      _logHomeAiOutfitOnce(
+        '[HOME_AI_OUTFIT] skip reason=generation_in_progress',
+      );
       return;
     }
     if (_homeAiRequestInFlight.any((sig) => sig.startsWith('$dateKey|'))) {
-      _logHomeAiOutfitOnce('[HOME_AI_OUTFIT] skip reason=generation_in_progress');
+      _logHomeAiOutfitOnce(
+        '[HOME_AI_OUTFIT] skip reason=generation_in_progress',
+      );
       return;
     }
     final aiSignature =
         '$dateKey|$weatherSignature|$_stylePreferenceFingerprint|$wardrobeSignature|fd=${forceDifferent ? 1 : 0}|n=$_homeAiRefreshNonce';
     final excluded = <String>{};
-    final rejected =
-        Set<String>.from(_rejectedOutfitCombinationKeysByDay[targetDayIdx] ?? {});
+    final rejected = Set<String>.from(
+      _rejectedOutfitCombinationKeysByDay[targetDayIdx] ?? {},
+    );
 
-    final effectiveCurrent = _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
+    final effectiveCurrent =
+        _editedOutfitByDay[targetDayIdx] ?? const <_HeroOutfitItem>[];
     for (final it in effectiveCurrent) {
       final id = (it.wardrobeItemId ?? '').trim();
       if (id.isNotEmpty) excluded.add(id);
@@ -5127,10 +5336,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             date: request.date,
             weatherContext: weatherContext,
             excludedItemIds: request.excludedItemIds.toList(growable: false),
-            rejectedCombinationSignatures: request.rejectedCombinationSignatures.toList(
+            rejectedCombinationSignatures: request.rejectedCombinationSignatures
+                .toList(growable: false),
+            previousOutfitItemIds: request.previousOutfitItemIds.toList(
               growable: false,
             ),
-            previousOutfitItemIds: request.previousOutfitItemIds.toList(growable: false),
             forceDifferentOutfit: request.forceDifferentOutfit,
           )
           .timeout(kHomeGenerateOutfitTimeout);
@@ -5180,7 +5390,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final sameAsCached = _sameHeroRecommendation(prevRec, rec);
       final targetDayIndex = _dayIndexForDate(request.date);
       final dayLabel = targetDayIndex == 0 ? 'today' : 'tomorrow';
-      final displayed = _editedOutfitByDay[targetDayIndex] ?? const <_HeroOutfitItem>[];
+      final displayed =
+          _editedOutfitByDay[targetDayIndex] ?? const <_HeroOutfitItem>[];
       final displayedDiffers = !_sameHeroItemsById(displayed, rec.items);
       final footwearPrepared = _validateAndReplaceRestoredFootwear(
         date: request.date,
@@ -5240,8 +5451,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           items: preparedItems,
         );
         final heroSource = footwearReplaced ? 'edited' : 'ai';
-        final persistSource =
-            footwearReplaced ? 'restore_footwear_fix' : 'ai_generated';
+        final persistSource = footwearReplaced
+            ? 'restore_footwear_fix'
+            : 'ai_generated';
         final userModified = footwearReplaced;
         final savedAt = DateTime.now();
         setState(() {
@@ -5252,10 +5464,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _homeAiLatestSignatureByDateKey[dateKey] = aiSignature;
           _homeAiForceDifferentNextByDateKey[dateKey] = false;
           _editedManuallyByDay[targetDayIndex] = userModified;
-          _editedOutfitByDay[targetDayIndex] =
-              List<_HeroOutfitItem>.from(preparedItems);
-          _lastSourceSignatureByDay[targetDayIndex] =
-              _heroRenderSignature(preparedItems);
+          _editedOutfitByDay[targetDayIndex] = List<_HeroOutfitItem>.from(
+            preparedItems,
+          );
+          _lastSourceSignatureByDay[targetDayIndex] = _heroRenderSignature(
+            preparedItems,
+          );
           _homeDayHeroCacheByDateKey[dateKey] = _HomeDayHeroCacheEntry(
             state: _HeroTodayState(
               vm: _HeroBannerVM(
@@ -5383,7 +5597,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         OutfitGenerationService.wardrobeItemId(typed[_HeroWearType.outerwear]!),
     ].where((e) => e.isNotEmpty).toList(growable: false);
     final heroCacheKey = 'ai|${orderedIds.join('|')}';
-    final ordered = _heroItemsCacheByIdSet[heroCacheKey] ??
+    final ordered =
+        _heroItemsCacheByIdSet[heroCacheKey] ??
         <_HeroOutfitItem>[
           _heroItemFromWardrobe(raw: top, type: _HeroWearType.top),
           _heroItemFromWardrobe(raw: bottom, type: _HeroWearType.bottom),
@@ -5428,7 +5643,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       afternoonRainSegment: weather.afternoonRainSegment,
       eveningRainSegment: weather.eveningRainSegment,
     );
-    final reason = HomeUserFacingReason.forDisplay(aiReply) ??
+    final reason =
+        HomeUserFacingReason.forDisplay(aiReply) ??
         _userFacingOutfitReason(
           items: ordered,
           weather: weather,
@@ -5442,7 +5658,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   ) {
     final out = <_HeroWearType, Map<String, dynamic>>{};
     for (final raw in selected) {
-      if (!out.containsKey(_HeroWearType.top) && _heroWardrobeMatchesType(raw, _HeroWearType.top)) {
+      if (!out.containsKey(_HeroWearType.top) &&
+          _heroWardrobeMatchesType(raw, _HeroWearType.top)) {
         out[_HeroWearType.top] = raw;
         continue;
       }
@@ -5486,11 +5703,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   String _wardrobeSignature(List<Map<String, dynamic>> wardrobe) {
-    final ids = wardrobe
-        .map((e) => OutfitGenerationService.wardrobeItemId(e))
-        .where((e) => e.isNotEmpty)
-        .toList()
-      ..sort();
+    final ids =
+        wardrobe
+            .map((e) => OutfitGenerationService.wardrobeItemId(e))
+            .where((e) => e.isNotEmpty)
+            .toList()
+          ..sort();
     return '${wardrobe.length}:${ids.join(",")}';
   }
 
@@ -5591,7 +5809,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required bool forceDifferent,
   }) {
     if (forceDifferent) return 'regenerate';
-    if (_homeAiLastTriggeredDateKey != null && _homeAiLastTriggeredDateKey != dateKey) {
+    if (_homeAiLastTriggeredDateKey != null &&
+        _homeAiLastTriggeredDateKey != dateKey) {
       return 'date_change';
     }
     final prevWeather = _homeAiLastWeatherSignatureByDateKey[dateKey];
@@ -5623,7 +5842,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (a.length != b.length) return false;
     for (var i = 0; i < a.length; i++) {
       if (a[i].type != b[i].type) return false;
-      if ((a[i].wardrobeItemId ?? '') != (b[i].wardrobeItemId ?? '')) return false;
+      if ((a[i].wardrobeItemId ?? '') != (b[i].wardrobeItemId ?? ''))
+        return false;
     }
     return true;
   }
@@ -5641,7 +5861,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     bool logNormalization = true,
   }) {
     if (_normalizedWardrobeForHomeBrain.isNotEmpty &&
-        _wardrobeSignature(wardrobe) == _wardrobeSignature(_lastWardrobeForCache)) {
+        _wardrobeSignature(wardrobe) ==
+            _wardrobeSignature(_lastWardrobeForCache)) {
       return _normalizedWardrobeForHomeBrain;
     }
     return HomeWardrobeNormalizer.normalizeWardrobeForHome(
@@ -5663,28 +5884,31 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final comfortInput =
         comfortWeather ?? ComfortWeatherInput.fromOutfitWeatherSnapshot(snap);
     final comfortTarget = ComfortTarget.fromWeather(comfortInput);
-    logComfortTarget(
-      day: comfortInput.dayLabel,
-      target: comfortTarget,
-    );
+    logComfortTarget(day: comfortInput.dayLabel, target: comfortTarget);
 
     final footwearGuidance = computeFootwearFamilyGuidance(weather: snap);
     logFootwearFamilyGuidance(weather: snap, guidance: footwearGuidance);
 
-    final footwearInventory =
-        footwearFamilyInventoryFromWardrobe(wardrobeForGen);
-    final preferredFootwearExists =
-        footwearInventory.hasPreferred(footwearGuidance);
-    final allowedFootwearExists = footwearInventory.hasAllowed(footwearGuidance);
+    final footwearInventory = footwearFamilyInventoryFromWardrobe(
+      wardrobeForGen,
+    );
+    final preferredFootwearExists = footwearInventory.hasPreferred(
+      footwearGuidance,
+    );
+    final allowedFootwearExists = footwearInventory.hasAllowed(
+      footwearGuidance,
+    );
 
     final excludedDiscouragedFootwearIds =
         (preferredFootwearExists || allowedFootwearExists)
-            ? footwearInventory.idsForDiscouragedFamilies(footwearGuidance).toSet()
-            : <String>{};
+        ? footwearInventory.idsForDiscouragedFamilies(footwearGuidance).toSet()
+        : <String>{};
 
-    final excludeBoots = excludedDiscouragedFootwearIds.isNotEmpty &&
-        footwearGuidance.discouragedFamilies
-            .contains(FootwearFamily.boots.wireName);
+    final excludeBoots =
+        excludedDiscouragedFootwearIds.isNotEmpty &&
+        footwearGuidance.discouragedFamilies.contains(
+          FootwearFamily.boots.wireName,
+        );
     logFootwearFamilyFilter(
       guidance: footwearGuidance,
       inventory: footwearInventory,
@@ -5706,8 +5930,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     final excludedDiscouragedBottomIds =
         (preferredBottomExists || allowedBottomExists)
-            ? bottomInventory.idsForDiscouraged(bottomGuidance).toSet()
-            : <String>{};
+        ? bottomInventory.idsForDiscouraged(bottomGuidance).toSet()
+        : <String>{};
 
     final effectiveExcluded = <String>{
       ...excludedItemIds,
@@ -5791,14 +6015,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         isPreferredFootwear: (p) =>
             previewHasPreferredFootwear(preview: p, guidance: footwearGuidance),
         isDiscouragedBottom: preferredBottomExists
-            ? (p) =>
-                previewHasDiscouragedBottom(preview: p, guidance: bottomGuidance)
+            ? (p) => previewHasDiscouragedBottom(
+                preview: p,
+                guidance: bottomGuidance,
+              )
             : null,
         isDiscouragedFootwear: preferredFootwearExists
             ? (p) => previewHasDiscouragedFootwear(
-                  preview: p,
-                  guidance: footwearGuidance,
-                )
+                preview: p,
+                guidance: footwearGuidance,
+              )
             : null,
         passesLayerHarmony: (p) => previewPassesLayerHarmonyGuard(
           preview: p,
@@ -5922,10 +6148,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (preferredBottomExists) {
       final preferredOnly = filtered
           .where(
-            (p) => previewHasPreferredBottom(
-              preview: p,
-              guidance: bottomGuidance,
-            ),
+            (p) =>
+                previewHasPreferredBottom(preview: p, guidance: bottomGuidance),
           )
           .toList(growable: false);
       if (preferredOnly.isNotEmpty) filtered = preferredOnly;
@@ -5980,8 +6204,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     Set<String> previousOutfitItemIds = const {},
     bool forceDifferentOutfit = false,
   }) {
-    final preferredShoeIds =
-        inventory.idsForPreferredFamilies(guidance).toSet();
+    final preferredShoeIds = inventory
+        .idsForPreferredFamilies(guidance)
+        .toSet();
     if (preferredShoeIds.isEmpty) return null;
     return OutfitGenerationService.generatePreview(
       wardrobeItems: wardrobeForGen,
@@ -6052,16 +6277,23 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final swapOutRaw = suggestedSwap['swapOutItemIds'];
     final swapInRaw = suggestedSwap['swapInItemIds'];
     final swapOutIds = swapOutRaw is List
-        ? swapOutRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList()
+        ? swapOutRaw
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList()
         : const <String>[];
     final swapInIds = swapInRaw is List
-        ? swapInRaw.map((e) => e.toString().trim()).where((s) => s.isNotEmpty).toList()
+        ? swapInRaw
+              .map((e) => e.toString().trim())
+              .where((s) => s.isNotEmpty)
+              .toList()
         : const <String>[];
 
     if (swapInIds.isEmpty) return null;
 
-    final currentShoeId =
-        OutfitGenerationService.wardrobeItemId(preview.shoes.item);
+    final currentShoeId = OutfitGenerationService.wardrobeItemId(
+      preview.shoes.item,
+    );
     if (swapOutIds.isNotEmpty &&
         currentShoeId.isNotEmpty &&
         !swapOutIds.contains(currentShoeId)) {
@@ -6097,10 +6329,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         '[STYLIST_FINAL_REVIEW_SWAP] swapOutId=$currentShoeId swapInId=$swapInId '
         'family=${family.wireName}',
       );
-      return _outfitPreviewWithSwappedShoes(
-        preview: preview,
-        newShoeRaw: raw,
-      );
+      return _outfitPreviewWithSwappedShoes(preview: preview, newShoeRaw: raw);
     }
 
     return null;
@@ -6125,12 +6354,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   /// Runs AI stylist final review over rule-based candidates; returns selected index.
   Future<
-      ({
-        int selectedIndex,
-        bool fallback,
-        String reason,
-        Map<String, dynamic>? suggestedSwap,
-      })> _runStylistFinalReviewOnPreviews({
+    ({
+      int selectedIndex,
+      bool fallback,
+      String reason,
+      Map<String, dynamic>? suggestedSwap,
+    })
+  >
+  _runStylistFinalReviewOnPreviews({
     required List<OutfitPreview> candidatePreviews,
     required _LocalWeather weather,
     required OutfitWeatherSnapshot snap,
@@ -6166,7 +6397,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return <String, dynamic>{
         'id': id,
         'name': name.isNotEmpty ? name : fallbackName,
-        'canonicalType': asString(raw['canonical_type'] ?? raw['canonicalType']),
+        'canonicalType': asString(
+          raw['canonical_type'] ?? raw['canonicalType'],
+        ),
         'layerRole': asString(raw['layer_role'] ?? raw['layerRole']),
         'categoryKey': asString(raw['categoryKey'] ?? raw['category']),
         'subCategoryKey': asString(raw['subCategoryKey'] ?? raw['subCategory']),
@@ -6219,8 +6452,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       'weather=${weather.tempC} rain=${weather.isRainy} wind=${weather.isWindy}',
     );
 
-    final comfortTarget =
-        ComfortTarget.fromWeather(_comfortWeatherInputFor(weather));
+    final comfortTarget = ComfortTarget.fromWeather(
+      _comfortWeatherInputFor(weather),
+    );
     var bestComfortIndex = 0;
     var bestComfortScore = -1.0;
     for (var i = 0; i < candidatePreviews.length; i++) {
@@ -6260,7 +6494,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ...asStringList(top['baseColors'] ?? top['colors']),
         ...asStringList(bottom['baseColors'] ?? bottom['colors']),
         ...asStringList(shoes['baseColors'] ?? shoes['colors']),
-        if (outer != null) ...asStringList(outer['baseColors'] ?? outer['colors']),
+        if (outer != null)
+          ...asStringList(outer['baseColors'] ?? outer['colors']),
       }.toList(growable: false);
 
       debugPrint(
@@ -6282,15 +6517,21 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
       final bottomPayload = itemForAi(bottom, fallbackName: p.bottom.label);
       bottomPayload['bottomFamily'] = bottomFamily.wireName;
-      bottomPayload['familyAllowed'] =
-          isBottomAllowedForGuidance(bottom, bottomGuidance);
-      bottomPayload['familyPreferred'] =
-          isBottomPreferredForGuidance(bottom, bottomGuidance);
+      bottomPayload['familyAllowed'] = isBottomAllowedForGuidance(
+        bottom,
+        bottomGuidance,
+      );
+      bottomPayload['familyPreferred'] = isBottomPreferredForGuidance(
+        bottom,
+        bottomGuidance,
+      );
 
       final shoesPayload = itemForAi(shoes, fallbackName: p.shoes.label);
       shoesPayload['footwearFamily'] = shoeFamily.wireName;
       shoesPayload['familyAllowed'] = footwearGuidance.isAllowed(shoeFamily);
-      shoesPayload['familyPreferred'] = footwearGuidance.isPreferred(shoeFamily);
+      shoesPayload['familyPreferred'] = footwearGuidance.isPreferred(
+        shoeFamily,
+      );
 
       candidatesPayload.add({
         'candidateIndex': i,
@@ -6364,11 +6605,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     final selectedIndex = res.selectedCandidateIndex;
-    final useFallback = res.fallback ||
+    final useFallback =
+        res.fallback ||
         selectedIndex < 0 ||
         selectedIndex >= candidatePreviews.length;
-    var effectiveIndex =
-        useFallback ? 0 : selectedIndex.clamp(0, candidatePreviews.length - 1);
+    var effectiveIndex = useFallback
+        ? 0
+        : selectedIndex.clamp(0, candidatePreviews.length - 1);
 
     if (!useFallback) {
       effectiveIndex = applyFootwearFamilyGuard(
@@ -6415,7 +6658,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       _heroItemFromOutfitPreview(preview.top),
       _heroItemFromOutfitPreview(preview.bottom),
       _heroItemFromOutfitPreview(preview.shoes),
-      if (preview.outerwear != null) _heroItemFromOutfitPreview(preview.outerwear!),
+      if (preview.outerwear != null)
+        _heroItemFromOutfitPreview(preview.outerwear!),
     ];
 
     if (outfitTiles.length < 3) return null;
@@ -6445,10 +6689,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (items.isEmpty) return null;
     return _HeroOutfitRecommendation(
       items: items,
-      reason: _userFacingOutfitReason(
-        items: items,
-        weather: weather,
-      ),
+      reason: _userFacingOutfitReason(items: items, weather: weather),
     );
   }
 
@@ -6624,10 +6865,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required List<Map<String, dynamic>> wardrobe,
     String selectedReason = '',
   }) async {
-    final finalSelectedItemIds =
-        _itemIdsFromOutfitPreview(finalSelectedCandidate);
-    final finalSelectedSignature =
-        _signatureFromOutfitPreview(finalSelectedCandidate);
+    final finalSelectedItemIds = _itemIdsFromOutfitPreview(
+      finalSelectedCandidate,
+    );
+    final finalSelectedSignature = _signatureFromOutfitPreview(
+      finalSelectedCandidate,
+    );
     final rec = _heroRecommendationFromPreview(
       preview: finalSelectedCandidate,
       weather: weather,
@@ -6700,13 +6943,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
     if (hydrated == null) return null;
 
-    final actualIds = hydrated
-        .map((e) => e.wardrobeItemId)
-        .whereType<String>()
-        .where((s) => s.isNotEmpty)
-        .toList()
+    final actualIds =
+        hydrated
+            .map((e) => e.wardrobeItemId)
+            .whereType<String>()
+            .where((s) => s.isNotEmpty)
+            .toList()
+          ..sort();
+    final expectedIds = List<String>.from(selection.finalSelectedItemIds)
       ..sort();
-    final expectedIds = List<String>.from(selection.finalSelectedItemIds)..sort();
     if (expectedIds.join('|') != actualIds.join('|')) {
       debugPrint(
         '[STYLIST_FINAL_REVIEW_APPLY_MISMATCH] expectedIds=${expectedIds.join(",")} '
@@ -6752,6 +6997,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         isRainy: weather.isRainy,
         isWindy: weather.isWindy,
         styleTaste: _homeStyleTaste,
+        stylingPresentation: StylePreferencesRuntime.effectivePresentation(
+          _stylePreferences,
+        ),
       ),
     );
     trace.mark('CANDIDATE_MATRIX_MS', matrixWatch);
@@ -6785,8 +7033,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 seasonKey: weather.seasonKey,
               ),
               weatherContext: _stylistFinalReviewWeatherContext(weather),
-              userStylePreferences:
-                  StylePreferencesRuntime.stylistPayload(_stylePreferences),
+              userStylePreferences: StylePreferencesRuntime.stylistPayload(
+                _stylePreferences,
+              ),
               logPrefix: '[HOME_AI_OUTFIT final_review_v2]',
               trace: trace,
             );
@@ -6889,7 +7138,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     required _LocalWeather weather,
     required bool isPremiumUser,
   }) {
-    final localSig = '$dateKey|${_homeWeatherSignature(weather)}|$_stylePreferenceFingerprint|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
+    final localSig =
+        '$dateKey|${_homeWeatherSignature(weather)}|$_stylePreferenceFingerprint|${_wardrobeSignature(wardrobe)}|p=${isPremiumUser ? 1 : 0}';
     if (_localRecCacheByDateSig.containsKey(localSig)) {
       return _localRecCacheByDateSig[localSig];
     }
@@ -6980,11 +7230,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final raw = p.item;
     final id = OutfitGenerationService.wardrobeItemId(raw);
     final brandRaw = (raw['brand'] ?? '').toString().trim();
-    final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
-    final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '')
+        .toString()
+        .trim();
+    final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '')
+        .toString()
+        .trim();
     final dateKey = _currentHeroBuildDateKey;
-    final allowPick =
-        dateKey == null || _allowHomeImagePickForBuild(dateKey);
+    final allowPick = dateKey == null || _allowHomeImagePickForBuild(dateKey);
     return _HeroOutfitItem(
       type: type,
       icon: _heroIconForType(type),
@@ -7018,10 +7271,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return 'Vrstva';
   }
 
-  String _heroLabelForWardrobeItem(Map<String, dynamic> raw, {required String fallback}) {
+  String _heroLabelForWardrobeItem(
+    Map<String, dynamic> raw, {
+    required String fallback,
+  }) {
     final name = (raw['name'] ?? '').toString().trim();
     if (name.isNotEmpty) return name;
-    final sub = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final sub = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '')
+        .toString()
+        .trim();
     if (sub.isNotEmpty) return sub;
     final cat = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
     if (cat.isNotEmpty) return cat;
@@ -7045,14 +7303,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final normalized = _normalizedWardrobeMapForHome(raw);
     final brandRaw = (normalized['brand'] ?? '').toString().trim();
     final categoryKey =
-        (normalized['categoryKey'] ?? normalized['category'] ?? '').toString().trim();
-    final subCategoryKey = (normalized['subCategoryKey'] ?? normalized['subCategory'] ?? '')
-        .toString()
-        .trim();
+        (normalized['categoryKey'] ?? normalized['category'] ?? '')
+            .toString()
+            .trim();
+    final subCategoryKey =
+        (normalized['subCategoryKey'] ?? normalized['subCategory'] ?? '')
+            .toString()
+            .trim();
     final wid = OutfitGenerationService.wardrobeItemId(normalized);
     final dateKey = _currentHeroBuildDateKey;
-    final allowPick =
-        dateKey == null || _allowHomeImagePickForBuild(dateKey);
+    final allowPick = dateKey == null || _allowHomeImagePickForBuild(dateKey);
     final skName = (normalized['type_pretty'] ?? normalized['typePretty'] ?? '')
         .toString()
         .trim();
@@ -7214,8 +7474,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   bool _heroWardrobeMatchesType(Map<String, dynamic> raw, _HeroWearType type) {
-    if (raw['home_kb_applied'] == true ||
-        raw['home_legacy_fallback'] == true) {
+    if (raw['home_kb_applied'] == true || raw['home_legacy_fallback'] == true) {
       final layer = (raw['layer_role'] ?? '').toString().trim();
       switch (type) {
         case _HeroWearType.top:
@@ -7249,9 +7508,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           'sweater',
         ]);
       case _HeroWearType.bottom:
-        return has(['nohav', 'rifl', 'jeans', 'pants', 'sukn', 'skirt', 'short']);
+        return has([
+          'nohav',
+          'rifl',
+          'jeans',
+          'pants',
+          'sukn',
+          'skirt',
+          'short',
+        ]);
       case _HeroWearType.shoes:
-        return has(['topán', 'topan', 'tenis', 'sneaker', 'boots', 'sand', 'obuv', 'shoes']);
+        return has([
+          'topán',
+          'topan',
+          'tenis',
+          'sneaker',
+          'boots',
+          'sand',
+          'obuv',
+          'shoes',
+        ]);
       case _HeroWearType.outerwear:
         return has([
           'bunda',
@@ -7295,21 +7571,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return needles.any((n) => haystack.contains(_normalizedClothingToken(n)));
   }
 
-  String _manualDefaultGroupForCurrentItem(_HeroWearType type, _HeroOutfitItem? currentItem) {
+  String _manualDefaultGroupForCurrentItem(
+    _HeroWearType type,
+    _HeroOutfitItem? currentItem,
+  ) {
     final source = _normalizedClothingToken(
       '${currentItem?.subCategoryKey ?? ''} ${currentItem?.categoryKey ?? ''} ${currentItem?.label ?? ''}',
     );
     if (type == _HeroWearType.shoes) return 'shoes';
     if (_containsAnyNormalized(source, ['hoodie', 'mikina'])) return 'hoodie';
     if (_containsAnyNormalized(source, ['jacket', 'bunda'])) return 'jacket';
-    if (_containsAnyNormalized(source, ['coat', 'kabat', 'kabat', 'kabát'])) return 'coat';
-    if (_containsAnyNormalized(source, ['t-shirt', 'tricko', 'tričko', 'tank', 'tielko'])) {
+    if (_containsAnyNormalized(source, ['coat', 'kabat', 'kabat', 'kabát']))
+      return 'coat';
+    if (_containsAnyNormalized(source, [
+      't-shirt',
+      'tricko',
+      'tričko',
+      'tank',
+      'tielko',
+    ])) {
       return 'tee_tank';
     }
     return type == _HeroWearType.bottom ? 'bottom' : 'type_default';
   }
 
-  bool _matchesManualGroup(Map<String, dynamic> raw, String group, _HeroWearType type) {
+  bool _matchesManualGroup(
+    Map<String, dynamic> raw,
+    String group,
+    _HeroWearType type,
+  ) {
     final blob = _normalizedClothingToken(_heroBlob(raw));
     bool has(List<String> words) => _containsAnyNormalized(blob, words);
     switch (group) {
@@ -7322,9 +7612,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       case 'coat':
         return has(['coat', 'kabat', 'kabát']);
       case 'bottom':
-        return has(['nohav', 'rifl', 'jeans', 'pants', 'sukn', 'skirt', 'short']);
+        return has([
+          'nohav',
+          'rifl',
+          'jeans',
+          'pants',
+          'sukn',
+          'skirt',
+          'short',
+        ]);
       case 'shoes':
-        return has(['topan', 'topán', 'tenis', 'sneaker', 'boots', 'sand', 'obuv', 'shoes']);
+        return has([
+          'topan',
+          'topán',
+          'tenis',
+          'sneaker',
+          'boots',
+          'sand',
+          'obuv',
+          'shoes',
+        ]);
       case 'type_default':
       default:
         return _heroWardrobeMatchesType(raw, type);
@@ -7346,9 +7653,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           _ManualCategoryOption(id: 'bottom', label: 'Nohavice, rifle, sukne'),
         ];
       case _HeroWearType.shoes:
-        return const [
-          _ManualCategoryOption(id: 'shoes', label: 'Obuv'),
-        ];
+        return const [_ManualCategoryOption(id: 'shoes', label: 'Obuv')];
     }
   }
 
@@ -7356,7 +7661,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     List<_HeroOutfitItem> displayItems,
     List<_HeroOutfitItem> effectiveItems,
     String renderHeroSource,
-  }) _getHeroPanelContent({
+  })
+  _getHeroPanelContent({
     required int panelDayIndex,
     required String dayLabel,
     required DateTime activeDate,
@@ -7397,7 +7703,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     List<_HeroOutfitItem> displayItems,
     List<_HeroOutfitItem> effectiveItems,
     String renderHeroSource,
-  }) _resolveHeroPanelContent({
+  })
+  _resolveHeroPanelContent({
     required int panelDayIndex,
     required String dayLabel,
     required DateTime activeDate,
@@ -7432,7 +7739,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } else {
       final cachedRender =
           _daySwitchPinnedHeroByDateKey[dateKey] ??
-              _renderHeroStateForDateKey(dateKey, dayLabel);
+          _renderHeroStateForDateKey(dateKey, dayLabel);
       if (cachedRender != null &&
           _heroOutfitTilesHaveVisibleImages(cachedRender.outfitItems)) {
         effectiveItems = cachedRender.outfitItems;
@@ -7467,7 +7774,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ? (cacheEntry?.state.source ?? 'cached')
         : heroSource;
     final renderedNames = effectiveItems.map((e) => e.label).join(', ');
-    final renderLogKey = '$renderHeroSource|${_heroRenderSignature(effectiveItems)}';
+    final renderLogKey =
+        '$renderHeroSource|${_heroRenderSignature(effectiveItems)}';
     if (_lastHeroRenderLogKeyByDayLabel[dayLabel] != renderLogKey) {
       _lastHeroRenderLogKeyByDayLabel[dayLabel] = renderLogKey;
       final renderSource = (_editedManuallyByDay[panelDayIndex] ?? false)
@@ -7503,7 +7811,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       List<_HeroOutfitItem> displayItems,
       List<_HeroOutfitItem> effectiveItems,
       String renderHeroSource,
-    }) resolved,
+    })
+    resolved,
     required List<Map<String, dynamic>> wardrobe,
   }) {
     if (panelDayIndex == _dayIndex) {
@@ -7521,10 +7830,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       isTomorrow: cardIsTomorrow,
       displayItems: resolved.displayItems,
       loadingMode:
-          resolved.renderHeroSource == 'loading' && resolved.displayItems.isEmpty,
-      outfitSpotlightTargetKey:
-          panelDayIndex == _dayIndex ? _editSpotlightTargetKey : null,
-      outfitSpotlightLink: panelDayIndex == _dayIndex ? _editSpotlightLink : null,
+          resolved.renderHeroSource == 'loading' &&
+          resolved.displayItems.isEmpty,
+      outfitSpotlightTargetKey: panelDayIndex == _dayIndex
+          ? _editSpotlightTargetKey
+          : null,
+      outfitSpotlightLink: panelDayIndex == _dayIndex
+          ? _editSpotlightLink
+          : null,
       optionalItemHints: _optionalHintsForHero(
         items: resolved.displayItems,
         weather: w,
@@ -7650,9 +7963,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ),
                   ),
                 )
-              : const SizedBox(
-                  key: ValueKey('like_feedback_hidden'),
-                ),
+              : const SizedBox(key: ValueKey('like_feedback_hidden')),
         ),
       ],
     );
@@ -7699,7 +8010,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           isTomorrow: cardIsTomorrow,
           outfitItems: resolved.displayItems,
           loadingMode:
-              resolved.renderHeroSource == 'loading' && resolved.displayItems.isEmpty,
+              resolved.renderHeroSource == 'loading' &&
+              resolved.displayItems.isEmpty,
           editMode: false,
           focusedType: null,
           onItemTap: null,
@@ -7797,12 +8109,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _onRemoveTileTap(_HeroOutfitItem item) async {
-    final shouldRemove = await showDialog<bool>(
+    final shouldRemove =
+        await showDialog<bool>(
           context: context,
           builder: (dialogContext) {
             return AlertDialog(
               backgroundColor: HomeLuxuryPalette.surfaceSoft.withOpacity(0.96),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
               title: const Text(
                 'Odstrániť tento kúsok z outfitu?',
                 style: TextStyle(
@@ -7826,7 +8141,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         ) ??
         false;
     if (!shouldRemove) return;
-    final current = List<_HeroOutfitItem>.from(_editedOutfitByDay[_dayIndex] ?? const []);
+    final current = List<_HeroOutfitItem>.from(
+      _editedOutfitByDay[_dayIndex] ?? const [],
+    );
     current.removeWhere((it) => it.type == item.type);
     _setEditedItems(current);
   }
@@ -7834,7 +8151,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _handleAiSuggestForType(_HeroWearType type) async {
     final user = _auth.currentUser;
     if (user == null) return;
-    final current = List<_HeroOutfitItem>.from(_editedOutfitByDay[_dayIndex] ?? const []);
+    final current = List<_HeroOutfitItem>.from(
+      _editedOutfitByDay[_dayIndex] ?? const [],
+    );
     final idx = current.indexWhere((it) => it.type == type);
     if (idx < 0) return;
     final old = current[idx];
@@ -7851,7 +8170,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       rejected.add(oldId);
     }
 
-    final originalsByType = _swapOriginalItemIdByTypeByDay[_dayIndex] ?? const {};
+    final originalsByType =
+        _swapOriginalItemIdByTypeByDay[_dayIndex] ?? const {};
     final originalId = (originalsByType[type] ?? '').trim();
     if (originalId.isNotEmpty) {
       rejected.add(originalId);
@@ -7863,7 +8183,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           (it.wardrobeItemId ?? '').trim(),
     };
 
-    final snap = await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+    final snap = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('wardrobe')
+        .get();
     final docs = snap.docs.map((d) {
       final raw = Map<String, dynamic>.from(d.data());
       raw['id'] = d.id;
@@ -7895,8 +8219,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       return _canonicalTypeFromRaw(raw) == oldCanonical;
     }).toList();
     final tier3 = sameRole.where(validRaw).toList();
-    var candidates =
-        tier1.isNotEmpty ? tier1 : (tier2.isNotEmpty ? tier2 : tier3);
+    var candidates = tier1.isNotEmpty
+        ? tier1
+        : (tier2.isNotEmpty ? tier2 : tier3);
     if (type == _HeroWearType.shoes && candidates.isNotEmpty) {
       candidates = _applyFootwearGuidanceToSwapCandidates(
         candidates: candidates,
@@ -7933,8 +8258,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final replacement = _heroItemFromWardrobe(raw: replacementRaw, type: type);
     final newId = (replacement.wardrobeItemId ?? '').trim();
     if (newId.isNotEmpty) {
-      _swapLastSuggestedItemIdByTypeByDay.putIfAbsent(_dayIndex, () => {})[type] =
-          newId;
+      _swapLastSuggestedItemIdByTypeByDay.putIfAbsent(
+        _dayIndex,
+        () => {},
+      )[type] = newId;
     }
     final replaced = current[idx];
     current[idx] = replacement;
@@ -7975,23 +8302,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
           highlightColor: HomeLuxuryPalette.accent.withOpacity(0.06),
           hoverColor: HomeLuxuryPalette.accent.withOpacity(0.05),
           textButtonTheme: TextButtonThemeData(
-            style: TextButton.styleFrom(
-              foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
-              textStyle: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-            ).copyWith(
-              overlayColor: WidgetStateProperty.all(
-                HomeLuxuryPalette.accent.withOpacity(0.10),
-              ),
-            ),
+            style:
+                TextButton.styleFrom(
+                  foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ).copyWith(
+                  overlayColor: WidgetStateProperty.all(
+                    HomeLuxuryPalette.accent.withOpacity(0.10),
+                  ),
+                ),
           ),
         );
         return Theme(
           data: localTheme,
           child: Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, bottomInset + safeBottom + 26),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              bottomInset + safeBottom + 26,
+            ),
             child: HomeGlassSurface(
               borderRadius: 22,
               blurSigma: 18,
@@ -8014,11 +8347,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     cursorColor: HomeLuxuryPalette.accent.withOpacity(0.96),
                     minLines: 3,
                     maxLines: 5,
-                    style: TextStyle(color: HomeLuxuryPalette.textPrimary.withOpacity(0.94)),
+                    style: TextStyle(
+                      color: HomeLuxuryPalette.textPrimary.withOpacity(0.94),
+                    ),
                     decoration: InputDecoration(
-                      hintText: 'Napíš čo ti na kúsku nesedí\na aký vibe chceš skúsiť.',
+                      hintText:
+                          'Napíš čo ti na kúsku nesedí\na aký vibe chceš skúsiť.',
                       hintStyle: TextStyle(
-                        color: HomeLuxuryPalette.textSecondary.withOpacity(0.84),
+                        color: HomeLuxuryPalette.textSecondary.withOpacity(
+                          0.84,
+                        ),
                         height: 1.35,
                       ),
                       filled: true,
@@ -8072,7 +8410,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final user = _auth.currentUser;
     if (user == null) return;
     _HeroOutfitItem? currentItem;
-    final currentItems = _editedOutfitByDay[_dayIndex] ?? const <_HeroOutfitItem>[];
+    final currentItems =
+        _editedOutfitByDay[_dayIndex] ?? const <_HeroOutfitItem>[];
     for (final it in currentItems) {
       if (it.type == type) {
         currentItem = it;
@@ -8107,10 +8446,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             return _normalizedWardrobeMapForHome(m);
                           })
                           .toList(growable: false);
-                      final defaultGroup = _manualDefaultGroupForCurrentItem(type, currentItem);
+                      final defaultGroup = _manualDefaultGroupForCurrentItem(
+                        type,
+                        currentItem,
+                      );
                       final activeGroup = overrideGroup ?? defaultGroup;
                       var filtered = allNormalized
-                          .where((raw) => _matchesManualGroup(raw, activeGroup, type))
+                          .where(
+                            (raw) =>
+                                _matchesManualGroup(raw, activeGroup, type),
+                          )
                           .toList();
                       if (type == _HeroWearType.shoes && filtered.isNotEmpty) {
                         filtered = _applyFootwearGuidanceToSwapCandidates(
@@ -8125,8 +8470,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                         );
                       }
                       final overrideOptions = _manualOverrideOptions(type);
-                      final matching = overrideOptions.where((o) => o.id == activeGroup).toList();
-                      final activeLabel = matching.isEmpty ? null : matching.first.label;
+                      final matching = overrideOptions
+                          .where((o) => o.id == activeGroup)
+                          .toList();
+                      final activeLabel = matching.isEmpty
+                          ? null
+                          : matching.first.label;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -8136,7 +8485,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                 child: Text(
                                   'Čím chceš nahradiť tento kúsok?',
                                   style: TextStyle(
-                                    color: HomeLuxuryPalette.textPrimary.withOpacity(0.96),
+                                    color: HomeLuxuryPalette.textPrimary
+                                        .withOpacity(0.96),
                                     fontSize: 17,
                                     fontWeight: FontWeight.w600,
                                     letterSpacing: -0.12,
@@ -8145,8 +8495,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               ),
                               TextButton(
                                 style: TextButton.styleFrom(
-                                  foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.96),
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  foregroundColor: HomeLuxuryPalette.accent
+                                      .withOpacity(0.96),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
                                   textStyle: TextStyle(
                                     fontSize: 12.6,
                                     fontWeight: FontWeight.w600,
@@ -8154,37 +8508,53 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                   ),
                                 ),
                                 onPressed: () async {
-                                  final selected = await showModalBottomSheet<String>(
-                                    context: sheetContext,
-                                    backgroundColor: Colors.transparent,
-                                    builder: (ctx) {
-                                      return SafeArea(
-                                        top: false,
-                                        child: HomeGlassSurface(
-                                          borderRadius: 18,
-                                          blurSigma: 16,
-                                          padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
-                                          child: Column(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              for (final option in overrideOptions)
-                                                ListTile(
-                                                  dense: true,
-                                                  onTap: () => Navigator.of(ctx).pop(option.id),
-                                                  title: Text(
-                                                    option.label,
-                                                    style: TextStyle(
-                                                      color: HomeLuxuryPalette.textPrimary.withOpacity(0.94),
-                                                      fontWeight: FontWeight.w500,
-                                                    ),
+                                  final selected =
+                                      await showModalBottomSheet<String>(
+                                        context: sheetContext,
+                                        backgroundColor: Colors.transparent,
+                                        builder: (ctx) {
+                                          return SafeArea(
+                                            top: false,
+                                            child: HomeGlassSurface(
+                                              borderRadius: 18,
+                                              blurSigma: 16,
+                                              padding:
+                                                  const EdgeInsets.fromLTRB(
+                                                    10,
+                                                    10,
+                                                    10,
+                                                    10,
                                                   ),
-                                                ),
-                                            ],
-                                          ),
-                                        ),
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  for (final option
+                                                      in overrideOptions)
+                                                    ListTile(
+                                                      dense: true,
+                                                      onTap: () => Navigator.of(
+                                                        ctx,
+                                                      ).pop(option.id),
+                                                      title: Text(
+                                                        option.label,
+                                                        style: TextStyle(
+                                                          color:
+                                                              HomeLuxuryPalette
+                                                                  .textPrimary
+                                                                  .withOpacity(
+                                                                    0.94,
+                                                                  ),
+                                                          fontWeight:
+                                                              FontWeight.w500,
+                                                        ),
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       );
-                                    },
-                                  );
                                   if (selected == null) return;
                                   setModalState(() => overrideGroup = selected);
                                 },
@@ -8198,7 +8568,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                               child: Text(
                                 activeLabel,
                                 style: TextStyle(
-                                  color: HomeLuxuryPalette.textSecondary.withOpacity(0.86),
+                                  color: HomeLuxuryPalette.textSecondary
+                                      .withOpacity(0.86),
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w500,
                                 ),
@@ -8209,7 +8580,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             child: filtered.isEmpty
                                 ? Center(
                                     child: Padding(
-                                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 12,
+                                      ),
                                       child: Text(
                                         type == _HeroWearType.shoes
                                             ? 'Pre dnešné počasie nemáš vhodnejšiu obuv na výmenu.'
@@ -8227,117 +8600,160 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                     ),
                                   )
                                 : GridView.builder(
-                              controller: controller,
-                              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                                crossAxisCount: 2,
-                                crossAxisSpacing: 10,
-                                mainAxisSpacing: 12,
-                                childAspectRatio: 0.76,
-                              ),
-                              itemCount: filtered.length,
-                              itemBuilder: (_, i) {
-                                final raw = filtered[i];
-                                final label = _heroLabelForWardrobeItem(
-                                  raw,
-                                  fallback: _heroFallbackLabelForType(type),
-                                );
-                                final item = _heroItemFromWardrobe(raw: raw, type: type);
-                                final current = currentItem;
-                                final isCurrent = current != null &&
-                                    current.label == item.label &&
-                                    current.type == item.type;
-                                return InkWell(
-                                  borderRadius: BorderRadius.circular(14),
-                                  onTap: () {
-                                    final current = List<_HeroOutfitItem>.from(
-                                      _editedOutfitByDay[_dayIndex] ?? const [],
-                                    );
-                                    final idx = current.indexWhere((it) => it.type == type);
-                                    final oldId = idx >= 0
-                                        ? (current[idx].wardrobeItemId ?? '').trim()
-                                        : '';
-                                    final replaced =
-                                        idx >= 0 ? current[idx] : null;
-                                    if (idx >= 0) {
-                                      current[idx] = item;
-                                    } else {
-                                      current.add(item);
-                                    }
-                                    final newId = (item.wardrobeItemId ?? '').trim();
-                                    _commitHomeOutfitItemReplacement(
-                                      wearType: type,
-                                      newItem: item,
-                                      updatedOutfit: current,
-                                      replacedItem: replaced,
-                                    );
-                                    if (newId.isNotEmpty) {
-                                      _swapLastSuggestedItemIdByTypeByDay
-                                          .putIfAbsent(_dayIndex, () => {})[type] = newId;
-                                    }
-                                    debugPrint(
-                                      '[HOME_SWAP] accept replacement oldId=$oldId newId=$newId',
-                                    );
-                                    debugPrint('[HOME_SWAP] marked_manual_edit=true');
-                                    debugPrint('[HOME_SWAP] prevented_ai_restore=true');
-                                    Navigator.of(sheetContext).pop();
-                                  },
-                                  child: Container(
-                                    padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(14),
-                                      color: HomeLuxuryPalette.surface.withOpacity(0.56),
-                                      border: Border.all(
-                                        color: isCurrent
-                                            ? HomeLuxuryPalette.accent.withOpacity(0.46)
-                                            : HomeLuxuryPalette.border,
-                                      ),
-                                      boxShadow: [
-                                        if (isCurrent)
-                                          BoxShadow(
-                                            color: HomeLuxuryPalette.accent.withOpacity(0.18),
-                                            blurRadius: 16,
-                                            spreadRadius: 0,
+                                    controller: controller,
+                                    gridDelegate:
+                                        const SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 2,
+                                          crossAxisSpacing: 10,
+                                          mainAxisSpacing: 12,
+                                          childAspectRatio: 0.76,
+                                        ),
+                                    itemCount: filtered.length,
+                                    itemBuilder: (_, i) {
+                                      final raw = filtered[i];
+                                      final label = _heroLabelForWardrobeItem(
+                                        raw,
+                                        fallback: _heroFallbackLabelForType(
+                                          type,
+                                        ),
+                                      );
+                                      final item = _heroItemFromWardrobe(
+                                        raw: raw,
+                                        type: type,
+                                      );
+                                      final current = currentItem;
+                                      final isCurrent =
+                                          current != null &&
+                                          current.label == item.label &&
+                                          current.type == item.type;
+                                      return InkWell(
+                                        borderRadius: BorderRadius.circular(14),
+                                        onTap: () {
+                                          final current =
+                                              List<_HeroOutfitItem>.from(
+                                                _editedOutfitByDay[_dayIndex] ??
+                                                    const [],
+                                              );
+                                          final idx = current.indexWhere(
+                                            (it) => it.type == type,
+                                          );
+                                          final oldId = idx >= 0
+                                              ? (current[idx].wardrobeItemId ??
+                                                        '')
+                                                    .trim()
+                                              : '';
+                                          final replaced = idx >= 0
+                                              ? current[idx]
+                                              : null;
+                                          if (idx >= 0) {
+                                            current[idx] = item;
+                                          } else {
+                                            current.add(item);
+                                          }
+                                          final newId =
+                                              (item.wardrobeItemId ?? '')
+                                                  .trim();
+                                          _commitHomeOutfitItemReplacement(
+                                            wearType: type,
+                                            newItem: item,
+                                            updatedOutfit: current,
+                                            replacedItem: replaced,
+                                          );
+                                          if (newId.isNotEmpty) {
+                                            _swapLastSuggestedItemIdByTypeByDay
+                                                    .putIfAbsent(
+                                                      _dayIndex,
+                                                      () => {},
+                                                    )[type] =
+                                                newId;
+                                          }
+                                          debugPrint(
+                                            '[HOME_SWAP] accept replacement oldId=$oldId newId=$newId',
+                                          );
+                                          debugPrint(
+                                            '[HOME_SWAP] marked_manual_edit=true',
+                                          );
+                                          debugPrint(
+                                            '[HOME_SWAP] prevented_ai_restore=true',
+                                          );
+                                          Navigator.of(sheetContext).pop();
+                                        },
+                                        child: Container(
+                                          padding: const EdgeInsets.fromLTRB(
+                                            10,
+                                            10,
+                                            10,
+                                            12,
                                           ),
-                                      ],
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: ClipRRect(
-                                            borderRadius: BorderRadius.circular(11),
-                                            child: ColoredBox(
-                                              color: HomeLuxuryPalette.bgMid.withOpacity(0.34),
-                                              child: _HeroOutfitImageView(
-                                                heroDayKey: 'manual_picker',
-                                                imageUrl: item.imageUrl,
-                                                fallbackIcon: item.icon,
-                                                wearType: item.type,
-                                                compact: true,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                            color: HomeLuxuryPalette.surface
+                                                .withOpacity(0.56),
+                                            border: Border.all(
+                                              color: isCurrent
+                                                  ? HomeLuxuryPalette.accent
+                                                        .withOpacity(0.46)
+                                                  : HomeLuxuryPalette.border,
+                                            ),
+                                            boxShadow: [
+                                              if (isCurrent)
+                                                BoxShadow(
+                                                  color: HomeLuxuryPalette
+                                                      .accent
+                                                      .withOpacity(0.18),
+                                                  blurRadius: 16,
+                                                  spreadRadius: 0,
+                                                ),
+                                            ],
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Expanded(
+                                                child: ClipRRect(
+                                                  borderRadius:
+                                                      BorderRadius.circular(11),
+                                                  child: ColoredBox(
+                                                    color: HomeLuxuryPalette
+                                                        .bgMid
+                                                        .withOpacity(0.34),
+                                                    child: _HeroOutfitImageView(
+                                                      heroDayKey:
+                                                          'manual_picker',
+                                                      imageUrl: item.imageUrl,
+                                                      fallbackIcon: item.icon,
+                                                      wearType: item.type,
+                                                      compact: true,
+                                                    ),
+                                                  ),
+                                                ),
                                               ),
-                                            ),
+                                              const SizedBox(height: 9),
+                                              Expanded(
+                                                child: Text(
+                                                  label,
+                                                  maxLines: 2,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: HomeLuxuryPalette
+                                                        .textPrimary
+                                                        .withOpacity(0.92),
+                                                    fontSize: 13,
+                                                    fontWeight: FontWeight.w500,
+                                                    height: 1.2,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ),
-                                        const SizedBox(height: 9),
-                                        Expanded(
-                                          child: Text(
-                                            label,
-                                            maxLines: 2,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: TextStyle(
-                                              color: HomeLuxuryPalette.textPrimary.withOpacity(0.92),
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w500,
-                                              height: 1.2,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                                      );
+                                    },
                                   ),
-                                );
-                              },
-                            ),
                           ),
                         ],
                       );
@@ -8508,7 +8924,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         stream: _userDocStream(user.uid),
         builder: (context, userSnap) {
           final data = userSnap.data?.data();
-          final isPremiumUser = data?['isPremium'] == true ||
+          final isPremiumUser =
+              data?['isPremium'] == true ||
               data?['subscriptionStatus'] == 'premium';
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: _wardrobeStream(user.uid),
@@ -8544,10 +8961,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                           0) >=
                       3);
               final wardrobeReady = wardrobe.isNotEmpty || snap.hasData;
-              final dataReadyToday = _weatherLoaded &&
-                  (wardrobeReady || hasCachedOutfitToday);
-              final dataReadyTomorrow = _weatherLoaded &&
-                  (wardrobeReady || hasCachedOutfitTomorrow);
+              final dataReadyToday =
+                  _weatherLoaded && (wardrobeReady || hasCachedOutfitToday);
+              final dataReadyTomorrow =
+                  _weatherLoaded && (wardrobeReady || hasCachedOutfitTomorrow);
               _debugHomeBootState();
               final todayHero = _resolveHomeHero(
                 activeDate: todayDate,
@@ -8561,8 +8978,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 isPremiumUser: isPremiumUser,
                 dataReady: dataReadyTomorrow,
               );
-              final activeHero =
-                  _dayIndex == 0 ? todayHero : tomorrowHero;
+              final activeHero = _dayIndex == 0 ? todayHero : tomorrowHero;
               final vm = _HeroBannerVM(description: activeHero.vm.description);
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -8680,7 +9096,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                             children: [
                               // Quick-orb-like atmosphere: stronger dim + subtle blur, kept lightweight.
                               BackdropFilter(
-                                filter: ImageFilter.blur(sigmaX: 2.2, sigmaY: 2.2),
+                                filter: ImageFilter.blur(
+                                  sigmaX: 2.2,
+                                  sigmaY: 2.2,
+                                ),
                                 child: const SizedBox.expand(),
                               ),
                               DecoratedBox(
@@ -8728,97 +9147,107 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       backgroundColor: HomeLuxuryPalette.bgMid,
       child: Stack(
         children: [
-      const Positioned.fill(
-      child: DecoratedBox(
-        decoration: BoxDecoration(
-        gradient: LinearGradient(
-        begin: Alignment.topLeft,
-        end: Alignment.bottomRight,
-        colors: [
-          HomeLuxuryPalette.bgTop,
-          HomeLuxuryPalette.bgMid,
-          HomeLuxuryPalette.bgBottom,
-        ],
-      ),
-    ),
-    ),
-    ),
-    Positioned.fill(
-    child: IgnorePointer(
-    child: DecoratedBox(
-    decoration: BoxDecoration(
-    gradient: RadialGradient(
-    center: const Alignment(-0.4, -0.9),
-    radius: 1.1,
-    colors: [
-    HomeLuxuryPalette.accent.withOpacity(0.25),
-    HomeLuxuryPalette.accent.withOpacity(0.10),
-    Colors.transparent,
-    ],
-    stops: const [0.0, 0.35, 1.0],
-    ),
-    ),
-    ),
-    ),
-    ),
-    Positioned.fill(
-    child: DecoratedBox(
-    decoration: BoxDecoration(
-    gradient: LinearGradient(
-    begin: Alignment.topCenter,
-    end: Alignment.bottomCenter,
-    colors: [
-    Colors.transparent,
-    Color(0xFF09090A).withOpacity(0.25),
-    ],
-    ),
-    ),
-    ),
-    ),
-    SafeArea(
-    child: Column(
-    children: [
-            Container(
-              margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
-              padding: const EdgeInsets.all(14),
+          const Positioned.fill(
+            child: DecoratedBox(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(18),
-                border: Border.all(color: HomeLuxuryPalette.border),
                 gradient: LinearGradient(
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                   colors: [
                     HomeLuxuryPalette.bgTop,
                     HomeLuxuryPalette.bgMid,
+                    HomeLuxuryPalette.bgBottom,
                   ],
                 ),
               ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 52,
-                    height: 52,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                        color: HomeLuxuryPalette.accent.withOpacity(0.45),
-                      ),
-                      gradient: const LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Color(0xFFC8A36A),
-                          Color(0xFF9D7C4C),
-                        ],
-                      ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(-0.4, -0.9),
+                    radius: 1.1,
+                    colors: [
+                      HomeLuxuryPalette.accent.withOpacity(0.25),
+                      HomeLuxuryPalette.accent.withOpacity(0.10),
+                      Colors.transparent,
+                    ],
+                    stops: const [0.0, 0.35, 1.0],
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.transparent,
+                    Color(0xFF09090A).withOpacity(0.25),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Container(
+                  margin: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(color: HomeLuxuryPalette.border),
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        HomeLuxuryPalette.bgTop,
+                        HomeLuxuryPalette.bgMid,
+                      ],
                     ),
-                    child: ClipOval(
-                      child: (photoUrl != null && photoUrl.trim().isNotEmpty)
-                          ? Image.network(
-                              photoUrl.trim(),
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) {
-                                return Center(
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 52,
+                        height: 52,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                            color: HomeLuxuryPalette.accent.withOpacity(0.45),
+                          ),
+                          gradient: const LinearGradient(
+                            begin: Alignment.topCenter,
+                            end: Alignment.bottomCenter,
+                            colors: [Color(0xFFC8A36A), Color(0xFF9D7C4C)],
+                          ),
+                        ),
+                        child: ClipOval(
+                          child:
+                              (photoUrl != null && photoUrl.trim().isNotEmpty)
+                              ? Image.network(
+                                  photoUrl.trim(),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) {
+                                    return Center(
+                                      child: Text(
+                                        initial,
+                                        style: const TextStyle(
+                                          color: Color(0xFF191512),
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 22,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                )
+                              : Center(
                                   child: Text(
                                     initial,
                                     style: const TextStyle(
@@ -8827,507 +9256,34 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                                       fontSize: 22,
                                     ),
                                   ),
-                                );
-                              },
-                            )
-                          : Center(
-                              child: Text(
-                                initial,
-                                style: const TextStyle(
-                                  color: Color(0xFF191512),
-                                  fontWeight: FontWeight.w800,
-                                  fontSize: 22,
                                 ),
-                              ),
-                            ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          displayName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            color: HomeLuxuryPalette.textPrimary,
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          email,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: HomeLuxuryPalette.textSecondary.withOpacity(0.9),
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: ListView(
-                padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
-                children: [
-            _drawerSectionLabel('SOCIÁLNE'),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.people_outline, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Priatelia',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const FriendsScreen()),
-                );
-              },
-            ),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.diversity_2, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Správy a zladenie outfitov',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const MessagesScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            _drawerSectionLabel('AI'),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.auto_awesome, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Analýza šatníka',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const WardrobeAnalysisScreen()),
-                );
-              },
-            ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.science_outlined, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Wardrobe Reanalyze Review',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Dry run — visual review, no Firestore writes',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const WardrobeReanalyzeReviewScreen(),
-                    ),
-                  );
-                },
-              ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.cloud_upload_outlined, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Reanalyze wardrobe metadata',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Re-run AI on photos → save patterns/logo to Firestore',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text('Reanalýza metadát beží…'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    final summary =
-                        await WardrobeReanalyzeApplyService.applyMetadataRefresh();
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Hotovo: ${summary.updated} aktualizovaných, '
-                          '${summary.skipped} bez zmeny, ${summary.failed} chýb',
                         ),
                       ),
-                    );
-                  } catch (e) {
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('Chyba: $e')),
-                    );
-                  }
-                },
-              ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.refresh, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Reanalyze only missing',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Dokonči kúsky, ktoré ešte nemajú metadáta (po rate limite)',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                        content: Text('Dopĺňam chýbajúce metadáta…'),
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    final summary = await WardrobeReanalyzeApplyService
-                        .applyMetadataRefresh(onlyMissing: true);
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Hotovo: ${summary.updated} aktualizovaných, '
-                          '${summary.skipped} bez zmeny, ${summary.failed} chýb',
-                        ),
-                      ),
-                    );
-                  } catch (e) {
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('Chyba: $e')),
-                    );
-                  }
-                },
-              ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.sync_alt, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Fix Mikina Layers',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Set existing mikiny to mid_layer',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      backgroundColor: HomeLuxuryPalette.surfaceSoft,
-                      title: const Text(
-                        'Fix Existing Mikina Layers?',
-                        style: TextStyle(color: HomeLuxuryPalette.textPrimary),
-                      ),
-                      content: const Text(
-                        'Updates existing mikiny in your wardrobe from '
-                        'outer_layer to mid_layer.\n\n'
-                        'Does not change names, colors, or images.\n\n'
-                        'This writes to your wardrobe in Firestore.',
-                        style: TextStyle(
-                          color: HomeLuxuryPalette.textSecondary,
-                          height: 1.4,
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Cancel'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('Fix mikiny'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed != true || !context.mounted) return;
-
-                  final messenger = ScaffoldMessenger.of(context);
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text('Mikina layer migration running…'),
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-
-                  try {
-                    final summary = await WardrobeMetadataMigrationService
-                        .applyMikinaMidLayerFix();
-                    if (!context.mounted) return;
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Mikina layer fix done: ${summary.updated} updated, '
-                          '${summary.skipped} skipped, ${summary.failed} failed '
-                          '(${summary.total} total)',
-                        ),
-                        duration: const Duration(seconds: 6),
-                      ),
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text('Mikina layer fix failed: $e'),
-                        duration: const Duration(seconds: 5),
-                      ),
-                    );
-                  }
-                },
-              ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.spellcheck, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Name Grammar Fix (Dry Run)',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  'Preview Slovak adjective fixes — no writes',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final messenger = ScaffoldMessenger.of(context);
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text('Name grammar dry run — check debug console.'),
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                  try {
-                    final summary = await WardrobeNameGrammarFixService.dryRun();
-                    if (!mounted) return;
-                    setState(() {
-                      _nameGrammarFixCanApply =
-                          WardrobeNameGrammarFixService.canApply;
-                    });
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          summary.fixed > 0
-                              ? 'Dry run done: ${summary.fixed} would fix, '
-                                  '${summary.skipped} skipped (${summary.total} total). '
-                                  'Apply is now unlocked.'
-                              : 'Dry run done: no grammar fixes needed.',
-                        ),
-                        duration: const Duration(seconds: 6),
-                      ),
-                    );
-                  } catch (e) {
-                    if (!mounted) return;
-                    setState(() => _nameGrammarFixCanApply = false);
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('Dry run failed: $e')),
-                    );
-                  }
-                },
-              ),
-            if (kDebugMode)
-              ListTile(
-                iconColor: HomeLuxuryPalette.accent,
-                textColor: HomeLuxuryPalette.accent,
-                leading: Icon(Icons.edit_note, color: HomeLuxuryPalette.accent),
-                title: Text(
-                  'Apply Name Grammar Fix',
-                  style: TextStyle(color: HomeLuxuryPalette.accent, fontSize: 14),
-                ),
-                subtitle: Text(
-                  _nameGrammarFixCanApply
-                      ? 'Apply ${WardrobeNameGrammarFixService.pendingFixes.length} '
-                          'pending fix(es) — name field only'
-                      : WardrobeNameGrammarFixService.dryRunCompletedThisSession
-                          ? 'No pending fixes from dry-run'
-                          : 'Run dry-run first to unlock',
-                  style: TextStyle(
-                    color: HomeLuxuryPalette.textSecondary.withOpacity(0.85),
-                    fontSize: 11,
-                  ),
-                ),
-                enabled: _nameGrammarFixCanApply,
-                onTap: () async {
-                  if (!_nameGrammarFixCanApply) return;
-                  Navigator.of(context).pop();
-                  final confirmed = await showDialog<bool>(
-                    context: context,
-                    builder: (ctx) => AlertDialog(
-                      backgroundColor: HomeLuxuryPalette.surfaceSoft,
-                      title: const Text(
-                        'Apply name grammar fixes?',
-                        style: TextStyle(color: HomeLuxuryPalette.textPrimary),
-                      ),
-                      content: const Text(
-                        'Fixes only obvious Slovak color adjective mistakes in '
-                        'the name field.\n\n'
-                        'Does not change colors, categories, metadata, or images.',
-                        style: TextStyle(
-                          color: HomeLuxuryPalette.textSecondary,
-                          height: 1.4,
-                        ),
-                      ),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(ctx, false),
-                          child: const Text('Cancel'),
-                        ),
-                        FilledButton(
-                          onPressed: () => Navigator.pop(ctx, true),
-                          child: const Text('Apply fixes'),
-                        ),
-                      ],
-                    ),
-                  );
-                  if (confirmed != true || !context.mounted) return;
-
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    final summary = await WardrobeNameGrammarFixService.apply();
-                    if (!mounted) return;
-                    setState(() => _nameGrammarFixCanApply = false);
-                    messenger.showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Applied: ${summary.fixed} names fixed, '
-                          '${summary.failed} failed (${summary.total} total)',
-                        ),
-                        duration: const Duration(seconds: 6),
-                      ),
-                    );
-                  } catch (e) {
-                    if (!mounted) return;
-                    messenger.showSnackBar(
-                      SnackBar(content: Text('Apply failed: $e')),
-                    );
-                  }
-                },
-              ),
-            const SizedBox(height: 10),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
-              child: InkWell(
-                borderRadius: BorderRadius.circular(14),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const PremiumScreen()),
-                  );
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(14),
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        HomeLuxuryPalette.surfaceSoft.withOpacity(0.92),
-                        HomeLuxuryPalette.bgTop.withOpacity(0.95),
-                      ],
-                    ),
-                    border: Border.all(
-                      color: HomeLuxuryPalette.accent.withOpacity(0.42),
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: HomeLuxuryPalette.accent.withOpacity(0.12),
-                        blurRadius: 14,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(10),
-                          color: HomeLuxuryPalette.accent.withOpacity(0.16),
-                          border: Border.all(
-                            color: HomeLuxuryPalette.accent.withOpacity(0.40),
-                          ),
-                        ),
-                        child: const Icon(
-                          Icons.workspace_premium,
-                          size: 18,
-                          color: HomeLuxuryPalette.accent,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
+                      const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: const [
+                          children: [
                             Text(
-                              'Premium',
-                              style: TextStyle(
+                              displayName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
                                 color: HomeLuxuryPalette.textPrimary,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13.5,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
                               ),
                             ),
-                            SizedBox(height: 2),
+                            const SizedBox(height: 4),
                             Text(
-                              'Odomkni pokročilé AI funkcie',
+                              email,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                               style: TextStyle(
-                                color: HomeLuxuryPalette.textSecondary,
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
+                                color: HomeLuxuryPalette.textSecondary
+                                    .withOpacity(0.9),
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w500,
                               ),
                             ),
                           ],
@@ -9336,65 +9292,624 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                     ],
                   ),
                 ),
-              ),
+                Expanded(
+                  child: ListView(
+                    padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
+                    children: [
+                      _drawerSectionLabel('SOCIÁLNE'),
+                      ListTile(
+                        iconColor: HomeLuxuryPalette.accent,
+                        textColor: HomeLuxuryPalette.accent,
+                        leading: Icon(
+                          Icons.people_outline,
+                          color: HomeLuxuryPalette.accent,
+                        ),
+                        title: Text(
+                          'Priatelia',
+                          style: TextStyle(color: HomeLuxuryPalette.accent),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const FriendsScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      ListTile(
+                        iconColor: HomeLuxuryPalette.accent,
+                        textColor: HomeLuxuryPalette.accent,
+                        leading: Icon(
+                          Icons.diversity_2,
+                          color: HomeLuxuryPalette.accent,
+                        ),
+                        title: Text(
+                          'Správy a zladenie outfitov',
+                          style: TextStyle(color: HomeLuxuryPalette.accent),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const MessagesScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 10),
+                      _drawerSectionLabel('AI'),
+                      ListTile(
+                        iconColor: HomeLuxuryPalette.accent,
+                        textColor: HomeLuxuryPalette.accent,
+                        leading: Icon(
+                          Icons.auto_awesome,
+                          color: HomeLuxuryPalette.accent,
+                        ),
+                        title: Text(
+                          'Analýza šatníka',
+                          style: TextStyle(color: HomeLuxuryPalette.accent),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const WardrobeAnalysisScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.science_outlined,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Wardrobe Reanalyze Review',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Dry run — visual review, no Firestore writes',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const WardrobeReanalyzeReviewScreen(),
+                              ),
+                            );
+                          },
+                        ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.cloud_upload_outlined,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Reanalyze wardrobe metadata',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Re-run AI on photos → save patterns/logo to Firestore',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            final messenger = ScaffoldMessenger.of(context);
+                            try {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('Reanalýza metadát beží…'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                              final summary =
+                                  await WardrobeReanalyzeApplyService.applyMetadataRefresh();
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Hotovo: ${summary.updated} aktualizovaných, '
+                                    '${summary.skipped} bez zmeny, ${summary.failed} chýb',
+                                  ),
+                                ),
+                              );
+                            } catch (e) {
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('Chyba: $e')),
+                              );
+                            }
+                          },
+                        ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.refresh,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Reanalyze only missing',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Dokonči kúsky, ktoré ešte nemajú metadáta (po rate limite)',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            final messenger = ScaffoldMessenger.of(context);
+                            try {
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text('Dopĺňam chýbajúce metadáta…'),
+                                  duration: Duration(seconds: 2),
+                                ),
+                              );
+                              final summary =
+                                  await WardrobeReanalyzeApplyService.applyMetadataRefresh(
+                                    onlyMissing: true,
+                                  );
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Hotovo: ${summary.updated} aktualizovaných, '
+                                    '${summary.skipped} bez zmeny, ${summary.failed} chýb',
+                                  ),
+                                ),
+                              );
+                            } catch (e) {
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('Chyba: $e')),
+                              );
+                            }
+                          },
+                        ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.sync_alt,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Fix Mikina Layers',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Set existing mikiny to mid_layer',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: HomeLuxuryPalette.surfaceSoft,
+                                title: const Text(
+                                  'Fix Existing Mikina Layers?',
+                                  style: TextStyle(
+                                    color: HomeLuxuryPalette.textPrimary,
+                                  ),
+                                ),
+                                content: const Text(
+                                  'Updates existing mikiny in your wardrobe from '
+                                  'outer_layer to mid_layer.\n\n'
+                                  'Does not change names, colors, or images.\n\n'
+                                  'This writes to your wardrobe in Firestore.',
+                                  style: TextStyle(
+                                    color: HomeLuxuryPalette.textSecondary,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Fix mikiny'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true || !context.mounted) return;
+
+                            final messenger = ScaffoldMessenger.of(context);
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Mikina layer migration running…',
+                                ),
+                                duration: Duration(seconds: 3),
+                              ),
+                            );
+
+                            try {
+                              final summary =
+                                  await WardrobeMetadataMigrationService.applyMikinaMidLayerFix();
+                              if (!context.mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Mikina layer fix done: ${summary.updated} updated, '
+                                    '${summary.skipped} skipped, ${summary.failed} failed '
+                                    '(${summary.total} total)',
+                                  ),
+                                  duration: const Duration(seconds: 6),
+                                ),
+                              );
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text('Mikina layer fix failed: $e'),
+                                  duration: const Duration(seconds: 5),
+                                ),
+                              );
+                            }
+                          },
+                        ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.spellcheck,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Name Grammar Fix (Dry Run)',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            'Preview Slovak adjective fixes — no writes',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          onTap: () async {
+                            Navigator.of(context).pop();
+                            final messenger = ScaffoldMessenger.of(context);
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Name grammar dry run — check debug console.',
+                                ),
+                                duration: Duration(seconds: 3),
+                              ),
+                            );
+                            try {
+                              final summary =
+                                  await WardrobeNameGrammarFixService.dryRun();
+                              if (!mounted) return;
+                              setState(() {
+                                _nameGrammarFixCanApply =
+                                    WardrobeNameGrammarFixService.canApply;
+                              });
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    summary.fixed > 0
+                                        ? 'Dry run done: ${summary.fixed} would fix, '
+                                              '${summary.skipped} skipped (${summary.total} total). '
+                                              'Apply is now unlocked.'
+                                        : 'Dry run done: no grammar fixes needed.',
+                                  ),
+                                  duration: const Duration(seconds: 6),
+                                ),
+                              );
+                            } catch (e) {
+                              if (!mounted) return;
+                              setState(() => _nameGrammarFixCanApply = false);
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('Dry run failed: $e')),
+                              );
+                            }
+                          },
+                        ),
+                      if (kDebugMode)
+                        ListTile(
+                          iconColor: HomeLuxuryPalette.accent,
+                          textColor: HomeLuxuryPalette.accent,
+                          leading: Icon(
+                            Icons.edit_note,
+                            color: HomeLuxuryPalette.accent,
+                          ),
+                          title: Text(
+                            'Apply Name Grammar Fix',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.accent,
+                              fontSize: 14,
+                            ),
+                          ),
+                          subtitle: Text(
+                            _nameGrammarFixCanApply
+                                ? 'Apply ${WardrobeNameGrammarFixService.pendingFixes.length} '
+                                      'pending fix(es) — name field only'
+                                : WardrobeNameGrammarFixService
+                                      .dryRunCompletedThisSession
+                                ? 'No pending fixes from dry-run'
+                                : 'Run dry-run first to unlock',
+                            style: TextStyle(
+                              color: HomeLuxuryPalette.textSecondary
+                                  .withOpacity(0.85),
+                              fontSize: 11,
+                            ),
+                          ),
+                          enabled: _nameGrammarFixCanApply,
+                          onTap: () async {
+                            if (!_nameGrammarFixCanApply) return;
+                            Navigator.of(context).pop();
+                            final confirmed = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                backgroundColor: HomeLuxuryPalette.surfaceSoft,
+                                title: const Text(
+                                  'Apply name grammar fixes?',
+                                  style: TextStyle(
+                                    color: HomeLuxuryPalette.textPrimary,
+                                  ),
+                                ),
+                                content: const Text(
+                                  'Fixes only obvious Slovak color adjective mistakes in '
+                                  'the name field.\n\n'
+                                  'Does not change colors, categories, metadata, or images.',
+                                  style: TextStyle(
+                                    color: HomeLuxuryPalette.textSecondary,
+                                    height: 1.4,
+                                  ),
+                                ),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text('Cancel'),
+                                  ),
+                                  FilledButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text('Apply fixes'),
+                                  ),
+                                ],
+                              ),
+                            );
+                            if (confirmed != true || !context.mounted) return;
+
+                            final messenger = ScaffoldMessenger.of(context);
+                            try {
+                              final summary =
+                                  await WardrobeNameGrammarFixService.apply();
+                              if (!mounted) return;
+                              setState(() => _nameGrammarFixCanApply = false);
+                              messenger.showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Applied: ${summary.fixed} names fixed, '
+                                    '${summary.failed} failed (${summary.total} total)',
+                                  ),
+                                  duration: const Duration(seconds: 6),
+                                ),
+                              );
+                            } catch (e) {
+                              if (!mounted) return;
+                              messenger.showSnackBar(
+                                SnackBar(content: Text('Apply failed: $e')),
+                              );
+                            }
+                          },
+                        ),
+                      const SizedBox(height: 10),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(14),
+                          onTap: () {
+                            Navigator.of(context).pop();
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const PremiumScreen(),
+                              ),
+                            );
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(14),
+                              gradient: LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  HomeLuxuryPalette.surfaceSoft.withOpacity(
+                                    0.92,
+                                  ),
+                                  HomeLuxuryPalette.bgTop.withOpacity(0.95),
+                                ],
+                              ),
+                              border: Border.all(
+                                color: HomeLuxuryPalette.accent.withOpacity(
+                                  0.42,
+                                ),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: HomeLuxuryPalette.accent.withOpacity(
+                                    0.12,
+                                  ),
+                                  blurRadius: 14,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    borderRadius: BorderRadius.circular(10),
+                                    color: HomeLuxuryPalette.accent.withOpacity(
+                                      0.16,
+                                    ),
+                                    border: Border.all(
+                                      color: HomeLuxuryPalette.accent
+                                          .withOpacity(0.40),
+                                    ),
+                                  ),
+                                  child: const Icon(
+                                    Icons.workspace_premium,
+                                    size: 18,
+                                    color: HomeLuxuryPalette.accent,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: const [
+                                      Text(
+                                        'Premium',
+                                        style: TextStyle(
+                                          color: HomeLuxuryPalette.textPrimary,
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 13.5,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2),
+                                      Text(
+                                        'Odomkni pokročilé AI funkcie',
+                                        style: TextStyle(
+                                          color:
+                                              HomeLuxuryPalette.textSecondary,
+                                          fontSize: 11.5,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      _drawerSectionLabel('ÚČET'),
+                      ListTile(
+                        iconColor: HomeLuxuryPalette.accent,
+                        textColor: HomeLuxuryPalette.accent,
+                        leading: Icon(
+                          Icons.person_outline,
+                          color: HomeLuxuryPalette.accent,
+                        ),
+                        title: Text(
+                          'Profil',
+                          style: TextStyle(color: HomeLuxuryPalette.accent),
+                        ),
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const ProfileScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                      ListTile(
+                        iconColor: HomeLuxuryPalette.accent,
+                        textColor: HomeLuxuryPalette.accent,
+                        leading: Icon(
+                          Icons.settings,
+                          color: HomeLuxuryPalette.accent,
+                        ),
+                        title: Text(
+                          'Nastavenia',
+                          style: TextStyle(color: HomeLuxuryPalette.accent),
+                        ),
+                        onTap: () async {
+                          Navigator.of(context).pop();
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const StylePreferencesScreen(),
+                            ),
+                          );
+                          if (!mounted) return;
+                          await _reloadStylePreferencesAndInvalidateIfNeeded();
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(color: HomeLuxuryPalette.border),
+                ListTile(
+                  iconColor: HomeLuxuryPalette.accent,
+                  textColor: HomeLuxuryPalette.accent,
+                  leading: Icon(Icons.logout, color: HomeLuxuryPalette.accent),
+                  title: Text(
+                    'Odhlásiť sa',
+                    style: TextStyle(color: HomeLuxuryPalette.accent),
+                  ),
+                  onTap: () async {
+                    Navigator.of(context).pop();
+                    await AuthSession.instance.signOut();
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 8),
-            _drawerSectionLabel('ÚČET'),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.person_outline, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Profil',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () {
-                Navigator.of(context).pop();
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
-                );
-              },
-            ),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.settings, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Nastavenia',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const StylePreferencesScreen()),
-                );
-                if (!mounted) return;
-                await _reloadStylePreferencesAndInvalidateIfNeeded();
-              },
-            ),
-                ],
-              ),
-            ),
-            Divider(color: HomeLuxuryPalette.border),
-            ListTile(
-              iconColor: HomeLuxuryPalette.accent,
-              textColor: HomeLuxuryPalette.accent,
-              leading: Icon(Icons.logout, color: HomeLuxuryPalette.accent),
-              title: Text(
-                'Odhlásiť sa',
-                style: TextStyle(color: HomeLuxuryPalette.accent),
-              ),
-              onTap: () async {
-                Navigator.of(context).pop();
-                await AuthSession.instance.signOut();
-              },
-            ),
-    ],
-    )
-    ),
-    ],
+          ),
+        ],
       ),
     );
   }
@@ -9424,20 +9939,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
 /// Inline weather — editorial typography only (no chips/capsules).
 class _HeroInlineWeather extends StatelessWidget {
-  const _HeroInlineWeather({
-    required this.weather,
-    required this.compact,
-  });
+  const _HeroInlineWeather({required this.weather, required this.compact});
 
   final _LocalWeather weather;
   final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    final emojiStyle = TextStyle(
-      fontSize: compact ? 13 : 14,
-      height: 1.2,
-    );
+    final emojiStyle = TextStyle(fontSize: compact ? 13 : 14, height: 1.2);
 
     final headlineLabel = BriefingWeatherCondition.dailyHeadlineSk(
       weather.briefingMorningCondition,
@@ -9522,10 +10031,7 @@ class _UnifiedHeroBriefingGlassPanel extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(9, 8, 9, 8),
         decoration: BoxDecoration(
           borderRadius: r,
-          border: Border.all(
-            color: Colors.white.withOpacity(0.078),
-            width: 1,
-          ),
+          border: Border.all(color: Colors.white.withOpacity(0.078), width: 1),
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
@@ -9717,8 +10223,8 @@ class _UnifiedHeroSurface extends StatelessWidget {
         segmentedToggleBandHeight + _kHeroGapAfterToggle;
     final rightColumnTopInset = editMode
         ? toggleWeatherBandHeight +
-            _heroInlineWeatherBandHeight(compact: compact) +
-            _kHeroGapBeforeGrid
+              _heroInlineWeatherBandHeight(compact: compact) +
+              _kHeroGapBeforeGrid
         : toggleWeatherBandHeight;
 
     final heroBodyColumn = Row(
@@ -9744,10 +10250,7 @@ class _UnifiedHeroSurface extends StatelessWidget {
                     const SizedBox(height: _kHeroGapAfterToggle),
                   ],
                 ),
-                _HeroInlineWeather(
-                  weather: weather,
-                  compact: compact,
-                ),
+                _HeroInlineWeather(weather: weather, compact: compact),
                 const SizedBox(height: _kHeroGapBeforeGrid),
                 SizedBox(
                   height: sharedBodyH,
@@ -9755,8 +10258,9 @@ class _UnifiedHeroSurface extends StatelessWidget {
                   child: hasOutfitTiles
                       ? outfitSwitcher
                       : ConstrainedBox(
-                          constraints:
-                              const BoxConstraints(minHeight: minGridEmpty),
+                          constraints: const BoxConstraints(
+                            minHeight: minGridEmpty,
+                          ),
                           child: outfitSwitcher,
                         ),
                 ),
@@ -9836,19 +10340,12 @@ class _UnifiedHeroSurface extends StatelessWidget {
     }
     return CompositedTransformTarget(
       link: outfitSpotlightLink ?? LayerLink(),
-      child: KeyedSubtree(
-        key: outfitSpotlightTargetKey,
-        child: heroShell,
-      ),
+      child: KeyedSubtree(key: outfitSpotlightTargetKey, child: heroShell),
     );
   }
 }
 
-enum _VibeComposerStage {
-  initial,
-  linkInput,
-  linkPlaceholder,
-}
+enum _VibeComposerStage { initial, linkInput, linkPlaceholder }
 
 class _VibeComposerSheet extends StatefulWidget {
   const _VibeComposerSheet({required this.onPhotoSelected});
@@ -9909,18 +10406,19 @@ class _VibeComposerSheetState extends State<_VibeComposerSheet> {
       highlightColor: HomeLuxuryPalette.accent.withOpacity(0.06),
       hoverColor: HomeLuxuryPalette.accent.withOpacity(0.05),
       textButtonTheme: TextButtonThemeData(
-        style: TextButton.styleFrom(
-          foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
-          textStyle: const TextStyle(
-            fontSize: 13.2,
-            fontWeight: FontWeight.w600,
-            letterSpacing: 0.06,
-          ),
-        ).copyWith(
-          overlayColor: WidgetStateProperty.all(
-            HomeLuxuryPalette.accent.withOpacity(0.10),
-          ),
-        ),
+        style:
+            TextButton.styleFrom(
+              foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
+              textStyle: const TextStyle(
+                fontSize: 13.2,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.06,
+              ),
+            ).copyWith(
+              overlayColor: WidgetStateProperty.all(
+                HomeLuxuryPalette.accent.withOpacity(0.10),
+              ),
+            ),
       ),
     );
     return SafeArea(
@@ -10058,7 +10556,8 @@ class _VibeComposerSheetState extends State<_VibeComposerSheet> {
         Row(
           children: [
             TextButton(
-              onPressed: () => setState(() => _stage = _VibeComposerStage.initial),
+              onPressed: () =>
+                  setState(() => _stage = _VibeComposerStage.initial),
               child: const Text('Späť'),
             ),
             const Spacer(),
@@ -10101,7 +10600,8 @@ class _VibeComposerSheetState extends State<_VibeComposerSheet> {
         Row(
           children: [
             TextButton(
-              onPressed: () => setState(() => _stage = _VibeComposerStage.initial),
+              onPressed: () =>
+                  setState(() => _stage = _VibeComposerStage.initial),
               child: const Text('Späť'),
             ),
             const Spacer(),
@@ -10123,13 +10623,16 @@ class _VibeRecreationWorkspaceScreen extends StatefulWidget {
   });
 
   final XFile photo;
-  final Future<_VibeRecreationResult?> Function(XFile photo) onAnalyzeInspiration;
+  final Future<_VibeRecreationResult?> Function(XFile photo)
+  onAnalyzeInspiration;
 
   @override
-  State<_VibeRecreationWorkspaceScreen> createState() => _VibeRecreationWorkspaceScreenState();
+  State<_VibeRecreationWorkspaceScreen> createState() =>
+      _VibeRecreationWorkspaceScreenState();
 }
 
-class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspaceScreen> {
+class _VibeRecreationWorkspaceScreenState
+    extends State<_VibeRecreationWorkspaceScreen> {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   bool _isLoading = true;
@@ -10159,7 +10662,11 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
       _items = _orderedHeroOutfitItems(res?.items ?? const []);
       _poolIndex
         ..clear()
-        ..addEntries((_result?.candidatePools.keys ?? const <_HeroWearType>{}).map((t) => MapEntry(t, 0)));
+        ..addEntries(
+          (_result?.candidatePools.keys ?? const <_HeroWearType>{}).map(
+            (t) => MapEntry(t, 0),
+          ),
+        );
       _likeActive = false;
       _showLikeFeedback = false;
       _likePulseTick = 0;
@@ -10256,13 +10763,19 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     final user = _auth.currentUser;
     if (user == null) return;
     final current = _currentItemForType(type);
-    final snap = await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+    final snap = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('wardrobe')
+        .get();
     final docs = snap.docs.map((d) => d.data()).toList();
     final candidates = docs
         .where((raw) => _heroWardrobeMatchesTypeLocal(raw, type))
         .map((raw) => _heroItemFromWardrobeLocal(raw: raw, type: type))
         .toList();
-    final alternatives = candidates.where((it) => !_isSameOutfitItem(current, it)).toList();
+    final alternatives = candidates
+        .where((it) => !_isSameOutfitItem(current, it))
+        .toList();
     if (alternatives.isEmpty) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -10278,7 +10791,11 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     final user = _auth.currentUser;
     if (user == null) return;
     final current = _currentItemForType(type);
-    final snap = await _firestore.collection('users').doc(user.uid).collection('wardrobe').get();
+    final snap = await _firestore
+        .collection('users')
+        .doc(user.uid)
+        .collection('wardrobe')
+        .get();
     final docs = snap.docs.map((d) => d.data()).toList();
     final allInCategory = docs
         .where((raw) => _heroWardrobeMatchesTypeLocal(raw, type))
@@ -10287,7 +10804,9 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     if (allInCategory.length <= 1) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('V tejto kategórii zatiaľ nemáš ďalší kúsok.')),
+        const SnackBar(
+          content: Text('V tejto kategórii zatiaľ nemáš ďalší kúsok.'),
+        ),
       );
       return;
     }
@@ -10324,12 +10843,13 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                     const SizedBox(height: 10),
                     Expanded(
                       child: GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 2,
-                          crossAxisSpacing: 10,
-                          mainAxisSpacing: 12,
-                          childAspectRatio: 0.76,
-                        ),
+                        gridDelegate:
+                            const SliverGridDelegateWithFixedCrossAxisCount(
+                              crossAxisCount: 2,
+                              crossAxisSpacing: 10,
+                              mainAxisSpacing: 12,
+                              childAspectRatio: 0.76,
+                            ),
                         itemCount: pool.length,
                         itemBuilder: (_, i) {
                           final item = pool[i];
@@ -10341,13 +10861,22 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                               Navigator.of(sheetContext).pop();
                             },
                             child: Container(
-                              padding: const EdgeInsets.fromLTRB(10, 10, 10, 12),
+                              padding: const EdgeInsets.fromLTRB(
+                                10,
+                                10,
+                                10,
+                                12,
+                              ),
                               decoration: BoxDecoration(
                                 borderRadius: BorderRadius.circular(14),
-                                color: HomeLuxuryPalette.surface.withOpacity(0.56),
+                                color: HomeLuxuryPalette.surface.withOpacity(
+                                  0.56,
+                                ),
                                 border: Border.all(
                                   color: isCurrent
-                                      ? HomeLuxuryPalette.accent.withOpacity(0.34)
+                                      ? HomeLuxuryPalette.accent.withOpacity(
+                                          0.34,
+                                        )
                                       : HomeLuxuryPalette.border,
                                 ),
                               ),
@@ -10358,7 +10887,8 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                                     child: ClipRRect(
                                       borderRadius: BorderRadius.circular(11),
                                       child: ColoredBox(
-                                        color: HomeLuxuryPalette.bgMid.withOpacity(0.34),
+                                        color: HomeLuxuryPalette.bgMid
+                                            .withOpacity(0.34),
                                         child: _HeroOutfitImageView(
                                           heroDayKey: 'manual_picker',
                                           imageUrl: item.imageUrl,
@@ -10379,8 +10909,10 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                                     overflow: TextOverflow.ellipsis,
                                     style: TextStyle(
                                       color: isCurrent
-                                          ? HomeLuxuryPalette.textSecondary.withOpacity(0.78)
-                                          : HomeLuxuryPalette.textPrimary.withOpacity(0.92),
+                                          ? HomeLuxuryPalette.textSecondary
+                                                .withOpacity(0.78)
+                                          : HomeLuxuryPalette.textPrimary
+                                                .withOpacity(0.92),
                                       fontSize: 13,
                                       fontWeight: FontWeight.w500,
                                       height: 1.2,
@@ -10429,20 +10961,29 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
           highlightColor: HomeLuxuryPalette.accent.withOpacity(0.06),
           hoverColor: HomeLuxuryPalette.accent.withOpacity(0.05),
           textButtonTheme: TextButtonThemeData(
-            style: TextButton.styleFrom(
-              foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
-              textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
-            ).copyWith(
-              overlayColor: WidgetStateProperty.all(
-                HomeLuxuryPalette.accent.withOpacity(0.10),
-              ),
-            ),
+            style:
+                TextButton.styleFrom(
+                  foregroundColor: HomeLuxuryPalette.accent.withOpacity(0.95),
+                  textStyle: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ).copyWith(
+                  overlayColor: WidgetStateProperty.all(
+                    HomeLuxuryPalette.accent.withOpacity(0.10),
+                  ),
+                ),
           ),
         );
         return Theme(
           data: localTheme,
           child: Padding(
-            padding: EdgeInsets.fromLTRB(16, 0, 16, bottomInset + safeBottom + 24),
+            padding: EdgeInsets.fromLTRB(
+              16,
+              0,
+              16,
+              bottomInset + safeBottom + 24,
+            ),
             child: HomeGlassSurface(
               borderRadius: 22,
               blurSigma: 18,
@@ -10464,11 +11005,16 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                     controller: ctrl,
                     maxLines: 4,
                     cursorColor: HomeLuxuryPalette.accent.withOpacity(0.96),
-                    style: TextStyle(color: HomeLuxuryPalette.textPrimary.withOpacity(0.94)),
+                    style: TextStyle(
+                      color: HomeLuxuryPalette.textPrimary.withOpacity(0.94),
+                    ),
                     decoration: InputDecoration(
-                      hintText: 'Napíš čo ti na kúsku nesedí a aký vibe chceš skúsiť.',
+                      hintText:
+                          'Napíš čo ti na kúsku nesedí a aký vibe chceš skúsiť.',
                       hintStyle: TextStyle(
-                        color: HomeLuxuryPalette.textSecondary.withOpacity(0.66),
+                        color: HomeLuxuryPalette.textSecondary.withOpacity(
+                          0.66,
+                        ),
                         fontSize: 12.6,
                       ),
                       filled: true,
@@ -10531,27 +11077,72 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     return '$name $cat $sub $main'.toLowerCase();
   }
 
-  bool _heroWardrobeMatchesTypeLocal(Map<String, dynamic> raw, _HeroWearType type) {
+  bool _heroWardrobeMatchesTypeLocal(
+    Map<String, dynamic> raw,
+    _HeroWearType type,
+  ) {
     final b = _heroBlobLocal(raw);
     bool has(List<String> needles) => needles.any((n) => b.contains(n));
     switch (type) {
       case _HeroWearType.top:
         return has([
-          'trič', 'tricko', 't-shirt', 'top', 'koše', 'blúz', 'bluz', 'sveter', 'shirt', 'hoodie', 'mikina',
+          'trič',
+          'tricko',
+          't-shirt',
+          'top',
+          'koše',
+          'blúz',
+          'bluz',
+          'sveter',
+          'shirt',
+          'hoodie',
+          'mikina',
         ]);
       case _HeroWearType.bottom:
-        return has(['nohav', 'rifl', 'jeans', 'pants', 'sukn', 'skirt', 'short']);
+        return has([
+          'nohav',
+          'rifl',
+          'jeans',
+          'pants',
+          'sukn',
+          'skirt',
+          'short',
+        ]);
       case _HeroWearType.shoes:
-        return has(['topán', 'topan', 'tenis', 'sneaker', 'boots', 'sand', 'obuv', 'shoes']);
+        return has([
+          'topán',
+          'topan',
+          'tenis',
+          'sneaker',
+          'boots',
+          'sand',
+          'obuv',
+          'shoes',
+        ]);
       case _HeroWearType.outerwear:
-        return has(['bunda', 'kabát', 'kabat', 'sako', 'blazer', 'coat', 'jacket', 'overshirt', 'bomber']);
+        return has([
+          'bunda',
+          'kabát',
+          'kabat',
+          'sako',
+          'blazer',
+          'coat',
+          'jacket',
+          'overshirt',
+          'bomber',
+        ]);
     }
   }
 
-  String _heroLabelForWardrobeItemLocal(Map<String, dynamic> raw, {required String fallback}) {
+  String _heroLabelForWardrobeItemLocal(
+    Map<String, dynamic> raw, {
+    required String fallback,
+  }) {
     final name = (raw['name'] ?? '').toString().trim();
     if (name.isNotEmpty) return name;
-    final sub = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final sub = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '')
+        .toString()
+        .trim();
     if (sub.isNotEmpty) return sub;
     final cat = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
     if (cat.isNotEmpty) return cat;
@@ -10563,8 +11154,12 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
     required _HeroWearType type,
   }) {
     final brandRaw = (raw['brand'] ?? '').toString().trim();
-    final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '').toString().trim();
-    final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '').toString().trim();
+    final categoryKey = (raw['categoryKey'] ?? raw['category'] ?? '')
+        .toString()
+        .trim();
+    final subCategoryKey = (raw['subCategoryKey'] ?? raw['subCategory'] ?? '')
+        .toString()
+        .trim();
     return _HeroOutfitItem(
       type: type,
       icon: type == _HeroWearType.top
@@ -10593,11 +11188,14 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
   }
 
   Future<void> _onRemoveTileTap(_HeroOutfitItem item) async {
-    final remove = await showDialog<bool>(
+    final remove =
+        await showDialog<bool>(
           context: context,
           builder: (_) => AlertDialog(
             backgroundColor: HomeLuxuryPalette.surfaceSoft.withOpacity(0.96),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(18),
+            ),
             title: const Text(
               'Odstrániť tento kúsok z outfitu?',
               style: TextStyle(
@@ -10607,15 +11205,22 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
               ),
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Zrušiť')),
-              TextButton(onPressed: () => Navigator.of(context).pop(true), child: const Text('Odstrániť')),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Zrušiť'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Odstrániť'),
+              ),
             ],
           ),
         ) ??
         false;
     if (!remove) return;
     setState(() {
-      _items = List<_HeroOutfitItem>.from(_items)..removeWhere((it) => it.type == item.type);
+      _items = List<_HeroOutfitItem>.from(_items)
+        ..removeWhere((it) => it.type == item.type);
       if (_focusedEditType == item.type) _focusedEditType = null;
     });
   }
@@ -10698,7 +11303,10 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                               fit: StackFit.expand,
                               children: [
                                 BackdropFilter(
-                                  filter: ImageFilter.blur(sigmaX: 2.2, sigmaY: 2.2),
+                                  filter: ImageFilter.blur(
+                                    sigmaX: 2.2,
+                                    sigmaY: 2.2,
+                                  ),
                                   child: const SizedBox.expand(),
                                 ),
                                 DecoratedBox(
@@ -10728,7 +11336,9 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                             const SizedBox(width: 10),
                             const Expanded(
                               flex: 4,
-                              child: _EditHelperPanel(withGlassBackground: true),
+                              child: _EditHelperPanel(
+                                withGlassBackground: true,
+                              ),
                             ),
                           ],
                         ),
@@ -10772,7 +11382,9 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                     height: 24,
                     child: CircularProgressIndicator(
                       strokeWidth: 2.2,
-                      valueColor: AlwaysStoppedAnimation<Color>(HomeLuxuryPalette.accent),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        HomeLuxuryPalette.accent,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -10814,7 +11426,10 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
           ] else ...[
             Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 430, maxHeight: 420),
+                constraints: const BoxConstraints(
+                  maxWidth: 430,
+                  maxHeight: 420,
+                ),
                 child: _HeroOutfitTilesGrid(
                   heroDayKey: 'composer_preview',
                   items: _items,
@@ -10949,24 +11564,33 @@ class _VibeRecreationWorkspaceScreenState extends State<_VibeRecreationWorkspace
                 runSpacing: 7,
                 children: _result!.suggestedFillers
                     .take(3)
-                    .map((label) => Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(10),
-                            color: HomeLuxuryPalette.surfaceSoft.withOpacity(0.42),
-                            border: Border.all(
-                              color: HomeLuxuryPalette.accent.withOpacity(0.22),
-                            ),
+                    .map(
+                      (label) => Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 9,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(10),
+                          color: HomeLuxuryPalette.surfaceSoft.withOpacity(
+                            0.42,
                           ),
-                          child: Text(
-                            label,
-                            style: TextStyle(
-                              color: HomeLuxuryPalette.textPrimary.withOpacity(0.93),
-                              fontSize: 11.7,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          border: Border.all(
+                            color: HomeLuxuryPalette.accent.withOpacity(0.22),
                           ),
-                        ))
+                        ),
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            color: HomeLuxuryPalette.textPrimary.withOpacity(
+                              0.93,
+                            ),
+                            fontSize: 11.7,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    )
                     .toList(),
               ),
             ],
@@ -11174,4 +11798,3 @@ class _VibeActionCard extends StatelessWidget {
     );
   }
 }
-

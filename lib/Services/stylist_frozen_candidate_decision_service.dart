@@ -2,6 +2,7 @@ import 'package:cloud_functions/cloud_functions.dart';
 
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
+import '../domain/wardrobe_v2/functional_suitability_v1.dart';
 
 /// Client transport for the authoritative Stylist Track-D/R seam.
 ///
@@ -24,14 +25,17 @@ class StylistFrozenCandidateDecisionResultV1 {
   final bool explanationFallback;
 
   bool get rejectAll => action == 'reject_all';
-  bool get selected => action == 'select_candidate' &&
+  bool get selected =>
+      action == 'select_candidate' &&
       selectedCandidateId != null &&
       selectedCandidateId!.isNotEmpty;
 
   static const rejectAllFallback = StylistFrozenCandidateDecisionResultV1(
     action: 'reject_all',
     selectedCandidateId: null,
-    explanation: 'Z dostupných možností teraz neviem bezpečne potvrdiť vhodný outfit.',
+    explanation:
+        'Tentoraz ti radšej outfit nepotvrdím, než by som predstieral, že je '
+        'niektorá z možností naozaj vhodná.',
     reasonCodes: <String>['decision_transport_unavailable'],
     explanationFallback: true,
   );
@@ -59,16 +63,16 @@ class StylistFrozenCandidateDecisionServiceV1 {
       return StylistFrozenCandidateDecisionResultV1.rejectAllFallback;
     }
     try {
-      final callable = (functions ?? FirebaseFunctions.instanceFor(
-        region: 'us-east1',
-      )).httpsCallable('resolveStylistFrozenCandidatesV1');
+      final callable =
+          (functions ?? FirebaseFunctions.instanceFor(region: 'us-east1'))
+              .httpsCallable('resolveStylistFrozenCandidatesV1');
       final result = await callable
           .call(<String, dynamic>{
             'contractVersion': 1,
             'resolvedContext': resolvedContext,
-            'frozenCandidates': candidates.map(_candidatePayload).toList(
-              growable: false,
-            ),
+            'frozenCandidates': candidates
+                .map(_candidatePayload)
+                .toList(growable: false),
           })
           .timeout(const Duration(seconds: 45));
       final raw = result.data;
@@ -86,8 +90,9 @@ class StylistFrozenCandidateDecisionServiceV1 {
       }
       return StylistFrozenCandidateDecisionResultV1(
         action: action,
-        selectedCandidateId:
-            action == 'select_candidate' ? selectedCandidateId : null,
+        selectedCandidateId: action == 'select_candidate'
+            ? selectedCandidateId
+            : null,
         explanation: (raw['explanation'] ?? '').toString().trim(),
         reasonCodes: raw['reasonCodes'] is List
             ? (raw['reasonCodes'] as List)
@@ -104,6 +109,14 @@ class StylistFrozenCandidateDecisionServiceV1 {
 
   static Map<String, dynamic> _candidatePayload(V2FlexibleCandidate candidate) {
     final validationErrors = candidate.outfit.validate();
+    final functional = candidate.functionalAssessment;
+    final compromiseLevel = switch (functional?.tier) {
+      FunctionalSuitabilityTierV1.acceptableCompromise =>
+        'acceptable_compromise',
+      FunctionalSuitabilityTierV1.strongCompromise => 'material_compromise',
+      FunctionalSuitabilityTierV1.inappropriate => 'reject_all',
+      _ => 'none',
+    };
     return <String, dynamic>{
       'candidateId': candidate.candidateId,
       'itemIds': candidate.outfit.items
@@ -130,6 +143,29 @@ class StylistFrozenCandidateDecisionServiceV1 {
       'compromiseClassification': const <String, dynamic>{
         'level': 'none',
         'reasonCodes': <String>[],
+      },
+      if (functional != null) ...<String, dynamic>{
+        'compromiseClassification': <String, dynamic>{
+          'level': compromiseLevel,
+          'reasonCodes': functional.reasonCodes,
+        },
+        'compromiseDetails': functional.items
+            .where(
+              (item) =>
+                  item.tier.severity >=
+                  FunctionalSuitabilityTierV1.acceptableCompromise.severity,
+            )
+            .map((item) {
+              final selected = candidate.outfit.items
+                  .where((value) => value.itemId == item.itemId)
+                  .firstOrNull;
+              return item.toUserFacingMap(
+                selected == null
+                    ? 'kúsok outfitu'
+                    : _presentationName(selected),
+              );
+            })
+            .toList(growable: false),
       },
     };
   }

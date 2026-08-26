@@ -1,5 +1,7 @@
 import '../style_preferences/style_preference_taste.dart';
+import '../style_preferences/styling_presentation.dart';
 import 'flexible_outfit_result_v2.dart';
+import 'functional_suitability_v1.dart';
 import 'native_outfit_engine_v2.dart';
 import 'outfit_composition_v2.dart';
 import 'outfit_suitability_policy_v2.dart';
@@ -27,6 +29,10 @@ class V2CandidateMatrixContext {
     this.forbiddenCanonicalTypes = const {},
     this.scoringFormalityFloor,
     this.styleTaste = StylePreferenceTaste.empty,
+    this.stylingPresentation = StylingPresentation.noPreference,
+    this.activityDurationMinutes,
+    this.terrain = '',
+    this.wetGroundRisk = false,
   });
   final bool weatherProtectionRequired,
       preferOnePiece,
@@ -35,11 +41,15 @@ class V2CandidateMatrixContext {
       outdoor;
   final int minimumFormality, maxCandidates;
   final int? tempC, feelsLikeC, eveningTempC, scoringFormalityFloor;
+  final int? activityDurationMinutes;
   final String seasonKey;
   final String activityType, occasionId;
+  final String terrain;
+  final bool wetGroundRisk;
   final Set<String> requiredFunctions, requiredOccasions;
   final Set<String> requestedItemIds, forbiddenCanonicalTypes;
   final StylePreferenceTaste styleTaste;
+  final StylingPresentation stylingPresentation;
 
   int get decisionFormalityFloor => scoringFormalityFloor ?? minimumFormality;
 }
@@ -50,11 +60,13 @@ class V2FlexibleCandidate {
     required this.outfit,
     required this.score,
     required this.scoreBreakdown,
+    this.functionalAssessment,
   });
   final String candidateId;
   final V2FlexibleOutfitResult outfit;
   final double score;
   final Map<String, double> scoreBreakdown;
+  final CandidateFunctionalAssessmentV1? functionalAssessment;
 }
 
 /// Shared candidate source for Home and Stylist. It consumes only resolved V2
@@ -65,6 +77,14 @@ abstract final class V2FlexibleCandidateMatrix {
     required V2CandidateMatrixContext context,
   }) {
     final eligible = wardrobe
+        .where(
+          (value) =>
+              context.requestedItemIds.contains(value.itemId) ||
+              FunctionalSuitabilityEvaluatorV1.presentationAllowed(
+                value,
+                context.stylingPresentation,
+              ),
+        )
         .where((value) => value.item.formality >= context.minimumFormality)
         .where(
           (value) =>
@@ -142,13 +162,33 @@ abstract final class V2FlexibleCandidateMatrix {
           displayByItemId: byId,
         );
         if (outfit.validate().isNotEmpty) continue;
+        final functional = FunctionalSuitabilityEvaluatorV1.assessCandidate(
+          outfit: outfit,
+          source: eligible,
+          requirements: ActivityFunctionalRequirementsV1(
+            activityType: context.activityType,
+            outdoor: context.outdoor,
+            isRainy: context.isRainy || context.weatherProtectionRequired,
+            wetGroundRisk: context.wetGroundRisk,
+            minimumFormality: context.decisionFormalityFloor,
+            durationMinutes: context.activityDurationMinutes,
+            terrain: context.terrain,
+            tempC: OutfitSuitabilityPolicyV2.effectiveTempC(
+              tempC: context.tempC,
+              feelsLikeC: context.feelsLikeC,
+            ),
+          ),
+        );
+        if (!functional.selectable) continue;
         final breakdown = V2FlexibleOutfitScorer.score(outfit, context);
+        breakdown['functionalCapability'] = functional.scoreAdjustment;
         results.add(
           V2FlexibleCandidate(
             candidateId: 'v2_${results.length + 1}',
             outfit: outfit,
             score: breakdown.values.fold(0, (a, b) => a + b),
             scoreBreakdown: breakdown,
+            functionalAssessment: functional,
           ),
         );
         if (results.length >= context.maxCandidates) break;

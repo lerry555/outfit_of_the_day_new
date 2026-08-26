@@ -123,6 +123,20 @@ test("Wardrobe gap asks permission and owned solution suppresses Shopping", asyn
   assert.equal(owned.handled, false);
 });
 
+test("best-owned compromise offers a replacement without shaming the wardrobe", async () => {
+  const ask = response(await turn("Potrebujem outfit", {}, {
+    wardrobeSignal: {
+      gapDetected: true,
+      suitableOwnedItemExists: false,
+      bestOwnedCompromiseExists: true,
+      needLabel: "trailová obuv s lepším gripom",
+    },
+  }));
+  assert.equal(ask.action, "ASK_PERMISSION_TO_SHOP");
+  assert.match(ask.reply, /najbližšiu možnosť/);
+  assert.doesNotMatch(ask.reply, /^Chýba ti/);
+});
+
 test("permission yes starts and permission no stays in Wardrobe", async () => {
   const yes = response(await turn("áno", {
     activeClarification: "SHOPPING_PERMISSION",

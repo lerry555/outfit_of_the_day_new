@@ -15,20 +15,29 @@ import 'home_daily_outfit_cache_service.dart';
 import 'outfit_generation_service.dart';
 import 'native_wardrobe_v2_runtime.dart';
 import '../utils/outfit_reason_builder.dart';
+import '../domain/style_preferences/style_preferences_runtime.dart';
+import '../domain/style_preferences/styling_presentation.dart';
+import 'user_style_preferences_reader.dart';
 
 class CalendarOutfitService {
   CalendarOutfitService({
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
     HomeDailyOutfitCacheService? dailyOutfitCache,
+    UserStylePreferencesReader? stylePreferencesReader,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _firestore = firestore ?? FirebaseFirestore.instance,
        _dailyOutfitCache =
-           dailyOutfitCache ?? HomeDailyOutfitCacheService(firestore: firestore);
+           dailyOutfitCache ??
+           HomeDailyOutfitCacheService(firestore: firestore),
+       _stylePreferencesReader =
+           stylePreferencesReader ??
+           UserStylePreferencesReader(firestore: firestore, auth: auth);
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
   final HomeDailyOutfitCacheService _dailyOutfitCache;
+  final UserStylePreferencesReader _stylePreferencesReader;
 
   String dateKey(DateTime date) {
     final y = date.year.toString().padLeft(4, '0');
@@ -217,9 +226,16 @@ class CalendarOutfitService {
         userData?['isPremium'] == true || subscriptionStatus == 'premium';
 
     final wardrobe = await _loadWardrobe(uid);
+    final stylePreferences = await _stylePreferencesReader.loadForUid(uid);
 
     final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe);
-    final composition = composeForCalendar(resolved, weatherSnapshot);
+    final composition = composeForCalendar(
+      resolved,
+      weatherSnapshot,
+      stylingPresentation: StylePreferencesRuntime.effectivePresentation(
+        stylePreferences,
+      ),
+    );
     if (composition == null) {
       throw StateError(
         'Nepodarilo sa vygenerovať outfit (chýbajú kusy v šatníku).',
@@ -274,8 +290,9 @@ class CalendarOutfitService {
     return CalendarOutfitDay(
       dateKey: key,
       weatherSnapshot: weatherSnapshot,
-      generationWeather:
-          CalendarGenerationWeather.fromSnapshot(weatherSnapshot),
+      generationWeather: CalendarGenerationWeather.fromSnapshot(
+        weatherSnapshot,
+      ),
       outfitItems: items,
       generationSource: 'calendar',
       source: CalendarOutfitSource.calendar,
@@ -304,8 +321,9 @@ class CalendarOutfitService {
   /// Shared Home/Stylist deterministic matrix context for Calendar scoring.
   /// No occasion/activity is invented; Calendar does not collect one.
   static V2CandidateMatrixContext compositionContextFor(
-    DateWeatherSnapshot weather,
-  ) {
+    DateWeatherSnapshot weather, {
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
+  }) {
     return V2CandidateMatrixContext(
       weatherProtectionRequired: weather.isRainy || weather.isWindy,
       tempC: weather.tempC,
@@ -314,17 +332,22 @@ class CalendarOutfitService {
       isWindy: weather.isWindy,
       outdoor: true,
       maxCandidates: 4,
+      stylingPresentation: stylingPresentation,
     );
   }
 
   /// Deterministic Calendar composition: scored V2 matrix, then engine compose.
   static OutfitCompositionV2? composeForCalendar(
     Iterable<ResolvedWardrobeItemV2> wardrobe,
-    DateWeatherSnapshot weather,
-  ) {
+    DateWeatherSnapshot weather, {
+    StylingPresentation stylingPresentation = StylingPresentation.noPreference,
+  }) {
     final matrix = V2FlexibleCandidateMatrix.generate(
       wardrobe: wardrobe,
-      context: compositionContextFor(weather),
+      context: compositionContextFor(
+        weather,
+        stylingPresentation: stylingPresentation,
+      ),
     );
     if (matrix.isNotEmpty) {
       return matrix.first.outfit.toComposition();
@@ -402,26 +425,20 @@ class CalendarOutfitService {
 
     controller = StreamController<R>(
       onListen: () {
-        subA = a.listen(
-          (value) {
-            latestA = value;
-            hasA = true;
-            if (hasA && hasB) {
-              controller.add(combine(latestA as A, latestB as B));
-            }
-          },
-          onError: controller.addError,
-        );
-        subB = b.listen(
-          (value) {
-            latestB = value;
-            hasB = true;
-            if (hasA && hasB) {
-              controller.add(combine(latestA as A, latestB as B));
-            }
-          },
-          onError: controller.addError,
-        );
+        subA = a.listen((value) {
+          latestA = value;
+          hasA = true;
+          if (hasA && hasB) {
+            controller.add(combine(latestA as A, latestB as B));
+          }
+        }, onError: controller.addError);
+        subB = b.listen((value) {
+          latestB = value;
+          hasB = true;
+          if (hasA && hasB) {
+            controller.add(combine(latestA as A, latestB as B));
+          }
+        }, onError: controller.addError);
       },
       onCancel: () async {
         await subA?.cancel();

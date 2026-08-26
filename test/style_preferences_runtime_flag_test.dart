@@ -6,6 +6,7 @@ import 'package:outfitofTheDay/Services/user_style_preferences_reader.dart';
 import 'package:outfitofTheDay/domain/style_preferences/home_taste_cache_policy.dart';
 import 'package:outfitofTheDay/domain/style_preferences/style_preference_taste.dart';
 import 'package:outfitofTheDay/domain/style_preferences/style_preferences_runtime.dart';
+import 'package:outfitofTheDay/domain/style_preferences/styling_presentation.dart';
 import 'package:outfitofTheDay/domain/style_preferences/user_style_preferences.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/flexible_outfit_result_v2.dart';
@@ -31,51 +32,77 @@ void main() {
   });
 
   group('Flag off — Home', () {
-    test('saved taste scores as empty and omits explanation and final-review payload', () {
-      StylePreferencesRuntime.debugOverrideEnabled(false);
-      final taste = StylePreferencesRuntime.effectiveTaste(savedA);
-      expect(taste.isEmpty, isTrue);
-      expect(taste, StylePreferenceTaste.empty);
-      final outfit = _outfit(color: 'blue', styles: const ['casual'], brand: 'Nike');
-      expect(
-        StylePreferenceTasteScorer.score(outfit: outfit, taste: taste),
-        0,
-      );
-      expect(
-        StylePreferenceExplain.naturalHint(
-          taste: taste,
-          outfit: outfit,
-          tasteScore: 0.8,
-        ),
-        isNull,
-      );
-      expect(StylePreferencesRuntime.stylistPayload(savedA), isNull);
-      expect(
-        V2FlexibleOutfitScorer.score(
-          outfit,
-          V2CandidateMatrixContext(
-            styleTaste: StylePreferencesRuntime.effectiveTaste(savedA),
+    test(
+      'saved taste scores as empty and omits explanation and final-review payload',
+      () {
+        StylePreferencesRuntime.debugOverrideEnabled(false);
+        final taste = StylePreferencesRuntime.effectiveTaste(savedA);
+        expect(taste.isEmpty, isTrue);
+        expect(taste, StylePreferenceTaste.empty);
+        final outfit = _outfit(
+          color: 'blue',
+          styles: const ['casual'],
+          brand: 'Nike',
+        );
+        expect(
+          StylePreferenceTasteScorer.score(outfit: outfit, taste: taste),
+          0,
+        );
+        expect(
+          StylePreferenceExplain.naturalHint(
+            taste: taste,
+            outfit: outfit,
+            tasteScore: 0.8,
           ),
-        )['styleTaste'],
-        0,
-      );
-    });
+          isNull,
+        );
+        expect(StylePreferencesRuntime.stylistPayload(savedA), isNull);
+        expect(
+          V2FlexibleOutfitScorer.score(
+            outfit,
+            V2CandidateMatrixContext(
+              styleTaste: StylePreferencesRuntime.effectiveTaste(savedA),
+            ),
+          )['styleTaste'],
+          0,
+        );
+      },
+    );
   });
 
   group('Flag off — fingerprint', () {
-    test('different saved preferences share the disabled runtime fingerprint', () {
+    test(
+      'different saved preferences share the disabled runtime fingerprint',
+      () {
+        StylePreferencesRuntime.debugOverrideEnabled(false);
+        expect(
+          StylePreferencesRuntime.consumptionFingerprint(savedA),
+          StylePreferencesRuntime.disabledConsumptionFingerprint,
+        );
+        expect(
+          StylePreferencesRuntime.consumptionFingerprint(savedA),
+          StylePreferencesRuntime.consumptionFingerprint(savedB),
+        );
+        expect(savedA.homeTasteFingerprint, isNot(savedB.homeTasteFingerprint));
+      },
+    );
+
+    test('explicit outfit presentation remains authoritative', () {
       StylePreferencesRuntime.debugOverrideEnabled(false);
-      expect(
-        StylePreferencesRuntime.consumptionFingerprint(savedA),
-        StylePreferencesRuntime.disabledConsumptionFingerprint,
+      const menswear = UserStylePreferences(
+        stylingPresentation: StylingPresentation.menswear,
       );
       expect(
-        StylePreferencesRuntime.consumptionFingerprint(savedA),
-        StylePreferencesRuntime.consumptionFingerprint(savedB),
+        StylePreferencesRuntime.effectivePresentation(menswear),
+        StylingPresentation.menswear,
       );
       expect(
-        savedA.homeTasteFingerprint,
-        isNot(savedB.homeTasteFingerprint),
+        StylePreferencesRuntime.consumptionFingerprint(menswear),
+        contains('p=menswear'),
+      );
+      expect(
+        StylePreferencesRuntime.stylistPayload(menswear),
+        <String, dynamic>{'stylingPresentation': 'menswear'},
       );
     });
   });
@@ -87,7 +114,10 @@ void main() {
       StylePreferencesRuntime.debugOverrideEnabled(false);
       final disabledFp = StylePreferencesRuntime.consumptionFingerprint(savedA);
       expect(enabledFp, startsWith('tasteRuntime=on:'));
-      expect(disabledFp, StylePreferencesRuntime.disabledConsumptionFingerprint);
+      expect(
+        disabledFp,
+        StylePreferencesRuntime.disabledConsumptionFingerprint,
+      );
       expect(
         HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
           userPinned: false,
@@ -98,69 +128,83 @@ void main() {
       );
     });
 
-    test('pinned or manual outfits are not discarded on runtime flag change', () {
-      StylePreferencesRuntime.debugOverrideEnabled(true);
-      final enabledFp = StylePreferencesRuntime.consumptionFingerprint(savedA);
-      StylePreferencesRuntime.debugOverrideEnabled(false);
-      expect(
-        HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
-          userPinned: true,
-          cachedFingerprint: enabledFp,
-          currentFingerprint: StylePreferencesRuntime.consumptionFingerprint(
-            savedA,
+    test(
+      'pinned or manual outfits are not discarded on runtime flag change',
+      () {
+        StylePreferencesRuntime.debugOverrideEnabled(true);
+        final enabledFp = StylePreferencesRuntime.consumptionFingerprint(
+          savedA,
+        );
+        StylePreferencesRuntime.debugOverrideEnabled(false);
+        expect(
+          HomeTasteCachePolicy.isAutoGeneratedTasteIncompatible(
+            userPinned: true,
+            cachedFingerprint: enabledFp,
+            currentFingerprint: StylePreferencesRuntime.consumptionFingerprint(
+              savedA,
+            ),
           ),
-        ),
-        isFalse,
-      );
-      expect(
-        HomeTasteCachePolicy.isUserPinned(
-          userModified: true,
-          persistSource: 'ai_generated',
-        ),
-        isTrue,
-      );
-    });
+          isFalse,
+        );
+        expect(
+          HomeTasteCachePolicy.isUserPinned(
+            userModified: true,
+            persistSource: 'ai_generated',
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 
   group('Toggle on again', () {
-    test('saved preferences are consumed again without rewriting the store', () async {
-      final reader = _CountingReader(savedA);
-      StylePreferencesRuntime.debugOverrideEnabled(false);
-      expect(
-        await StylistChatService.resolveStylePreferencesPayload(reader, 'uid-1'),
-        isNull,
-      );
-      expect(reader.loads, 0);
+    test(
+      'saved preferences are consumed again without rewriting the store',
+      () async {
+        final reader = _CountingReader(savedA);
+        StylePreferencesRuntime.debugOverrideEnabled(false);
+        expect(
+          await StylistChatService.resolveStylePreferencesPayload(
+            reader,
+            'uid-1',
+          ),
+          isNull,
+        );
+        expect(reader.loads, 1);
 
-      StylePreferencesRuntime.debugOverrideEnabled(true);
-      final payload = await StylistChatService.resolveStylePreferencesPayload(
-        reader,
-        'uid-1',
-      );
-      expect(payload, isNotNull);
-      expect(payload!['favoriteColors'], ['blue']);
-      expect(reader.loads, 1);
-      expect(reader.writes, 0);
-      expect(reader.prefs.favoriteColors, ['Modrá']);
-    });
+        StylePreferencesRuntime.debugOverrideEnabled(true);
+        final payload = await StylistChatService.resolveStylePreferencesPayload(
+          reader,
+          'uid-1',
+        );
+        expect(payload, isNotNull);
+        expect(payload!['favoriteColors'], ['blue']);
+        expect(reader.loads, 2);
+        expect(reader.writes, 0);
+        expect(reader.prefs.favoriteColors, ['Modrá']);
+      },
+    );
   });
 
   group('Home wiring', () {
-    test('Home uses the shared runtime flag for taste, payload, and fingerprint', () {
-      final home = File('lib/screens/home_screen.dart').readAsStringSync();
-      expect(home.contains('StylePreferencesRuntime.effectiveTaste'), isTrue);
-      expect(home.contains('StylePreferencesRuntime.stylistPayload'), isTrue);
-      expect(
-        home.contains('StylePreferencesRuntime.consumptionFingerprint'),
-        isTrue,
-      );
-      expect(
-        File('lib/Services/stylist_chat_service.dart').readAsStringSync().contains(
-          'StylePreferencesRuntime.enabled',
-        ),
-        isTrue,
-      );
-    });
+    test(
+      'Home uses the shared runtime flag for taste, payload, and fingerprint',
+      () {
+        final home = File('lib/screens/home_screen.dart').readAsStringSync();
+        expect(home.contains('StylePreferencesRuntime.effectiveTaste'), isTrue);
+        expect(home.contains('StylePreferencesRuntime.stylistPayload'), isTrue);
+        expect(
+          home.contains('StylePreferencesRuntime.consumptionFingerprint'),
+          isTrue,
+        );
+        expect(
+          File('lib/Services/stylist_chat_service.dart')
+              .readAsStringSync()
+              .contains('StylePreferencesRuntime.stylistPayload'),
+          isTrue,
+        );
+      },
+    );
   });
 }
 
@@ -195,9 +239,7 @@ V2FlexibleOutfitResult _outfit({
       canonicalFamily: family,
       bodySlots: slots,
       layerPosition: layer,
-      colorProfile: ColorProfileV2(
-        primary: SemanticColorV2(family: color),
-      ),
+      colorProfile: ColorProfileV2(primary: SemanticColorV2(family: color)),
       formality: 4,
       styles: styles,
       occasionFit: const ['everyday'],
@@ -237,7 +279,9 @@ V2FlexibleOutfitResult _outfit({
       ),
       wrap(
         'shoes',
-        piece('shoes', 'sneakers', 'footwear', const ['feet'], 'not_applicable'),
+        piece('shoes', 'sneakers', 'footwear', const [
+          'feet',
+        ], 'not_applicable'),
         'footwear',
       ),
     ],

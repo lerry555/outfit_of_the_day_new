@@ -172,78 +172,84 @@ void main() {
   });
 
   group('Subordinate taste scoring', () {
-    test('favorite color is a soft tie-break among equally suitable outfits', () {
-      final blue = _outfit(color: 'blue');
-      final gray = _outfit(color: 'gray');
-      final taste = StylePreferenceTaste.fromPreferences(
-        UserStylePreferences.fromMap({'favoriteColors': ['Modrá']}),
-      );
-      final context = V2CandidateMatrixContext(styleTaste: taste);
-      expect(
-        V2FlexibleOutfitScorer.score(blue, context)['styleTaste'],
-        StylePreferenceTasteScorer.favoriteColorBonus,
-      );
-      expect(V2FlexibleOutfitScorer.score(gray, context)['styleTaste'], 0);
-      expect(
-        _total(blue, context),
-        greaterThan(_total(gray, context)),
-      );
-    });
+    test(
+      'favorite color is a soft tie-break among equally suitable outfits',
+      () {
+        final blue = _outfit(color: 'blue');
+        final gray = _outfit(color: 'gray');
+        final taste = StylePreferenceTaste.fromPreferences(
+          UserStylePreferences.fromMap({
+            'favoriteColors': ['Modrá'],
+          }),
+        );
+        final context = V2CandidateMatrixContext(styleTaste: taste);
+        expect(
+          V2FlexibleOutfitScorer.score(blue, context)['styleTaste'],
+          StylePreferenceTasteScorer.favoriteColorBonus,
+        );
+        expect(V2FlexibleOutfitScorer.score(gray, context)['styleTaste'], 0);
+        expect(_total(blue, context), greaterThan(_total(gray, context)));
+      },
+    );
 
     test('avoided color is a penalty, not a hard exclusion', () {
       final red = _outfit(color: 'red');
       final navy = _outfit(color: 'navy');
       final taste = StylePreferenceTaste.fromPreferences(
-        UserStylePreferences.fromMap({'avoidedColors': ['Červená']}),
+        UserStylePreferences.fromMap({
+          'avoidedColors': ['Červená'],
+        }),
       );
       final context = V2CandidateMatrixContext(styleTaste: taste);
       expect(
         V2FlexibleOutfitScorer.score(red, context)['styleTaste'],
         StylePreferenceTasteScorer.avoidedColorPenalty,
       );
-      expect(
-        V2FlexibleOutfitScorer.score(navy, context)['styleTaste'],
-        0,
-      );
+      expect(V2FlexibleOutfitScorer.score(navy, context)['styleTaste'], 0);
       expect(_total(navy, context), greaterThan(_total(red, context)));
     });
 
-    test('suitability still dominates an avoided-color weather-safe outfit', () {
-      final safeRedJacket = _outfit(color: 'red', weatherComplete: true);
-      final favoriteNoProtection = _outfit(
-        color: 'blue',
-        weatherComplete: false,
-      );
-      final taste = StylePreferenceTaste.fromPreferences(
-        UserStylePreferences.fromMap({
-          'favoriteColors': ['Modrá'],
-          'avoidedColors': ['Červená'],
-        }),
-      );
-      final rainy = V2CandidateMatrixContext(
-        isRainy: true,
-        weatherProtectionRequired: true,
-        styleTaste: taste,
-      );
-      expect(
-        V2FlexibleOutfitScorer.score(safeRedJacket, rainy)['weather'],
-        2,
-      );
-      expect(
-        V2FlexibleOutfitScorer.score(favoriteNoProtection, rainy)['weather'],
-        -8,
-      );
-      expect(
-        _total(safeRedJacket, rainy) - _total(favoriteNoProtection, rainy),
-        greaterThan(StylePreferenceTasteScorer.maxAbsScore),
-      );
-    });
+    test(
+      'suitability still dominates an avoided-color weather-safe outfit',
+      () {
+        final safeRedJacket = _outfit(color: 'red', weatherComplete: true);
+        final favoriteNoProtection = _outfit(
+          color: 'blue',
+          weatherComplete: false,
+        );
+        final taste = StylePreferenceTaste.fromPreferences(
+          UserStylePreferences.fromMap({
+            'favoriteColors': ['Modrá'],
+            'avoidedColors': ['Červená'],
+          }),
+        );
+        final rainy = V2CandidateMatrixContext(
+          isRainy: true,
+          weatherProtectionRequired: true,
+          styleTaste: taste,
+        );
+        expect(
+          V2FlexibleOutfitScorer.score(safeRedJacket, rainy)['weather'],
+          2,
+        );
+        expect(
+          V2FlexibleOutfitScorer.score(favoriteNoProtection, rainy)['weather'],
+          -8,
+        );
+        expect(
+          _total(safeRedJacket, rainy) - _total(favoriteNoProtection, rainy),
+          greaterThan(StylePreferenceTasteScorer.maxAbsScore),
+        );
+      },
+    );
 
     test('preferred style overlap is a soft positive on valid outfits', () {
       final casual = _outfit(color: 'gray', styles: const ['Casual']);
       final plain = _outfit(color: 'gray');
       final taste = StylePreferenceTaste.fromPreferences(
-        UserStylePreferences.fromMap({'preferredStyles': ['Casual']}),
+        UserStylePreferences.fromMap({
+          'preferredStyles': ['Casual'],
+        }),
       );
       final context = V2CandidateMatrixContext(styleTaste: taste);
       expect(
@@ -253,19 +259,27 @@ void main() {
       expect(V2FlexibleOutfitScorer.score(plain, context)['styleTaste'], 0);
     });
 
-    test('favorite brand is a weak positive only when brand metadata exists', () {
-      final branded = _outfit(color: 'gray', brand: 'Nike');
-      final unbranded = _outfit(color: 'gray');
-      final taste = StylePreferenceTaste.fromPreferences(
-        UserStylePreferences.fromMap({'favoriteBrands': ['Nike']}),
-      );
-      final context = V2CandidateMatrixContext(styleTaste: taste);
-      expect(
-        V2FlexibleOutfitScorer.score(branded, context)['styleTaste'],
-        StylePreferenceTasteScorer.favoriteBrandBonus,
-      );
-      expect(V2FlexibleOutfitScorer.score(unbranded, context)['styleTaste'], 0);
-    });
+    test(
+      'favorite brand is a weak positive only when brand metadata exists',
+      () {
+        final branded = _outfit(color: 'gray', brand: 'Nike');
+        final unbranded = _outfit(color: 'gray');
+        final taste = StylePreferenceTaste.fromPreferences(
+          UserStylePreferences.fromMap({
+            'favoriteBrands': ['Nike'],
+          }),
+        );
+        final context = V2CandidateMatrixContext(styleTaste: taste);
+        expect(
+          V2FlexibleOutfitScorer.score(branded, context)['styleTaste'],
+          StylePreferenceTasteScorer.favoriteBrandBonus,
+        );
+        expect(
+          V2FlexibleOutfitScorer.score(unbranded, context)['styleTaste'],
+          0,
+        );
+      },
+    );
 
     test('missing style or brand metadata is not penalized', () {
       final plain = _outfit(color: 'gray');
@@ -321,7 +335,9 @@ void main() {
     test('preference copy stays human and is not an internal label', () {
       final hint = StylePreferenceExplain.naturalHint(
         taste: StylePreferenceTaste.fromPreferences(
-          UserStylePreferences.fromMap({'favoriteColors': ['Modrá']}),
+          UserStylePreferences.fromMap({
+            'favoriteColors': ['Modrá'],
+          }),
         ),
         outfit: _outfit(color: 'blue'),
         tasteScore: StylePreferenceTasteScorer.favoriteColorBonus,
@@ -332,29 +348,41 @@ void main() {
       expect(hint.contains('_'), isFalse);
     });
 
-    test('Home consumes the authoritative reader; Calendar and Trip do not', () {
-      final home = File('lib/screens/home_screen.dart').readAsStringSync();
-      expect(home.contains('UserStylePreferencesReader'), isTrue);
-      expect(home.contains('stylePreferenceFingerprint'), isTrue);
-      expect(home.contains('StylePreferencesRuntime'), isTrue);
-      expect(home.contains('tomorrow_deferred_until_zajtra'), isTrue);
-      expect(home.contains('ensure_today_only'), isTrue);
-      const protected = [
-        'lib/Services/calendar_outfit_service.dart',
-        'lib/screens/trip_planner_screen.dart',
-        'lib/Services/trip_packing_service.dart',
-      ];
-      for (final path in protected) {
-        final src = File(path).readAsStringSync();
-        expect(src.contains('UserStylePreferencesReader'), isFalse);
-        expect(src.contains('stylePreferenceFingerprint'), isFalse);
-      }
-    });
+    test(
+      'Home, Calendar and Trip consume preferences at orchestration boundaries',
+      () {
+        final home = File('lib/screens/home_screen.dart').readAsStringSync();
+        expect(home.contains('UserStylePreferencesReader'), isTrue);
+        expect(home.contains('stylePreferenceFingerprint'), isTrue);
+        expect(home.contains('StylePreferencesRuntime'), isTrue);
+        expect(home.contains('tomorrow_deferred_until_zajtra'), isTrue);
+        expect(home.contains('ensure_today_only'), isTrue);
+        final calendar = File(
+          'lib/Services/calendar_outfit_service.dart',
+        ).readAsStringSync();
+        expect(calendar.contains('UserStylePreferencesReader'), isTrue);
+        expect(calendar.contains('effectivePresentation'), isTrue);
+        final trip = File(
+          'lib/Services/trip_packing_service.dart',
+        ).readAsStringSync();
+        expect(trip.contains('UserStylePreferencesReader'), isTrue);
+        expect(trip.contains('effectivePresentation'), isTrue);
+        const protected = ['lib/screens/trip_planner_screen.dart'];
+        for (final path in protected) {
+          final src = File(path).readAsStringSync();
+          expect(src.contains('UserStylePreferencesReader'), isFalse);
+          expect(src.contains('stylePreferenceFingerprint'), isFalse);
+        }
+      },
+    );
   });
 }
 
 double _total(V2FlexibleOutfitResult outfit, V2CandidateMatrixContext context) {
-  return V2FlexibleOutfitScorer.score(outfit, context).values.fold(0, (a, b) => a + b);
+  return V2FlexibleOutfitScorer.score(
+    outfit,
+    context,
+  ).values.fold(0, (a, b) => a + b);
 }
 
 V2FlexibleCandidate _candidate() {
@@ -385,9 +413,7 @@ V2FlexibleOutfitResult _outfit({
       canonicalFamily: family,
       bodySlots: slots,
       layerPosition: layer,
-      colorProfile: ColorProfileV2(
-        primary: SemanticColorV2(family: color),
-      ),
+      colorProfile: ColorProfileV2(primary: SemanticColorV2(family: color)),
       formality: 4,
       styles: styles,
       occasionFit: const ['everyday'],
@@ -400,11 +426,7 @@ V2FlexibleOutfitResult _outfit({
     );
   }
 
-  V2FlexibleOutfitItem wrap(
-    String id,
-    WardrobeItemV2 item,
-    String group,
-  ) {
+  V2FlexibleOutfitItem wrap(String id, WardrobeItemV2 item, String group) {
     return V2FlexibleOutfitItem(
       itemId: id,
       item: item,
@@ -431,7 +453,9 @@ V2FlexibleOutfitResult _outfit({
       ),
       wrap(
         'shoes',
-        piece('shoes', 'sneakers', 'footwear', const ['feet'], 'not_applicable'),
+        piece('shoes', 'sneakers', 'footwear', const [
+          'feet',
+        ], 'not_applicable'),
         'footwear',
       ),
     ],

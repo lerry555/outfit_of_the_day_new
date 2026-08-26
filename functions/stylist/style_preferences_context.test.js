@@ -45,6 +45,16 @@ test("favorite brand is a weak wardrobe-conditional preference", () => {
   assert.match(block, /weak preference only when a wardrobe item actually has that brand/);
 });
 
+test("outfit presentation is explicit authority, not inferred from wardrobe", () => {
+  const block = formatStylePreferencesBlock({stylingPresentation: "menswear"});
+  assert.match(block, /stylingPresentation: menswear/);
+  assert.match(block, /wardrobe contents do not override it/);
+  assert.equal(
+    sanitizeUserStylePreferences({stylingPresentation: "invented"}),
+    null,
+  );
+});
+
 test("current-turn request outranks saved avoid preferences", () => {
   assert.match(STYLE_PREFERENCE_RULES, /aktuálna správa používateľa/);
   assert.match(STYLE_PREFERENCE_RULES, /prebiť/);

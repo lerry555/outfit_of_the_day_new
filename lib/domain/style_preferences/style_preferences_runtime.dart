@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'style_preference_taste.dart';
+import 'styling_presentation.dart';
 import 'user_style_preferences.dart';
 
 /// Developer/test gate for *consuming* saved style taste at runtime.
@@ -17,7 +18,8 @@ abstract final class StylePreferencesRuntime {
     defaultValue: false,
   );
 
-  static const disabledConsumptionFingerprint = 'tasteRuntime=off';
+  static const disabledConsumptionFingerprint =
+      'tasteRuntime=off:p=no_preference';
 
   static bool? _debugOverride;
 
@@ -31,11 +33,20 @@ abstract final class StylePreferencesRuntime {
   /// Home cache / generation fingerprint. Disabled mode is one stable value
   /// regardless of what is stored in Firestore.
   static String consumptionFingerprint(UserStylePreferences stored) {
-    if (!enabled) return disabledConsumptionFingerprint;
-    return 'tasteRuntime=on:${stored.homeTasteFingerprint}';
+    final presentation = stored.stylingPresentation.wireName;
+    if (!enabled) return 'tasteRuntime=off:p=$presentation';
+    return 'tasteRuntime=on:${stored.homeTasteFingerprint}|p=$presentation';
   }
 
-  static UserStylePreferences effectivePreferences(UserStylePreferences stored) {
+  /// Outfit-presentation is an explicit composition authority, not a taste
+  /// experiment. It remains active independently of the soft-taste rollout.
+  static StylingPresentation effectivePresentation(
+    UserStylePreferences stored,
+  ) => stored.stylingPresentation;
+
+  static UserStylePreferences effectivePreferences(
+    UserStylePreferences stored,
+  ) {
     return enabled ? stored : UserStylePreferences.empty;
   }
 
@@ -44,6 +55,12 @@ abstract final class StylePreferencesRuntime {
   }
 
   static Map<String, dynamic>? stylistPayload(UserStylePreferences stored) {
-    return effectivePreferences(stored).toStylistPayload();
+    if (enabled) return stored.toStylistPayload();
+    if (stored.stylingPresentation == StylingPresentation.noPreference) {
+      return null;
+    }
+    return <String, dynamic>{
+      'stylingPresentation': stored.stylingPresentation.wireName,
+    };
   }
 }

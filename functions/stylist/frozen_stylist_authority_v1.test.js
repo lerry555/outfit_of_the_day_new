@@ -7,8 +7,19 @@ const {normalizeRequest, validateDecision} = require("./frozen_stylist_authority
 const owned = new Set(["top", "bottom", "shoes"]);
 const request = () => ({contractVersion: 1, resolvedContext: {activity: "walk"}, frozenCandidates: [{
   candidateId: "candidate-a", itemIds: ["top", "bottom", "shoes"],
+  presentationItems: [
+    {itemId: "top", name: "tričko", canonicalType: "t_shirt", primaryColor: "black"},
+    {itemId: "bottom", name: "rifle", canonicalType: "jeans", primaryColor: "blue"},
+    {itemId: "shoes", name: "čižmy", canonicalType: "winter_boots", primaryColor: "black"},
+  ],
   hardConstraintEvidence: {deterministicPassed: true, violationCodes: []},
-  compromiseClassification: {level: "none"},
+  compromiseClassification: {level: "material_compromise"},
+  compromiseDetails: [{
+    itemName: "čižmy", tier: "strongCompromise",
+    reasonCodes: ["footwear_not_hiking_or_trail_rated"],
+    missingCapabilities: ["hiking_footwear", "traction"],
+    idealReplacementDescription: "turistická obuv s gripom",
+  }],
 }]});
 
 test("frozen authority selects only an eligible candidate ID", () => {
@@ -16,6 +27,11 @@ test("frozen authority selects only an eligible candidate ID", () => {
   assert.equal(validateDecision(normalized.frozenCandidates, {
     action: "select_candidate", selectedCandidateId: "candidate-a",
   }).selectedCandidateId, "candidate-a");
+  assert.equal(normalized.frozenCandidates[0].presentationItems[2].canonicalType, "winter_boots");
+  assert.deepEqual(
+    normalized.frozenCandidates[0].compromiseDetails[0].missingCapabilities,
+    ["hiking_footwear", "traction"],
+  );
 });
 
 test("unknown ID, non-owned candidate, malformed attempt and empty valid set reject all", () => {

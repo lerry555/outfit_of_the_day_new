@@ -211,6 +211,17 @@ abstract final class OutfitSuitabilityPolicyV2 {
     return canonicalType.toLowerCase().contains('boot');
   }
 
+  static bool isHikingFootwear(String canonicalType) {
+    final type = canonicalType.toLowerCase();
+    return const {
+      'hiking_boots',
+      'hiking_shoes',
+      'trail_shoes',
+      'trekking_boots',
+      'trekking_shoes',
+    }.contains(type);
+  }
+
   static bool isSneakerFootwear(String canonicalType) {
     final t = canonicalType.toLowerCase();
     return t.contains('sneaker') || t.contains('trainer');
@@ -245,8 +256,11 @@ abstract final class OutfitSuitabilityPolicyV2 {
     }
     final type = item.canonicalType.toLowerCase();
     if (isTerrainActivity(activityType)) {
-      if (isBootFootwear(type) && !type.contains('chelsea')) return 0;
-      if (type.contains('chelsea')) return 2;
+      if (isHikingFootwear(type)) return 0;
+      // A boot silhouette is not evidence of trail traction, stability or
+      // hiking construction. Generic boots remain usable as a compromise,
+      // but never outrank known hiking/trail footwear on category alone.
+      if (isBootFootwear(type)) return 5;
       if (isSneakerFootwear(type)) return 3;
       if (isOpenFootwear(type)) return 30;
       if (isFormalFootwear(type)) return 28;
@@ -530,8 +544,10 @@ abstract final class OutfitSuitabilityPolicyV2 {
     for (final shoe in shoes) {
       final type = shoe.canonicalType.toLowerCase();
       if (isTerrainActivity(activityType)) {
-        if (isBootFootwear(type)) {
+        if (isHikingFootwear(type)) {
           score += 3;
+        } else if (isBootFootwear(type)) {
+          score += 0;
         } else if (isSneakerFootwear(type) &&
             (activityType == 'nature_walk' || activityType == 'outdoor')) {
           score += 1;

@@ -39,9 +39,12 @@ async function handleStylistShoppingTurn({
   if (wardrobeSignal?.gapDetected === true &&
       wardrobeSignal?.suitableOwnedItemExists !== true &&
       wardrobeSignal?.shoppingApproved !== true) {
+    const compromiseLead = wardrobeSignal?.bestOwnedCompromiseExists === true ?
+      "Z tvojho šatníka som vybral najbližšiu možnosť, ale ideálny kúsok na túto situáciu" :
+      "Na túto situáciu ti v šatníku";
     return shoppingResult({
       action: ACTIONS.ASK_PERMISSION,
-      reply: `Chýba ti vhodný kúsok${wardrobeSignal.needLabel ?
+      reply: `${compromiseLead} chýba${wardrobeSignal.needLabel ?
         ` (${wardrobeSignal.needLabel})` : ""}. Chceš, aby som pozrel možnosti v obchodoch?`,
       attachments: [clarificationAttachment("SHOPPING_PERMISSION", ["SHOPPING", "NO_THANKS"])],
       contextPatch: {

@@ -13,7 +13,7 @@ function groundingClarificationReply(fields, wasCorrection) {
   if (wanted.has("activity") || wanted.has("trip_scope")) {
     return `${prefix}Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?`;
   }
-  return `${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.`;
+  return `${prefix}Jasné 🙂 Ešte si potrebujem trochu upresniť plán, aby som ti nevybral outfit naslepo.`;
 }
 
 module.exports = {groundingClarificationReply};

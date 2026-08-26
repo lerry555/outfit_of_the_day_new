@@ -683,10 +683,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           latestUserText: _messages
               .lastWhere(
                 (message) => message.isUser,
-                orElse: () => const StylistChatMessage(
-                  text: '',
-                  isUser: true,
-                ),
+                orElse: () => const StylistChatMessage(text: '', isUser: true),
               )
               .text,
         );
@@ -1476,9 +1473,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       debugPrint('STYLIST CHAT material_correction_refresh=true');
     }
     if (effectiveAction == 'generate_outfit' &&
-        OutfitContextState.isMultiDayPackingRequest(
-          _conversationHintText(),
-        )) {
+        OutfitContextState.isMultiDayPackingRequest(_conversationHintText())) {
       // Packing spans several situations and must not be collapsed into one
       // frozen outfit. GPT-4o can give scoped packing advice; D/R remains the
       // authority only when the user actually asks for one outfit.
@@ -2052,8 +2047,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         StylistChatMessage(
           text:
               displayReply ??
-              'Outfit som vybral, ale potvrdené vysvetlenie zo Stylist '
-                  'autority teraz nie je dostupné. Skús to prosím znova.',
+              'Outfit už mám vybraný, no vysvetlenie sa mi teraz nepodarilo '
+                  'načítať. Nechcem si k nemu nič domýšľať — skús mi ho '
+                  'prosím poslať ešte raz.',
           isUser: false,
           suggestedItems: suggestedItems,
         ),
@@ -2076,6 +2072,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       shoppingWardrobeSignal: <String, dynamic>{
         'gapDetected': true,
         'suitableOwnedItemExists': false,
+        'bestOwnedCompromiseExists': wardrobeAnalysis.usedCompromise,
         'canonicalType': gap.category,
         'needLabel': gap.explanationSk.isNotEmpty
             ? gap.explanationSk
@@ -2489,8 +2486,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       }
       return '${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.';
     }
-    if (normalized.contains('trip_scope') &&
-        !normalized.contains('activity')) {
+    if (normalized.contains('trip_scope') && !normalized.contains('activity')) {
       return '${prefix}Chceš jeden konkrétny outfit, alebo plán, čo si zbaliť na celý pobyt?';
     }
     if (normalized.contains('activity')) {

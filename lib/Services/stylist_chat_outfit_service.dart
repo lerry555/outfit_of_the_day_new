@@ -34,11 +34,14 @@ import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import '../domain/wardrobe_v2/native_outfit_engine_v2.dart';
 import '../domain/wardrobe_v2/outfit_composition_v2.dart';
+import '../domain/wardrobe_v2/functional_suitability_v1.dart';
+import '../domain/style_preferences/style_preferences_runtime.dart';
 import '../Services/hourly_weather_service.dart';
 import '../Services/outfit_generation_service.dart';
 import 'stylist_frozen_candidate_decision_service.dart';
 import 'user_location_service.dart';
 import 'native_wardrobe_v2_runtime.dart';
+import 'user_style_preferences_reader.dart';
 
 class StylistChatOutfitResult {
   const StylistChatOutfitResult({
@@ -52,6 +55,7 @@ class StylistChatOutfitResult {
     this.stylistOpinion,
     this.finalExplanation,
     this.rejectAllReasonCodes = const <String>[],
+    this.functionalAssessment,
   });
 
   final V2FlexibleOutfitResult flexibleOutfit;
@@ -64,10 +68,12 @@ class StylistChatOutfitResult {
   final OutfitIntent? outfitIntent;
   final ActivityIdentityResult? activityIdentity;
   final StylistOpinion? stylistOpinion;
+
   /// Immutable Claude explanation generated only after the server accepted the
   /// frozen candidate decision. It has no authority to alter this outfit.
   final String? finalExplanation;
   final List<String> rejectAllReasonCodes;
+  final CandidateFunctionalAssessmentV1? functionalAssessment;
 }
 
 /// Explicit swap requests must either return their validated replacement or
@@ -94,6 +100,7 @@ class StylistChatEventContext {
   final String? performer;
   final Map<String, dynamic>? dressCode;
   final StylistTripWindow tripWindow;
+  final int? durationMinutes;
 
   const StylistChatEventContext({
     required this.date,
@@ -103,6 +110,7 @@ class StylistChatEventContext {
     this.performer,
     this.dressCode,
     this.tripWindow = const StylistTripWindow(),
+    this.durationMinutes,
   });
 
   int? get eventStartHour => tripWindow.eventStartHour ?? hourLocal;
@@ -169,7 +177,22 @@ class StylistChatEventContext {
       performer: performer.isEmpty ? null : performer,
       dressCode: dressCode,
       tripWindow: tripFromRaw,
+      durationMinutes: _durationMinutes(raw, tripFromRaw),
     );
+  }
+
+  static int? _durationMinutes(
+    Map<String, dynamic> raw,
+    StylistTripWindow trip,
+  ) {
+    final direct = int.tryParse(
+      (raw['durationMinutes'] ?? raw['eventDurationMinutes'] ?? '').toString(),
+    );
+    if (direct != null && direct > 0 && direct <= 7 * 24 * 60) return direct;
+    final start = trip.eventStartHour ?? trip.tripStartHour;
+    final end = trip.eventEndHour ?? trip.tripEndHour;
+    if (start != null && end != null && end > start) return (end - start) * 60;
+    return null;
   }
 }
 
@@ -178,13 +201,18 @@ class StylistChatOutfitService {
     FirebaseAuth? auth,
     FirebaseFirestore? firestore,
     HourlyWeatherService? hourlyWeatherService,
+    UserStylePreferencesReader? stylePreferencesReader,
   }) : _auth = auth ?? FirebaseAuth.instance,
        _firestore = firestore ?? FirebaseFirestore.instance,
-       _hourlyWeatherService = hourlyWeatherService ?? HourlyWeatherService();
+       _hourlyWeatherService = hourlyWeatherService ?? HourlyWeatherService(),
+       _stylePreferencesReader =
+           stylePreferencesReader ??
+           UserStylePreferencesReader(firestore: firestore, auth: auth);
 
   final FirebaseAuth _auth;
   final FirebaseFirestore _firestore;
   final HourlyWeatherService _hourlyWeatherService;
+  final UserStylePreferencesReader _stylePreferencesReader;
 
   Future<StylistChatOutfitResult?> generateForEvent({
     required StylistChatEventContext event,
@@ -202,6 +230,7 @@ class StylistChatOutfitService {
     if (user == null) return null;
     final wardrobe = await _loadNormalizedWardrobe(user.uid);
     if (wardrobe.isEmpty) return null;
+    final stylePreferences = await _stylePreferencesReader.loadForUid(user.uid);
     final city = event.locationLabel.trim().isNotEmpty
         ? event.locationLabel
         : UserLocationService.instance.cityLabel;
@@ -228,7 +257,8 @@ class StylistChatOutfitService {
             date: event.date.subtract(const Duration(days: 1)),
           )
         : null;
-    final antecedentPrecipitation = antecedentDay != null &&
+    final antecedentPrecipitation =
+        antecedentDay != null &&
         antecedentDay.fromOpenMeteo &&
         antecedentDay.willRain;
     if (terrain == StylistActivityTerrain.wetGround) {
@@ -238,13 +268,14 @@ class StylistChatOutfitService {
         'rain=$antecedentPrecipitation',
       );
     }
-    final wetGroundMuddy = StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
-      snapshot: dayWeather,
-      now: DateTime.now(),
-      terrain: terrain,
-      eventHour: event.hourLocal,
-      antecedentPrecipitation: antecedentPrecipitation,
-    );
+    final wetGroundMuddy =
+        StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
+          snapshot: dayWeather,
+          now: DateTime.now(),
+          terrain: terrain,
+          eventHour: event.hourLocal,
+          antecedentPrecipitation: antecedentPrecipitation,
+        );
     final occasionProfile = StylistOccasionGuidance.profileFor(
       occasion: event.occasion,
       conversationText: conversationHint,
@@ -289,7 +320,8 @@ class StylistChatOutfitService {
         .toList(growable: false);
     if (resolved.isEmpty) return null;
     final context = V2CandidateMatrixContext(
-      weatherProtectionRequired: weather.isRainy || weather.isWindy || wetGroundMuddy,
+      weatherProtectionRequired:
+          weather.isRainy || weather.isWindy || wetGroundMuddy,
       minimumFormality: occasionProfile.isElevated ? 5 : 1,
       requiredOccasions: {occasionProfile.dressCode.id},
       maxCandidates: 6,
@@ -299,6 +331,13 @@ class StylistChatOutfitService {
       isWindy: weather.isWindy,
       activityType: outfitIntent.activityType,
       occasionId: occasionProfile.dressCode.id,
+      styleTaste: StylePreferencesRuntime.effectiveTaste(stylePreferences),
+      stylingPresentation: StylePreferencesRuntime.effectivePresentation(
+        stylePreferences,
+      ),
+      activityDurationMinutes: event.durationMinutes,
+      terrain: terrain.name,
+      wetGroundRisk: wetGroundMuddy,
     );
     var generated = V2FlexibleCandidateMatrix.generate(
       wardrobe: resolved,
@@ -317,6 +356,11 @@ class StylistChatOutfitService {
           isWindy: context.isWindy,
           activityType: context.activityType,
           occasionId: context.occasionId,
+          styleTaste: context.styleTaste,
+          stylingPresentation: context.stylingPresentation,
+          activityDurationMinutes: context.activityDurationMinutes,
+          terrain: context.terrain,
+          wetGroundRisk: context.wetGroundRisk,
         ),
       );
     }
@@ -360,6 +404,7 @@ class StylistChatOutfitService {
                   'intent': intent.finalScore,
                   'activity': activity.score,
                 },
+                functionalAssessment: candidate.functionalAssessment,
               );
             })
             .where((candidate) => candidate.score > -900)
@@ -410,10 +455,12 @@ class StylistChatOutfitService {
               'activity': outfitIntent.activityType,
               'occasion': occasionProfile.label,
               'environment': event.locationLabel,
-              'weather': '${weather.tempC}C rain=${weather.isRainy} '
+              'weather':
+                  '${weather.tempC}C rain=${weather.isRainy} '
                   'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
                   'antecedentRain=$antecedentPrecipitation',
               'formality': occasionProfile.dressCode.id,
+              'terrain': terrain.name,
               'relevantKnownTimingFacts': <String, String>{
                 'eventDate':
                     '${event.date.year.toString().padLeft(4, '0')}-'
@@ -438,13 +485,19 @@ class StylistChatOutfitService {
           .firstOrNull;
       if (accepted == null) return null;
       selected = accepted.outfit;
-      finalExplanation = decision.explanation.isEmpty ? null : decision.explanation;
+      finalExplanation = decision.explanation.isEmpty
+          ? null
+          : decision.explanation;
       rejectAllReasonCodes = decision.reasonCodes;
     }
-    if (selected == null || selected.validate().isNotEmpty) return null;
+    if (selected.validate().isNotEmpty) return null;
+    final selectedAssessment = matrix
+        .where((candidate) => candidate.outfit == selected)
+        .firstOrNull
+        ?.functionalAssessment;
     return StylistChatOutfitResult(
       flexibleOutfit: selected,
-      wardrobeAnalysis: _wardrobeGapAnalysisV2(selected),
+      wardrobeAnalysis: _wardrobeGapAnalysisV2(selected, selectedAssessment),
       weather: weather,
       occasionProfile: occasionProfile,
       wetGroundMuddy: wetGroundMuddy,
@@ -456,6 +509,7 @@ class StylistChatOutfitService {
       ),
       finalExplanation: finalExplanation,
       rejectAllReasonCodes: rejectAllReasonCodes,
+      functionalAssessment: selectedAssessment,
     );
   }
 
@@ -505,6 +559,7 @@ class StylistChatOutfitService {
 
   static WardrobeAnalysis _wardrobeGapAnalysisV2(
     V2FlexibleOutfitResult outfit,
+    CandidateFunctionalAssessmentV1? functional,
   ) {
     final gaps = <WardrobeGap>[];
     if (!outfit.completeness.coreComplete) {
@@ -527,8 +582,77 @@ class StylistChatOutfitService {
         ),
       );
     }
-    return WardrobeAnalysis(missingItems: gaps);
+    if (functional != null) {
+      final capabilityGaps =
+          <({String capability, ItemFunctionalAssessmentV1 item})>[
+            for (final item in functional.items)
+              for (final capability in item.missingCapabilities)
+                (capability: capability, item: item),
+          ]..sort((left, right) {
+            final severity = right.item.tier.severity.compareTo(
+              left.item.tier.severity,
+            );
+            if (severity != 0) return severity;
+            return _gapPriority(
+              left.capability,
+            ).compareTo(_gapPriority(right.capability));
+          });
+      final seenCapabilities = <String>{};
+      for (final entry in capabilityGaps) {
+        if (!seenCapabilities.add(entry.capability)) continue;
+        final capability = entry.capability;
+        final item = entry.item;
+        gaps.add(
+          WardrobeGap(
+            category: capability,
+            reason: item.reasonCodes.isEmpty
+                ? 'functional_capability_gap'
+                : item.reasonCodes.first,
+            blocksIdealOutfit:
+                item.tier.severity >=
+                FunctionalSuitabilityTierV1.strongCompromise.severity,
+            explanationSk: item.idealReplacementDescription == null
+                ? 'Ideálny outfit by potreboval lepšie pokryť: $capability.'
+                : 'Časom by sa hodilo doplniť: '
+                      '${item.idealReplacementDescription}.',
+          ),
+        );
+      }
+    }
+    return WardrobeAnalysis(
+      usedCompromise:
+          functional != null &&
+          functional.tier.severity >=
+              FunctionalSuitabilityTierV1.acceptableCompromise.severity,
+      missingItems: gaps,
+      compromiseItems:
+          functional?.items
+              .where(
+                (item) =>
+                    item.tier.severity >=
+                    FunctionalSuitabilityTierV1.acceptableCompromise.severity,
+              )
+              .map((item) => item.itemId)
+              .toList(growable: false) ??
+          const <String>[],
+    );
   }
+
+  static int _gapPriority(String capability) => switch (capability) {
+    'hiking_footwear' => 0,
+    'wet_terrain_footwear' => 1,
+    'traction' || 'walking_stability' => 2,
+    'rain_shell' || 'rain_protection' => 3,
+    'hiking_bottom' || 'mobility' => 4,
+    'activity_top' || 'breathability' || 'moisture_handling' => 5,
+    _ => 20,
+  };
+
+  @visibleForTesting
+  static WardrobeAnalysis wardrobeGapAnalysisForTest(
+    V2FlexibleOutfitResult outfit,
+    CandidateFunctionalAssessmentV1? functional,
+  ) => _wardrobeGapAnalysisV2(outfit, functional);
 
   // Historical rollback implementation. It is unreachable from the active
   // Stylist entrypoint and may be deleted after owner-device E2E.
@@ -1166,16 +1290,18 @@ class StylistChatOutfitService {
         mode: 'v2_review_no_valid_candidate',
       );
     }
-    final decision = await const StylistFrozenCandidateDecisionServiceV1()
-        .resolve(
-          candidates: flexibleReviewCandidates,
-          resolvedContext: <String, dynamic>{
-            'activity': 'stylist_chat',
-            'weather': '${weather.tempC}C rain=${weather.isRainy} wind=${weather.isWindy}',
-          },
-        );
+    final decision = await const StylistFrozenCandidateDecisionServiceV1().resolve(
+      candidates: flexibleReviewCandidates,
+      resolvedContext: <String, dynamic>{
+        'activity': 'stylist_chat',
+        'weather':
+            '${weather.tempC}C rain=${weather.isRainy} wind=${weather.isWindy}',
+      },
+    );
     final reviewedFlexible = flexibleReviewCandidates
-        .where((candidate) => candidate.candidateId == decision.selectedCandidateId)
+        .where(
+          (candidate) => candidate.candidateId == decision.selectedCandidateId,
+        )
         .firstOrNull;
     if (!decision.selected || reviewedFlexible == null) {
       // The new Stylist authority is intentionally unable to select candidate

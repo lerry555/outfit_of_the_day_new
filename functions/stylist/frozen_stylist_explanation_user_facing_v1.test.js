@@ -24,6 +24,13 @@ const request = () => ({
     ],
     hardConstraintEvidence: {deterministicPassed: true, violationCodes: []},
     compromiseClassification: {level: "acceptable_compromise", reasonCodes: ["internal_reason"]},
+    compromiseDetails: [{
+      itemName: "sivé nohavice",
+      tier: "acceptableCompromise",
+      reasonCodes: ["limited_mobility_evidence"],
+      missingCapabilities: ["technical_hiking_bottom"],
+      idealReplacementDescription: "pružné turistické nohavice",
+    }],
   }],
 });
 
@@ -47,6 +54,13 @@ test("Claude receives presentation-safe selected clothes without IDs or authorit
     {name: "sivé nohavice", canonicalType: "trousers", primaryColor: "grey"},
     {name: "červená bomber bunda", canonicalType: "bomber_jacket", primaryColor: "red"},
   ]);
+  assert.deepEqual(payload.userFacingCompromises, [{
+    itemName: "sivé nohavice",
+    tier: "acceptableCompromise",
+    reasons: ["limited_mobility_evidence"],
+    missingCapabilities: ["technical_hiking_bottom"],
+    idealReplacementDescription: "pružné turistické nohavice",
+  }]);
   const serialized = JSON.stringify(payload);
   for (const forbidden of ["candidate-internal-only", "itemId", "hardConstraintEvidence", "reasonCodes"]) {
     assert.equal(serialized.includes(forbidden), false);
@@ -67,7 +81,8 @@ test("Anthropic instructions forbid IDs and validation/scoring jargon", () => {
 test("deterministic explanation fallback remains user-facing", () => {
   const selected = deterministicExplanation({action: "select_candidate"});
   assert.equal(selected.includes("kontrolou"), false);
-  assert.equal(selected.includes("podmienkam"), true);
+  assert.equal(selected.includes("najsilnejšia dostupná kombinácia"), true);
+  assert.equal(selected.includes("candidate"), false);
   assert.equal(
     deterministicExplanation({action: "reject_all"}).includes("reason code"),
     false,

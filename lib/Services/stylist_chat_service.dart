@@ -18,7 +18,8 @@ class StylistChatService {
   }) : _firestoreOverride = firestore,
        _authOverride = auth,
        _injectedJobConsumer = jobConsumer,
-       _stylePreferences = stylePreferences ??
+       _stylePreferences =
+           stylePreferences ??
            UserStylePreferencesReader(firestore: firestore, auth: auth);
 
   final FirebaseFirestore? _firestoreOverride;
@@ -252,15 +253,15 @@ class StylistChatService {
     );
   }
 
-  /// Loads taste-only Stylist context. Missing docs, empty lists, and
-  /// transient read failures all resolve to `null` (omit the payload field).
-  /// Saved taste is also omitted when [StylePreferencesRuntime] is disabled.
+  /// Loads Stylist preference context. Missing docs, empty values, and
+  /// transient read failures resolve to `null` (omit the payload field).
+  /// Soft taste follows [StylePreferencesRuntime], while explicit outfit
+  /// presentation remains authoritative independently of that rollout flag.
   @visibleForTesting
   static Future<Map<String, dynamic>?> resolveStylePreferencesPayload(
     UserStylePreferencesReader reader,
     String? uid,
   ) async {
-    if (!StylePreferencesRuntime.enabled) return null;
     try {
       final prefs = await reader.loadForUid(uid);
       return StylePreferencesRuntime.stylistPayload(prefs);
