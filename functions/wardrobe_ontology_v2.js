@@ -45,6 +45,12 @@ function validateWardrobeItemV2(input, {strict = true} = {}) {
     for (const tone of ["metalTone","hardwareTone"]) if (!artifact.enums.metalTones.includes(cp[tone])) errors.push(`colorProfile.${tone}.invalid`);
   }
   if (!Number.isInteger(input.formality) || input.formality < 1 || input.formality > 10) errors.push("formality.range");
+  if (!Number.isInteger(input.warmth) || input.warmth < 1 || input.warmth > 10) {
+    errors.push("warmth.range");
+  } else if (kb?.warmthRange &&
+      (input.warmth < kb.warmthRange.min || input.warmth > kb.warmthRange.max)) {
+    errors.push("warmth.out_of_type_range");
+  }
   if (input.setMembership != null) {
     const s = input.setMembership;
     if (typeof s !== "object" || !String(s.setId || "").trim() || !String(s.setType || "").trim()) errors.push("setMembership.invalid");

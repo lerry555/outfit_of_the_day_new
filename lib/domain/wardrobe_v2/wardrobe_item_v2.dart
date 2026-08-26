@@ -229,6 +229,11 @@ class WardrobeItemV2Validator {
     }
     if (item.formality < 1 || item.formality > 10) e.add('formality.range');
     if (item.warmth < 1 || item.warmth > 10) e.add('warmth.range');
+    if (d != null &&
+        ((d.warmthMin != null && item.warmth < d.warmthMin!) ||
+            (d.warmthMax != null && item.warmth > d.warmthMax!))) {
+      e.add('warmth.out_of_type_range');
+    }
     for (final f in item.userOverrideFields) {
       final source = item.fieldSources[f];
       final validSetAuthority =

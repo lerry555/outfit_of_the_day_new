@@ -61,12 +61,13 @@ final _formalShoes = _item(
   seasons: const ['celoročne'],
 );
 final _blackAnkleBoots = _item(
-  // Mirrors the production item's canonical class: black ankle/Chelsea boots
-  // have V2's typical warmth 6, rather than the artificial winter-boots 9.
+  // Mirrors the observed production-item class: a light Chelsea/ankle boot
+  // can legitimately have warmth 4, while its autumn/winter season facts
+  // still make it unsuitable for a late-summer rainy restaurant candidate.
   type: 'chelsea_boots',
   family: 'footwear',
   slots: const ['feet'],
-  warmth: 6,
+  warmth: 4,
   formality: 5,
   seasons: const ['jeseň', 'zima'],
 );

@@ -249,6 +249,86 @@ void main() {
     expect(built.fieldSources['styles'], 'user_correction');
   });
 
+  test('Add Clothing builder keeps light Chelsea warmth in range and defaults to its KB typical value', () {
+    final inferred = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+      ontology: ontology,
+      analyzer: {
+        'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
+        'observed': {
+          'colorProfile': {
+            'primary': {'family': 'black'},
+            'secondary': null,
+            'accents': [],
+            'metalTone': 'none',
+            'hardwareTone': 'none',
+          },
+          'attributes': {},
+        },
+        'inferred': {
+          'formality': 5,
+          'styles': ['smart_casual'],
+          'occasionFit': ['business_casual'],
+          'warmth': 4,
+        },
+      },
+    );
+    expect(inferred.warmth, 4);
+    expect(inferred.fieldSources['warmth'], 'visual_ai');
+
+    final defaulted = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+      ontology: ontology,
+      analyzer: {
+        'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
+        'observed': {
+          'colorProfile': {
+            'primary': {'family': 'black'},
+            'secondary': null,
+            'accents': [],
+            'metalTone': 'none',
+            'hardwareTone': 'none',
+          },
+          'attributes': {},
+        },
+        'inferred': {
+          'formality': 5,
+          'styles': ['smart_casual'],
+          'occasionFit': ['business_casual'],
+        },
+      },
+    );
+    expect(defaulted.warmth, 6);
+    expect(defaulted.fieldSources['warmth'], 'knowledge_base');
+    expect(defaulted.fieldSources['seasons'], 'system');
+  });
+
+  test('Add Clothing builder rejects a Chelsea warmth outside its ontology range', () {
+    expect(
+      () => WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+        ontology: ontology,
+        analyzer: {
+          'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
+          'observed': {
+            'colorProfile': {
+              'primary': {'family': 'black'},
+              'secondary': null,
+              'accents': [],
+              'metalTone': 'none',
+              'hardwareTone': 'none',
+            },
+            'attributes': {},
+          },
+          'inferred': {
+            'formality': 5,
+            'styles': ['smart_casual'],
+            'occasionFit': ['business_casual'],
+            'warmth': 9,
+          },
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
   test('swap, search and trip projections consume V2 semantics', () {
     final earrings = item('earrings', 'jewelry', ['ears'], 'not_applicable');
     final hoops = item('hoop_earrings', 'jewelry', ['ears'], 'not_applicable');

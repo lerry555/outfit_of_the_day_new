@@ -45,7 +45,7 @@ function buildGeminiWardrobeAnalyzerV2Schema() {
       fit: {type: "string"},
       visualScale: {type: "string"},
       formality: {type: "integer"},
-      warmth: {type: "integer"},
+      warmth: {type: "integer", minimum: 1, maximum: 10},
       styles: stringArray,
       occasionFit: stringArray,
       attributes: {

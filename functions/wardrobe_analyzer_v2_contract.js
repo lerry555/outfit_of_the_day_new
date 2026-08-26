@@ -11,6 +11,15 @@ function validateAnalyzerV2(raw) {
   const allowed=new Set(canonicalDefinition(type)?.allowedAttributes||[]); const attrs=raw.observed?.attributes;
   if (!attrs||typeof attrs!=="object"||Array.isArray(attrs)||Object.keys(attrs).some((key)=>!allowed.has(key))) errors.push("observed.attributes.invalid");
   if (!raw.inferred||!Number.isInteger(raw.inferred.formality)||raw.inferred.formality<1||raw.inferred.formality>10||!Array.isArray(raw.inferred.styles)||!Array.isArray(raw.inferred.occasionFit)) errors.push("inferred.invalid");
+  const warmthRange=canonicalDefinition(type)?.warmthRange;
+  if (!Number.isInteger(raw.inferred?.warmth)||
+      raw.inferred.warmth<1||raw.inferred.warmth>10) {
+    errors.push("inferred.warmth.invalid");
+  } else if (warmthRange &&
+      (raw.inferred.warmth<warmthRange.min||
+       raw.inferred.warmth>warmthRange.max)) {
+    errors.push("inferred.warmth.out_of_type_range");
+  }
   if (!raw.evidence||!Array.isArray(raw.evidence.visibleRegions)||typeof raw.evidence.fieldConfidence!=="object"||Object.values(raw.evidence.fieldConfidence||{}).some((value)=>typeof value!=="number"||value<0||value>1)) errors.push("evidence.invalid");
   return {ok:errors.length===0,errors:[...new Set(errors)].sort(),value:errors.length?null:raw};
 }

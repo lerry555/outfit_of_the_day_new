@@ -78,6 +78,26 @@ abstract final class WardrobeV2WriteBuilder {
     final evidenceConfidence = evidence['fieldConfidence'] is Map
         ? Map<String, dynamic>.from(evidence['fieldConfidence'] as Map)
         : const <String, dynamic>{};
+    final analyzedWarmth = chosen('warmth', inferred['warmth']);
+    final warmth = (analyzedWarmth as num?)?.toInt() ??
+        definition.warmthTypical ??
+        5;
+    if ((definition.warmthMin != null && warmth < definition.warmthMin!) ||
+        (definition.warmthMax != null && warmth > definition.warmthMax!)) {
+      throw StateError('v2_warmth_out_of_type_range:$canonical');
+    }
+    if (!overrides.contains('warmth')) {
+      sources['warmth'] = analyzedWarmth is num
+          ? 'visual_ai'
+          : 'knowledge_base';
+      confidence['warmth'] = analyzedWarmth is num ?
+          (evidenceConfidence['warmth'] as num?)?.toDouble() ?? 0.0 :
+          1.0;
+    }
+    if (!overrides.contains('seasons')) {
+      sources['seasons'] ??= 'system';
+      confidence['seasons'] ??= 0.0;
+    }
     confidence.addAll({
       'canonicalType': (identity['confidence'] as num?)?.toDouble() ?? .0,
       'canonicalFamily': 1.0,
@@ -113,7 +133,7 @@ abstract final class WardrobeV2WriteBuilder {
       seasons: List<String>.from(
         chosen('seasons', inferred['seasons']) as List? ?? const [],
       ),
-      warmth: (chosen('warmth', inferred['warmth']) as num?)?.toInt() ?? 5,
+      warmth: warmth,
       attributes: Map<String, dynamic>.from(
         chosen('attributes', observed['attributes']) as Map? ?? const {},
       ),
