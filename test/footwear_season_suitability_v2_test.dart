@@ -60,6 +60,16 @@ final _formalShoes = _item(
   formality: 8,
   seasons: const ['celoročne'],
 );
+final _blackAnkleBoots = _item(
+  // Mirrors the production item's canonical class: black ankle/Chelsea boots
+  // have V2's typical warmth 6, rather than the artificial winter-boots 9.
+  type: 'chelsea_boots',
+  family: 'footwear',
+  slots: const ['feet'],
+  warmth: 6,
+  formality: 5,
+  seasons: const ['jeseň', 'zima'],
+);
 
 List<ResolvedWardrobeItemV2> _wardrobe({bool formal = false}) => [
   _resolved(
@@ -101,6 +111,33 @@ List<ResolvedWardrobeItemV2> _wardrobe({bool formal = false}) => [
   if (formal) _resolved('formal-shoes', _formalShoes),
 ];
 
+List<ResolvedWardrobeItemV2> _lateSummerRestaurantWardrobe() => [
+  _resolved(
+    'restaurant-shirt',
+    _item(
+      type: 'dress_shirt',
+      family: 'top',
+      slots: const ['upper_body'],
+      warmth: 3,
+      formality: 6,
+      seasons: const ['celoročne'],
+    ),
+  ),
+  _resolved(
+    'restaurant-trousers',
+    _item(
+      type: 'trousers',
+      family: 'bottom',
+      slots: const ['lower_body'],
+      warmth: 3,
+      formality: 6,
+      seasons: const ['celoročne'],
+    ),
+  ),
+  _resolved('black-ankle-boots', _blackAnkleBoots),
+  _resolved('formal-shoes', _formalShoes),
+];
+
 void main() {
   test(
     'warm rain excludes winter-only high-warmth boots before candidates',
@@ -139,6 +176,38 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'late-summer rain excludes moderate Chelsea ankle boots before frozen candidates',
+    () {
+      final matrix = V2FlexibleCandidateMatrix.generate(
+        wardrobe: _lateSummerRestaurantWardrobe(),
+        context: const V2CandidateMatrixContext(
+          tempC: 17,
+          seasonKey: 'let',
+          isRainy: true,
+          weatherProtectionRequired: true,
+          minimumFormality: 5,
+          scoringFormalityFloor: 5,
+          occasionId: 'restaurant_evening',
+        ),
+      );
+
+      expect(matrix, isNotEmpty);
+      expect(
+        matrix.every(
+          (candidate) => candidate.outfit.items.every(
+            (item) => item.itemId != 'black-ankle-boots',
+          ),
+        ),
+        isTrue,
+      );
+      expect(
+        matrix.first.outfit.items.map((item) => item.itemId),
+        contains('formal-shoes'),
+      );
+    },
+  );
 
   test('light all-season Chelsea boots remain valid at 14C', () {
     final chelsea = _item(

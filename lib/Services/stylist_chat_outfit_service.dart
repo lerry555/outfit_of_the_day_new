@@ -262,6 +262,7 @@ class StylistChatOutfitService {
           : {event.occasion!.trim().toLowerCase()},
       maxCandidates: 6,
       tempC: weather.tempC,
+      seasonKey: weather.seasonKey,
       isRainy: weather.isRainy,
       isWindy: weather.isWindy,
       activityType: outfitIntent.activityType,
@@ -279,6 +280,7 @@ class StylistChatOutfitService {
           minimumFormality: 1,
           maxCandidates: context.maxCandidates,
           tempC: context.tempC,
+          seasonKey: context.seasonKey,
           isRainy: context.isRainy,
           isWindy: context.isWindy,
           activityType: context.activityType,
@@ -348,6 +350,7 @@ class StylistChatOutfitService {
           tempC: context.tempC,
           feelsLikeC: context.feelsLikeC,
           eveningTempC: context.eveningTempC,
+          seasonKey: context.seasonKey,
           activityType: context.activityType,
         ),
       );

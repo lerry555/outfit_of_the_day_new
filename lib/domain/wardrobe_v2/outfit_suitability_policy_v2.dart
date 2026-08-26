@@ -92,13 +92,18 @@ abstract final class OutfitSuitabilityPolicyV2 {
   static bool isPhysicallyUnsuitable(
     WardrobeItemV2 item, {
     int? tempC,
+    String seasonKey = '',
     bool isRainy = false,
     String activityType = '',
   }) {
     final temp = tempC;
     final type = item.canonicalType.toLowerCase();
     if (item.bodySlots.contains('feet') &&
-        isFootwearPhysicallyUnsuitableForConditions(item, tempC: temp)) {
+        isFootwearPhysicallyUnsuitableForConditions(
+          item,
+          tempC: temp,
+          seasonKey: seasonKey,
+        )) {
       return true;
     }
     if (temp != null &&
@@ -121,19 +126,19 @@ abstract final class OutfitSuitabilityPolicyV2 {
 
   /// Rejects only footwear whose V2 thermal/season facts make it plainly
   /// unsuitable. Rain can improve a suitable closed shoe's rank, but may not
-  /// rescue winter-only or heavily insulated boots in warm weather.
+  /// rescue seasonally excluded or overly warm boots.
   static bool isFootwearPhysicallyUnsuitableForConditions(
     WardrobeItemV2 item, {
     int? tempC,
+    String seasonKey = '',
   }) {
     if (!item.bodySlots.contains('feet') &&
         item.canonicalFamily.toLowerCase() != 'footwear') {
       return false;
     }
-    if (tempC == null) return false;
-
     final type = item.canonicalType.toLowerCase();
     final seasons = item.seasons.map(_normalizedSeason).toSet();
+    final currentSeason = _normalizedSeason(seasonKey);
     final winterOnly =
         seasons.isNotEmpty && seasons.every((season) => season == 'winter');
     final supportsWarmSeason = seasons.any(
@@ -142,13 +147,28 @@ abstract final class OutfitSuitabilityPolicyV2 {
     final isBoot = isBootFootwear(type);
     final winterType = type.contains('winter') || type.contains('snow');
 
+    // The V2 season facts are authoritative when present. In particular, a
+    // moderate Chelsea/ankle boot marked autumn/winter is not made suitable
+    // for a summer event simply because rain promotes closed footwear.
+    final seasonMismatch =
+        currentSeason.isNotEmpty &&
+        seasons.isNotEmpty &&
+        !seasons.contains('all_season') &&
+        !seasons.contains(currentSeason);
+    if (currentSeason == 'summer' && seasonMismatch && isBoot) return true;
+
+    if (tempC == null) return false;
+
     if (tempC >= 18 && winterOnly) return true;
     if (tempC >= 18 && isBoot && winterType && item.warmth >= 7) {
       return true;
     }
-    // At true warm-weather temperatures, very insulating boots are still
-    // unsuitable unless their explicit season data says they are all-season.
-    if (tempC >= 22 && isBoot && item.warmth >= 8 && !supportsWarmSeason) {
+    // At warm temperatures, the canonical Chelsea/ankle-boot class (typical
+    // V2 warmth 6) is still thermally unsuitable unless its facts explicitly
+    // support warm/all-season wear. This is deliberately stricter than the
+    // prior high-warmth-only guard while retaining lightweight all-season
+    // ankle boots for transitional conditions.
+    if (tempC >= 20 && isBoot && item.warmth >= 6 && !supportsWarmSeason) {
       return true;
     }
     return false;
@@ -157,14 +177,14 @@ abstract final class OutfitSuitabilityPolicyV2 {
   static String _normalizedSeason(String value) {
     final season = value.trim().toLowerCase();
     return switch (season) {
-      'zima' || 'winter' => 'winter',
-      'leto' || 'summer' => 'summer',
+      'zim' || 'zima' || 'winter' => 'winter',
+      'let' || 'leto' || 'summer' => 'summer',
       'celoročne' ||
       'celorocne' ||
       'all_season' ||
       'all-season' => 'all_season',
       'jar' || 'spring' => 'spring',
-      'jeseň' || 'jesen' || 'autumn' || 'fall' => 'autumn',
+      'jese' || 'jeseň' || 'jesen' || 'autumn' || 'fall' => 'autumn',
       _ => season,
     };
   }
@@ -210,8 +230,13 @@ abstract final class OutfitSuitabilityPolicyV2 {
     required int formalityFloorValue,
     required bool isRainy,
     int? tempC,
+    String seasonKey = '',
   }) {
-    if (isFootwearPhysicallyUnsuitableForConditions(item, tempC: tempC)) {
+    if (isFootwearPhysicallyUnsuitableForConditions(
+      item,
+      tempC: tempC,
+      seasonKey: seasonKey,
+    )) {
       return 1000;
     }
     final type = item.canonicalType.toLowerCase();

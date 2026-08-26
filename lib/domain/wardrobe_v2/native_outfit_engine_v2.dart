@@ -11,6 +11,7 @@ class NativeOutfitRequestV2 {
     this.tempC,
     this.feelsLikeC,
     this.eveningTempC,
+    this.seasonKey = '',
     this.activityType = '',
     this.requestedItemIds = const {},
     this.formalityFloor,
@@ -19,6 +20,7 @@ class NativeOutfitRequestV2 {
   final bool weatherProtectionRequired, preferOnePiece;
   final int minimumFormality;
   final int? tempC, feelsLikeC, eveningTempC, formalityFloor;
+  final String seasonKey;
   final String activityType;
   final Set<String> requiredFunctions, requestedItemIds, forbiddenCanonicalTypes;
 
@@ -47,6 +49,7 @@ abstract final class NativeOutfitEngineV2 {
       return OutfitSuitabilityPolicyV2.isPhysicallyUnsuitable(
         value.item,
         tempC: request.effectiveTempC,
+        seasonKey: request.seasonKey,
         isRainy: request.weatherProtectionRequired,
         activityType: request.activityType,
       );
@@ -190,6 +193,7 @@ abstract final class NativeOutfitEngineV2 {
         formalityFloorValue: request.resolvedFormalityFloor,
         isRainy: request.weatherProtectionRequired,
         tempC: request.effectiveTempC,
+        seasonKey: request.seasonKey,
       ),
       // A footwear thermal/season rejection is not eligible for the legacy
       // fallback pass. Returning no composition is safer than silently

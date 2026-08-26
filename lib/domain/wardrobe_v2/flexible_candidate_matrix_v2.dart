@@ -17,6 +17,7 @@ class V2CandidateMatrixContext {
     this.tempC,
     this.feelsLikeC,
     this.eveningTempC,
+    this.seasonKey = '',
     this.isRainy = false,
     this.isWindy = false,
     this.outdoor = true,
@@ -30,6 +31,7 @@ class V2CandidateMatrixContext {
   final bool weatherProtectionRequired, preferOnePiece, isRainy, isWindy, outdoor;
   final int minimumFormality, maxCandidates;
   final int? tempC, feelsLikeC, eveningTempC, scoringFormalityFloor;
+  final String seasonKey;
   final String activityType, occasionId;
   final Set<String> requiredFunctions, requiredOccasions;
   final Set<String> requestedItemIds, forbiddenCanonicalTypes;
@@ -80,6 +82,7 @@ abstract final class V2FlexibleCandidateMatrix {
                   tempC: context.tempC,
                   feelsLikeC: context.feelsLikeC,
                 ),
+                seasonKey: context.seasonKey,
               ),
         )
         .toList(growable: false);
@@ -109,6 +112,7 @@ abstract final class V2FlexibleCandidateMatrix {
             tempC: context.tempC,
             feelsLikeC: context.feelsLikeC,
             eveningTempC: context.eveningTempC,
+            seasonKey: context.seasonKey,
             activityType: context.activityType,
             requestedItemIds: context.requestedItemIds,
             forbiddenCanonicalTypes: context.forbiddenCanonicalTypes,
