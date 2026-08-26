@@ -760,9 +760,19 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           ).hasMatch(text.toLowerCase());
       final needsWardrobe =
           _messageNeedsWardrobeContext(text) || sourceChoiceNeedsWardrobe;
+      // GPS is useful for a routine local request, but not evidence that an
+      // ambiguous trip happens in the user's home city.
+      _outfitContextState = OutfitContextState.buildFrom(
+        conversation: _conversationHintText(),
+        gpsCityLabel: UserLocationService.instance.cityLabel,
+        previous: _outfitContextState,
+        latestUserText: text,
+      );
       final timing = Stopwatch()..start();
       final weatherContext = await _resolveWeatherContextForRequest(
         lightweight: !needsWardrobe,
+        allowGpsEventFallback:
+            _outfitContextState.groundingStatus == 'sufficient',
       );
       final weatherMs = timing.elapsedMilliseconds;
       timing.reset();
@@ -783,11 +793,6 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         _scrollToBottom();
         return;
       }
-      _outfitContextState = OutfitContextState.buildFrom(
-        conversation: _conversationHintText(),
-        gpsCityLabel: UserLocationService.instance.cityLabel,
-        previous: _outfitContextState,
-      );
       // AI-first: správu posielame backend AI. Lokálne pravidlá sú poistka
       final jobId = _newJobId();
       _inFlightJobId = jobId;
@@ -1390,21 +1395,47 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     _mergeOutfitContextFromResponse(response);
 
     var effectiveAction = action;
-    final requestedImpactFields = response['impactFields'] is List
+    var requestedImpactFields = response['impactFields'] is List
         ? (response['impactFields'] as List)
               .map((value) => value.toString().trim().toLowerCase())
               .where((value) => value.isNotEmpty)
               .toSet()
         : <String>{};
+    // No model phrasing can authorize a frozen candidate request while a
+    // deterministic material event fact remains unknown.
+    if (_outfitContextState.groundingStatus == 'needs_grounding' &&
+        effectiveAction != 'stop') {
+      final modelAlreadyClarifying = effectiveAction == 'clarify';
+      effectiveAction = 'clarify';
+      requestedImpactFields = {
+        ...requestedImpactFields,
+        ..._outfitContextState.unresolvedMaterialFields,
+      };
+      response['impactFields'] = requestedImpactFields.toList(growable: false);
+      // Keep GPT-4o's natural clarification if it has already chosen the
+      // correct non-decisive action. The deterministic text is only the
+      // fail-closed fallback for a model that attempted to proceed.
+      if (!modelAlreadyClarifying) {
+        response['reply'] = _groundingClarificationText(
+          _outfitContextState.unresolvedMaterialFields,
+          correction: _outfitContextState.userCorrectionDetected,
+        );
+      }
+      debugPrint(
+        'STYLIST CHAT grounding_blocked_generation '
+        'fields=${_outfitContextState.unresolvedMaterialFields}',
+      );
+    }
     final alreadyAsked = _outfitContextState.clarifiedMaterialFields
         .map((value) => value.trim().toLowerCase())
         .toSet();
     if (effectiveAction == 'clarify' &&
         (requestedImpactFields.isEmpty ||
             requestedImpactFields.every(alreadyAsked.contains))) {
-      // Local fail-safe complements the server state machine: repeated questions
-      // cannot become an interview loop if a malformed response slips through.
-      effectiveAction = 'generate_outfit';
+      // A malformed/repeated clarification may be unhelpful, but it must not
+      // silently turn into an ungrounded outfit decision.
+      effectiveAction = 'chat';
+      debugPrint('STYLIST CHAT repeated_or_empty_clarification_blocked');
     }
 
     if (effectiveAction == 'clarify') {
@@ -2313,7 +2344,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         location = '';
       }
     }
-    if (location.isEmpty) {
+    final mayUseGpsAsEventLocation =
+        !_outfitContextState.remoteActivityPlanned ||
+            _outfitContextState.routineLocalOutfit;
+    if (location.isEmpty && mayUseGpsAsEventLocation) {
       location = fallbackLocation.split(',').first.trim();
     }
 
@@ -2324,7 +2358,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         .toString()
         .trim()
         .toLowerCase();
-    final explicitDate = StylistDayParser.resolveDate(conversation);
+    final stateDate = DateTime.tryParse(_outfitContextState.dateKey ?? '');
+    final explicitDate = stateDate ?? StylistDayParser.resolveDate(conversation);
     if (explicitDate != null && aiDateKey.isEmpty) {
       date = explicitDate;
     }
@@ -2358,6 +2393,27 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       dressCode: base.dressCode,
       tripWindow: mergedTrip,
     );
+  }
+
+  String _groundingClarificationText(
+    Iterable<String> fields, {
+    required bool correction,
+  }) {
+    final normalized = fields
+        .map((value) => value.trim().toLowerCase())
+        .where((value) => value.isNotEmpty)
+        .toSet();
+    final prefix = correction ? 'Máš pravdu, to som si nemal domýšľať. ' : '';
+    if (normalized.contains('destination') && normalized.contains('activity')) {
+      return '${prefix}Kam sa chystáte a čo tam budete približne robiť?';
+    }
+    if (normalized.contains('destination')) {
+      return '${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.';
+    }
+    if (normalized.contains('activity') || normalized.contains('trip_scope')) {
+      return '${prefix}Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?';
+    }
+    return '${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.';
   }
 
   bool _shouldAutoGenerateOutfitAfterChat() {
@@ -3033,6 +3089,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   Future<Map<String, dynamic>> _resolveWeatherContextForRequest({
     required bool lightweight,
+    bool allowGpsEventFallback = true,
   }) async {
     final conversation = _conversationHintText();
     final dest = StylistDestinationParser.inferFromConversation(
@@ -3060,6 +3117,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       full['dayLabel'] = dayLabel;
       if (!lightweight) return full;
       return _lightweightWeatherSlice(full, dayLabel);
+    }
+    if (!allowGpsEventFallback) {
+      return <String, dynamic>{
+        'dayLabel': dayLabel,
+        'eventWeatherStatus': 'deferred_pending_grounding',
+        'weatherDeferredForGrounding': true,
+        'fromOpenMeteo': false,
+      };
     }
     // Bez konkrétneho mesta berieme GPS polohu. Ak používateľ spomenul iný deň
     // (napr. „idem zajtra“), stiahneme počasie pre TEN deň, nie len dnešné
@@ -3176,6 +3241,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   DateTime _eventDateFromConversation(String conversation) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
+    final stateDate = DateTime.tryParse(_outfitContextState.dateKey ?? '');
+    if (stateDate != null) {
+      return DateTime(stateDate.year, stateDate.month, stateDate.day);
+    }
     return StylistDayParser.resolveDate(conversation, now: now) ?? today;
   }
 
@@ -3217,6 +3286,17 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       includeRain: !declinedRain,
     );
     final tripPayload = trip.toWeatherContextPayload();
+    final rawSuitabilityTempC = trip.outfitTempC;
+    final outfitTempC = StylistWeatherAdjustment.adjustActivityTempC(
+      rawTempC: rawSuitabilityTempC,
+      terrain: terrain,
+      hourLocal: event.hourLocal,
+    );
+    // One canonical suitability temperature prevents raw forecast and
+    // terrain-adjusted values from alternating in user-facing chat.
+    tripPayload['outfitTempC'] = outfitTempC;
+    tripPayload['forecastTempC'] = rawSuitabilityTempC;
+    tripPayload.remove('tripOutfitTempC');
     if (declinedRain) {
       tripPayload.remove('tripWeatherAdvisory');
     }
@@ -3233,6 +3313,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           ? 'wetGround'
           : 'urban',
       'wetGroundRisk': wetGroundRisk,
+      'outfitTempC': outfitTempC,
       'userDeclinedRainAdvice': declinedRain,
       if (chatSummary != null) 'weatherChatSummarySk': chatSummary,
       if (declinedRain) 'rainAdviceSk': null,

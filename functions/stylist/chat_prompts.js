@@ -9,10 +9,11 @@ const JSON_OUTPUT =
   `"assumptions":[],"clarifyReason":"","impactFields":[],` +
   `"showItemIds":[],"eventContext":{},"excludeItemKeywords":[]}\n` +
   `\nROZHODNUTIE (nie checklist polí):\n` +
-  `- confidence >= 0.70 → action: "generate_outfit" (s assumptions).\n` +
-  `- decisionRisk "high" A confidence < 0.75 → action: "clarify" (jedna prirodzená otázka na tento konkrétny materiálny problém).\n` +
-  `- decisionRisk "medium": ak confidence >= 0.70 → generate_outfit, inak clarify.\n` +
-  `- decisionRisk "low" → generate_outfit, aj keď niečo chýba — rozumne odhadni.\n` +
+  `- Neznámy fakt s materiálnym dopadom NIKDY nenahrádzaj domnienkou iba preto, že máš vysokú confidence.\n` +
+  `- Ak outfitContextState.groundingStatus = needs_grounding alebo obsahuje unresolvedMaterialFields, action MUSÍ byť "clarify"; nikdy generate_outfit.\n` +
+  `- Pri vysokej istote len vtedy, keď sú materiálne fakty používateľom alebo systémom spoľahlivo uzemnené, → generate_outfit.\n` +
+  `- decisionRisk "high" pri neuzemnenom cieli/aktivite → clarify (jedna prirodzená otázka na súvisiaci problém).\n` +
+  `- Nízke riziko povoľuje rozumný predpoklad len pri nízko-dopadových detailoch; nie pri cieli, aktivite, teréne, dĺžke alebo expozícii počasiu.\n` +
   `- confidence: 0.0–1.0 — istota kvality odporúčania AJ s predpokladmi.\n` +
   `- decisionRisk: riziko zlého outfitu bez ďalšej info (nie zoznam chýbajúcich polí).\n` +
   `- assumptions: čo si rozumne predpokladal (pre logy, nie pre usera).\n` +
@@ -53,8 +54,15 @@ const CLARIFY_RULES =
   `nie ako checklist alebo opakovanie už zodpovedaného.\n` +
   `- NIKDY séria otázok (čas → kam → ako dlho → trasa).\n` +
   `- NIKDY sa nepýtaj na počasie — máš weatherContext.\n` +
+  `- Keď weatherContext obsahuje outfitTempC, je to jediná kanonická teplota pre outfit a user-facing odporúčanie. forecastTempC je len označená surová predpoveď; nestriedaj obe hodnoty bez vysvetlenia.\n` +
   `- Nepýtaj sa na to, čo už vieš z kontextu alebo histórie.\n` +
   `- clarifiedMaterialFields v outfitContextState sú už položené otázky: nikdy ich neopakuj.\n` +
+  `\nAUTORITA FAKTOV A OPRAVY:\n` +
+  `- Iba správy s rolou user a deterministický outfitContextState sú dôkazom faktov udalosti. Predošlé texty asistenta sú NEAUTORITATÍVNE a nesmú sa samy potvrdiť.\n` +
+  `- GPS je systémový fakt o aktuálnej polohe používateľa, nie dôkaz cieľa výletu/cesty/dovolenky/turistiky.\n` +
+  `- „výlet“, „niekam von“, „ideme preč“ ani „cesta“ samy neurčujú turistiku, prechádzku, mesto ani terén. Pri neznámom cieli alebo aktivite sa prirodzene spýtaj jednou otázkou, ktorá môže pokryť oboje.\n` +
+  `- Keď user poprie predchádzajúci predpoklad alebo opraví cieľ/aktivitu/dátum, uznaj opravu, nepreber asistentov predpoklad ako fakt a negeneruj outfit, kým nezostanú materiálne fakty uzemnené.\n` +
+  `- Viacdňová cesta nie je automaticky jeden lokálny outfit. Zisti, či rieši cestovný deň alebo konkrétnu udalosť, ak to mení odporúčanie.\n` +
   `\nLOKALITA:\n` +
   `- GPS nie je automaticky miesto aktivity pri výlete/hore/les/dovolenka.\n` +
   `- „Čo si mám obliecť dnes do práce?" → generate_outfit, GPS stačí.\n` +

@@ -31,6 +31,7 @@ import 'package:outfitofTheDay/utils/stylist_weather_tip.dart';
 import 'package:outfitofTheDay/utils/wardrobe_gap_analysis.dart';
 import 'package:outfitofTheDay/utils/layer_harmony_guard.dart';
 import 'package:outfitofTheDay/utils/trip_weather_analyzer.dart';
+import 'package:outfitofTheDay/utils/stylist_trip_parser.dart';
 
 /// Deterministické testy pre logiku stylistu: výber rodiny spodku podľa
 /// sezóny/počasia, počasie na celý výlet (text bez bundy/vymysleného času),
@@ -362,6 +363,34 @@ void main() {
           conversationText: 'zajtra rano na huby',
         ),
         StylistActivityTerrain.wetGround,
+      );
+    });
+  });
+
+  group('Antecedent precipitation for terrain', () {
+    test('forest after prior rain requires closed footwear even if start is dry', () {
+      expect(
+        StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
+          snapshot: daySnapshot(temp: 20, willRain: false),
+          now: DateTime(2026, 8, 26, 9),
+          terrain: StylistActivityTerrain.wetGround,
+          eventHour: 13,
+          antecedentPrecipitation: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('dry forest receives no artificial wet-ground restriction', () {
+      expect(
+        StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
+          snapshot: daySnapshot(temp: 20, willRain: false),
+          now: DateTime(2026, 8, 26, 9),
+          terrain: StylistActivityTerrain.wetGround,
+          eventHour: 13,
+          antecedentPrecipitation: false,
+        ),
+        isFalse,
       );
     });
   });
@@ -1112,6 +1141,61 @@ void main() {
       expect(state.activityLocationKnown, isFalse);
       expect(state.hourExplicit, isFalse);
       expect(state.routineLocalOutfit, isFalse);
+      expect(state.groundingStatus, 'needs_grounding');
+      expect(state.unresolvedMaterialFields, contains('destination'));
+    });
+
+    test('vágny výlet nepreberie GPS ani turistiku ako event fakt', () {
+      final state = OutfitContextState.buildFrom(
+        conversation:
+            'ahoj zajtra chceme ist na vylet, budem potrebovat pomoc s vyberom outfitu',
+        latestUserText:
+            'ahoj zajtra chceme ist na vylet, budem potrebovat pomoc s vyberom outfitu',
+        gpsCityLabel: 'Martin',
+      );
+      expect(state.activityLocationKnown, isFalse);
+      expect(state.activityLocationLabel, isNull);
+      expect(state.gpsDefaultCity, 'Martin');
+      expect(state.groundingStatus, 'needs_grounding');
+      expect(state.unresolvedMaterialFields, containsAll(['destination', 'activity']));
+    });
+
+    test('oprava nepovýši predošlý predpoklad Martina alebo prechádzky na fakt', () {
+      final state = OutfitContextState.buildFrom(
+        conversation:
+            'ahoj zajtra chceme ist na vylet\nkde som tvrdil ze idem na prechadzku okolo Martina?',
+        latestUserText: 'kde som tvrdil ze idem na prechadzku okolo Martina?',
+        gpsCityLabel: 'Martin',
+      );
+      expect(state.userCorrectionDetected, isTrue);
+      expect(state.activityLocationLabel, isNull);
+      expect(state.groundingStatus, 'needs_grounding');
+      expect(state.unresolvedMaterialFields, containsAll(['destination', 'activity']));
+    });
+
+    test('konkrétna horská turistika s časom je uzemnená', () {
+      final state = OutfitContextState.buildFrom(
+        conversation:
+            'Zajtra ideme do Tatier na turistiku, vyrážame o 8:00 a budeme tam asi 6 hodín.',
+        latestUserText:
+            'Zajtra ideme do Tatier na turistiku, vyrážame o 8:00 a budeme tam asi 6 hodín.',
+        gpsCityLabel: 'Martin',
+      );
+      expect(state.activityLocationKnown, isTrue);
+      expect(state.activityLocationLabel, 'Tatry');
+      expect(state.hourLocal, 8);
+      expect(state.groundingStatus, 'sufficient');
+    });
+
+    test('viacdňová cesta nie je ticho zredukovaná na lokálny outfit', () {
+      final state = OutfitContextState.buildFrom(
+        conversation: 'Ideme na tri dni do Prahy.',
+        latestUserText: 'Ideme na tri dni do Prahy.',
+        gpsCityLabel: 'Martin',
+      );
+      expect(state.remoteActivityPlanned, isTrue);
+      expect(state.groundingStatus, 'needs_grounding');
+      expect(state.unresolvedMaterialFields, contains('trip_scope'));
     });
 
     test('zajtra do mesta v Martine → lokalita známa', () {
@@ -1139,6 +1223,15 @@ void main() {
       );
       expect(state.hourExplicit, isTrue);
       expect(state.hourLocal, 15);
+    });
+
+    test('dlhá aktivita parsuje eventové časové okno, nie iba štart', () {
+      final window = StylistTripParser.parseFromConversation(
+        'Zajtra o 8:00 ideme na turistiku asi na 6 hodín.',
+      );
+      expect(window.eventStartHour, 8);
+      expect(window.tripEndHour, 14);
+      expect(window.tripEndEstimated, isFalse);
     });
 
     test('mergeFromAiResponse doplní confidence a eventContext', () {

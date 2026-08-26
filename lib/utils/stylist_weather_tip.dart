@@ -13,8 +13,12 @@ class StylistWeatherTipBuilder {
     required DateTime now,
     required StylistActivityTerrain terrain,
     int? eventHour,
+    bool antecedentPrecipitation = false,
   }) {
     if (terrain != StylistActivityTerrain.wetGround) return false;
+    // A prior wet day remains material for trail/grass/forest footwear even
+    // when the event starts dry.
+    if (antecedentPrecipitation) return true;
     if (!snapshot.fromOpenMeteo || !snapshot.willRain) return false;
 
     final nowH = now.hour;

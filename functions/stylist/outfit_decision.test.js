@@ -13,8 +13,23 @@ test("minimal clarification allows a distinct second question but blocks loops",
   }), "clarify");
   assert.equal(resolveOutfitAction("clarify", {impactFields: ["terrain"]}, {
     clarifiedMaterialFields: ["terrain"],
-  }), "generate_outfit");
-  assert.equal(resolveOutfitAction("clarify", {impactFields: ["style"]}, {}), "generate_outfit");
+  }), "chat");
+  assert.equal(resolveOutfitAction("clarify", {impactFields: ["style"]}, {}), "chat");
+});
+
+test("grounding state blocks generation for all material event dimensions", () => {
+  for (const field of [
+    "activity", "activity_type", "outing_type", "trip_type", "trip_scope",
+    "duration", "trip_length", "number_of_days", "indoor_outdoor", "intensity",
+  ]) {
+    assert.equal(resolveOutfitAction("clarify", {impactFields: [field]}, {
+      clarifiedMaterialFields: [],
+    }), "clarify", field);
+  }
+  assert.equal(resolveOutfitAction("generate_outfit", {}, {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["destination", "activity"],
+  }), "clarify");
 });
 
 test("outfit decision fields are bounded and sanitized", () => {

@@ -23,6 +23,8 @@ const {OUTFIT_FIELD_CATALOG} = require("./stylist/field_catalog");
 const {
   parseOutfitDecisionFields,
   resolveOutfitAction,
+  requiresGroundingClarification,
+  groundingFields,
 } = require("./stylist/outfit_decision");
 const {
   appendStylePreferencesSection,
@@ -387,6 +389,22 @@ function sanitizeStylistAiEventContext(eventContext, outfitContextState) {
     }
   }
   return Object.keys(sanitized).length ? sanitized : null;
+}
+
+function groundingClarificationReply(fields, wasCorrection) {
+  const wanted = new Set((fields || []).map((value) => String(value || "")
+    .trim().toLowerCase()));
+  const prefix = wasCorrection ? "Máš pravdu, to som si nemal domýšľať. " : "";
+  if (wanted.has("destination") && wanted.has("activity")) {
+    return `${prefix}Kam sa chystáte a čo tam budete približne robiť?`;
+  }
+  if (wanted.has("destination")) {
+    return `${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.`;
+  }
+  if (wanted.has("activity") || wanted.has("trip_scope")) {
+    return `${prefix}Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?`;
+  }
+  return `${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.`;
 }
 
 // sem si neskôr môžeš dať config, ak by si menil URL servera
@@ -4083,8 +4101,10 @@ exports.attachCleanImageOnWardrobeWrite = functions
         }
 
         const decision = parseOutfitDecisionFields(parsed);
+        const requestedAction = String(parsed?.action || "chat").trim() || "chat";
+        const groundingRequired = requiresGroundingClarification(outfitContextState);
         let action = resolveOutfitAction(
-          String(parsed?.action || "chat").trim() || "chat",
+          requestedAction,
           decision,
           outfitContextState,
         );
@@ -4095,6 +4115,12 @@ exports.attachCleanImageOnWardrobeWrite = functions
           clarifyReason,
           impactFields,
         } = decision;
+        const effectiveImpactFields = [...new Set([
+          ...impactFields,
+          ...groundingFields(outfitContextState),
+        ])];
+        const actionForcedByGrounding = groundingRequired && action === "clarify" &&
+          requestedAction !== "clarify";
 
         if (action === "clarify" || action === "generate_outfit") {
           logger.info("stylistChat: outfit_decision", {
@@ -4103,11 +4129,11 @@ exports.attachCleanImageOnWardrobeWrite = functions
             decisionRisk,
             assumptions,
             clarifyReason,
-            impactFields,
+            impactFields: effectiveImpactFields,
             clarifiedMaterialFields: outfitContextState?.clarifiedMaterialFields || [],
             tier: routing.tier,
-            actionOverridden: action !== String(parsed?.action || "").trim() &&
-              String(parsed?.action || "").trim() === "clarify",
+            actionOverridden: action !== requestedAction,
+            groundingRequired,
           });
         }
         // Pozn.: NIKDY nepoužívaj `raw` ako fallback pre reply — bol by to surový
@@ -4116,7 +4142,12 @@ exports.attachCleanImageOnWardrobeWrite = functions
         let reply = sanitizeStylistChatReply(replyRaw);
         const replyLooksLikeGarbage =
           !reply || /^[\s{}[\]"',.:;]*$/.test(reply);
-        if (replyLooksLikeGarbage) {
+        if (actionForcedByGrounding) {
+          reply = groundingClarificationReply(
+            effectiveImpactFields,
+            outfitContextState?.userCorrectionDetected === true,
+          );
+        } else if (replyLooksLikeGarbage) {
           reply = action === "generate_outfit" ?
             "Jasné, hneď ti zložím outfit. 👇" :
             "Prepáč, trochu som sa pri tom zamotal 😅 " +
@@ -4162,7 +4193,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           decisionRisk,
           assumptions,
           clarifyReason,
-          impactFields,
+          impactFields: effectiveImpactFields,
           clearShoppingContext,
         });
       } catch (error) {

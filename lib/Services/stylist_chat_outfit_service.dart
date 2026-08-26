@@ -34,8 +34,8 @@ import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import '../domain/wardrobe_v2/native_outfit_engine_v2.dart';
 import '../domain/wardrobe_v2/outfit_composition_v2.dart';
-import 'hourly_weather_service.dart';
-import 'outfit_generation_service.dart';
+import '../Services/hourly_weather_service.dart';
+import '../Services/outfit_generation_service.dart';
 import 'stylist_frozen_candidate_decision_service.dart';
 import 'user_location_service.dart';
 import 'native_wardrobe_v2_runtime.dart';
@@ -213,6 +213,36 @@ class StylistChatOutfitService {
       event,
       conversationHint: conversationHint,
     );
+    final terrain = StylistActivityTerrainClassifier.classify(
+      conversationText: conversationHint,
+      occasion: event.occasion,
+    );
+    // Fetch antecedent precipitation only when terrain makes it material. A
+    // dry-looking start time must not erase yesterday's rain from a forest or
+    // trail footwear decision, while ordinary city chats incur no extra call.
+    final antecedentDay = terrain == StylistActivityTerrain.wetGround
+        ? await _hourlyWeatherService.getWeatherForCityAndDate(
+            city: city,
+            date: event.date.subtract(const Duration(days: 1)),
+          )
+        : null;
+    final antecedentPrecipitation = antecedentDay != null &&
+        antecedentDay.fromOpenMeteo &&
+        antecedentDay.willRain;
+    if (terrain == StylistActivityTerrain.wetGround) {
+      debugPrint(
+        'STYLIST CHAT antecedent_weather '
+        'available=${antecedentDay?.fromOpenMeteo ?? false} '
+        'rain=$antecedentPrecipitation',
+      );
+    }
+    final wetGroundMuddy = StylistWeatherTipBuilder.wetGroundNeedsClosedFootwear(
+      snapshot: dayWeather,
+      now: DateTime.now(),
+      terrain: terrain,
+      eventHour: event.hourLocal,
+      antecedentPrecipitation: antecedentPrecipitation,
+    );
     final occasionProfile = StylistOccasionGuidance.profileFor(
       occasion: event.occasion,
       conversationText: conversationHint,
@@ -228,7 +258,7 @@ class StylistChatOutfitService {
     final footwearGuidance = StylistOccasionGuidance.footwearGuidanceFor(
       weather: weather,
       profile: occasionProfile,
-      wetGroundMuddy: false,
+      wetGroundMuddy: wetGroundMuddy,
     );
     final bottomGuidance = StylistOccasionGuidance.bottomGuidanceFor(
       weather: weather,
@@ -239,7 +269,7 @@ class StylistChatOutfitService {
       dressCode: occasionProfile.dressCode,
       bottomGuidance: bottomGuidance,
       footwearGuidance: footwearGuidance,
-      wetGroundMuddy: false,
+      wetGroundMuddy: wetGroundMuddy,
     );
     final excluded = <String>{
       ...excludedItemIds,
@@ -255,7 +285,7 @@ class StylistChatOutfitService {
         .toList(growable: false);
     if (resolved.isEmpty) return null;
     final context = V2CandidateMatrixContext(
-      weatherProtectionRequired: weather.isRainy || weather.isWindy,
+      weatherProtectionRequired: weather.isRainy || weather.isWindy || wetGroundMuddy,
       minimumFormality: occasionProfile.isElevated ? 5 : 1,
       requiredOccasions: event.occasion == null
           ? const {}
@@ -316,6 +346,7 @@ class StylistChatOutfitService {
               final activity = ActivityOutfitIdentity.evaluateFlexible(
                 outfit: candidate.outfit,
                 intent: outfitIntent,
+                wetGroundMuddy: wetGroundMuddy,
               );
               return V2FlexibleCandidate(
                 candidateId: candidate.candidateId,
@@ -377,7 +408,9 @@ class StylistChatOutfitService {
               'activity': outfitIntent.activityType,
               'occasion': event.occasion,
               'environment': event.locationLabel,
-              'weather': '${weather.tempC}C rain=${weather.isRainy} wind=${weather.isWindy}',
+              'weather': '${weather.tempC}C rain=${weather.isRainy} '
+                  'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
+                  'antecedentRain=$antecedentPrecipitation',
               'formality': occasionProfile.dressCode.id,
             },
           );
@@ -403,11 +436,12 @@ class StylistChatOutfitService {
       wardrobeAnalysis: _wardrobeGapAnalysisV2(selected),
       weather: weather,
       occasionProfile: occasionProfile,
-      wetGroundMuddy: false,
+      wetGroundMuddy: wetGroundMuddy,
       outfitIntent: outfitIntent,
       activityIdentity: ActivityOutfitIdentity.evaluateFlexible(
         outfit: selected,
         intent: outfitIntent,
+        wetGroundMuddy: wetGroundMuddy,
       ),
       finalExplanation: finalExplanation,
       rejectAllReasonCodes: rejectAllReasonCodes,

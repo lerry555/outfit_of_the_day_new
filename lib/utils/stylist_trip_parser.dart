@@ -35,6 +35,11 @@ class StylistTripParser {
 
   static final RegExp _clockPattern = RegExp(r'\b(\d{1,2}):\d{2}\b');
 
+  static final RegExp _durationPattern = RegExp(
+    r'\b(?:asi|cca|približne|priblizne)?\s*(\d{1,2})\s*(?:hod(?:inu|iny|ín|in)?|h)\b',
+    caseSensitive: false,
+  );
+
   static final RegExp _returnPattern = RegExp(
     r'(?:domov|sp[äa]t[ʼ\u0165]?|nasp[äa]t[ʼ\u0165]?|vr[áa]t[ií]m?e?)\s*'
     r'(?:o|okolo|po|do|cca)?\s*(\d{1,2})(?::\d{2})?',
@@ -90,17 +95,29 @@ class StylistTripParser {
 
     // Posledná záchrana: holé časy typu „14:00 ... 22:00“ bez predložky.
     if (eventStart == null || tripEnd == null) {
-      final clockHours = _clockPattern
-          .allMatches(blob)
-          .map((m) => _hour(m.group(1)))
-          .whereType<int>()
-          .toList()
-        ..sort();
+      final clockHours =
+          _clockPattern
+              .allMatches(blob)
+              .map((m) => _hour(m.group(1)))
+              .whereType<int>()
+              .toList()
+            ..sort();
       if (clockHours.isNotEmpty) {
         eventStart ??= clockHours.first;
         if (clockHours.length >= 2) {
           tripEnd ??= clockHours.last;
         }
+      }
+    }
+
+    // A duration belongs to the event window, not merely to prose.  This lets
+    // weather reasoning inspect a long hike/day out as a range instead of one
+    // arbitrary start-hour snapshot.
+    if (eventStart != null && tripEnd == null) {
+      final duration = _durationPattern.firstMatch(blob);
+      final hours = duration == null ? null : _hour(duration.group(1));
+      if (hours != null && hours > 0) {
+        tripEnd = eventStart + hours > 23 ? 23 : eventStart + hours;
       }
     }
 
