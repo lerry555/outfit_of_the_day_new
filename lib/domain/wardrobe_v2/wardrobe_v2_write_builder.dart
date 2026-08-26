@@ -1,5 +1,6 @@
 import 'wardrobe_item_v2.dart';
 import 'wardrobe_ontology_v2.dart';
+import 'season_compatibility_v2.dart';
 
 /// Produces the authoritative V2 portion of an Add Clothing write. Legacy
 /// compatibility fields may coexist in the outer document during cutover.
@@ -29,8 +30,14 @@ abstract final class WardrobeV2WriteBuilder {
     final evidence = analyzer['evidence'] is Map
         ? Map<String, dynamic>.from(analyzer['evidence'] as Map)
         : const <String, dynamic>{};
+    final overrides = {
+      ...(existing['userOverrideFields'] as List? ?? const []).map(
+        (x) => x.toString(),
+      ),
+      ...manuallyEditedFields,
+    };
     dynamic chosen(String field, dynamic analyzed) =>
-        manuallyEditedFields.contains(field) ? existing[field] : analyzed;
+        overrides.contains(field) ? existing[field] : analyzed;
     final colors = chosen('colorProfile', observed['colorProfile']);
     final colorMap = colors is Map
         ? Map<String, dynamic>.from(colors)
@@ -45,12 +52,6 @@ abstract final class WardrobeV2WriteBuilder {
                         : 'unknown')
                     .toString(),
           };
-    final overrides = {
-      ...(existing['userOverrideFields'] as List? ?? const []).map(
-        (x) => x.toString(),
-      ),
-      ...manuallyEditedFields,
-    };
     final sources = <String, dynamic>{
       ...(existing['fieldSources'] is Map
           ? Map<String, dynamic>.from(existing['fieldSources'] as Map)
@@ -79,24 +80,39 @@ abstract final class WardrobeV2WriteBuilder {
         ? Map<String, dynamic>.from(evidence['fieldConfidence'] as Map)
         : const <String, dynamic>{};
     final analyzedWarmth = chosen('warmth', inferred['warmth']);
-    final warmth = (analyzedWarmth as num?)?.toInt() ??
-        definition.warmthTypical ??
-        5;
+    final warmth =
+        (analyzedWarmth as num?)?.toInt() ?? definition.warmthTypical ?? 5;
     if ((definition.warmthMin != null && warmth < definition.warmthMin!) ||
         (definition.warmthMax != null && warmth > definition.warmthMax!)) {
       throw StateError('v2_warmth_out_of_type_range:$canonical');
     }
+    final analyzedSeasons = chosen('seasons', inferred['seasons']);
+    final resolvedSeasons = overrides.contains('seasons')
+        ? List<String>.from(analyzedSeasons as List? ?? const [])
+        : (analyzedSeasons is List && analyzedSeasons.isNotEmpty
+              ? List<String>.from(analyzedSeasons)
+              : SeasonCompatibilityV2.derive(
+                  canonicalType: canonical,
+                  canonicalFamily: definition.canonicalFamily,
+                  layerPosition: definition.defaultLayerPosition,
+                  warmth: warmth,
+                  outfitFunctions: definition.outfitFunctions,
+                  attributes: Map<String, dynamic>.from(
+                    chosen('attributes', observed['attributes']) as Map? ??
+                        const {},
+                  ),
+                ));
     if (!overrides.contains('warmth')) {
       sources['warmth'] = analyzedWarmth is num
           ? 'visual_ai'
           : 'knowledge_base';
-      confidence['warmth'] = analyzedWarmth is num ?
-          (evidenceConfidence['warmth'] as num?)?.toDouble() ?? 0.0 :
-          1.0;
+      confidence['warmth'] = analyzedWarmth is num
+          ? (evidenceConfidence['warmth'] as num?)?.toDouble() ?? 0.0
+          : 1.0;
     }
     if (!overrides.contains('seasons')) {
-      sources['seasons'] ??= 'system';
-      confidence['seasons'] ??= 0.0;
+      sources['seasons'] = 'system';
+      confidence['seasons'] = 1.0;
     }
     confidence.addAll({
       'canonicalType': (identity['confidence'] as num?)?.toDouble() ?? .0,
@@ -130,9 +146,7 @@ abstract final class WardrobeV2WriteBuilder {
       occasionFit: List<String>.from(
         chosen('occasionFit', inferred['occasionFit']) as List? ?? const [],
       ),
-      seasons: List<String>.from(
-        chosen('seasons', inferred['seasons']) as List? ?? const [],
-      ),
+      seasons: resolvedSeasons,
       warmth: warmth,
       attributes: Map<String, dynamic>.from(
         chosen('attributes', observed['attributes']) as Map? ?? const {},

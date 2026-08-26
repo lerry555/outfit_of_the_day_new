@@ -1,12 +1,19 @@
 "use strict";
 const {validateAnalyzerV2}=require("../wardrobe_analyzer_v2_contract");
 const {enrichIdentity,applyAnalyzerResult,validateWardrobeItemV2,artifact}=require("../wardrobe_ontology_v2");
+const {deriveSeasonCompatibilityV2}=require("../season_compatibility_v2");
 function adaptAnalyzerV2ToWardrobeItem(parsed,{existingItem={},provenance={}}={}){
   const checked=validateAnalyzerV2(parsed);if(!checked.ok){const e=new Error("analyzer_v2_invalid");e.code="analyzer_v2_invalid";e.details=checked.errors;throw e;}
-  // V2 does not infer seasonality from an image. An empty list is an explicit
-  // system placeholder, rather than visual evidence or a KB seasonal claim.
-  const base={ontologyVersion:artifact.ontologyVersion,taxonomyVersion:artifact.taxonomyVersion,kbVersion:artifact.kbVersion,...enrichIdentity(parsed.identity.canonicalType),colorProfile:parsed.observed.colorProfile,formality:parsed.inferred.formality,styles:parsed.inferred.styles,occasionFit:parsed.inferred.occasionFit,seasons:[],warmth:parsed.inferred.warmth,attributes:parsed.observed.attributes||{},setMembership:existingItem.setMembership??null,fieldSources:{canonicalType:"visual_ai",seasons:"system"},fieldConfidence:{canonicalType:parsed.identity.confidence,seasons:0,...parsed.evidence.fieldConfidence},userOverrideFields:[...(existingItem.userOverrideFields||[])],analyzerProvenance:{analyzerVersion:parsed.analyzerVersion,analyzerProvider:"google",analyzerModel:parsed.modelVersion,analyzerPromptVersion:provenance.promptVersion||null,analyzerPromptHash:provenance.promptHash||null,taxonomyVersion:artifact.taxonomyVersion,ontologyVersion:artifact.ontologyVersion,kbVersion:artifact.kbVersion}};
-  const merged=applyAnalyzerResult({...base,...existingItem},parsed);const valid=validateWardrobeItemV2(merged,{strict:false});if(!valid.ok){const e=new Error("wardrobe_item_v2_invalid");e.code="wardrobe_item_v2_invalid";e.details=valid.errors;throw e;}return merged;
+  const identity=enrichIdentity(parsed.identity.canonicalType);
+  const overrides=new Set(existingItem.userOverrideFields||[]);
+  const derivedSeasons=deriveSeasonCompatibilityV2({...identity,warmth:parsed.inferred.warmth});
+  const preservedSeasons=Array.isArray(existingItem.seasons)?existingItem.seasons:[];
+  const seasons=overrides.has("seasons")?preservedSeasons:derivedSeasons;
+  const base={ontologyVersion:artifact.ontologyVersion,taxonomyVersion:artifact.taxonomyVersion,kbVersion:artifact.kbVersion,...identity,colorProfile:parsed.observed.colorProfile,formality:parsed.inferred.formality,styles:parsed.inferred.styles,occasionFit:parsed.inferred.occasionFit,seasons,warmth:parsed.inferred.warmth,attributes:parsed.observed.attributes||{},setMembership:existingItem.setMembership??null,fieldSources:{canonicalType:"visual_ai",seasons:overrides.has("seasons")?"user_correction":"system"},fieldConfidence:{canonicalType:parsed.identity.confidence,seasons:1,...parsed.evidence.fieldConfidence},userOverrideFields:[...(existingItem.userOverrideFields||[])],analyzerProvenance:{analyzerVersion:parsed.analyzerVersion,analyzerProvider:"google",analyzerModel:parsed.modelVersion,analyzerPromptVersion:provenance.promptVersion||null,analyzerPromptHash:provenance.promptHash||null,taxonomyVersion:artifact.taxonomyVersion,ontologyVersion:artifact.ontologyVersion,kbVersion:artifact.kbVersion}};
+  const fieldSources={...base.fieldSources,...(existingItem.fieldSources||{})};
+  const fieldConfidence={...base.fieldConfidence,...(existingItem.fieldConfidence||{})};
+  if(!overrides.has("seasons")){fieldSources.seasons="system";fieldConfidence.seasons=1;}
+  const merged=applyAnalyzerResult({...base,...existingItem,seasons,fieldSources,fieldConfidence},parsed);const valid=validateWardrobeItemV2(merged,{strict:false});if(!valid.ok){const e=new Error("wardrobe_item_v2_invalid");e.code="wardrobe_item_v2_invalid";e.details=valid.errors;throw e;}return merged;
 }
 function adaptAnalyzerV2ToClientResponse(parsed,{provenance={}}={}){
   const wardrobeV2=adaptAnalyzerV2ToWardrobeItem(parsed,{provenance});

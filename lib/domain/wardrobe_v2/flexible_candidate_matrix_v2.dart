@@ -28,7 +28,11 @@ class V2CandidateMatrixContext {
     this.scoringFormalityFloor,
     this.styleTaste = StylePreferenceTaste.empty,
   });
-  final bool weatherProtectionRequired, preferOnePiece, isRainy, isWindy, outdoor;
+  final bool weatherProtectionRequired,
+      preferOnePiece,
+      isRainy,
+      isWindy,
+      outdoor;
   final int minimumFormality, maxCandidates;
   final int? tempC, feelsLikeC, eveningTempC, scoringFormalityFloor;
   final String seasonKey;
@@ -37,8 +41,7 @@ class V2CandidateMatrixContext {
   final Set<String> requestedItemIds, forbiddenCanonicalTypes;
   final StylePreferenceTaste styleTaste;
 
-  int get decisionFormalityFloor =>
-      scoringFormalityFloor ?? minimumFormality;
+  int get decisionFormalityFloor => scoringFormalityFloor ?? minimumFormality;
 }
 
 class V2FlexibleCandidate {
@@ -191,6 +194,7 @@ abstract final class V2FlexibleOutfitScorer {
         minimumFormality: context.decisionFormalityFloor,
         requestedItemIds: context.requestedItemIds,
         forbiddenCanonicalTypes: context.forbiddenCanonicalTypes,
+        seasonKey: context.seasonKey,
       ),
     );
     final contextualSet = suitability.remove('setContextual') ?? 0.0;

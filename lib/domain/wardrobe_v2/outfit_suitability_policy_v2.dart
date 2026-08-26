@@ -32,10 +32,7 @@ abstract final class OutfitSuitabilityPolicyV2 {
       return 7;
     }
     if (_is(act, const {'meeting', 'important_meeting', 'business_meeting'}) ||
-        _is(
-          occ,
-          const {'meeting', 'important_meeting', 'business_meeting'},
-        )) {
+        _is(occ, const {'meeting', 'important_meeting', 'business_meeting'})) {
       return 6;
     }
     if (_is(act, const {'semi_formal'}) ||
@@ -57,17 +54,14 @@ abstract final class OutfitSuitabilityPolicyV2 {
 
   static bool isTerrainActivity(String activityType) {
     final act = activityType.trim().toLowerCase();
-    return _is(
-      act,
-      const {
-        'hike',
-        'hiking',
-        'mountains',
-        'mushroom',
-        'outdoor',
-        'nature_walk',
-      },
-    );
+    return _is(act, const {
+      'hike',
+      'hiking',
+      'mountains',
+      'mushroom',
+      'outdoor',
+      'nature_walk',
+    });
   }
 
   static bool isAthleticActivity(String activityType) {
@@ -114,8 +108,7 @@ abstract final class OutfitSuitabilityPolicyV2 {
             item.layerPosition == 'mid')) {
       return true;
     }
-    if (isOpenFootwear(type) &&
-        (isRainy || (temp != null && temp <= 8))) {
+    if (isOpenFootwear(type) && (isRainy || (temp != null && temp <= 8))) {
       return true;
     }
     if (isTerrainActivity(activityType) && isFormalFootwear(type)) {
@@ -124,9 +117,9 @@ abstract final class OutfitSuitabilityPolicyV2 {
     return false;
   }
 
-  /// Rejects only footwear whose V2 thermal/season facts make it plainly
-  /// unsuitable. Rain can improve a suitable closed shoe's rank, but may not
-  /// rescue seasonally excluded or overly warm boots.
+  /// Rejects only footwear whose V2 thermal facts make it plainly unsuitable.
+  /// Rain can improve a suitable closed shoe's rank, but may not rescue an
+  /// overly warm boot.
   static bool isFootwearPhysicallyUnsuitableForConditions(
     WardrobeItemV2 item, {
     int? tempC,
@@ -138,7 +131,6 @@ abstract final class OutfitSuitabilityPolicyV2 {
     }
     final type = item.canonicalType.toLowerCase();
     final seasons = item.seasons.map(_normalizedSeason).toSet();
-    final currentSeason = _normalizedSeason(seasonKey);
     final winterOnly =
         seasons.isNotEmpty && seasons.every((season) => season == 'winter');
     final supportsWarmSeason = seasons.any(
@@ -147,19 +139,12 @@ abstract final class OutfitSuitabilityPolicyV2 {
     final isBoot = isBootFootwear(type);
     final winterType = type.contains('winter') || type.contains('snow');
 
-    // The V2 season facts are authoritative when present. In particular, a
-    // moderate Chelsea/ankle boot marked autumn/winter is not made suitable
-    // for a summer event simply because rain promotes closed footwear.
-    final seasonMismatch =
-        currentSeason.isNotEmpty &&
-        seasons.isNotEmpty &&
-        !seasons.contains('all_season') &&
-        !seasons.contains(currentSeason);
-    if (currentSeason == 'summer' && seasonMismatch && isBoot) return true;
-
     if (tempC == null) return false;
 
-    if (tempC >= 18 && winterOnly) return true;
+    // Calendar season is deliberately not an eligibility gate. A cold March,
+    // April or November day can require winter-capable footwear, while a warm
+    // January day must not select it merely because the date says winter.
+    if (tempC >= 14 && winterOnly && item.warmth >= 7) return true;
     if (tempC >= 18 && isBoot && winterType && item.warmth >= 7) {
       return true;
     }
@@ -172,6 +157,23 @@ abstract final class OutfitSuitabilityPolicyV2 {
       return true;
     }
     return false;
+  }
+
+  /// A small ranking prior only. It can never make an item ineligible or
+  /// rescue one that failed a physical weather/thermal check.
+  static double calendarSeasonCompatibilityAdjustment(
+    WardrobeItemV2 item, {
+    String seasonKey = '',
+  }) {
+    final current = _normalizedSeason(seasonKey);
+    final seasons = item.seasons.map(_normalizedSeason).toSet();
+    if (current.isEmpty ||
+        seasons.isEmpty ||
+        seasons.contains('all_season') ||
+        seasons.contains(current)) {
+      return 0;
+    }
+    return -0.35;
   }
 
   static String _normalizedSeason(String value) {
@@ -191,7 +193,9 @@ abstract final class OutfitSuitabilityPolicyV2 {
 
   static bool isOpenFootwear(String canonicalType) {
     final t = canonicalType.toLowerCase();
-    return t.contains('sandal') || t.contains('flip_flop') || t.contains('slide');
+    return t.contains('sandal') ||
+        t.contains('flip_flop') ||
+        t.contains('slide');
   }
 
   static bool isFormalFootwear(String canonicalType) {
@@ -278,6 +282,7 @@ abstract final class OutfitSuitabilityPolicyV2 {
     int minimumFormality = 1,
     Set<String> requestedItemIds = const {},
     Set<String> forbiddenCanonicalTypes = const {},
+    String seasonKey = '',
   }) {
     final items = outfit.items.map((x) => x.item).toList(growable: false);
     final ids = outfit.items.map((x) => x.itemId).toSet();
@@ -330,6 +335,12 @@ abstract final class OutfitSuitabilityPolicyV2 {
         floor: floor,
         activityType: activityType,
         tempC: temp,
+      ),
+      'calendarSeasonCompatibility': items.fold(
+        0.0,
+        (score, item) =>
+            score +
+            calendarSeasonCompatibilityAdjustment(item, seasonKey: seasonKey),
       ),
     };
   }
@@ -488,15 +499,15 @@ abstract final class OutfitSuitabilityPolicyV2 {
     }
     if (floor >= 5 &&
         pool.any(
-          (item) => item.canonicalType.toLowerCase().contains('track_jacket') ||
+          (item) =>
+              item.canonicalType.toLowerCase().contains('track_jacket') ||
               item.canonicalType.toLowerCase().contains('track_pant'),
         )) {
       score += strongPenalty;
     }
     if (floor >= 7 &&
         pool.any(
-          (item) =>
-              item.canonicalType.toLowerCase().contains('hoodie'),
+          (item) => item.canonicalType.toLowerCase().contains('hoodie'),
         )) {
       score += strongPenalty;
     }
@@ -692,9 +703,4 @@ abstract final class OutfitSuitabilityPolicyV2 {
       options.contains(value.trim().toLowerCase());
 }
 
-enum DecisionQualityGrade {
-  excellent,
-  good,
-  acceptableWithCompromise,
-  weak,
-}
+enum DecisionQualityGrade { excellent, good, acceptableWithCompromise, weak }

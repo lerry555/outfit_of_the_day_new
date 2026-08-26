@@ -249,61 +249,10 @@ void main() {
     expect(built.fieldSources['styles'], 'user_correction');
   });
 
-  test('Add Clothing builder keeps light Chelsea warmth in range and defaults to its KB typical value', () {
-    final inferred = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
-      ontology: ontology,
-      analyzer: {
-        'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
-        'observed': {
-          'colorProfile': {
-            'primary': {'family': 'black'},
-            'secondary': null,
-            'accents': [],
-            'metalTone': 'none',
-            'hardwareTone': 'none',
-          },
-          'attributes': {},
-        },
-        'inferred': {
-          'formality': 5,
-          'styles': ['smart_casual'],
-          'occasionFit': ['business_casual'],
-          'warmth': 4,
-        },
-      },
-    );
-    expect(inferred.warmth, 4);
-    expect(inferred.fieldSources['warmth'], 'visual_ai');
-
-    final defaulted = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
-      ontology: ontology,
-      analyzer: {
-        'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
-        'observed': {
-          'colorProfile': {
-            'primary': {'family': 'black'},
-            'secondary': null,
-            'accents': [],
-            'metalTone': 'none',
-            'hardwareTone': 'none',
-          },
-          'attributes': {},
-        },
-        'inferred': {
-          'formality': 5,
-          'styles': ['smart_casual'],
-          'occasionFit': ['business_casual'],
-        },
-      },
-    );
-    expect(defaulted.warmth, 6);
-    expect(defaulted.fieldSources['warmth'], 'knowledge_base');
-    expect(defaulted.fieldSources['seasons'], 'system');
-  });
-
-  test('Add Clothing builder rejects a Chelsea warmth outside its ontology range', () {
-    expect(
-      () => WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+  test(
+    'Add Clothing builder keeps light Chelsea warmth in range and defaults to its KB typical value',
+    () {
+      final inferred = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
         ontology: ontology,
         analyzer: {
           'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
@@ -321,13 +270,105 @@ void main() {
             'formality': 5,
             'styles': ['smart_casual'],
             'occasionFit': ['business_casual'],
-            'warmth': 9,
+            'warmth': 4,
           },
         },
-      ),
-      throwsA(isA<StateError>()),
+      );
+      expect(inferred.warmth, 4);
+      expect(inferred.fieldSources['warmth'], 'visual_ai');
+      expect(inferred.seasons, ['jar', 'jeseň']);
+      expect(inferred.fieldConfidence['seasons'], 1.0);
+
+      final defaulted = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+        ontology: ontology,
+        analyzer: {
+          'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
+          'observed': {
+            'colorProfile': {
+              'primary': {'family': 'black'},
+              'secondary': null,
+              'accents': [],
+              'metalTone': 'none',
+              'hardwareTone': 'none',
+            },
+            'attributes': {},
+          },
+          'inferred': {
+            'formality': 5,
+            'styles': ['smart_casual'],
+            'occasionFit': ['business_casual'],
+          },
+        },
+      );
+      expect(defaulted.warmth, 6);
+      expect(defaulted.fieldSources['warmth'], 'knowledge_base');
+      expect(defaulted.fieldSources['seasons'], 'system');
+      expect(defaulted.seasons, ['jar', 'jeseň']);
+    },
+  );
+
+  test('Add Clothing builder never replaces a user season override', () {
+    final built = WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+      ontology: ontology,
+      analyzer: {
+        'identity': {'canonicalType': 'winter_boots', 'confidence': .94},
+        'observed': {
+          'colorProfile': {
+            'primary': {'family': 'black'},
+            'secondary': null,
+            'accents': [],
+            'metalTone': 'none',
+            'hardwareTone': 'none',
+          },
+          'attributes': {},
+        },
+        'inferred': {
+          'formality': 3,
+          'styles': ['casual'],
+          'occasionFit': ['casual'],
+          'warmth': 8,
+        },
+      },
+      existing: {
+        'seasons': ['celoročne'],
+        'userOverrideFields': ['seasons'],
+        'fieldSources': {'seasons': 'user_correction'},
+      },
     );
+    expect(built.seasons, ['celoročne']);
+    expect(built.fieldSources['seasons'], 'user_correction');
   });
+
+  test(
+    'Add Clothing builder rejects a Chelsea warmth outside its ontology range',
+    () {
+      expect(
+        () => WardrobeV2WriteBuilder.fromAnalyzerAndKb(
+          ontology: ontology,
+          analyzer: {
+            'identity': {'canonicalType': 'chelsea_boots', 'confidence': .94},
+            'observed': {
+              'colorProfile': {
+                'primary': {'family': 'black'},
+                'secondary': null,
+                'accents': [],
+                'metalTone': 'none',
+                'hardwareTone': 'none',
+              },
+              'attributes': {},
+            },
+            'inferred': {
+              'formality': 5,
+              'styles': ['smart_casual'],
+              'occasionFit': ['business_casual'],
+              'warmth': 9,
+            },
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+    },
+  );
 
   test('swap, search and trip projections consume V2 semantics', () {
     final earrings = item('earrings', 'jewelry', ['ears'], 'not_applicable');
@@ -676,7 +717,10 @@ void main() {
       resolved('shorts', item('shorts', 'bottom', ['lower_body'], 'outer')),
       resolved('trousers', item('trousers', 'bottom', ['lower_body'], 'outer')),
       resolved('dress', item('dress', 'one_piece', ['full_body'], 'outer')),
-      resolved('shoes', item('sneakers', 'footwear', ['feet'], 'not_applicable')),
+      resolved(
+        'shoes',
+        item('sneakers', 'footwear', ['feet'], 'not_applicable'),
+      ),
     ], const NativeOutfitRequestV2(tempC: 28))!;
     expect(
       outfit.items.any(
@@ -690,50 +734,59 @@ void main() {
     expect(outfit.items.any((x) => x.itemId == 'dress'), isFalse);
   });
 
-  test('engine skips heavy outerwear on a hot day when a lighter option exists', () {
-    ResolvedWardrobeItemV2 resolved(String id, WardrobeItemV2 value) =>
-        ResolvedWardrobeItemV2(itemId: id, item: value, raw: const {});
-    WardrobeItemV2 warm(
-      String type,
-      String family,
-      List<String> slots,
-      String layer,
-      int warmth,
-    ) => WardrobeItemV2(
-      canonicalType: type,
-      canonicalFamily: family,
-      bodySlots: slots,
-      layerPosition: layer,
-      outfitFunctions: const [],
-      colorProfile: const ColorProfileV2(
-        primary: SemanticColorV2(family: 'black'),
-        metalTone: 'none',
-        hardwareTone: 'none',
-      ),
-      formality: 3,
-      styles: const [],
-      occasionFit: const [],
-      seasons: const [],
-      warmth: warmth,
-      attributes: const {},
-      fieldSources: const {'canonicalType': 'visual_ai'},
-      fieldConfidence: const {'canonicalType': .9},
-      userOverrideFields: const [],
-    );
-    final outfit = NativeOutfitEngineV2.compose([
-      resolved('top', item('t_shirt', 'top', ['upper_body'], 'base')),
-      resolved('jeans', item('jeans', 'bottom', ['lower_body'], 'outer')),
-      resolved(
-        'winter',
-        warm('winter_jacket', 'outerwear', ['upper_body'], 'outer', 9),
-      ),
-      resolved(
-        'rain',
-        warm('rain_jacket', 'outerwear', ['upper_body'], 'outer', 4),
-      ),
-      resolved('shoes', item('sneakers', 'footwear', ['feet'], 'not_applicable')),
-    ], const NativeOutfitRequestV2(tempC: 32, weatherProtectionRequired: true))!;
-    expect(outfit.items.any((x) => x.itemId == 'winter'), isFalse);
-    expect(outfit.items.any((x) => x.itemId == 'rain'), isTrue);
-  });
+  test(
+    'engine skips heavy outerwear on a hot day when a lighter option exists',
+    () {
+      ResolvedWardrobeItemV2 resolved(String id, WardrobeItemV2 value) =>
+          ResolvedWardrobeItemV2(itemId: id, item: value, raw: const {});
+      WardrobeItemV2 warm(
+        String type,
+        String family,
+        List<String> slots,
+        String layer,
+        int warmth,
+      ) => WardrobeItemV2(
+        canonicalType: type,
+        canonicalFamily: family,
+        bodySlots: slots,
+        layerPosition: layer,
+        outfitFunctions: const [],
+        colorProfile: const ColorProfileV2(
+          primary: SemanticColorV2(family: 'black'),
+          metalTone: 'none',
+          hardwareTone: 'none',
+        ),
+        formality: 3,
+        styles: const [],
+        occasionFit: const [],
+        seasons: const [],
+        warmth: warmth,
+        attributes: const {},
+        fieldSources: const {'canonicalType': 'visual_ai'},
+        fieldConfidence: const {'canonicalType': .9},
+        userOverrideFields: const [],
+      );
+      final outfit = NativeOutfitEngineV2.compose(
+        [
+          resolved('top', item('t_shirt', 'top', ['upper_body'], 'base')),
+          resolved('jeans', item('jeans', 'bottom', ['lower_body'], 'outer')),
+          resolved(
+            'winter',
+            warm('winter_jacket', 'outerwear', ['upper_body'], 'outer', 9),
+          ),
+          resolved(
+            'rain',
+            warm('rain_jacket', 'outerwear', ['upper_body'], 'outer', 4),
+          ),
+          resolved(
+            'shoes',
+            item('sneakers', 'footwear', ['feet'], 'not_applicable'),
+          ),
+        ],
+        const NativeOutfitRequestV2(tempC: 32, weatherProtectionRequired: true),
+      )!;
+      expect(outfit.items.any((x) => x.itemId == 'winter'), isFalse);
+      expect(outfit.items.any((x) => x.itemId == 'rain'), isTrue);
+    },
+  );
 }

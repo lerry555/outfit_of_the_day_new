@@ -61,13 +61,12 @@ final _formalShoes = _item(
   seasons: const ['celoročne'],
 );
 final _blackAnkleBoots = _item(
-  // Mirrors the observed production-item class: a light Chelsea/ankle boot
-  // can legitimately have warmth 4, while its autumn/winter season facts
-  // still make it unsuitable for a late-summer rainy restaurant candidate.
+  // A genuinely warm Chelsea/ankle boot remains thermally unsuitable for a
+  // warm late-summer restaurant candidate. Calendar season is not the gate.
   type: 'chelsea_boots',
   family: 'footwear',
   slots: const ['feet'],
-  warmth: 4,
+  warmth: 6,
   formality: 5,
   seasons: const ['jeseň', 'zima'],
 );
@@ -179,12 +178,12 @@ void main() {
   });
 
   test(
-    'late-summer rain excludes moderate Chelsea ankle boots before frozen candidates',
+    'warm late-summer rain excludes thermally heavy Chelsea ankle boots before frozen candidates',
     () {
       final matrix = V2FlexibleCandidateMatrix.generate(
         wardrobe: _lateSummerRestaurantWardrobe(),
         context: const V2CandidateMatrixContext(
-          tempC: 17,
+          tempC: 22,
           seasonKey: 'let',
           isRainy: true,
           weatherProtectionRequired: true,
