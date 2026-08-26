@@ -1429,7 +1429,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     final alreadyAsked = _outfitContextState.clarifiedMaterialFields
         .map((value) => value.trim().toLowerCase())
         .toSet();
-    if (effectiveAction == 'clarify' &&
+    if (_outfitContextState.groundingStatus != 'needs_grounding' &&
+        effectiveAction == 'clarify' &&
         (requestedImpactFields.isEmpty ||
             requestedImpactFields.every(alreadyAsked.contains))) {
       // A malformed/repeated clarification may be unhelpful, but it must not
@@ -2324,10 +2325,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     required String fallbackLocation,
   }) {
     final conversation = _conversationHintText();
-    final inferred = StylistDestinationParser.inferFromConversation(
-      conversation,
-      exclude: _unresolvableDestinations,
-    );
+    final inferred = _outfitContextState.groundingStatus == 'sufficient'
+        ? _outfitContextState.activityLocationLabel
+        : null;
     final base = StylistChatEventContext.fromDynamic(
       rawEvent,
       now: DateTime.now(),
@@ -3092,10 +3092,13 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     bool allowGpsEventFallback = true,
   }) async {
     final conversation = _conversationHintText();
-    final dest = StylistDestinationParser.inferFromConversation(
-      conversation,
-      exclude: _unresolvableDestinations,
-    );
+    // Resolve an event destination only from the authoritative grounding
+    // state. A correction can quote an assistant's invented city ("Martin"),
+    // so reparsing the complete text here would turn the quote into weather
+    // evidence before the user has supplied an actual destination.
+    final dest = _outfitContextState.groundingStatus == 'sufficient'
+        ? _outfitContextState.activityLocationLabel
+        : null;
     final date = _eventDateFromConversation(conversation);
     final dayLabel = _dayLabelForDate(date);
     if (dest != null && StylistDestinationParser.isPlausibleDestination(dest)) {
