@@ -6,10 +6,14 @@
 
 const {
   createOpenAiRoleTransport,
+  createAnthropicExplanationTransport,
 } = require("./ai_stylist_role_transport_v1");
 const {
   createConversationBrainExplanationTransportV1,
 } = require("./conversation_brain_v1");
+const {
+  CONVERSATION_BRAIN_VERSION,
+} = require("./conversation_brain_persona_v1");
 
 const CONTRACT_VERSION = 1;
 const MAX_CANDIDATES = 12;
@@ -107,7 +111,7 @@ function normalizeCompromiseDetails(value) {
 
 // This snapshot is immutable and must describe precisely the frozen item set.
 // It is retained server-side with IDs for correlation, then IDs are removed
-// before the payload reaches the user-facing conversation brain.
+// before the payload reaches either user-facing explanation model.
 function normalizePresentationItems(value, itemIds) {
   if (value == null) return Object.freeze([]); // Allows already-released clients.
   if (!Array.isArray(value) || value.length !== itemIds.length) return null;
@@ -174,8 +178,8 @@ function explanationPayload(normalized, decision) {
   return Object.freeze({
     contractVersion: "FrozenOutfitExplanationRequestV1",
     effectiveAction: decision.action,
-    // Never transmit candidate or item IDs to the user-facing brain. It
-    // receives only this presentation-safe description of the immutable set.
+    // Never transmit candidate or item IDs to a user-facing explanation model.
+    // It receives only this presentation-safe description of the immutable set.
     userFacingSelectedOutfit: selected ? selected.presentationItems.map((item) => ({
       name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,
     })) : [],
@@ -202,17 +206,22 @@ function isUserFacingExplanationSafe(value) {
   ].some((pattern) => pattern.test(lower));
 }
 
+function brainRequested(data) {
+  return cleanText(data && data.conversationBrainVersion, 40) ===
+    CONVERSATION_BRAIN_VERSION;
+}
+
 function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecret, execute}) {
-  // resolveAnthropicSecret is retained in the public constructor for one
-  // compatibility cycle so the deployed callable and existing callers do not
-  // need to change at the same time. Brain V1 no longer sends explanation
-  // requests to Anthropic.
   if (typeof resolveOpenAISecret !== "function" || typeof resolveAnthropicSecret !== "function" ||
       typeof execute !== "function") throw new Error("frozen_stylist_authority_dependencies_missing");
   const decisionClient = createOpenAiRoleTransport({
     role: "finalCandidateDecision", credentialProvider: resolveOpenAISecret, execute,
   });
-  const explanationClient = createConversationBrainExplanationTransportV1({
+  const legacyExplanationClient = createAnthropicExplanationTransport({
+    credentialProvider: resolveAnthropicSecret,
+    execute,
+  });
+  const brainExplanationClient = createConversationBrainExplanationTransportV1({
     credentialProvider: resolveOpenAISecret,
     execute,
   });
@@ -249,6 +258,8 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
           decision = validateDecision(normalized.frozenCandidates, result.value);
         }
       }
+      const useBrain = brainRequested(data);
+      const explanationClient = useBrain ? brainExplanationClient : legacyExplanationClient;
       const explanationResult = await explanationClient.run(explanationPayload(normalized, decision));
       const explanationValid = explanationResult.ok &&
         isUserFacingExplanationSafe(explanationResult.value.explanation);
@@ -265,6 +276,7 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
         explanationProviderFailure: explanationValid ? null :
           explanationResult.ok ? "explanation_user_facing_contract_invalid" :
             explanationResult.failureCode || "explanation_provider_failure",
+        conversationBrainVersion: useBrain ? CONVERSATION_BRAIN_VERSION : null,
       });
     },
   });
@@ -272,6 +284,6 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
 
 module.exports = {
   CONTRACT_VERSION, normalizeRequest, validateDecision, explanationPayload,
-  deterministicExplanation, isUserFacingExplanationSafe,
+  deterministicExplanation, isUserFacingExplanationSafe, brainRequested,
   createFrozenStylistAuthority,
 };
