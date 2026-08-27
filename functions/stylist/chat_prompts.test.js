@@ -31,7 +31,9 @@ test("fast and premium prompts include saved style preference precedence", () =>
 
 test("premium prompt keeps event facts grounded before outfit generation", () => {
   const prompt = buildChatSystemPrompt("premium");
-  assert.match(prompt, /groundingStatus = needs_grounding/);
+  assert.match(prompt, /unresolvedMaterialFields/);
+  assert.match(prompt, /semanticGrounding/);
+  assert.match(prompt, /user_explicit/);
   assert.match(prompt, /GPS je systémový fakt/);
   assert.match(prompt, /Predošlé texty asistenta sú NEAUTORITATÍVNE/);
   assert.match(prompt, /„výlet“/);
