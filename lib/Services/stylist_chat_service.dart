@@ -298,7 +298,7 @@ class StylistChatService {
             exists: true,
             status: (data['status'] ?? '').toString(),
             result: rawResult is Map
-                ? Map<String, dynamic>.from(rawResult as Map)
+                ? Map<String, dynamic>.from(rawResult)
                 : null,
           );
         });
