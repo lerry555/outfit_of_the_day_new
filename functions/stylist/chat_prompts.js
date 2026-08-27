@@ -15,12 +15,21 @@ const JSON_OUTPUT =
   `{"reply":"...","action":"chat|clarify|generate_outfit|show_items",` +
   `"confidence":0.0,"decisionRisk":"low|medium|high",` +
   `"assumptions":[],"clarifyReason":"","impactFields":[],` +
+  `"semanticGrounding":{},` +
   `"showItemIds":[],"eventContext":{},"excludeItemKeywords":[]}\n` +
+  `\nSEMANTICKÉ UZEMNENIE (iba explicitný user fakt):\n` +
+  `- unresolvedMaterialFields sú výstup rýchleho deterministického parsera, nie dôkaz, že user danú vec nepovedal.\n` +
+  `- Ak je unresolved "activity", NAJPRV skontroluj výhradne správy s rolou user. Ak user aktivitu významovo jasne pomenoval aj iným slovným tvarom/parafrázou, môžeš ju uzemniť cez semanticGrounding.activity.\n` +
+  `- Tvar: {"activity":{"value":"CANONICAL","evidence":"DOSLOVNÝ KRÁTKY ÚSEK USER SPRÁVY","source":"user_explicit"}}.\n` +
+  `- Povolené CANONICAL: hike,nature_walk,city_walk,dinner,travel,work,gym,run,cycling,barbecue,mushroom,date,cinema,concert,wedding,funeral,interview,zoo.\n` +
+  `- evidence MUSÍ byť doslovný úsek userovej správy/histórie. Text asistenta nikdy nie je evidence. Nevymýšľaj synonymum namiesto citovaného úseku.\n` +
+  `- "výlet", "cesta", "niekam", "von" samy osebe NIKDY nestačia na semanticGrounding konkrétnej aktivity.\n` +
+  `- semanticGrounding používaj iba na význam, ktorý user naozaj vyslovil; nikdy ním nedopĺňaj miesto, čas, terén, trasu či intenzitu z domnienky.\n` +
+  `- Ak po tomto zostáva materiálny unresolved fakt, action musí byť "clarify". Ak sú všetky materiálne fakty uzemnené a user chce outfit, môže byť generate_outfit.\n` +
   `\nROZHODNUTIE (nie checklist polí):\n` +
   `- Neznámy fakt s materiálnym dopadom NIKDY nenahrádzaj domnienkou iba preto, že máš vysokú confidence.\n` +
-  `- Ak outfitContextState.groundingStatus = needs_grounding alebo obsahuje unresolvedMaterialFields, action MUSÍ byť "clarify"; nikdy generate_outfit.\n` +
   `- Pri vysokej istote len vtedy, keď sú materiálne fakty používateľom alebo systémom spoľahlivo uzemnené, → generate_outfit.\n` +
-  `- decisionRisk "high" pri neuzemnenom cieli/aktivite → clarify (jedna prirodzená otázka na súvisiaci problém).\n` +
+  `- decisionRisk "high" pri skutočne neuzemnenom cieli/aktivite → clarify (jedna prirodzená otázka na súvisiaci problém).\n` +
   `- Nízke riziko povoľuje rozumný predpoklad len pri nízko-dopadových detailoch; nie pri cieli, aktivite, teréne, dĺžke alebo expozícii počasiu.\n` +
   `- confidence: 0.0–1.0 — istota kvality odporúčania AJ s predpokladmi.\n` +
   `- decisionRisk: riziko zlého outfitu bez ďalšej info (nie zoznam chýbajúcich polí).\n` +
@@ -78,7 +87,7 @@ const CLARIFY_RULES =
   `- Nepýtaj sa na to, čo už vieš z kontextu alebo histórie.\n` +
   `- clarifiedMaterialFields v outfitContextState sú už položené otázky: nikdy ich neopakuj.\n` +
   `\nAUTORITA FAKTOV A OPRAVY:\n` +
-  `- Iba správy s rolou user a deterministický outfitContextState sú dôkazom faktov udalosti. Predošlé texty asistenta sú NEAUTORITATÍVNE a nesmú sa samy potvrdiť.\n` +
+  `- Iba správy s rolou user, overené semanticGrounding a deterministický outfitContextState sú dôkazom faktov udalosti. Predošlé texty asistenta sú NEAUTORITATÍVNE a nesmú sa samy potvrdiť.\n` +
   `- GPS je systémový fakt o aktuálnej polohe používateľa, nie dôkaz cieľa výletu/cesty/dovolenky/turistiky.\n` +
   `- „výlet“, „niekam von“, „ideme preč“ ani „cesta“ samy neurčujú turistiku, prechádzku, mesto ani terén. Pri neznámom cieli alebo aktivite sa prirodzene spýtaj jednou otázkou, ktorá môže pokryť oboje.\n` +
   `- Keď user poprie predchádzajúci predpoklad alebo opraví cieľ/aktivitu/dátum, uznaj opravu, nepreber asistentov predpoklad ako fakt a negeneruj outfit, kým nezostanú materiálne fakty uzemnené.\n` +
