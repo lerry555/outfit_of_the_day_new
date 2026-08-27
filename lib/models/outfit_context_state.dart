@@ -354,6 +354,15 @@ class OutfitContextState {
         blob.contains('lietadl')) {
       return 'travel';
     }
+    // Slovak users commonly say "ideme na túru" rather than "turistika".
+    // Treat those explicit forms as hiking, while keeping generic "výlet"
+    // unresolved so the app still asks what kind of outing it is.
+    if (RegExp(
+      r'\b(?:túra|túru|túre|túrou|tura|turu|ture|turou|turistika|turistiku|turistike|turistikou|hike|hiking|trek\w*)\b',
+      caseSensitive: false,
+    ).hasMatch(blob)) {
+      return 'hike';
+    }
     for (final hint in _remoteActivityHints) {
       if (blob.contains(hint)) return hint;
     }
