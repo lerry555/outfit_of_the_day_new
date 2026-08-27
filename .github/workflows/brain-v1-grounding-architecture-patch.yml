@@ -1,0 +1,230 @@
+name: Brain V1 grounding architecture patch
+
+on:
+  push:
+    branches: [brain-v1-experiment]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message == 'chore: run Brain V1 grounding architecture patch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 0
+
+      - name: Apply systemic grounding patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def read(path):
+              return Path(path).read_text(encoding='utf-8')
+
+          def write(path, text):
+              Path(path).write_text(text, encoding='utf-8')
+
+          def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 match, found {count}')
+              return text.replace(old, new, 1)
+
+          # 1) Client: deterministic state may force clarify for safety, but when
+          # Brain itself already chose clarify it owns the wording. The client
+          # must not overwrite a valid Brain reply with a legacy form sentence.
+          path = 'lib/screens/stylist_chat_screen.dart'
+          s = read(path)
+          s = replace_once(
+              s,
+              "import '../utils/stylist_occasion_guidance.dart';\n",
+              "import '../utils/stylist_occasion_guidance.dart';\nimport '../utils/stylist_semantic_activity.dart';\n",
+              'client semantic import',
+          )
+          old = """      response['reply'] = _groundingClarificationText(
+        _outfitContextState.unresolvedMaterialFields,
+        correction: _outfitContextState.userCorrectionDetected,
+      );
+"""
+          new = """      final brainReply = (response['reply'] ?? '').toString().trim();
+      final brainAlreadyClarified = action == 'clarify' && brainReply.isNotEmpty;
+      if (!brainAlreadyClarified) {
+        response['reply'] = _groundingClarificationText(
+          _outfitContextState.unresolvedMaterialFields,
+          correction: _outfitContextState.userCorrectionDetected,
+        );
+      }
+"""
+          s = replace_once(s, old, new, 'client reply ownership')
+
+          replacements = {
+              'Kam sa chystáte a čo tam budete približne robiť?': 'Kam sa chystáš a čo tam budeš približne robiť?',
+              'Čo budete po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.': 'Čo budeš po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.',
+              'Čo budete počas pobytu približne robiť a kedy cestujete?': 'Čo budeš počas pobytu približne robiť a kedy cestuješ?',
+              'Ešte kam sa chystáte? Podľa miesta vyberiem správne počasie.': 'Ešte kam sa chystáš? Podľa miesta vyberiem správne počasie.',
+              'Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.': 'Kam sa chystáš? Podľa miesta vyberiem vhodné počasie aj outfit.',
+              'Čo budete po príchode približne robiť? To rozhodne, či má byť outfit hlavne pohodlný, alebo aj upravenejší.': 'Čo budeš po príchode približne robiť? To rozhodne, či má byť outfit hlavne pohodlný, alebo aj upravenejší.',
+              'Čo máte počas pobytu v pláne? Na celodenné chodenie po meste a na lepšiu večeru sa balí trochu inak.': 'Čo máš počas pobytu v pláne? Na celodenné chodenie po meste a na lepšiu večeru sa balí trochu inak.',
+              'Čo tam budete približne robiť?': 'Čo tam budeš približne robiť?',
+              'Kedy cestujete? Podľa termínu overím správne počasie.': 'Kedy cestuješ? Podľa termínu overím správne počasie.',
+          }
+          for old_text, new_text in replacements.items():
+              if old_text not in s:
+                  raise SystemExit(f'client fallback copy missing: {old_text}')
+              s = s.replace(old_text, new_text)
+
+          old_log = """        'location=${_outfitContextState.activityLocationLabel ?? '-'} '
+        'correction=${_outfitContextState.userCorrectionDetected}',
+"""
+          new_log = """        'location=${_outfitContextState.activityLocationLabel ?? '-'} '
+        'activity=${_outfitContextState.activityHint ?? '-'} '
+        'unresolved=${_outfitContextState.unresolvedMaterialFields} '
+        'semantic=${StylistSemanticActivity.runtimeVersion} '
+        'directActivity=${StylistSemanticActivity.resolveExplicit(text) ?? '-'} '
+        'correction=${_outfitContextState.userCorrectionDetected}',
+"""
+          s = replace_once(s, old_log, new_log, 'client grounding diagnostic')
+          write(path, s)
+
+          # 2) Shared deterministic resolver gets an explicit runtime marker.
+          path = 'lib/utils/stylist_semantic_activity.dart'
+          s = read(path)
+          s = replace_once(
+              s,
+              "class StylistSemanticActivity {\n  const StylistSemanticActivity._();\n",
+              "class StylistSemanticActivity {\n  const StylistSemanticActivity._();\n\n  static const String runtimeVersion = 'brain_v1_semantic_activity_v3';\n",
+              'semantic runtime marker',
+          )
+          write(path, s)
+
+          # 3) Server: evidence-verified semantic grounding must always have a
+          # transport object back to Flutter, even if the model omitted
+          # eventContext. Generic/no-semantic turns retain null eventContext.
+          path = 'functions/stylist/outfit_decision.js'
+          s = read(path)
+          old = """  return {
+    confidence,
+    decisionRisk,
+    assumptions,
+    clarifyReason,
+    impactFields,
+    semanticGrounding: parseSemanticGrounding(parsed),
+    eventContext:
+      parsed?.eventContext && typeof parsed.eventContext === \"object\" ?
+        parsed.eventContext : null,
+  };
+"""
+          new = """  const semanticGrounding = parseSemanticGrounding(parsed);
+  let eventContext =
+    parsed?.eventContext && typeof parsed.eventContext === \"object\" &&
+      !Array.isArray(parsed.eventContext) ? parsed.eventContext : null;
+  if (semanticGrounding && parsed && typeof parsed === \"object\" &&
+      !Array.isArray(parsed) && !eventContext) {
+    eventContext = {};
+    parsed.eventContext = eventContext;
+  }
+
+  return {
+    confidence,
+    decisionRisk,
+    assumptions,
+    clarifyReason,
+    impactFields,
+    semanticGrounding,
+    eventContext,
+  };
+"""
+          s = replace_once(s, old, new, 'server semantic transport')
+          write(path, s)
+
+          # 4) Brain contract: semantic pre-pass is mandatory whenever the fast
+          # parser leaves activity unresolved. This is meaning-first, not a
+          # keyword/synonym list.
+          path = 'functions/stylist/chat_prompts.js'
+          s = read(path)
+          old = '  `- Ak je unresolved "activity", NAJPRV skontroluj výhradne správy s rolou user. Ak user aktivitu významovo jasne pomenoval aj iným slovným tvarom/parafrázou, môžeš ju uzemniť cez semanticGrounding.activity.\\n` +\n'
+          new = (
+              '  `- Ak je unresolved "activity", MUSÍŠ pred voľbou action spraviť semantický pre-pass výhradne nad správami s rolou user: rozhodni, či user už významovo jasne opísal, čo bude robiť, aj keď nepoužil názov aktivity ani očakávané kľúčové slovo.\\n` +\n'
+              '  `- Ak je aktivita z user textu významovo jednoznačná, semanticGrounding.activity je POVINNÉ a NESMIEŠ sa na tú istú aktivitu znovu pýtať. Parserovo unresolved vtedy znamená iba „fast-path to nerozpoznal“, nie „user to nepovedal“.\\n` +\n'
+          )
+          s = replace_once(s, old, new, 'brain semantic prepass')
+          write(path, s)
+
+          # 5) Lower structured Brain variance; natural tone remains in persona.
+          path = 'functions/stylist/ai_model_registry.js'
+          s = read(path)
+          s = replace_once(
+              s,
+              'provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.65,',
+              'provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.3,',
+              'brain temperature',
+          )
+          write(path, s)
+
+          # 6) Deterministic emergency server copy is only used when safety
+          # changes a non-clarify action into clarify. Keep it in tykanie.
+          path = 'functions/stylist/grounding_reply.js'
+          s = read(path)
+          server_copy = {
+              'Kam sa chystáte a čo tam budete približne robiť?': 'Kam sa chystáš a čo tam budeš približne robiť?',
+              'Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.': 'Kam sa chystáš? Podľa miesta vyberiem vhodné počasie aj outfit.',
+              'Čo budete na výlete približne robiť a pôjde o jeden deň alebo viac dní?': 'Čo budeš na výlete približne robiť a pôjde o jeden deň alebo viac dní?',
+          }
+          for old_text, new_text in server_copy.items():
+              if old_text not in s:
+                  raise SystemExit(f'server fallback copy missing: {old_text}')
+              s = s.replace(old_text, new_text)
+          write(path, s)
+
+          # 7) Regression: semantic grounding must survive when GPT omits
+          # eventContext entirely, because this was a real transport weak spot.
+          path = 'functions/stylist/outfit_decision.test.js'
+          s = read(path)
+          marker = 'test("semantic grounding cannot borrow assistant-only or invented evidence", () => {'
+          test_block = r'''test("verified semantic activity creates transport context when model omits eventContext", () => {
+  const parsed = {
+    semanticGrounding: {
+      activity: {
+        value: "hike",
+        evidence: "motať po vysokohorskom chodníku",
+        source: "user_explicit",
+      },
+    },
+  };
+  const decision = parseOutfitDecisionFields(parsed);
+  const state = {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["activity"],
+    semanticEvidenceTexts: [
+      "budeme sa asi 6 hodín motať po vysokohorskom chodníku",
+    ],
+  };
+
+  assert.equal(resolveOutfitAction("clarify", decision, state), "chat");
+  assert.equal(state.activityHint, "hike");
+  assert.equal(parsed.eventContext.occasion, "hike");
+  assert.equal(decision.eventContext.occasion, "hike");
+  assert.deepEqual(state.unresolvedMaterialFields, []);
+});
+
+'''
+          if test_block not in s:
+              if marker not in s:
+                  raise SystemExit('server test insertion marker missing')
+              s = s.replace(marker, test_block + marker, 1)
+          write(path, s)
+
+      - name: Sanity check server seam
+        run: node --test functions/stylist/outfit_decision.test.js
+
+      - name: Commit systemic patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/stylist_chat_screen.dart lib/utils/stylist_semantic_activity.dart functions/stylist/outfit_decision.js functions/stylist/outfit_decision.test.js functions/stylist/chat_prompts.js functions/stylist/ai_model_registry.js functions/stylist/grounding_reply.js
+          git commit -m "fix: make Brain grounding meaning-first end to end"
+          git push origin HEAD:brain-v1-experiment
