@@ -1,5 +1,10 @@
 /**
- * Tiered system prompts for stylist chat (Phase 2b — impact-based clarify).
+ * Stylist chat prompts.
+ *
+ * Brain V1 deliberately has one conversational owner. Legacy fast/premium
+ * builders remain exported for isolated compatibility tests, but production
+ * `buildChatSystemPrompt()` now always returns the same full Brain prompt so
+ * an easy turn cannot silently lose grounding or continuity rules.
  */
 
 const {
@@ -84,18 +89,17 @@ const CLARIFY_RULES =
 function buildFastChatSystemPrompt() {
   return (
     CORE_TONE +
-    `\nÚLOHA (FAST — jednoduché správy):\n` +
+    `\nÚLOHA (LEGACY FAST BUILDER):\n` +
     `- Pozdravy, poďakovanie, krátke follow-up o už navrhnutom outfite.\n` +
     `- show_items keď user chce ukázať kúsok zo šatníka.\n` +
     `- Swap jedného kusu → generate_outfit + eventContext.swap.\n` +
-    `- Plánovaná aktivita / outfit → chat alebo stručný clarify (max 1 otázka).\n` +
     SET_CONTEXT_RULES +
     STYLE_PREFERENCE_RULES +
     JSON_OUTPUT
   );
 }
 
-function buildPremiumChatSystemPrompt() {
+function buildConversationBrainChatSystemPrompt() {
   return (
     CORE_TONE +
     `\nTÓN A REŠPEKT:\n` +
@@ -126,18 +130,24 @@ function buildPremiumChatSystemPrompt() {
   );
 }
 
+function buildPremiumChatSystemPrompt() {
+  return buildConversationBrainChatSystemPrompt();
+}
+
 /**
- * @param {'fast' | 'standard' | 'premium'} tier
+ * Brain V1 intentionally ignores the legacy routing tier for the prompt.
+ * Model selection is already centralized in ai_model_registry; keeping prompt
+ * personality/grounding tiered would recreate the fragmented-dialogue problem.
  */
-function buildChatSystemPrompt(tier) {
-  if (tier === "fast") return buildFastChatSystemPrompt();
-  return buildPremiumChatSystemPrompt();
+function buildChatSystemPrompt(_tier) {
+  return buildConversationBrainChatSystemPrompt();
 }
 
 module.exports = {
   buildChatSystemPrompt,
   buildFastChatSystemPrompt,
   buildPremiumChatSystemPrompt,
+  buildConversationBrainChatSystemPrompt,
   CORE_TONE,
   SET_CONTEXT_RULES,
   STYLE_PREFERENCE_RULES,
