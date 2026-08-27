@@ -53,6 +53,8 @@ class StylistFrozenDecisionRejectedExceptionV1 implements Exception {
 class StylistFrozenCandidateDecisionServiceV1 {
   const StylistFrozenCandidateDecisionServiceV1({this.functions});
 
+  static const conversationBrainVersion = 'brain_v1';
+
   final FirebaseFunctions? functions;
 
   Future<StylistFrozenCandidateDecisionResultV1> resolve({
@@ -69,6 +71,9 @@ class StylistFrozenCandidateDecisionServiceV1 {
       final result = await callable
           .call(<String, dynamic>{
             'contractVersion': 1,
+            // Explicit experiment opt-in. Older clients omit this marker and
+            // retain the settled explanation path on the shared callable.
+            'conversationBrainVersion': conversationBrainVersion,
             'resolvedContext': resolvedContext,
             'frozenCandidates': candidates
                 .map(_candidatePayload)
@@ -125,7 +130,7 @@ class StylistFrozenCandidateDecisionServiceV1 {
           .toList(growable: false),
       // Presentation data is an immutable description of this same frozen
       // candidate. The authority validates itemId membership before using it
-      // to build the Claude-only, user-facing explanation snapshot.
+      // to build the user-facing explanation snapshot.
       'presentationItems': candidate.outfit.items
           .map(
             (item) => <String, dynamic>{
