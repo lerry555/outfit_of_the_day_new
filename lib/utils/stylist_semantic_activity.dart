@@ -118,6 +118,21 @@ class StylistSemanticActivity {
       return 'hike';
     }
 
+    // Concept-level mountain walking. Combine a mountain/trail environment
+    // with movement/path evidence instead of enumerating sentence templates.
+    // This covers natural paraphrases such as "motať sa po vysokohorskom
+    // chodníku", "kráčať po horskom traili" or "celý deň po tatranskej trase".
+    // A bare destination such as "Tatry" still does not invent an activity.
+    final mountainEnvironment = _has(
+      text,
+      r'\b(?:vysokohorsk\w*|horsk\w*|tatr\w*|alpinsk\w*|hreben\w*|vrchol\w*|trail\w*)\b',
+    );
+    final walkingOrRoute = _has(
+      text,
+      r'\b(?:chodnik\w*|trasa\w*|trail\w*|krac\w*|chod\w*|ist\w*|idem\w*|ideme\w*|pojd\w*|mota\w*|vyraz\w*|stup\w*)\b',
+    );
+    if (mountainEnvironment && walkingOrRoute) return 'hike';
+
     if (_has(text, r'\b(?:behat\w*|beh\w*|jogging\w*)\b')) return 'run';
     if (_has(text, r'\b(?:bicykl\w*|cyklist\w*|bike\w*)\b')) return 'cycling';
     if (_has(text, r'\b(?:posil\w*|fitko\w*|fitness\w*|gym\w*|cvicen\w*)\b')) {
