@@ -1,10 +1,9 @@
 /**
  * Stylist chat prompts.
  *
- * Brain V1 deliberately has one conversational owner. Legacy fast/premium
- * builders remain exported for isolated compatibility tests, but production
- * `buildChatSystemPrompt()` now always returns the same full Brain prompt so
- * an easy turn cannot silently lose grounding or continuity rules.
+ * Legacy clients keep the settled tiered prompts. The experimental client is
+ * routed with the synthetic prompt tier `brain_v1`, which gives every opted-in
+ * turn one full conversational prompt without changing older app builds.
  */
 
 const {
@@ -31,7 +30,15 @@ const JSON_OUTPUT =
   `- Druhá otázka je správna LEN keď prvá odpoveď vyriešila iný problém a zostáva odlišná materiálna neistota.\n` +
   `Gibberish → reply: "Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš.", action: "chat"`;
 
-const CORE_TONE =
+const LEGACY_CORE_TONE =
+  `Si osobný stylist v slovenskej módnej appke. Píšeš prirodzene — nie ako robot.\n` +
+  `Nikdy nespomínaj, že si AI. Odpovedaj na poslednú správu.\n` +
+  `- Stručne, ľudsky. Max 1 emoji na správu, ak sedí.\n` +
+  `- SLOVENČINA: „no" = áno. NIKDY neber „no" ako anglické odmietnutie.\n` +
+  `- SKLOŇOVANIE MESTA: „pri Martine", „v Martine" — NIKDY „pri Martin".\n` +
+  `- Žiadne URL, žiadne id v texte.\n`;
+
+const BRAIN_CORE_TONE =
   `${CONVERSATION_BRAIN_PERSONA_SK}\n` +
   `\nKONVERZAČNÉ VLASTNÍCTVO:\n` +
   `- Toto nie je jednorazový klasifikátor. Si ten istý stylista počas celého vlákna a posledná správa nadväzuje na predchádzajúce správy.\n` +
@@ -86,22 +93,9 @@ const CLARIFY_RULES =
   `- Pri outdoor zohľadni podmienky pred aktivitou (mokrá tráva → uzavretá obuv).\n` +
   `- NIKDY sa usera nepýtaj na dážď alebo teplotu.\n`;
 
-function buildFastChatSystemPrompt() {
+function premiumBody(coreTone) {
   return (
-    CORE_TONE +
-    `\nÚLOHA (LEGACY FAST BUILDER):\n` +
-    `- Pozdravy, poďakovanie, krátke follow-up o už navrhnutom outfite.\n` +
-    `- show_items keď user chce ukázať kúsok zo šatníka.\n` +
-    `- Swap jedného kusu → generate_outfit + eventContext.swap.\n` +
-    SET_CONTEXT_RULES +
-    STYLE_PREFERENCE_RULES +
-    JSON_OUTPUT
-  );
-}
-
-function buildConversationBrainChatSystemPrompt() {
-  return (
-    CORE_TONE +
+    coreTone +
     `\nTÓN A REŠPEKT:\n` +
     `- Prispôsob sa tónu používateľa. Default NIE JE „čau".\n` +
     `- POZDRAVY: Ak user odpovie len pozdravom, NEOPAKUJ pozdrav.\n` +
@@ -130,17 +124,37 @@ function buildConversationBrainChatSystemPrompt() {
   );
 }
 
+function buildFastChatSystemPrompt() {
+  return (
+    LEGACY_CORE_TONE +
+    `\nÚLOHA (FAST — jednoduché správy):\n` +
+    `- Pozdravy, poďakovanie, krátke follow-up o už navrhnutom outfite.\n` +
+    `- show_items keď user chce ukázať kúsok zo šatníka.\n` +
+    `- Swap jedného kusu → generate_outfit + eventContext.swap.\n` +
+    `- Plánovaná aktivita / outfit → chat alebo stručný clarify (max 1 otázka).\n` +
+    SET_CONTEXT_RULES +
+    STYLE_PREFERENCE_RULES +
+    JSON_OUTPUT
+  );
+}
+
 function buildPremiumChatSystemPrompt() {
-  return buildConversationBrainChatSystemPrompt();
+  return premiumBody(LEGACY_CORE_TONE);
+}
+
+function buildConversationBrainChatSystemPrompt() {
+  return premiumBody(BRAIN_CORE_TONE);
 }
 
 /**
- * Brain V1 intentionally ignores the legacy routing tier for the prompt.
- * Model selection is already centralized in ai_model_registry; keeping prompt
- * personality/grounding tiered would recreate the fragmented-dialogue problem.
+ * `brain_v1` is an explicit synthetic prompt tier emitted only for the opted-in
+ * experiment client. Legacy fast/standard/premium behavior stays byte-close to
+ * the settled production path.
  */
-function buildChatSystemPrompt(_tier) {
-  return buildConversationBrainChatSystemPrompt();
+function buildChatSystemPrompt(tier) {
+  if (tier === "brain_v1") return buildConversationBrainChatSystemPrompt();
+  if (tier === "fast") return buildFastChatSystemPrompt();
+  return buildPremiumChatSystemPrompt();
 }
 
 module.exports = {
@@ -148,7 +162,8 @@ module.exports = {
   buildFastChatSystemPrompt,
   buildPremiumChatSystemPrompt,
   buildConversationBrainChatSystemPrompt,
-  CORE_TONE,
+  LEGACY_CORE_TONE,
+  BRAIN_CORE_TONE,
   SET_CONTEXT_RULES,
   STYLE_PREFERENCE_RULES,
 };
