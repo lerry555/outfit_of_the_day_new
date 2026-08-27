@@ -190,7 +190,8 @@ function parseOutfitDecisionFields(parsed) {
  * @returns {string}
  */
 function resolveOutfitAction(action, decision, clarificationState) {
-  applySemanticGroundingToState(clarificationState, decision);
+  const semanticResolvedFields =
+    applySemanticGroundingToState(clarificationState, decision);
 
   if (requiresGroundingClarification(clarificationState) &&
       action !== "stop" && action !== "show_items") {
@@ -198,11 +199,13 @@ function resolveOutfitAction(action, decision, clarificationState) {
   }
   if (action !== "clarify") return action;
 
-  // If semantic grounding resolved the only material unknown, a model that
-  // conservatively emitted `clarify` must not ask the already-answered question
-  // again. It remains chat rather than silently generating unless the model
-  // itself requested generate_outfit.
-  if (!requiresGroundingClarification(clarificationState)) return "chat";
+  // Only semantic grounding may turn a conservative model `clarify` into a
+  // non-question after it has proven the requested fact from user-authored
+  // evidence. Ordinary material clarification behavior remains unchanged.
+  if (semanticResolvedFields.length > 0 &&
+      !requiresGroundingClarification(clarificationState)) {
+    return "chat";
+  }
 
   const state = clarificationState && typeof clarificationState === "object" ?
     clarificationState : {};
