@@ -1,10 +1,13 @@
 import '../utils/stylist_day_parser.dart';
 import '../utils/stylist_destination_parser.dart';
+import '../utils/stylist_semantic_activity.dart';
 import '../utils/stylist_trip_parser.dart';
 
 /// Známy kontext pre outfit — z konverzácie, GPS a dát appky.
 ///
-/// AI dostane tento stav + fieldCatalog a sama rozhodne o chýbajúcich poliach.
+/// Jazykový fast-path používa jeden spoločný semantický resolver. Ak lokálny
+/// resolver niečo nepozná, Brain môže neskôr uzemniť explicitne povedanú
+/// aktivitu; preto si držíme iba krátke user-authored evidence texty.
 class OutfitContextState {
   final String? gpsDefaultCity;
   final String? activityLocationLabel;
@@ -27,6 +30,10 @@ class OutfitContextState {
   final String groundingStatus;
   final bool userCorrectionDetected;
 
+  /// Posledné user-authored texty použiteľné na serveri na overenie, že
+  /// semantické uzemnenie pochádza naozaj od používateľa, nie od asistenta.
+  final List<String> semanticEvidenceTexts;
+
   const OutfitContextState({
     this.gpsDefaultCity,
     this.activityLocationLabel,
@@ -48,33 +55,8 @@ class OutfitContextState {
     this.unresolvedMaterialFields = const [],
     this.groundingStatus = 'sufficient',
     this.userCorrectionDetected = false,
+    this.semanticEvidenceTexts = const [],
   });
-
-  static const _remoteActivityHints = [
-    'hory',
-    'hore',
-    'horach',
-    'turist',
-    'vylet',
-    'výlet',
-    'les',
-    'lese',
-    'hub',
-    'hrib',
-    'dovolen',
-    'služobn',
-    'sluzobn',
-    'cest',
-    'svadb',
-    'tatry',
-    'kopce',
-    'kopcoch',
-    'prírod',
-    'prirod',
-    'zoo',
-    'hrad',
-    'festival',
-  ];
 
   static const _routineLocalHints = [
     'čo si mám',
@@ -98,16 +80,12 @@ class OutfitContextState {
     String latestUserText = '',
   }) {
     final blob = conversation.toLowerCase();
-    final latest = latestUserText.trim().isEmpty
-        ? conversation
-        : latestUserText;
+    final latest = latestUserText.trim().isEmpty ? conversation : latestUserText;
     final correction = _isCorrectionOrChallenge(latest);
     final correctionChangesPlaceOrActivity =
         correction && _changesPlaceOrActivity(latest);
     final gps = gpsCityLabel.split(',').first.trim();
-    final latestInferred = StylistDestinationParser.inferFromConversation(
-      latest,
-    );
+    final latestInferred = StylistDestinationParser.inferFromConversation(latest);
     final inferred = correctionChangesPlaceOrActivity
         ? null
         : latestInferred ??
@@ -119,8 +97,7 @@ class OutfitContextState {
         StylistDestinationParser.isPlausibleDestination(inferred);
 
     final remote =
-        _remoteActivityHints.any(blob.contains) ||
-        _genericTripHints.any(blob.contains) ||
+        StylistSemanticActivity.looksRemotePlan(blob) ||
         _isMultiDay(blob) ||
         (inferredOk &&
             gps.isNotEmpty &&
@@ -155,10 +132,12 @@ class OutfitContextState {
     }
 
     final activityLocationKnown = inferredOk || (routine && gps.isNotEmpty);
-    final latestActivityHint = _extractActivityHint(latest.toLowerCase());
+    final latestActivityHint = StylistSemanticActivity.resolveExplicit(latest);
     final activityHint = correctionChangesPlaceOrActivity
         ? latestActivityHint
-        : latestActivityHint ?? previous?.activityHint ?? _extractActivityHint(blob);
+        : latestActivityHint ??
+              previous?.activityHint ??
+              StylistSemanticActivity.resolveExplicit(conversation);
     final unresolved = _materialUnknowns(
       remote: remote,
       routine: routine,
@@ -190,6 +169,7 @@ class OutfitContextState {
       unresolvedMaterialFields: unresolved,
       groundingStatus: unresolved.isEmpty ? 'sufficient' : 'needs_grounding',
       userCorrectionDetected: correction,
+      semanticEvidenceTexts: _mergeEvidenceTexts(previous, latestUserText),
     );
   }
 
@@ -215,6 +195,7 @@ class OutfitContextState {
       unresolvedMaterialFields: unresolvedMaterialFields,
       groundingStatus: groundingStatus,
       userCorrectionDetected: userCorrectionDetected,
+      semanticEvidenceTexts: semanticEvidenceTexts,
     );
   }
 
@@ -246,6 +227,7 @@ class OutfitContextState {
       unresolvedMaterialFields: unresolvedMaterialFields,
       groundingStatus: groundingStatus,
       userCorrectionDetected: userCorrectionDetected,
+      semanticEvidenceTexts: semanticEvidenceTexts,
     );
   }
 
@@ -262,10 +244,20 @@ class OutfitContextState {
     final locOk =
         loc.isNotEmpty && StylistDestinationParser.isPlausibleDestination(loc);
     final hour = raw['hourLocal'];
-    final parsedHour = hour is int
-        ? hour
-        : int.tryParse(hour?.toString() ?? '');
+    final parsedHour =
+        hour is int ? hour : int.tryParse(hour?.toString() ?? '');
+    final incomingActivity = StylistSemanticActivity.canonicalize(
+      raw['occasion']?.toString(),
+    );
 
+    final unresolved = unresolvedMaterialFields.toSet();
+    if (locOk) unresolved.remove('destination');
+    if ((raw['dateKey'] ?? '').toString().trim().isNotEmpty) {
+      unresolved.remove('date');
+    }
+    if (incomingActivity != null) unresolved.remove('activity');
+
+    final nextUnresolved = unresolved.toList(growable: false);
     return OutfitContextState(
       gpsDefaultCity: gpsDefaultCity,
       activityLocationLabel: locOk ? loc : activityLocationLabel,
@@ -275,7 +267,7 @@ class OutfitContextState {
       hourLocal: parsedHour ?? hourLocal,
       hourExplicit: hourExplicit || parsedHour != null,
       dateKey: (raw['dateKey'] ?? dateKey)?.toString(),
-      activityHint: (raw['occasion'] ?? activityHint)?.toString(),
+      activityHint: incomingActivity ?? activityHint,
       occasion: (raw['occasion'] ?? occasion)?.toString(),
       clarifyRoundUsed: clarifyRoundUsed,
       clarifiedMaterialFields: clarifiedMaterialFields,
@@ -284,9 +276,10 @@ class OutfitContextState {
       lastAssumptions: assumptions ?? lastAssumptions,
       lastClarifyReason: clarifyReason ?? lastClarifyReason,
       lastImpactFields: impactFields ?? lastImpactFields,
-      unresolvedMaterialFields: unresolvedMaterialFields,
-      groundingStatus: groundingStatus,
+      unresolvedMaterialFields: nextUnresolved,
+      groundingStatus: nextUnresolved.isEmpty ? 'sufficient' : 'needs_grounding',
       userCorrectionDetected: userCorrectionDetected,
+      semanticEvidenceTexts: semanticEvidenceTexts,
     );
   }
 
@@ -315,6 +308,8 @@ class OutfitContextState {
         'unresolvedMaterialFields': unresolvedMaterialFields,
       'groundingStatus': groundingStatus,
       if (userCorrectionDetected) 'userCorrectionDetected': true,
+      if (semanticEvidenceTexts.isNotEmpty)
+        'semanticEvidenceTexts': semanticEvidenceTexts,
     };
   }
 
@@ -328,60 +323,6 @@ class OutfitContextState {
     if (h == null || h < 0 || h > 23) return null;
     return h;
   }
-
-  static String? _extractActivityHint(String blob) {
-    // These are narrow deterministic labels for facts the user actually
-    // supplied; they deliberately do not turn a generic "výlet" into hiking.
-    if (blob.contains('zoo')) return 'zoo';
-    if (blob.contains('reštaur') ||
-        blob.contains('restaur') ||
-        blob.contains('večeru') ||
-        blob.contains('veceru')) {
-      return 'dinner';
-    }
-    if (blob.contains('centrum') ||
-        blob.contains('centre') ||
-        blob.contains('centra') ||
-        blob.contains('centrom') ||
-        blob.contains('pamiat') ||
-        blob.contains('meste') ||
-        RegExp(r'\bpo\s+mete\b').hasMatch(blob) ||
-        RegExp(r'\bpopozer\w*\s+mest').hasMatch(blob)) {
-      return 'city_walk';
-    }
-    if (blob.contains('autom') ||
-        blob.contains('vlakom') ||
-        blob.contains('lietadl')) {
-      return 'travel';
-    }
-    // Slovak users commonly say "ideme na túru" rather than "turistika".
-    // Treat those explicit forms as hiking, while keeping generic "výlet"
-    // unresolved so the app still asks what kind of outing it is.
-    if (RegExp(
-      r'\b(?:túra|túru|túre|túrou|tura|turu|ture|turou|turistika|turistiku|turistike|turistikou|hike|hiking|trek\w*)\b',
-      caseSensitive: false,
-    ).hasMatch(blob)) {
-      return 'hike';
-    }
-    for (final hint in _remoteActivityHints) {
-      if (blob.contains(hint)) return hint;
-    }
-    if (blob.contains('mest')) return 'mesto';
-    if (blob.contains('rande')) return 'rande';
-    if (blob.contains('koncert')) return 'koncert';
-    return null;
-  }
-
-  static const _genericTripHints = <String>{
-    'vylet',
-    'výlet',
-    'cest',
-    'dovolen',
-    'niekam',
-    'von',
-    'prec',
-    'preč',
-  };
 
   static List<String> _materialUnknowns({
     required bool remote,
@@ -400,8 +341,7 @@ class OutfitContextState {
     ).hasMatch(conversation);
     final genericActivity =
         activityHint == null ||
-        (activityHint == 'travel' && !travelDayExplicit) ||
-        _genericTripHints.any((hint) => activityHint.contains(hint));
+        (activityHint == 'travel' && !travelDayExplicit);
     if (remote && !locationKnown) result.add('destination');
     if (remote && genericActivity) result.add('activity');
     if (remote &&
@@ -413,7 +353,9 @@ class OutfitContextState {
             ).hasMatch(conversation))) {
       result.add('date');
     }
-    if (_isMultiDay(conversation) && remote && !_tripScopeResolved(conversation)) {
+    if (_isMultiDay(conversation) &&
+        remote &&
+        !_tripScopeResolved(conversation)) {
       result.add('trip_scope');
     }
     if (_isCorrectionOrChallenge(latest) && result.isEmpty && !locationKnown) {
@@ -460,18 +402,28 @@ class OutfitContextState {
   }
 
   static bool _changesPlaceOrActivity(String value) {
-    final text = value.toLowerCase();
-    return _isCorrectionOrChallenge(text) &&
-        (text.contains('martin') ||
-            text.contains('mest') ||
-            text.contains('turist') ||
-            text.contains('prechadz') ||
-            text.contains('prechádz') ||
-            text.contains('les') ||
-            text.contains('vieden') ||
-            text.contains('viedeň') ||
-            text.contains('autom') ||
-            text.contains('pes') ||
-            text.contains('peš'));
+    final normalized = StylistSemanticActivity.normalize(value);
+    return _isCorrectionOrChallenge(value) &&
+        (StylistSemanticActivity.resolveExplicit(value) != null ||
+            RegExp(
+              r'\b(?:martin\w*|mesto\w*|meste\w*|vieden\w*|zilin\w*|tatr\w*|les\w*|hor\w*)\b',
+            ).hasMatch(normalized));
+  }
+
+  static List<String> _mergeEvidenceTexts(
+    OutfitContextState? previous,
+    String latestUserText,
+  ) {
+    final latest = latestUserText.trim();
+    final values = <String>[
+      ...?previous?.semanticEvidenceTexts,
+      if (latest.isNotEmpty) latest,
+    ];
+    final deduped = <String>[];
+    for (final value in values) {
+      if (!deduped.contains(value)) deduped.add(value);
+    }
+    if (deduped.length <= 6) return deduped;
+    return deduped.sublist(deduped.length - 6);
   }
 }
