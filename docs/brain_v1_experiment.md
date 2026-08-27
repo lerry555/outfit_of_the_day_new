@@ -1,6 +1,6 @@
 # AI Stylist Conversation Brain V1
 
-Status: experimental branch only. Do not merge or deploy as production truth until owner-device E2E passes.
+Status: experimental branch only. Do not merge as production truth until owner-device E2E passes.
 
 ## Goal
 
@@ -18,6 +18,17 @@ Brain V1 starts with the already-proven `gpt-4o`. This is intentional: first tes
 
 Sol is therefore a quality ceiling candidate, not a hard production dependency.
 
+## Opt-in isolation
+
+The experiment build sends `conversationBrainVersion=brain_v1` in ordinary Stylist chat context and in the frozen decision/explanation request.
+
+- Opted-in chat requests route to the synthetic `brain_v1` prompt tier and `conversationBrain` model role.
+- Chat requests from older clients keep the settled context/clarification model and legacy tiered prompt.
+- Opted-in frozen requests use Conversation Brain V1 for the post-validation user-facing explanation.
+- Frozen requests from older clients keep the settled Anthropic explanation path.
+
+This makes a selective deploy of the shared callable names suitable for owner-device testing without silently opting older app builds into the experiment.
+
 ## Preserved invariants
 
 - Candidate identity remains exact `candidateId`, never list index.
@@ -30,7 +41,18 @@ Sol is therefore a quality ceiling candidate, not a hard production dependency.
 
 ## Current scope
 
-Phase 1 wires the same Conversation Brain identity/model into ordinary chat turns and the post-validation outfit explanation. Existing shopping pre-routing remains authoritative and existing photo-rating transport is still isolated. The photo path already supports vision and wardrobe follow-up, but its prompt/state ownership must be consolidated into the Conversation Brain in a later phase before claiming full one-brain photo-to-shopping continuity.
+Phase 1 wires the same Conversation Brain identity/model into ordinary text-chat turns and the post-validation outfit explanation. Existing shopping pre-routing remains authoritative. The current `rate_photo` implementation is still an isolated vision transport; do not claim full one-brain photo-to-shopping continuity yet.
+
+## Owner-device deployment scope
+
+Deploy only these shared Stylist callables from the experiment checkout:
+
+```text
+stylistChat
+resolveStylistFrozenCandidatesV1
+```
+
+Do not deploy the whole Functions project for this experiment.
 
 ## Manual acceptance focus
 
