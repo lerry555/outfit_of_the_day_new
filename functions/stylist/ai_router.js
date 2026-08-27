@@ -10,7 +10,7 @@ const {CONVERSATION_BRAIN_VERSION} = require("./conversation_brain_persona_v1");
  *
  * Brain V1 is explicitly client-opted-in. This lets the experiment callable
  * be deployed under the existing function name without silently moving older
- * app builds away from the settled context/clarification model.
+ * app builds away from the settled context/clarification model or prompt.
  *
  * @param {Object} input
  * @param {string} input.message
@@ -23,7 +23,7 @@ const {CONVERSATION_BRAIN_VERSION} = require("./conversation_brain_persona_v1");
 function routeStylistRequest(input) {
   const mode = String(input.mode || "chat").trim() || "chat";
   const signals = buildServerRequestSignals(input);
-  const {tier, confidence, reason} = decideTierFromSignals(signals, mode);
+  const {tier: legacyTier, confidence, reason} = decideTierFromSignals(signals, mode);
   const brainOptIn = mode === "chat" &&
     String(input?.clientContext?.conversationBrainVersion || "").trim() ===
       CONVERSATION_BRAIN_VERSION;
@@ -34,10 +34,13 @@ function routeStylistRequest(input) {
   // frozen-candidate callable rather than this router.
   const modelConfig = mode === "chat" ?
     getStylistRoleModelConfig(brainOptIn ? "conversationBrain" : "contextClarification") :
-    getModelConfig(tier);
+    getModelConfig(legacyTier);
 
   return {
-    tier,
+    // index.js feeds this field into buildChatSystemPrompt(). `brain_v1` is a
+    // synthetic prompt tier; non-opted-in callers retain their legacy tier.
+    tier: brainOptIn ? "brain_v1" : legacyTier,
+    legacyTier,
     modelId: modelConfig.id,
     maxTokens: modelConfig.maxTokens,
     temperature: modelConfig.temperature,
