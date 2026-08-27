@@ -8,16 +8,30 @@ const {
 } = require("./chat_prompts");
 const {routeStylistRequest} = require("./ai_router");
 
-test("ordinary chat routes through the Conversation Brain V1 registry role", () => {
+test("opted-in ordinary chat routes through the Conversation Brain V1 registry role", () => {
   const route = routeStylistRequest({
     message: "A tie prvé by sa hodili aj k rifliam?",
+    history: [],
+    mode: "chat",
+    weatherContext: null,
+    clientContext: {conversationBrainVersion: "brain_v1"},
+  });
+  assert.equal(route.modelId, "gpt-4o");
+  assert.equal(route.pipeline, "conversation_brain_v1");
+  assert.equal(route.brainVersion, "brain_v1");
+});
+
+test("older client without opt-in keeps the settled context clarification route", () => {
+  const route = routeStylistRequest({
+    message: "Čo si mám obliecť?",
     history: [],
     mode: "chat",
     weatherContext: null,
     clientContext: null,
   });
   assert.equal(route.modelId, "gpt-4o");
-  assert.equal(route.pipeline, "conversation_brain_v1");
+  assert.equal(route.pipeline, "context_clarification");
+  assert.equal(route.brainVersion, null);
 });
 
 test("Brain V1 uses one full conversational prompt even when legacy tier signal differs", () => {
