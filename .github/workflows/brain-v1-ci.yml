@@ -74,3 +74,6 @@ jobs:
           flutter analyze --no-fatal-infos
           lib/Services/stylist_chat_service.dart
           lib/Services/stylist_frozen_candidate_decision_service.dart
+          lib/models/outfit_context_state.dart
+      - name: Explicit hike grounding regression
+        run: flutter test test/brain_v1_explicit_hike_grounding_test.dart
