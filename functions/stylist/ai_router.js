@@ -19,18 +19,20 @@ function routeStylistRequest(input) {
   const mode = String(input.mode || "chat").trim() || "chat";
   const signals = buildServerRequestSignals(input);
   const {tier, confidence, reason} = decideTierFromSignals(signals, mode);
-  // Track U made GPT-4o the sole Stylist context/clarification authority.
-  // Vision remains on its isolated legacy transport; Track D/R run through
-  // their dedicated frozen-decision callable rather than this chat router.
+  // Brain V1 owns every ordinary Stylist chat turn. The selected model is a
+  // registry value so we can A/B architecture and model strength separately.
+  // Vision remains on its isolated route for this phase; Track D/R still run
+  // through the frozen-candidate authority rather than this router.
   const modelConfig = mode === "chat" ?
-    getStylistRoleModelConfig("contextClarification") : getModelConfig(tier);
+    getStylistRoleModelConfig("conversationBrain") : getModelConfig(tier);
 
   return {
     tier,
     modelId: modelConfig.id,
     maxTokens: modelConfig.maxTokens,
     temperature: modelConfig.temperature,
-    pipeline: mode === "explain_outfit" ? "legacy_explain" : mode === "rate_photo" ? "vision" : "context_clarification",
+    pipeline: mode === "explain_outfit" ?
+      "legacy_explain" : mode === "rate_photo" ? "vision" : "conversation_brain_v1",
     confidence,
     reason,
     signals,

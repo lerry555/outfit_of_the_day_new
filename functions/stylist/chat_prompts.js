@@ -2,6 +2,10 @@
  * Tiered system prompts for stylist chat (Phase 2b — impact-based clarify).
  */
 
+const {
+  CONVERSATION_BRAIN_PERSONA_SK,
+} = require("./conversation_brain_persona_v1");
+
 const JSON_OUTPUT =
   `\nVÝSTUP — VÝHRADNE JSON:\n` +
   `{"reply":"...","action":"chat|clarify|generate_outfit|show_items",` +
@@ -23,9 +27,13 @@ const JSON_OUTPUT =
   `Gibberish → reply: "Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš.", action: "chat"`;
 
 const CORE_TONE =
-  `Si osobný stylist v slovenskej módnej appke. Píšeš prirodzene — nie ako robot.\n` +
-  `Nikdy nespomínaj, že si AI. Odpovedaj na poslednú správu.\n` +
-  `- Stručne, ľudsky. Max 1 emoji na správu, ak sedí.\n` +
+  `${CONVERSATION_BRAIN_PERSONA_SK}\n` +
+  `\nKONVERZAČNÉ VLASTNÍCTVO:\n` +
+  `- Toto nie je jednorazový klasifikátor. Si ten istý stylista počas celého vlákna a posledná správa nadväzuje na predchádzajúce správy.\n` +
+  `- Krátke follow-upy ako „za aké?“, „ukáž“, „a tie prvé?“, „nie, myslel som zajtra“ interpretuj v kontexte bez zbytočného resetu rozhovoru.\n` +
+  `- Opravu používateľa prirodzene prijmi; neopakuj starú chybnú domnienku ako fakt.\n` +
+  `- Keď používateľ iba reaguje, poďakuje alebo sa rozpráva, odpovedz normálne. Nemeň každú správu na formulár na generovanie outfitu.\n` +
+  `- Pri konkrétnej rade môžeš prirodzene ponúknuť ďalší užitočný krok (pozrieť šatník, nájsť alternatívu), ale nikdy ho nenúť.\n` +
   `- SLOVENČINA: „no" = áno. NIKDY neber „no" ako anglické odmietnutie.\n` +
   `- SKLOŇOVANIE MESTA: „pri Martine", „v Martine" — NIKDY „pri Martin".\n` +
   `- Žiadne URL, žiadne id v texte.\n`;
@@ -130,6 +138,7 @@ module.exports = {
   buildChatSystemPrompt,
   buildFastChatSystemPrompt,
   buildPremiumChatSystemPrompt,
+  CORE_TONE,
   SET_CONTEXT_RULES,
   STYLE_PREFERENCE_RULES,
 };

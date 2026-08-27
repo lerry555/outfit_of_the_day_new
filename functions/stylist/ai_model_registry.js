@@ -47,10 +47,15 @@ const STYLIST_MODEL_REGISTRY = {
   },
 };
 
-// Benchmark-locked U/D/R responsibilities. These are deliberately separate
-// from the legacy tier registry because Home/Calendar/Trip may still consume
-// tier routing during their own migration.
+// U/D/R responsibilities are separate from the legacy tier registry because
+// Home/Calendar/Trip may still consume tier routing during their own migration.
+// Brain V1 deliberately starts on the already-proven GPT-4o so the experiment
+// measures the value of a single conversational owner before paying for a
+// stronger model. Changing the brain model later is a one-line registry swap.
 const STYLIST_ROLE_MODELS = Object.freeze({
+  conversationBrain: Object.freeze({
+    provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.65,
+  }),
   contextClarification: Object.freeze({
     provider: "openai", id: "gpt-4o", maxTokens: 500, temperature: 0,
   }),

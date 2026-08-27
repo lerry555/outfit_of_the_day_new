@@ -1,13 +1,15 @@
 "use strict";
 
-// Production authority for the U/D/R Stylist path.  This module deliberately
+// Production authority for the U/D/R Stylist path. This module deliberately
 // accepts candidate IDs only: it can reject an unsafe/invalid candidate but it
 // can never substitute candidate zero (or any other positional fallback).
 
 const {
   createOpenAiRoleTransport,
-  createAnthropicExplanationTransport,
 } = require("./ai_stylist_role_transport_v1");
+const {
+  createConversationBrainExplanationTransportV1,
+} = require("./conversation_brain_v1");
 
 const CONTRACT_VERSION = 1;
 const MAX_CANDIDATES = 12;
@@ -105,7 +107,7 @@ function normalizeCompromiseDetails(value) {
 
 // This snapshot is immutable and must describe precisely the frozen item set.
 // It is retained server-side with IDs for correlation, then IDs are removed
-// before the payload reaches the user-facing explanation model.
+// before the payload reaches the user-facing conversation brain.
 function normalizePresentationItems(value, itemIds) {
   if (value == null) return Object.freeze([]); // Allows already-released clients.
   if (!Array.isArray(value) || value.length !== itemIds.length) return null;
@@ -172,14 +174,12 @@ function explanationPayload(normalized, decision) {
   return Object.freeze({
     contractVersion: "FrozenOutfitExplanationRequestV1",
     effectiveAction: decision.action,
-    // Never transmit candidate or item IDs to Claude. It receives only this
-    // presentation-safe description of the immutable selected set.
+    // Never transmit candidate or item IDs to the user-facing brain. It
+    // receives only this presentation-safe description of the immutable set.
     userFacingSelectedOutfit: selected ? selected.presentationItems.map((item) => ({
       name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,
     })) : [],
     userFacingContext: normalized.resolvedContext,
-    // This is deliberately separate from the outfit description. It is a
-    // caveat signal, not vocabulary for the end-user response.
     internalCaveat: selected ? selected.compromiseClassification.level : "reject_all",
     userFacingCompromises: selected ? selected.compromiseDetails : [],
   });
@@ -191,10 +191,6 @@ function deterministicExplanation(decision) {
     "Toto je z tvojho šatníka najsilnejšia dostupná kombinácia. Ak je niektorý kúsok kompromis, ber ho ako najlepšiu aktuálnu možnosť, nie ako ideálne riešenie.";
 }
 
-// Prompting is the primary UX control, but do not display an explanation that
-// nevertheless leaks a recognisable implementation term. This guard cannot
-// change the already validated decision; it only selects the safe prose
-// fallback for that same decision.
 function isUserFacingExplanationSafe(value) {
   const lower = cleanText(value, 1200).toLowerCase();
   if (!lower) return false;
@@ -207,13 +203,18 @@ function isUserFacingExplanationSafe(value) {
 }
 
 function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecret, execute}) {
+  // resolveAnthropicSecret is retained in the public constructor for one
+  // compatibility cycle so the deployed callable and existing callers do not
+  // need to change at the same time. Brain V1 no longer sends explanation
+  // requests to Anthropic.
   if (typeof resolveOpenAISecret !== "function" || typeof resolveAnthropicSecret !== "function" ||
       typeof execute !== "function") throw new Error("frozen_stylist_authority_dependencies_missing");
   const decisionClient = createOpenAiRoleTransport({
     role: "finalCandidateDecision", credentialProvider: resolveOpenAISecret, execute,
   });
-  const explanationClient = createAnthropicExplanationTransport({
-    credentialProvider: resolveAnthropicSecret, execute,
+  const explanationClient = createConversationBrainExplanationTransportV1({
+    credentialProvider: resolveOpenAISecret,
+    execute,
   });
   return Object.freeze({
     async resolve({data, ownedItemIds}) {

@@ -1,0 +1,57 @@
+name: Brain V1 unit checks
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  brain-v1-unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+      - name: Syntax check Brain V1 seams
+        run: |
+          node --check functions/stylist/conversation_brain_persona_v1.js
+          node --check functions/stylist/conversation_brain_v1.js
+          node --check functions/stylist/ai_model_registry.js
+          node --check functions/stylist/ai_router.js
+          node --check functions/stylist/chat_prompts.js
+          node --check functions/stylist/frozen_stylist_authority_v1.js
+      - name: Brain V1 focused contracts
+        run: >-
+          node --test
+          functions/stylist/conversation_brain_v1.test.js
+          functions/stylist/conversation_brain_chat_prompt_v1.test.js
+          functions/stylist/frozen_stylist_authority_v1.test.js
+          functions/stylist/frozen_stylist_brain_v1.test.js
+          functions/stylist/chat_prompts.test.js
+      - name: Frozen explanation regression
+        run: node --test functions/stylist/frozen_stylist_explanation_user_facing_v1.test.js
+      - name: Secret binding regression
+        run: node --test functions/stylist/ai_stylist_role_secret_binding_v1.test.js
+      - name: Grounding regression
+        run: node --test functions/stylist/grounding_reply.test.js
+      - name: Home review preference regression
+        run: node --test functions/stylist/home_final_review_preferences.test.js
+      - name: Outfit decision regression
+        run: node --test functions/stylist/outfit_decision.test.js
+      - name: Style preference regression
+        run: node --test functions/stylist/style_preferences_context.test.js
+      - name: Wardrobe summary regression
+        run: node --test functions/stylist/wardrobe_doc_summary.test.js
