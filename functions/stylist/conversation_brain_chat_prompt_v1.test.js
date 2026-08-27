@@ -19,9 +19,10 @@ test("opted-in ordinary chat routes through the Conversation Brain V1 registry r
   assert.equal(route.modelId, "gpt-4o");
   assert.equal(route.pipeline, "conversation_brain_v1");
   assert.equal(route.brainVersion, "brain_v1");
+  assert.equal(route.tier, "brain_v1");
 });
 
-test("older client without opt-in keeps the settled context clarification route", () => {
+test("older client without opt-in keeps the settled context clarification route and legacy prompt tier", () => {
   const route = routeStylistRequest({
     message: "Čo si mám obliecť?",
     history: [],
@@ -32,17 +33,19 @@ test("older client without opt-in keeps the settled context clarification route"
   assert.equal(route.modelId, "gpt-4o");
   assert.equal(route.pipeline, "context_clarification");
   assert.equal(route.brainVersion, null);
+  assert.notEqual(route.tier, "brain_v1");
+  assert.doesNotMatch(buildChatSystemPrompt(route.tier), /jeden súvislý osobný stylista OOTD/);
 });
 
-test("Brain V1 uses one full conversational prompt even when legacy tier signal differs", () => {
+test("Brain V1 synthetic prompt tier always resolves to the one full Brain prompt", () => {
   const canonical = buildConversationBrainChatSystemPrompt();
-  assert.equal(buildChatSystemPrompt("fast"), canonical);
-  assert.equal(buildChatSystemPrompt("standard"), canonical);
-  assert.equal(buildChatSystemPrompt("premium"), canonical);
+  assert.equal(buildChatSystemPrompt("brain_v1"), canonical);
+  assert.notEqual(buildChatSystemPrompt("fast"), canonical);
+  assert.notEqual(buildChatSystemPrompt("premium"), canonical);
 });
 
 test("Brain V1 prompt owns multi-turn continuity without weakening grounding", () => {
-  const prompt = buildChatSystemPrompt("fast");
+  const prompt = buildChatSystemPrompt("brain_v1");
   assert.match(prompt, /jeden súvislý osobný stylista OOTD/);
   assert.match(prompt, /Krátke follow-upy/);
   assert.match(prompt, /„za aké\?“/);
