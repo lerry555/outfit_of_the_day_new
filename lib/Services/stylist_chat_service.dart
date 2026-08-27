@@ -22,6 +22,11 @@ class StylistChatService {
            stylePreferences ??
            UserStylePreferencesReader(firestore: firestore, auth: auth);
 
+  /// This branch is an explicit opt-in build. Released clients on master do
+  /// not send this marker, so a selective backend deploy can serve both paths
+  /// without silently moving existing users onto the experiment.
+  static const conversationBrainVersion = 'brain_v1';
+
   final FirebaseFirestore? _firestoreOverride;
   final FirebaseAuth? _authOverride;
   final StylistJobConsumer? _injectedJobConsumer;
@@ -90,11 +95,15 @@ class StylistChatService {
       final callable = FirebaseFunctions.instanceFor(
         region: 'us-east1',
       ).httpsCallable('stylistChat');
+      final effectiveClientContext = <String, dynamic>{
+        ...?clientContext,
+        'conversationBrainVersion': conversationBrainVersion,
+      };
       final payload = <String, dynamic>{
         'message': message,
         'history': history,
         'weatherContext': weatherContext,
-        'clientContext': clientContext,
+        'clientContext': effectiveClientContext,
         'mode': mode,
         'includeWardrobe': includeWardrobe,
       };
@@ -160,9 +169,9 @@ class StylistChatService {
         callable,
         jsonSafeMapForCallable(payload),
         callTimeout,
-        // GPT-4o context/clarification is authoritative. A transport failure
-        // must surface as a failure rather than silently create extra model
-        // attempts that could produce a different clarification state.
+        // Brain/context clarification is authoritative. A transport failure
+        // must surface rather than silently create a second conversational
+        // decision with potentially different clarification state.
         maxAttempts: mode == 'chat' ? 1 : 3,
       );
 
@@ -289,7 +298,7 @@ class StylistChatService {
             exists: true,
             status: (data['status'] ?? '').toString(),
             result: rawResult is Map
-                ? Map<String, dynamic>.from(rawResult)
+                ? Map<String, dynamic>.from(rawResult as Map)
                 : null,
           );
         });
