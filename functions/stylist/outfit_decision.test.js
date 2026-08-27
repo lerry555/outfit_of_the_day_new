@@ -78,6 +78,32 @@ test("explicit user evidence may resolve a locally unknown activity", () => {
   assert.equal(parsed.eventContext.occasion, "hike");
 });
 
+test("verified semantic activity creates transport context when model omits eventContext", () => {
+  const parsed = {
+    semanticGrounding: {
+      activity: {
+        value: "hike",
+        evidence: "motať po vysokohorskom chodníku",
+        source: "user_explicit",
+      },
+    },
+  };
+  const decision = parseOutfitDecisionFields(parsed);
+  const state = {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["activity"],
+    semanticEvidenceTexts: [
+      "budeme sa asi 6 hodín motať po vysokohorskom chodníku",
+    ],
+  };
+
+  assert.equal(resolveOutfitAction("clarify", decision, state), "chat");
+  assert.equal(state.activityHint, "hike");
+  assert.equal(parsed.eventContext.occasion, "hike");
+  assert.equal(decision.eventContext.occasion, "hike");
+  assert.deepEqual(state.unresolvedMaterialFields, []);
+});
+
 test("semantic grounding cannot borrow assistant-only or invented evidence", () => {
   for (const evidence of ["ideme na túru", "túra v Tatrách"]) {
     const parsed = {

@@ -39,6 +39,7 @@ import '../utils/stylist_destination_parser.dart';
 import '../utils/stylist_day_parser.dart';
 import '../utils/stylist_city_suggester.dart';
 import '../utils/stylist_occasion_guidance.dart';
+import '../utils/stylist_semantic_activity.dart';
 import '../utils/stylist_outfit_explain_builder.dart';
 import '../utils/stylist_swap_request.dart';
 import '../utils/stylist_activity_terrain.dart';
@@ -806,6 +807,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         'status=${_outfitContextState.groundingStatus} '
         'remote=${_outfitContextState.remoteActivityPlanned} '
         'location=${_outfitContextState.activityLocationLabel ?? '-'} '
+        'activity=${_outfitContextState.activityHint ?? '-'} '
+        'unresolved=${_outfitContextState.unresolvedMaterialFields} '
+        'semantic=${StylistSemanticActivity.runtimeVersion} '
+        'directActivity=${StylistSemanticActivity.resolveExplicit(text) ?? '-'} '
         'correction=${_outfitContextState.userCorrectionDetected}',
       );
       final timing = Stopwatch()..start();
@@ -1456,10 +1461,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // directly so an otherwise good model reply cannot re-ask a resolved
       // field (or add a low-impact time question) before the destination and
       // activity are actually grounded.
-      response['reply'] = _groundingClarificationText(
-        _outfitContextState.unresolvedMaterialFields,
-        correction: _outfitContextState.userCorrectionDetected,
-      );
+      final brainReply = (response['reply'] ?? '').toString().trim();
+      final brainAlreadyClarified = action == 'clarify' && brainReply.isNotEmpty;
+      if (!brainAlreadyClarified) {
+        response['reply'] = _groundingClarificationText(
+          _outfitContextState.unresolvedMaterialFields,
+          correction: _outfitContextState.userCorrectionDetected,
+        );
+      }
       debugPrint(
         'STYLIST CHAT grounding_blocked_generation '
         'fields=${_outfitContextState.unresolvedMaterialFields}',
@@ -2462,7 +2471,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         .toSet();
     final prefix = correction ? 'Máš pravdu, to som si nemal domýšľať. ' : '';
     if (normalized.contains('destination') && normalized.contains('activity')) {
-      return '${prefix}Kam sa chystáte a čo tam budete približne robiť?';
+      return '${prefix}Kam sa chystáš a čo tam budeš približne robiť?';
     }
     if (normalized.contains('activity') && normalized.contains('date')) {
       final weekend = RegExp(
@@ -2470,8 +2479,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         caseSensitive: false,
       ).hasMatch(_conversationHintText());
       return weekend
-          ? '${prefix}Čo budete po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.'
-          : '${prefix}Čo budete počas pobytu približne robiť a kedy cestujete?';
+          ? '${prefix}Čo budeš po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.'
+          : '${prefix}Čo budeš počas pobytu približne robiť a kedy cestuješ?';
     }
     if (normalized.contains('destination')) {
       final activity = _outfitContextState.activityHint;
@@ -2482,27 +2491,27 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         ).hasMatch(_conversationHintText());
         return country
             ? '${prefix}Prechádzku po meste mám. Ktoré mesto v USA? Počasie sa tam môže dosť líšiť.'
-            : '${prefix}Prechádzku po meste mám. Ešte kam sa chystáte? Podľa miesta vyberiem správne počasie.';
+            : '${prefix}Prechádzku po meste mám. Ešte kam sa chystáš? Podľa miesta vyberiem správne počasie.';
       }
-      return '${prefix}Kam sa chystáte? Podľa miesta vyberiem vhodné počasie aj outfit.';
+      return '${prefix}Kam sa chystáš? Podľa miesta vyberiem vhodné počasie aj outfit.';
     }
     if (normalized.contains('trip_scope') && !normalized.contains('activity')) {
       return '${prefix}Chceš jeden konkrétny outfit, alebo plán, čo si zbaliť na celý pobyt?';
     }
     if (normalized.contains('activity')) {
       if (_outfitContextState.activityHint == 'travel') {
-        return '${prefix}Cestu mám. Čo budete po príchode približne robiť? To rozhodne, či má byť outfit hlavne pohodlný, alebo aj upravenejší.';
+        return '${prefix}Cestu mám. Čo budeš po príchode približne robiť? To rozhodne, či má byť outfit hlavne pohodlný, alebo aj upravenejší.';
       }
       if (RegExp(
         r'\b(?:\d+|jeden|jedna|dva|dve|tri|štyri|styri|päť|pat)\s+dni?\b',
         caseSensitive: false,
       ).hasMatch(_conversationHintText())) {
-        return '${prefix}Čo máte počas pobytu v pláne? Na celodenné chodenie po meste a na lepšiu večeru sa balí trochu inak.';
+        return '${prefix}Čo máš počas pobytu v pláne? Na celodenné chodenie po meste a na lepšiu večeru sa balí trochu inak.';
       }
-      return '${prefix}Čo tam budete približne robiť?';
+      return '${prefix}Čo tam budeš približne robiť?';
     }
     if (normalized.contains('date')) {
-      return '${prefix}Kedy cestujete? Podľa termínu overím správne počasie.';
+      return '${prefix}Kedy cestuješ? Podľa termínu overím správne počasie.';
     }
     return '${prefix}Aby som vybral vhodný outfit, potrebujem ešte trochu upresniť plán.';
   }

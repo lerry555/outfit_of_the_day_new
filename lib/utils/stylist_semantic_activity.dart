@@ -7,6 +7,8 @@
 class StylistSemanticActivity {
   const StylistSemanticActivity._();
 
+  static const String runtimeVersion = 'brain_v1_semantic_activity_v3';
+
   static const Set<String> canonicalActivities = <String>{
     'hike',
     'nature_walk',

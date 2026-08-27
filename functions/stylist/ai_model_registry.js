@@ -54,7 +54,7 @@ const STYLIST_MODEL_REGISTRY = {
 // stronger model. Changing the brain model later is a one-line registry swap.
 const STYLIST_ROLE_MODELS = Object.freeze({
   conversationBrain: Object.freeze({
-    provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.65,
+    provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.3,
   }),
   contextClarification: Object.freeze({
     provider: "openai", id: "gpt-4o", maxTokens: 500, temperature: 0,

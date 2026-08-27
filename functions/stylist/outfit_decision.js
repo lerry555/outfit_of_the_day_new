@@ -170,16 +170,24 @@ function parseOutfitDecisionFields(parsed) {
       .filter(Boolean);
   }
 
+  const semanticGrounding = parseSemanticGrounding(parsed);
+  let eventContext =
+    parsed?.eventContext && typeof parsed.eventContext === "object" &&
+      !Array.isArray(parsed.eventContext) ? parsed.eventContext : null;
+  if (semanticGrounding && parsed && typeof parsed === "object" &&
+      !Array.isArray(parsed) && !eventContext) {
+    eventContext = {};
+    parsed.eventContext = eventContext;
+  }
+
   return {
     confidence,
     decisionRisk,
     assumptions,
     clarifyReason,
     impactFields,
-    semanticGrounding: parseSemanticGrounding(parsed),
-    eventContext:
-      parsed?.eventContext && typeof parsed.eventContext === "object" ?
-        parsed.eventContext : null,
+    semanticGrounding,
+    eventContext,
   };
 }
 

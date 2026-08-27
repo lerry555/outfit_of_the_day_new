@@ -19,7 +19,8 @@ const JSON_OUTPUT =
   `"showItemIds":[],"eventContext":{},"excludeItemKeywords":[]}\n` +
   `\nSEMANTICKÉ UZEMNENIE (iba explicitný user fakt):\n` +
   `- unresolvedMaterialFields sú výstup rýchleho deterministického parsera, nie dôkaz, že user danú vec nepovedal.\n` +
-  `- Ak je unresolved "activity", NAJPRV skontroluj výhradne správy s rolou user. Ak user aktivitu významovo jasne pomenoval aj iným slovným tvarom/parafrázou, môžeš ju uzemniť cez semanticGrounding.activity.\n` +
+  `- Ak je unresolved "activity", MUSÍŠ pred voľbou action spraviť semantický pre-pass výhradne nad správami s rolou user: rozhodni, či user už významovo jasne opísal, čo bude robiť, aj keď nepoužil názov aktivity ani očakávané kľúčové slovo.\n` +
+  `- Ak je aktivita z user textu významovo jednoznačná, semanticGrounding.activity je POVINNÉ a NESMIEŠ sa na tú istú aktivitu znovu pýtať. Parserovo unresolved vtedy znamená iba „fast-path to nerozpoznal“, nie „user to nepovedal“.\n` +
   `- Tvar: {"activity":{"value":"CANONICAL","evidence":"DOSLOVNÝ KRÁTKY ÚSEK USER SPRÁVY","source":"user_explicit"}}.\n` +
   `- Povolené CANONICAL: hike,nature_walk,city_walk,dinner,travel,work,gym,run,cycling,barbecue,mushroom,date,cinema,concert,wedding,funeral,interview,zoo.\n` +
   `- evidence MUSÍ byť doslovný úsek userovej správy/histórie. Text asistenta nikdy nie je evidence. Nevymýšľaj synonymum namiesto citovaného úseku.\n` +
