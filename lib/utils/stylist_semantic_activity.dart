@@ -77,7 +77,6 @@ class StylistSemanticActivity {
     final text = normalize(input);
     if (text.isEmpty) return null;
 
-    // Specific social / venue activities first.
     if (_has(text, r'\b(?:svadb\w*|sobas\w*)\b')) return 'wedding';
     if (_has(text, r'\b(?:pohreb\w*|kar\w*)\b')) return 'funeral';
     if (_has(text, r'\b(?:pohovor\w*|interview\w*)\b')) return 'interview';
@@ -98,11 +97,11 @@ class StylistSemanticActivity {
       return 'dinner';
     }
 
-    // Strong hiking language. Word families handle Slovak cases and common
-    // paraphrases such as túra/túrou, výšľap/výšľapu, trekking, hrebeňovka.
+    // Strong hiking language. The `tur...` noun pattern covers grammatical
+    // cases (túra, túry, túru, túre, túrou, túrami, túrach) in one family.
     if (_has(
       text,
-      r'\b(?:turistik\w*|turistick\w*|tura\w*|trek\w*|hike|hiking|vyslap\w*|hrebenovk\w*)\b',
+      r'\b(?:turistik\w*|turistick\w*|tur(?:a|y|u|e|ou|ami|ach)|trek\w*|hike|hiking|vyslap\w*|hrebenovk\w*)\b',
     )) {
       return 'hike';
     }
@@ -129,7 +128,6 @@ class StylistSemanticActivity {
       return 'work';
     }
 
-    // Explicit city sightseeing/walking.
     if (_has(text, r'\b(?:pamiat\w*|sightseeing\w*|prehliadk\w*)\b')) {
       return 'city_walk';
     }
@@ -148,8 +146,6 @@ class StylistSemanticActivity {
       return 'city_walk';
     }
 
-    // Explicit nature/forest wording. "Do lesa" is enough to establish the
-    // functional environment; it does not invent a route, terrain grade or GPS.
     if (_has(text, r'\b(?:do|v|po)\s+les\w*\b')) return 'nature_walk';
     if (_has(text, r'\b(?:les\w*|prirod\w*|luk\w*)\b') &&
         _has(
@@ -159,8 +155,6 @@ class StylistSemanticActivity {
       return 'nature_walk';
     }
 
-    // Transport is a travel activity fact. Upstream grounding still decides
-    // whether it is enough for the requested outfit or only transport mode.
     if (_has(text, r'\b(?:autom\w*|vlakom\w*|lietadl\w*|letim\w*|presun\w*)\b')) {
       return 'travel';
     }
