@@ -44,13 +44,16 @@ test("Brain V1 synthetic prompt tier always resolves to the one full Brain promp
   assert.notEqual(buildChatSystemPrompt("premium"), canonical);
 });
 
-test("Brain V1 prompt owns multi-turn continuity without weakening grounding", () => {
+test("Brain V1 prompt owns continuity and can repair parser misses only from explicit user evidence", () => {
   const prompt = buildChatSystemPrompt("brain_v1");
   assert.match(prompt, /jeden súvislý osobný stylista OOTD/);
   assert.match(prompt, /Krátke follow-upy/);
   assert.match(prompt, /„za aké\?“/);
   assert.match(prompt, /Opravu používateľa prirodzene prijmi/);
-  assert.match(prompt, /groundingStatus = needs_grounding/);
+  assert.match(prompt, /semanticGrounding/);
+  assert.match(prompt, /user_explicit/);
+  assert.match(prompt, /doslovný úsek userovej správy/i);
+  assert.match(prompt, /"výlet", "cesta", "niekam", "von"/);
   assert.match(prompt, /GPS je systémový fakt/);
   assert.match(prompt, /Plný outfit vyberá appka/);
   assert.match(prompt, /VÝSTUP — VÝHRADNE JSON/);
