@@ -55,3 +55,22 @@ jobs:
         run: node --test functions/stylist/style_preferences_context.test.js
       - name: Wardrobe summary regression
         run: node --test functions/stylist/wardrobe_doc_summary.test.js
+
+  brain-v1-flutter-seams:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+      - name: Analyze Brain V1 client seams
+        run: >-
+          flutter analyze --no-fatal-infos
+          lib/Services/stylist_chat_service.dart
+          lib/Services/stylist_frozen_candidate_decision_service.dart
