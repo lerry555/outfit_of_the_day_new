@@ -1,7 +1,10 @@
 import '../data/stylist_intent.dart';
 import 'dress_code_resolver.dart';
+import 'stylist_semantic_activity.dart';
 
-/// Určí [StylistIntent] z konverzácie a dress-code archetypov — log-only v M1a.
+/// Určí [StylistIntent] z kanonickej aktivity alebo dress-code archetypu.
+/// Slovenské tvary/parafrázy rieši zdieľaný [StylistSemanticActivity], aby sa
+/// jazykové zoznamy nerozchádzali medzi groundingom, intentom a terénom.
 class StylistIntentResolver {
   const StylistIntentResolver._();
 
@@ -13,17 +16,8 @@ class StylistIntentResolver {
     String? groundedActivityType,
   }) {
     final grounded = _resolveGroundedActivityType(groundedActivityType);
-    if (grounded != null) {
-      final profile = StylistIntentCatalog.intentFor(grounded);
-      if (profile.activityType == grounded) return profile;
-      return StylistIntent(
-        activityType: grounded,
-        primaryImpressions: profile.primaryImpressions,
-        secondaryImpressions: profile.secondaryImpressions,
-        avoidImpressions: profile.avoidImpressions,
-        impressionSummarySk: profile.impressionSummarySk,
-      );
-    }
+    if (grounded != null) return _intentForCanonical(grounded);
+
     final activityType = _resolveActivityType(
       occasion: occasion,
       conversationText: conversationText,
@@ -33,30 +27,23 @@ class StylistIntentResolver {
     return StylistIntentCatalog.intentFor(activityType);
   }
 
+  static StylistIntent _intentForCanonical(String canonical) {
+    final effective = canonical == 'zoo' ? 'city_walk' : canonical;
+    final profile = StylistIntentCatalog.intentFor(effective);
+    if (profile.activityType == effective) return profile;
+    return StylistIntent(
+      activityType: effective,
+      primaryImpressions: profile.primaryImpressions,
+      secondaryImpressions: profile.secondaryImpressions,
+      avoidImpressions: profile.avoidImpressions,
+      impressionSummarySk: profile.impressionSummarySk,
+    );
+  }
+
   static String? _resolveGroundedActivityType(String? value) {
-    final normalized = (value ?? '').trim().toLowerCase();
-    if (normalized.isEmpty) return null;
-    if (normalized == 'city_walk' || normalized == 'mesto' || normalized == 'zoo') {
-      return 'city_walk';
-    }
-    if (normalized.contains('hory') ||
-        normalized.contains('turist') ||
-        normalized == 'hike' ||
-        normalized == 'hiking') {
-      return 'hike';
-    }
-    if (normalized.contains('les') ||
-        normalized.contains('prírod') ||
-        normalized.contains('prirod')) {
-      return 'nature_walk';
-    }
-    if (normalized == 'dinner' || normalized == 'work' || normalized == 'travel') {
-      return normalized;
-    }
-    // Generic trip words deliberately remain unresolved upstream and must not
-    // acquire an outdoor/hiking identity here.
-    if (normalized.contains('vylet') || normalized.contains('výlet')) return null;
-    return normalized;
+    final canonical = StylistSemanticActivity.canonicalize(value);
+    if (canonical != null) return canonical;
+    return StylistSemanticActivity.resolveExplicit(value ?? '');
   }
 
   static String _resolveActivityType({
@@ -65,16 +52,11 @@ class StylistIntentResolver {
     Map<String, dynamic>? aiDressCode,
     int? tempC,
   }) {
-    final blob = '${occasion ?? ''} ${conversationText ?? ''}'.toLowerCase();
+    final blob = '${occasion ?? ''} ${conversationText ?? ''}'.trim();
+    if (blob.isEmpty) return 'casual';
 
-    if (blob.trim().isEmpty) return 'casual';
-
-    // Špecifickejšie aktivity pred všeobecným dress-code matchom.
-    if (_matchesMushroom(blob)) return 'mushroom';
-    if (_matchesBarbecue(blob)) return 'barbecue';
-    if (_matchesDate(blob)) return 'date';
-    if (_matchesCinema(blob)) return 'cinema';
-    if (_matchesDinner(blob)) return 'dinner';
+    final semantic = StylistSemanticActivity.resolveExplicit(blob);
+    if (semantic != null) return semantic == 'zoo' ? 'city_walk' : semantic;
 
     final dressCode = DressCodeResolver.resolve(
       occasion: occasion,
@@ -86,65 +68,6 @@ class StylistIntentResolver {
     if (StylistIntentCatalog.byActivityType.containsKey(dressCode.id)) {
       return dressCode.id;
     }
-
     return 'casual';
-  }
-
-  static bool _matchesMushroom(String blob) {
-    return _matchesAny(blob, [
-      'hubovan',
-      'huby',
-      'hub ',
-      'hub,',
-      'hub.',
-      'hrib',
-      'hriby',
-      'hribov',
-    ]);
-  }
-
-  static bool _matchesBarbecue(String blob) {
-    return _matchesAny(blob, [
-      'grilov',
-      'gril ',
-      'grill',
-      'bbq',
-      'barbecue',
-      'opekac',
-      'opekač',
-    ]);
-  }
-
-  static bool _matchesDate(String blob) {
-    return blob.contains('rande') ||
-        blob.contains('date night') ||
-        RegExp(r'\bdate\b').hasMatch(blob);
-  }
-
-  static bool _matchesCinema(String blob) {
-    return blob.contains('kino') ||
-        blob.contains('kina') ||
-        blob.contains('kine') ||
-        blob.contains('cinema') ||
-        blob.contains('movie');
-  }
-
-  // Pozn.: zámerne matchujeme „večeru"/„večeri" (akuzatív/lokál), nie „večer",
-  // aby sme nezachytili „Večer idem na svadbu.".
-  static bool _matchesDinner(String blob) {
-    return blob.contains('večeru') ||
-        blob.contains('veceru') ||
-        blob.contains('večeri') ||
-        blob.contains('veceri') ||
-        blob.contains('dinner') ||
-        blob.contains('reštaurác') ||
-        blob.contains('restaurac');
-  }
-
-  static bool _matchesAny(String blob, List<String> needles) {
-    for (final needle in needles) {
-      if (blob.contains(needle)) return true;
-    }
-    return false;
   }
 }
