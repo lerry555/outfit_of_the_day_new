@@ -106,10 +106,16 @@ class StylistSemanticActivity {
     )) {
       return 'hike';
     }
-    if (_has(text, r'\b(?:vystup\w*|slap\w*)\b.*\b(?:vrchol\w*|kopec\w*|hreben\w*)\b')) {
+    if (_has(
+      text,
+      r'\b(?:vystup\w*|slap\w*)\b.*\b(?:vrchol\w*|kopec\w*|hreben\w*)\b',
+    )) {
       return 'hike';
     }
     if (_has(text, r'\b(?:na|po)\s+(?:vrchol\w*|hreben\w*)\b')) {
+      return 'hike';
+    }
+    if (_has(text, r'\b(?:do|na|po)\s+hor(?:y|ach|ami|u|ou)?\b')) {
       return 'hike';
     }
 
@@ -127,18 +133,29 @@ class StylistSemanticActivity {
     if (_has(text, r'\b(?:pamiat\w*|sightseeing\w*|prehliadk\w*)\b')) {
       return 'city_walk';
     }
-    if (_has(text, r'\b(?:centrum\w*|centre\w*|mesto\w*|meste\w*|mestom\w*)\b') &&
-        _has(text, r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*)\b')) {
+    if (_has(
+          text,
+          r'\b(?:centrum\w*|centre\w*|mesto\w*|meste\w*|mestom\w*)\b',
+        ) &&
+        _has(
+          text,
+          r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*)\b',
+        )) {
       return 'city_walk';
     }
-    // Preserve an old typo-tolerant phrase used by grounding regression data.
-    if (_has(text, r'\bpo\s+mete\b') || _has(text, r'\bpopozer\w*\s+mest\w*\b')) {
+    if (_has(text, r'\bpo\s+mete\b') ||
+        _has(text, r'\bpopozer\w*\s+mest\w*\b')) {
       return 'city_walk';
     }
 
-    // Explicit nature/forest walking, but not merely a destination word.
+    // Explicit nature/forest wording. "Do lesa" is enough to establish the
+    // functional environment; it does not invent a route, terrain grade or GPS.
+    if (_has(text, r'\b(?:do|v|po)\s+les\w*\b')) return 'nature_walk';
     if (_has(text, r'\b(?:les\w*|prirod\w*|luk\w*)\b') &&
-        _has(text, r'\b(?:prechadz\w*|chod\w*|ist\w*|pojd\w*|vyraz\w*)\b')) {
+        _has(
+          text,
+          r'\b(?:prechadz\w*|chod\w*|idem\w*|ideme\w*|ist\w*|pojd\w*|vyraz\w*)\b',
+        )) {
       return 'nature_walk';
     }
 
@@ -163,6 +180,12 @@ class StylistSemanticActivity {
     final text = normalize(input);
     final activity = resolveExplicit(text);
     if (looksLikeGenericTrip(text)) return true;
+    if (_has(
+      text,
+      r'\b(?:hor\w*|les\w*|prirod\w*|tatr\w*|kopc\w*|zoo|hrad\w*|festival\w*|svadb\w*)\b',
+    )) {
+      return true;
+    }
     return activity == 'hike' ||
         activity == 'nature_walk' ||
         activity == 'city_walk' ||
