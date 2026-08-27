@@ -15,6 +15,9 @@ void main() {
         'spravíme výstup na vrchol',
         'pôjdeme po hrebeni',
         'ideme do hôr',
+        'budeme sa asi 6 hodín motať po vysokohorskom chodníku',
+        'budeme kráčať po horskom traili',
+        'celý deň pôjdeme po tatranskej trase',
       ];
       for (final sample in samples) {
         expect(
@@ -52,12 +55,13 @@ void main() {
       );
     });
 
-    test('generic outing stays unresolved and plain evening is not dinner', () {
+    test('generic outing and bare mountain destination stay unresolved', () {
       for (final sample in <String>[
         'zajtra idem na výlet',
         'ideme niekam von',
         'chystáme sa preč',
         'zajtra večer niekam ideme',
+        'zajtra idem do Tatier',
       ]) {
         expect(
           StylistSemanticActivity.resolveExplicit(sample),
@@ -80,6 +84,28 @@ void main() {
             'zajtra idem na výlet Do Vysokých Tatier, ideme na túru asi na 6 hodín a vyrážame okolo 8:00.',
         latestUserText:
             'Do Vysokých Tatier, ideme na túru asi na 6 hodín a vyrážame okolo 8:00.',
+        gpsCityLabel: 'Martin',
+        previous: first,
+      );
+
+      expect(second.activityHint, 'hike');
+      expect(second.activityLocationKnown, isTrue);
+      expect(second.hourLocal, 8);
+      expect(second.unresolvedMaterialFields, isNot(contains('activity')));
+      expect(second.groundingStatus, 'sufficient');
+    });
+
+    test('natural mountain-walking paraphrase is ready without asking activity twice', () {
+      final first = OutfitContextState.buildFrom(
+        conversation: 'zajtra idem na výlet',
+        latestUserText: 'zajtra idem na výlet',
+        gpsCityLabel: 'Martin',
+      );
+      final second = OutfitContextState.buildFrom(
+        conversation:
+            'zajtra idem na výlet Do Vysokých Tatier, budeme sa asi 6 hodín motať po vysokohorskom chodníku a vyrážame okolo 8:00.',
+        latestUserText:
+            'Do Vysokých Tatier, budeme sa asi 6 hodín motať po vysokohorskom chodníku a vyrážame okolo 8:00.',
         gpsCityLabel: 'Martin',
         previous: first,
       );
