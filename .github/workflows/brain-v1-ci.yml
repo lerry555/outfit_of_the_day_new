@@ -33,6 +33,7 @@ jobs:
           node --check functions/stylist/ai_router.js
           node --check functions/stylist/chat_prompts.js
           node --check functions/stylist/frozen_stylist_authority_v1.js
+          node --check functions/stylist/outfit_decision.js
       - name: Brain V1 focused contracts
         run: >-
           node --test
@@ -75,5 +76,10 @@ jobs:
           lib/Services/stylist_chat_service.dart
           lib/Services/stylist_frozen_candidate_decision_service.dart
           lib/models/outfit_context_state.dart
+          lib/utils/stylist_semantic_activity.dart
+          lib/utils/stylist_intent_resolver.dart
+          lib/utils/stylist_activity_terrain.dart
       - name: Explicit hike grounding regression
         run: flutter test test/brain_v1_explicit_hike_grounding_test.dart
+      - name: Semantic activity regression
+        run: flutter test test/stylist_semantic_activity_test.dart
