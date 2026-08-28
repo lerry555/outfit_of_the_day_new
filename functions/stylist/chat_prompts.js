@@ -19,13 +19,14 @@ const JSON_OUTPUT =
   `"showItemIds":[],"eventContext":{},"excludeItemKeywords":[]}\n` +
   `\nSEMANTICKÉ UZEMNENIE (iba explicitný user fakt):\n` +
   `- unresolvedMaterialFields sú výstup rýchleho deterministického parsera, nie dôkaz, že user danú vec nepovedal.\n` +
-  `- Ak je unresolved "activity", MUSÍŠ pred voľbou action spraviť semantický pre-pass výhradne nad správami s rolou user: rozhodni, či user už významovo jasne opísal, čo bude robiť, aj keď nepoužil názov aktivity ani očakávané kľúčové slovo.\n` +
+  `- Ak je unresolved "activity" alebo "trip_scope", MUSÍŠ pred voľbou action spraviť semantický pre-pass výhradne nad správami s rolou user: rozhodni, či user už významovo jasne opísal, NA ČO outfit použije alebo čo bude robiť, aj keď nepoužil názov aktivity ani očakávané kľúčové slovo.\n` +
   `- Ak je aktivita z user textu významovo jednoznačná, semanticGrounding.activity je POVINNÉ a NESMIEŠ sa na tú istú aktivitu znovu pýtať. Parserovo unresolved vtedy znamená iba „fast-path to nerozpoznal“, nie „user to nepovedal“.\n` +
-  `- Tvar: {"activity":{"value":"CANONICAL","evidence":"DOSLOVNÝ KRÁTKY ÚSEK USER SPRÁVY","source":"user_explicit"}}.\n` +
+  `- Tvar známej kategórie: {"activity":{"value":"CANONICAL","evidence":"DOSLOVNÝ KRÁTKY ÚSEK USER SPRÁVY","source":"user_explicit"}}.\n` +
   `- Povolené CANONICAL: hike,nature_walk,city_walk,dinner,travel,work,gym,run,cycling,barbecue,mushroom,date,cinema,concert,wedding,funeral,interview,zoo.\n` +
+  `- Ak user jasne pomenoval inú reálnu aktivitu (napr. prednáška, konferencia, vyšetrenie, ceremónia), NEVYMÝŠĽAJ nový canonical a nenúť ju do nesprávnej kategórie. Použi {"activity":{"value":"other","label":"stručný názov aktivity","evidence":"DOSLOVNÝ ÚSEK","source":"user_explicit"}}.\n` +
   `- evidence MUSÍ byť doslovný úsek userovej správy/histórie. Text asistenta nikdy nie je evidence. Nevymýšľaj synonymum namiesto citovaného úseku.\n` +
   `- "výlet", "cesta", "niekam", "von" samy osebe NIKDY nestačia na semanticGrounding konkrétnej aktivity.\n` +
-  `- semanticGrounding používaj iba na význam, ktorý user naozaj vyslovil; nikdy ním nedopĺňaj miesto, čas, terén, trasu či intenzitu z domnienky.\n` +
+  `- semanticGrounding používaj iba na význam, ktorý user naozaj vyslovil; nikdy ním nedopĺňaj miesto, čas, terén, trasu, rolu na udalosti či intenzitu z domnienky.\n` +
   `- Ak po tomto zostáva materiálny unresolved fakt, action musí byť "clarify". Ak sú všetky materiálne fakty uzemnené a user chce outfit, môže byť generate_outfit.\n` +
   `\nROZHODNUTIE (nie checklist polí):\n` +
   `- Neznámy fakt s materiálnym dopadom NIKDY nenahrádzaj domnienkou iba preto, že máš vysokú confidence.\n` +
@@ -93,8 +94,19 @@ const CLARIFY_RULES =
   `- „výlet“, „niekam von“, „ideme preč“ ani „cesta“ samy neurčujú turistiku, prechádzku, mesto ani terén. Pri neznámom cieli alebo aktivite sa prirodzene spýtaj jednou otázkou, ktorá môže pokryť oboje.\n` +
   `- Keď user poprie predchádzajúci predpoklad alebo opraví cieľ/aktivitu/dátum, uznaj opravu, nepreber asistentov predpoklad ako fakt a negeneruj outfit, kým nezostanú materiálne fakty uzemnené.\n` +
   `- Viacdňová cesta nie je automaticky jeden lokálny outfit. Zisti, či rieši cestovný deň alebo konkrétnu udalosť, ak to mení odporúčanie.\n` +
+  `\nCESTOVANIE — ÚČEL OUTFITU:\n` +
+  `- travelContext.scope je významový fakt, nie typ dopravného prostriedku. Auto/vlak/lietadlo samo NEZNAMENÁ, že user chce outfit počas cesty.\n` +
+  `- scope=unknown + scopeNeedsClarification=true znamená: vieš, že cestuje, ale nevieš NA ČO outfit použije. Spýtaj sa priateľsky jednou otázkou, či ho chce hlavne na cestu, na to čo ho čaká po príchode, alebo aby fungoval na oboje. Nepýtaj sa znovu na už známy cieľ.\n` +
+  `- scope=transit: prioritou je pohodlie počas presunu. Destinácia nie je blocker; ak je známa, počasie po príjazde je bonus pre praktickú radu (čo mať poruke), nie dôvod odmietnuť outfit.\n` +
+  `- scope=destination: outfit je pre aktivitu po príchode; konkrétna destinácia/počasie je materiálne.\n` +
+  `- scope=mixed: outfit alebo vrstvy musia zvládnuť presun AJ prechod do cieľovej situácie. Hľadaj vrstvenie/ľahkú zmenu (napr. vrchná vrstva), nie dva nesúvisiace outfity, pokiaľ user nechce prezliekanie.\n` +
+  `- Ak travelContext.departureOffsetMinutes existuje, odchod je relatívny k clientContext.now. NIKDY sa nepýtaj na čas odchodu, ktorý už z toho vieš.\n` +
+  `- Ak travelContext/derivedTravelTiming obsahuje odhad príjazdu, používaj ho ako ODHAD a neprezentuj ho ako cestovný poriadok. Ak odhad nie je dostupný a čas príjazdu by materiálne menil vrstvy/počasie, opýtaj sa na približný čas príjazdu a vysvetli stručne prečo.\n` +
+  `- Ak poznáš cieľ aj čas/odhad príjazdu, môžeš povedať, že pozrieš podmienky po príjazde, aby user vedel, či mať poruke mikinu, ľahkú vrstvu alebo ochranu pred dažďom. Nepýtaj sa usera na počasie.\n` +
   `\nLOKALITA:\n` +
   `- GPS nie je automaticky miesto aktivity pri výlete/hore/les/dovolenka.\n` +
+  `- locationContext.providerVerified=true znamená, že názov/typ lokality overil globálny provider. country/adminRegion môže byť príliš široké pre destination outfit, locality je použiteľná pre počasie.\n` +
+  `- Nikdy nerozhoduj, že názov je mesto/krajina podľa vlastného zoznamu názvov. Opieraj sa o locationContext.\n` +
   `- „Čo si mám obliecť dnes do práce?" → generate_outfit, GPS stačí.\n` +
   `- „Idem o 15:00 do lesa" + GPS → ak rozdiel počasia malý, generate_outfit.\n` +
   `- „Zajtra idem do hory" bez času/oblasti → clarify (vysoké riziko minutia teploty).\n` +
@@ -128,6 +140,7 @@ function premiumBody(coreTone) {
     `- „idem o 15 do lesa" → generate_outfit, assumptions [gpsCity, wetGround z API].\n` +
     `- „zajtra o 15 do mesta na hodinu" → generate_outfit.\n` +
     `- „okolo 4:00 na huby" → generate_outfit.\n` +
+    `- „za pol hodinu idem autom do Berlína, potrebujem outfit" → clarify účel outfitu; NIKDY automaticky nepredpokladaj outfit do auta.\n` +
     SET_CONTEXT_RULES +
     STYLE_PREFERENCE_RULES +
     JSON_OUTPUT
