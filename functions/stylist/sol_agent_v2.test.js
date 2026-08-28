@@ -103,8 +103,8 @@ function fakeFirestore(initial = {}) {
             collection(subcollection) {
               assert.equal(subcollection, "stylistAgentV2Sessions");
               return {
-                doc(chatId) {
-                  const key = `${uid}/${chatId}`;
+                doc(id) {
+                  const key = `${uid}/${id}`;
                   return {
                     async get() {
                       return {
@@ -132,41 +132,46 @@ function fakeHttpsError(code, message) {
   return error;
 }
 
-test("Sol V2 handler persists only the provider response id as conversation state", async () => {
+function successfulProvider(capture) {
+  return async (url, request) => {
+    capture.value = {url, request};
+    return {
+      ok: true,
+      async json() {
+        return {
+          id: "resp_new",
+          output: [{
+            type: "message",
+            content: [{type: "output_text", text: "Sedí. 😄"}],
+          }],
+        };
+      },
+    };
+  };
+}
+
+test("Sol V2 handler persists provider response id as native conversation state", async () => {
   const db = fakeFirestore({"user_1/chat_1": {previousResponseId: "resp_old"}});
-  let capturedRequest;
+  const capture = {};
   const handler = createSolAgentV2Handler({
     db,
     resolveOpenAISecret: () => "test-secret",
     serverTimestamp: () => "SERVER_TIME",
     httpsError: fakeHttpsError,
     logger: {info() {}, warn() {}, error() {}},
-    fetchImpl: async (url, request) => {
-      capturedRequest = {url, request};
-      return {
-        ok: true,
-        async json() {
-          return {
-            id: "resp_new",
-            output: [{
-              type: "message",
-              content: [{type: "output_text", text: "Sedí. 😄"}],
-            }],
-          };
-        },
-      };
-    },
+    fetchImpl: successfulProvider(capture),
   });
 
   const result = await handler({
     message: "A čo toto?",
+    sessionId: "chat_1",
     chatId: "chat_1",
   }, {auth: {uid: "user_1"}});
 
-  const body = JSON.parse(capturedRequest.request.body);
-  assert.equal(capturedRequest.url, "https://api.openai.com/v1/responses");
+  const body = JSON.parse(capture.value.request.body);
+  assert.equal(capture.value.url, "https://api.openai.com/v1/responses");
   assert.equal(body.previous_response_id, "resp_old");
-  assert.equal(capturedRequest.request.headers.Authorization, "Bearer test-secret");
+  assert.equal(capture.value.request.headers.Authorization, "Bearer test-secret");
   assert.equal(result.reply, "Sedí. 😄");
   assert.equal(result.agentVersion, "sol_v2");
   assert.equal(db.state["user_1/chat_1"].previousResponseId, "resp_new");
@@ -174,7 +179,32 @@ test("Sol V2 handler persists only the provider response id as conversation stat
   assert.equal(db.writes[0].value.updatedAt, "SERVER_TIME");
 });
 
-test("Sol V2 handler refuses to mix chats when chatId is missing", async () => {
+test("Temporary first-turn session is mirrored to persisted chat id", async () => {
+  const db = fakeFirestore({"user_1/draft_1": {previousResponseId: "resp_old"}});
+  const capture = {};
+  const handler = createSolAgentV2Handler({
+    db,
+    resolveOpenAISecret: () => "test-secret",
+    serverTimestamp: () => "SERVER_TIME",
+    httpsError: fakeHttpsError,
+    logger: {info() {}, warn() {}, error() {}},
+    fetchImpl: successfulProvider(capture),
+  });
+
+  await handler({
+    message: "Pokračujeme.",
+    sessionId: "draft_1",
+    chatId: "chat_real",
+  }, {auth: {uid: "user_1"}});
+
+  const body = JSON.parse(capture.value.request.body);
+  assert.equal(body.previous_response_id, "resp_old");
+  assert.equal(db.state["user_1/draft_1"].previousResponseId, "resp_new");
+  assert.equal(db.state["user_1/chat_real"].previousResponseId, "resp_new");
+  assert.equal(db.writes.length, 2);
+});
+
+test("Sol V2 handler refuses requests without any session identity", async () => {
   const handler = createSolAgentV2Handler({
     db: fakeFirestore(),
     resolveOpenAISecret: () => "test-secret",
@@ -185,6 +215,6 @@ test("Sol V2 handler refuses to mix chats when chatId is missing", async () => {
 
   await assert.rejects(
     handler({message: "Ahoj"}, {auth: {uid: "user_1"}}),
-    (error) => error.code === "invalid-argument" && error.message === "chat_id_required",
+    (error) => error.code === "invalid-argument" && error.message === "session_id_required",
   );
 });
