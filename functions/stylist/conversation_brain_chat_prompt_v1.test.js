@@ -16,10 +16,12 @@ test("opted-in ordinary chat routes through the Conversation Brain V1 registry r
     weatherContext: null,
     clientContext: {conversationBrainVersion: "brain_v1"},
   });
-  assert.equal(route.modelId, "gpt-4o");
+  assert.equal(route.modelId, "gpt-5.6-terra");
   assert.equal(route.pipeline, "conversation_brain_v1");
   assert.equal(route.brainVersion, "brain_v1");
   assert.equal(route.tier, "brain_v1");
+  assert.equal(route.webSearchEnabled, true);
+  assert.equal(route.reasoningEffort, "low");
 });
 
 test("older client without opt-in keeps the settled context clarification route and legacy prompt tier", () => {
