@@ -39,6 +39,7 @@ function buildConversationBrainResponsesBodyV1({
     input: normalizeResponsesInputV1(messages),
     tools: [{type: "web_search", search_context_size: contextSize}],
     tool_choice: "auto",
+    max_tool_calls: 3,
     include: ["web_search_call.action.sources"],
     reasoning: {effort},
     max_output_tokens: maxTokens,
