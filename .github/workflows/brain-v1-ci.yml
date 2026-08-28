@@ -77,9 +77,12 @@ jobs:
           lib/Services/stylist_frozen_candidate_decision_service.dart
           lib/models/outfit_context_state.dart
           lib/utils/stylist_semantic_activity.dart
+          lib/utils/stylist_travel_context.dart
           lib/utils/stylist_intent_resolver.dart
           lib/utils/stylist_activity_terrain.dart
       - name: Explicit hike grounding regression
         run: flutter test test/brain_v1_explicit_hike_grounding_test.dart
       - name: Semantic activity regression
         run: flutter test test/stylist_semantic_activity_test.dart
+      - name: Travel scope regression
+        run: flutter test test/stylist_travel_context_test.dart

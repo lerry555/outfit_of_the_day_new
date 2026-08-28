@@ -4,10 +4,12 @@
 /// Slovak diacritics and recognizes word families / common paraphrases rather
 /// than enumerating every grammatical case in every caller. Generic outing
 /// words ("výlet", "niekam von", "cesta") intentionally stay unresolved.
+/// Named cities, countries, regions, attractions and performers are never
+/// semantic evidence for an activity.
 class StylistSemanticActivity {
   const StylistSemanticActivity._();
 
-  static const String runtimeVersion = 'brain_v1_semantic_activity_v3';
+  static const String runtimeVersion = 'brain_v1_semantic_activity_v4';
 
   static const Set<String> canonicalActivities = <String>{
     'hike',
@@ -74,7 +76,7 @@ class StylistSemanticActivity {
   }
 
   /// Resolves only activities that the user's wording itself makes explicit.
-  /// It must never turn a generic trip into hiking/city walking by assumption.
+  /// It must never turn a generic trip or a named place into an activity.
   static String? resolveExplicit(String input) {
     final text = normalize(input);
     if (text.isEmpty) return null;
@@ -99,8 +101,6 @@ class StylistSemanticActivity {
       return 'dinner';
     }
 
-    // Strong hiking language. The `tur...` noun pattern covers grammatical
-    // cases (túra, túry, túru, túre, túrou, túrami, túrach) in one family.
     if (_has(
       text,
       r'\b(?:turistik\w*|turistick\w*|tur(?:a|y|u|e|ou|ami|ach)|trek\w*|hike|hiking|vyslap\w*|hrebenovk\w*)\b',
@@ -120,14 +120,11 @@ class StylistSemanticActivity {
       return 'hike';
     }
 
-    // Concept-level mountain walking. Combine a mountain/trail environment
-    // with movement/path evidence instead of enumerating sentence templates.
-    // This covers natural paraphrases such as "motať sa po vysokohorskom
-    // chodníku", "kráčať po horskom traili" or "celý deň po tatranskej trase".
-    // A bare destination such as "Tatry" still does not invent an activity.
+    // Concept-level mountain walking. Geographic proper nouns are excluded;
+    // the activity must come from terrain + movement meaning.
     final mountainEnvironment = _has(
       text,
-      r'\b(?:vysokohorsk\w*|horsk\w*|tatr\w*|alpinsk\w*|hreben\w*|vrchol\w*|trail\w*)\b',
+      r'\b(?:vysokohorsk\w*|horsk\w*|alpinsk\w*|hreben\w*|vrchol\w*|trail\w*)\b',
     );
     final walkingOrRoute = _has(
       text,
@@ -172,7 +169,10 @@ class StylistSemanticActivity {
       return 'nature_walk';
     }
 
-    if (_has(text, r'\b(?:autom\w*|vlakom\w*|lietadl\w*|letim\w*|presun\w*)\b')) {
+    if (_has(
+      text,
+      r'\b(?:autom\w*|vlakom\w*|lietadl\w*|letim\w*|letime\w*|presun\w*|autobus\w*|trajekt\w*)\b',
+    )) {
       return 'travel';
     }
 
@@ -193,7 +193,7 @@ class StylistSemanticActivity {
     if (looksLikeGenericTrip(text)) return true;
     if (_has(
       text,
-      r'\b(?:hor\w*|les\w*|prirod\w*|tatr\w*|kopc\w*|zoo|hrad\w*|festival\w*|svadb\w*)\b',
+      r'\b(?:hor\w*|les\w*|prirod\w*|kopc\w*|zoo|hrad\w*|festival\w*|svadb\w*)\b',
     )) {
       return true;
     }

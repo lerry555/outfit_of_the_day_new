@@ -1,13 +1,14 @@
 import '../utils/stylist_day_parser.dart';
 import '../utils/stylist_destination_parser.dart';
 import '../utils/stylist_semantic_activity.dart';
+import '../utils/stylist_travel_context.dart';
 import '../utils/stylist_trip_parser.dart';
 
-/// Známy kontext pre outfit — z konverzácie, GPS a dát appky.
+/// Deterministic known context for one Stylist outfit request.
 ///
-/// Jazykový fast-path používa jeden spoločný semantický resolver. Ak lokálny
-/// resolver niečo nepozná, Brain môže neskôr uzemniť explicitne povedanú
-/// aktivitu; preto si držíme iba krátke user-authored evidence texty.
+/// Proper nouns are not allowed to become semantic truth here. Named locations
+/// remain optional location facts; activity and travel scope come from generic
+/// meaning and may later be evidence-verified by the Conversation Brain.
 class OutfitContextState {
   final String? gpsDefaultCity;
   final String? activityLocationLabel;
@@ -19,6 +20,12 @@ class OutfitContextState {
   final String? dateKey;
   final String? activityHint;
   final String? occasion;
+  final String travelScope;
+  final String transportMode;
+  final bool transitOutfitExplicit;
+  final bool arrivalWeatherUseful;
+  final int? departureHourLocal;
+  final int? arrivalHourLocal;
   final bool clarifyRoundUsed;
   final List<String> clarifiedMaterialFields;
   final double? lastConfidence;
@@ -29,9 +36,6 @@ class OutfitContextState {
   final List<String> unresolvedMaterialFields;
   final String groundingStatus;
   final bool userCorrectionDetected;
-
-  /// Posledné user-authored texty použiteľné na serveri na overenie, že
-  /// semantické uzemnenie pochádza naozaj od používateľa, nie od asistenta.
   final List<String> semanticEvidenceTexts;
 
   const OutfitContextState({
@@ -45,6 +49,12 @@ class OutfitContextState {
     this.dateKey,
     this.activityHint,
     this.occasion,
+    this.travelScope = 'none',
+    this.transportMode = 'unknown',
+    this.transitOutfitExplicit = false,
+    this.arrivalWeatherUseful = false,
+    this.departureHourLocal,
+    this.arrivalHourLocal,
     this.clarifyRoundUsed = false,
     this.clarifiedMaterialFields = const [],
     this.lastConfidence,
@@ -72,7 +82,6 @@ class OutfitContextState {
     'ihned',
   ];
 
-  /// Zostaví stav z konverzácie a dát appky (deterministické, bez AI).
   static OutfitContextState buildFrom({
     required String conversation,
     required String gpsCityLabel,
@@ -85,6 +94,10 @@ class OutfitContextState {
     final correctionChangesPlaceOrActivity =
         correction && _changesPlaceOrActivity(latest);
     final gps = gpsCityLabel.split(',').first.trim();
+
+    final travel = StylistTravelContextResolver.resolve(conversation);
+    final latestTravel = StylistTravelContextResolver.resolve(latest);
+
     final latestInferred = StylistDestinationParser.inferFromConversation(latest);
     final inferred = correctionChangesPlaceOrActivity
         ? null
@@ -97,6 +110,7 @@ class OutfitContextState {
         StylistDestinationParser.isPlausibleDestination(inferred);
 
     final remote =
+        travel.travelMentioned ||
         StylistSemanticActivity.looksRemotePlan(blob) ||
         _isMultiDay(blob) ||
         (inferredOk &&
@@ -134,10 +148,14 @@ class OutfitContextState {
     final activityLocationKnown = inferredOk || (routine && gps.isNotEmpty);
     final latestActivityHint = StylistSemanticActivity.resolveExplicit(latest);
     final activityHint = correctionChangesPlaceOrActivity
-        ? latestActivityHint
+        ? latestActivityHint ??
+              (latestTravel.transitOutfitExplicit ? 'travel' : null)
         : latestActivityHint ??
+              (latestTravel.transitOutfitExplicit ? 'travel' : null) ??
               previous?.activityHint ??
-              StylistSemanticActivity.resolveExplicit(conversation);
+              StylistSemanticActivity.resolveExplicit(conversation) ??
+              (travel.transitOutfitExplicit ? 'travel' : null);
+
     final unresolved = _materialUnknowns(
       remote: remote,
       routine: routine,
@@ -146,6 +164,7 @@ class OutfitContextState {
       dateKnown: dateKey != null,
       conversation: conversation,
       latest: latest,
+      travel: travel,
     );
 
     return OutfitContextState(
@@ -159,6 +178,12 @@ class OutfitContextState {
       dateKey: dateKey,
       activityHint: activityHint,
       occasion: previous?.occasion,
+      travelScope: travel.scope.wireName,
+      transportMode: travel.transportMode.wireName,
+      transitOutfitExplicit: travel.transitOutfitExplicit,
+      arrivalWeatherUseful: travel.arrivalWeatherCouldHelp,
+      departureHourLocal: travel.departureHourLocal,
+      arrivalHourLocal: travel.arrivalHourLocal,
       clarifyRoundUsed: previous?.clarifyRoundUsed ?? false,
       clarifiedMaterialFields: previous?.clarifiedMaterialFields ?? const [],
       lastConfidence: previous?.lastConfidence,
@@ -173,61 +198,19 @@ class OutfitContextState {
     );
   }
 
-  OutfitContextState withClarifyRoundUsed(bool value) {
-    return OutfitContextState(
-      gpsDefaultCity: gpsDefaultCity,
-      activityLocationLabel: activityLocationLabel,
-      activityLocationKnown: activityLocationKnown,
-      routineLocalOutfit: routineLocalOutfit,
-      remoteActivityPlanned: remoteActivityPlanned,
-      hourLocal: hourLocal,
-      hourExplicit: hourExplicit,
-      dateKey: dateKey,
-      activityHint: activityHint,
-      occasion: occasion,
-      clarifyRoundUsed: value,
-      clarifiedMaterialFields: value ? clarifiedMaterialFields : const [],
-      lastConfidence: lastConfidence,
-      lastDecisionRisk: lastDecisionRisk,
-      lastAssumptions: lastAssumptions,
-      lastClarifyReason: lastClarifyReason,
-      lastImpactFields: lastImpactFields,
-      unresolvedMaterialFields: unresolvedMaterialFields,
-      groundingStatus: groundingStatus,
-      userCorrectionDetected: userCorrectionDetected,
-      semanticEvidenceTexts: semanticEvidenceTexts,
-    );
-  }
+  OutfitContextState withClarifyRoundUsed(bool value) => _copy(
+    clarifyRoundUsed: value,
+    clarifiedMaterialFields: value ? clarifiedMaterialFields : const [],
+  );
 
-  /// Records a material question without imposing a global question count.
-  /// A later, distinct outfit-changing uncertainty may still be clarified.
   OutfitContextState withClarificationAsked(Iterable<String> fields) {
     final merged = <String>{
       ...clarifiedMaterialFields.map((value) => value.trim().toLowerCase()),
       ...fields.map((value) => value.trim().toLowerCase()),
     }..removeWhere((value) => value.isEmpty);
-    return OutfitContextState(
-      gpsDefaultCity: gpsDefaultCity,
-      activityLocationLabel: activityLocationLabel,
-      activityLocationKnown: activityLocationKnown,
-      routineLocalOutfit: routineLocalOutfit,
-      remoteActivityPlanned: remoteActivityPlanned,
-      hourLocal: hourLocal,
-      hourExplicit: hourExplicit,
-      dateKey: dateKey,
-      activityHint: activityHint,
-      occasion: occasion,
+    return _copy(
       clarifyRoundUsed: true,
       clarifiedMaterialFields: merged.toList(growable: false),
-      lastConfidence: lastConfidence,
-      lastDecisionRisk: lastDecisionRisk,
-      lastAssumptions: lastAssumptions,
-      lastClarifyReason: lastClarifyReason,
-      lastImpactFields: lastImpactFields,
-      unresolvedMaterialFields: unresolvedMaterialFields,
-      groundingStatus: groundingStatus,
-      userCorrectionDetected: userCorrectionDetected,
-      semanticEvidenceTexts: semanticEvidenceTexts,
     );
   }
 
@@ -244,8 +227,7 @@ class OutfitContextState {
     final locOk =
         loc.isNotEmpty && StylistDestinationParser.isPlausibleDestination(loc);
     final hour = raw['hourLocal'];
-    final parsedHour =
-        hour is int ? hour : int.tryParse(hour?.toString() ?? '');
+    final parsedHour = hour is int ? hour : int.tryParse(hour?.toString() ?? '');
     final incomingActivity = StylistSemanticActivity.canonicalize(
       raw['occasion']?.toString(),
     );
@@ -269,6 +251,12 @@ class OutfitContextState {
       dateKey: (raw['dateKey'] ?? dateKey)?.toString(),
       activityHint: incomingActivity ?? activityHint,
       occasion: (raw['occasion'] ?? occasion)?.toString(),
+      travelScope: travelScope,
+      transportMode: transportMode,
+      transitOutfitExplicit: transitOutfitExplicit,
+      arrivalWeatherUseful: arrivalWeatherUseful,
+      departureHourLocal: departureHourLocal,
+      arrivalHourLocal: arrivalHourLocal,
       clarifyRoundUsed: clarifyRoundUsed,
       clarifiedMaterialFields: clarifiedMaterialFields,
       lastConfidence: confidence ?? lastConfidence,
@@ -283,35 +271,76 @@ class OutfitContextState {
     );
   }
 
-  Map<String, dynamic> toApiPayload() {
-    return <String, dynamic>{
-      if (gpsDefaultCity != null) 'gpsDefaultCity': gpsDefaultCity,
-      if (activityLocationLabel != null)
-        'activityLocationLabel': activityLocationLabel,
-      'activityLocationKnown': activityLocationKnown,
-      'routineLocalOutfit': routineLocalOutfit,
-      'remoteActivityPlanned': remoteActivityPlanned,
-      if (hourLocal != null) 'hourLocal': hourLocal,
-      'hourExplicit': hourExplicit,
-      if (dateKey != null) 'dateKey': dateKey,
-      if (activityHint != null) 'activityHint': activityHint,
-      if (occasion != null) 'occasion': occasion,
-      'clarifyRoundUsed': clarifyRoundUsed,
-      if (clarifiedMaterialFields.isNotEmpty)
-        'clarifiedMaterialFields': clarifiedMaterialFields,
-      if (lastConfidence != null) 'lastConfidence': lastConfidence,
-      if (lastDecisionRisk != null) 'lastDecisionRisk': lastDecisionRisk,
-      if (lastAssumptions.isNotEmpty) 'lastAssumptions': lastAssumptions,
-      if (lastClarifyReason != null) 'lastClarifyReason': lastClarifyReason,
-      if (lastImpactFields.isNotEmpty) 'lastImpactFields': lastImpactFields,
-      if (unresolvedMaterialFields.isNotEmpty)
-        'unresolvedMaterialFields': unresolvedMaterialFields,
-      'groundingStatus': groundingStatus,
-      if (userCorrectionDetected) 'userCorrectionDetected': true,
-      if (semanticEvidenceTexts.isNotEmpty)
-        'semanticEvidenceTexts': semanticEvidenceTexts,
-    };
-  }
+  Map<String, dynamic> toApiPayload() => <String, dynamic>{
+    if (gpsDefaultCity != null) 'gpsDefaultCity': gpsDefaultCity,
+    if (activityLocationLabel != null)
+      'activityLocationLabel': activityLocationLabel,
+    'activityLocationKnown': activityLocationKnown,
+    'routineLocalOutfit': routineLocalOutfit,
+    'remoteActivityPlanned': remoteActivityPlanned,
+    if (hourLocal != null) 'hourLocal': hourLocal,
+    'hourExplicit': hourExplicit,
+    if (dateKey != null) 'dateKey': dateKey,
+    if (activityHint != null) 'activityHint': activityHint,
+    if (occasion != null) 'occasion': occasion,
+    'travelContext': <String, dynamic>{
+      'scope': travelScope,
+      'transportMode': transportMode,
+      'transitOutfitExplicit': transitOutfitExplicit,
+      'destinationRequiredForPrimaryOutfit': !transitOutfitExplicit,
+      'arrivalWeatherCouldHelp': arrivalWeatherUseful,
+      if (departureHourLocal != null) 'departureHourLocal': departureHourLocal,
+      if (arrivalHourLocal != null) 'arrivalHourLocal': arrivalHourLocal,
+    },
+    'clarifyRoundUsed': clarifyRoundUsed,
+    if (clarifiedMaterialFields.isNotEmpty)
+      'clarifiedMaterialFields': clarifiedMaterialFields,
+    if (lastConfidence != null) 'lastConfidence': lastConfidence,
+    if (lastDecisionRisk != null) 'lastDecisionRisk': lastDecisionRisk,
+    if (lastAssumptions.isNotEmpty) 'lastAssumptions': lastAssumptions,
+    if (lastClarifyReason != null) 'lastClarifyReason': lastClarifyReason,
+    if (lastImpactFields.isNotEmpty) 'lastImpactFields': lastImpactFields,
+    if (unresolvedMaterialFields.isNotEmpty)
+      'unresolvedMaterialFields': unresolvedMaterialFields,
+    'groundingStatus': groundingStatus,
+    if (userCorrectionDetected) 'userCorrectionDetected': true,
+    if (semanticEvidenceTexts.isNotEmpty)
+      'semanticEvidenceTexts': semanticEvidenceTexts,
+  };
+
+  OutfitContextState _copy({
+    bool? clarifyRoundUsed,
+    List<String>? clarifiedMaterialFields,
+  }) => OutfitContextState(
+    gpsDefaultCity: gpsDefaultCity,
+    activityLocationLabel: activityLocationLabel,
+    activityLocationKnown: activityLocationKnown,
+    routineLocalOutfit: routineLocalOutfit,
+    remoteActivityPlanned: remoteActivityPlanned,
+    hourLocal: hourLocal,
+    hourExplicit: hourExplicit,
+    dateKey: dateKey,
+    activityHint: activityHint,
+    occasion: occasion,
+    travelScope: travelScope,
+    transportMode: transportMode,
+    transitOutfitExplicit: transitOutfitExplicit,
+    arrivalWeatherUseful: arrivalWeatherUseful,
+    departureHourLocal: departureHourLocal,
+    arrivalHourLocal: arrivalHourLocal,
+    clarifyRoundUsed: clarifyRoundUsed ?? this.clarifyRoundUsed,
+    clarifiedMaterialFields:
+        clarifiedMaterialFields ?? this.clarifiedMaterialFields,
+    lastConfidence: lastConfidence,
+    lastDecisionRisk: lastDecisionRisk,
+    lastAssumptions: lastAssumptions,
+    lastClarifyReason: lastClarifyReason,
+    lastImpactFields: lastImpactFields,
+    unresolvedMaterialFields: unresolvedMaterialFields,
+    groundingStatus: groundingStatus,
+    userCorrectionDetected: userCorrectionDetected,
+    semanticEvidenceTexts: semanticEvidenceTexts,
+  );
 
   static int? _extractHour(String blob) {
     final m = RegExp(
@@ -332,17 +361,19 @@ class OutfitContextState {
     required bool dateKnown,
     required String conversation,
     required String latest,
+    required StylistTravelContext travel,
   }) {
     if (routine && !remote) return const [];
     final result = <String>[];
-    final travelDayExplicit = RegExp(
-      r'\b(?:outfit\w*\s+na\s+cest|na\s+cestu|cestovn\w*\s+(?:deň|den)|presun)\b',
-      caseSensitive: false,
-    ).hasMatch(conversation);
     final genericActivity =
         activityHint == null ||
-        (activityHint == 'travel' && !travelDayExplicit);
-    if (remote && !locationKnown) result.add('destination');
+        (activityHint == 'travel' && !travel.transitOutfitExplicit);
+
+    if (remote &&
+        !locationKnown &&
+        travel.destinationRequiredForPrimaryOutfit) {
+      result.add('destination');
+    }
     if (remote && genericActivity) result.add('activity');
     if (remote &&
         !dateKnown &&
@@ -355,10 +386,14 @@ class OutfitContextState {
     }
     if (_isMultiDay(conversation) &&
         remote &&
+        !travel.transitOutfitExplicit &&
         !_tripScopeResolved(conversation)) {
       result.add('trip_scope');
     }
-    if (_isCorrectionOrChallenge(latest) && result.isEmpty && !locationKnown) {
+    if (_isCorrectionOrChallenge(latest) &&
+        result.isEmpty &&
+        !locationKnown &&
+        travel.destinationRequiredForPrimaryOutfit) {
       result.addAll(const ['destination', 'activity']);
     }
     return result.toSet().toList(growable: false);
@@ -405,8 +440,9 @@ class OutfitContextState {
     final normalized = StylistSemanticActivity.normalize(value);
     return _isCorrectionOrChallenge(value) &&
         (StylistSemanticActivity.resolveExplicit(value) != null ||
+            StylistTravelContextResolver.resolve(value).travelMentioned ||
             RegExp(
-              r'\b(?:martin\w*|mesto\w*|meste\w*|vieden\w*|zilin\w*|tatr\w*|les\w*|hor\w*)\b',
+              r'\b(?:mesto\w*|centrum\w*|les\w*|hor\w*|prirod\w*|park\w*|plaz\w*|letisk\w*|hotel\w*|restaur\w*|lokalit\w*|destin\w*)\b',
             ).hasMatch(normalized));
   }
 

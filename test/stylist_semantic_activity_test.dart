@@ -17,7 +17,7 @@ void main() {
         'ideme do hôr',
         'budeme sa asi 6 hodín motať po vysokohorskom chodníku',
         'budeme kráčať po horskom traili',
-        'celý deň pôjdeme po tatranskej trase',
+        'celý deň pôjdeme po horskej trase',
       ];
       for (final sample in samples) {
         expect(
@@ -55,7 +55,7 @@ void main() {
       );
     });
 
-    test('generic outing and bare mountain destination stay unresolved', () {
+    test('generic outing and bare named destination stay unresolved', () {
       for (final sample in <String>[
         'zajtra idem na výlet',
         'ideme niekam von',
@@ -73,7 +73,7 @@ void main() {
   });
 
   group('OutfitContextState uses shared semantics', () {
-    test('Vysoké Tatry hike is ready without asking activity twice', () {
+    test('explicit hike is ready without asking activity twice', () {
       final first = OutfitContextState.buildFrom(
         conversation: 'zajtra idem na výlet',
         latestUserText: 'zajtra idem na výlet',
