@@ -1,6 +1,7 @@
 import '../data/event_dress_code.dart';
 
-/// Určí dress code z konverzácie, AI eventContext alebo katalógu archetypov.
+/// Resolves dress-code archetypes from generic event meaning.
+/// Named performers, partners or locations never determine venue/formality.
 class DressCodeResolver {
   const DressCodeResolver._();
 
@@ -55,13 +56,11 @@ class DressCodeResolver {
 
     final archetype = _matchArchetype(blob);
     if (archetype != null) return archetype.spec;
-
     if (_matchesRestaurantEvening(blob)) {
       return EventDressCodeCatalog.archetypes
           .firstWhere((a) => a.id == 'restaurant_evening')
           .spec;
     }
-
     if (_matchesNiceDinner(blob)) {
       return const EventDressCodeSpec(
         id: 'nice_dinner',
@@ -71,19 +70,13 @@ class DressCodeResolver {
         preferJeans: true,
       );
     }
-
     return EventDressCodeSpec.casual;
   }
 
   static bool needsVenueClarification(String? conversationText) {
     final blob = (conversationText ?? '').toLowerCase();
     if (!blob.contains('koncert')) return false;
-    if (_hasConcertVenueHint(blob)) return false;
-    // S časom predpokladáme lokálny koncert v meste (GPS) — netreba hneď vonku/sála.
-    if (RegExp(r'(?:o|okolo)\s*\d', caseSensitive: false).hasMatch(blob)) {
-      return false;
-    }
-    return true;
+    return !_hasConcertVenueHint(blob);
   }
 
   static bool needsDateActivityClarification(String? conversationText) {
@@ -96,10 +89,9 @@ class DressCodeResolver {
     final spec = resolve(conversationText: conversationText);
     if (spec.id == 'casual') return null;
     final label = spec.labelSk;
-    if (spec.isElevated) {
-      return 'Na $label by som šiel ${spec.explainPhrase()}.';
-    }
-    return 'Na $label ${spec.explainPhrase()}.';
+    return spec.isElevated
+        ? 'Na $label by som šiel ${spec.explainPhrase()}.'
+        : 'Na $label ${spec.explainPhrase()}.';
   }
 
   static EventDressCodeArchetype? ambiguousArchetype(String? conversationText) {
@@ -130,7 +122,7 @@ class DressCodeResolver {
   static EventDressCodeArchetype? _matchArchetype(String blob) {
     EventDressCodeArchetype? ambiguous;
     for (final archetype in EventDressCodeCatalog.archetypes) {
-      if (!_matchesArchetype(blob, archetype)) continue;
+      if (!archetype.keywords.any(blob.contains)) continue;
       if (archetype.requiresVenueClarification) {
         ambiguous ??= archetype;
         continue;
@@ -140,36 +132,27 @@ class DressCodeResolver {
     return ambiguous;
   }
 
-  static bool _matchesArchetype(String blob, EventDressCodeArchetype archetype) {
-    return archetype.keywords.any(blob.contains);
-  }
-
-  static bool _hasConcertVenueHint(String blob) {
-    return _matchesAny(blob, [
-      'vonku',
-      'vonkaj',
-      'festival',
-      'stadion',
-      'štadión',
-      'amfik',
-      'amfite',
-      'amfiteáter',
-      'amfiteater',
-      'open air',
-      'open-air',
-      'filharmon',
-      'sála',
-      'sale',
-      'sála',
-      'sála,',
-      'v sale',
-      'v sále',
-      'klub',
-      'rock',
-      'ac/dc',
-      'acdc',
-    ]);
-  }
+  static bool _hasConcertVenueHint(String blob) => _matchesAny(blob, [
+    'vonku',
+    'vonkaj',
+    'festival',
+    'stadion',
+    'štadión',
+    'amfik',
+    'amfite',
+    'amfiteáter',
+    'amfiteater',
+    'open air',
+    'open-air',
+    'filharmon',
+    'sála',
+    'sale',
+    'v sale',
+    'v sále',
+    'klub',
+    'hala',
+    'hall',
+  ]);
 
   static bool _hasClearDateActivity(String blob) {
     if (RegExp(r'(?:o|okolo)\s*\d', caseSensitive: false).hasMatch(blob)) {
@@ -196,9 +179,8 @@ class DressCodeResolver {
     ]);
   }
 
-  static bool _matchesRestaurantEvening(String blob) {
-    return _matchesAny(blob, ['reštaur', 'restaur', 'reštauráci', 'restauraci', 'luxus']);
-  }
+  static bool _matchesRestaurantEvening(String blob) =>
+      _matchesAny(blob, ['reštaur', 'restaur', 'reštauráci', 'restauraci', 'luxus']);
 
   static bool _matchesNiceDinner(String blob) {
     final dinner = _matchesAny(blob, ['večer', 'vecer', 'večeru', 'veceru', 'dinner']);
@@ -212,36 +194,31 @@ class DressCodeResolver {
       'formál',
       'formal',
       'romant',
-      'žen',
-      'manžel',
-      'manzel',
     ]);
     return dinner && nice;
   }
 
   static EventVenueType _parseVenue(Object? raw) {
-    final v = (raw ?? '').toString().toLowerCase().trim();
-    if (v.contains('outdoor') || v.contains('vonku')) {
+    final value = (raw ?? '').toString().toLowerCase().trim();
+    if (value.contains('outdoor') || value.contains('vonku')) {
       return EventVenueType.outdoor;
     }
-    if (v.contains('formal') || v.contains('gala') || v.contains('filharmon')) {
+    if (value.contains('formal') ||
+        value.contains('gala') ||
+        value.contains('filharmon')) {
       return EventVenueType.indoorFormal;
     }
-    if (v.contains('indoor') || v.contains('vnútri') || v.contains('vnutri')) {
+    if (value.contains('indoor') ||
+        value.contains('vnútri') ||
+        value.contains('vnutri')) {
       return EventVenueType.indoorCasual;
     }
     return EventVenueType.any;
   }
 
-  static int? _parseInt(Object? raw) {
-    if (raw == null) return null;
-    return int.tryParse(raw.toString());
-  }
+  static int? _parseInt(Object? raw) =>
+      raw == null ? null : int.tryParse(raw.toString());
 
-  static bool _matchesAny(String blob, List<String> needles) {
-    for (final needle in needles) {
-      if (blob.contains(needle)) return true;
-    }
-    return false;
-  }
+  static bool _matchesAny(String blob, List<String> needles) =>
+      needles.any(blob.contains);
 }

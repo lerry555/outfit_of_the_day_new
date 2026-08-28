@@ -1,8 +1,7 @@
 /// Katalóg dress-code profilov pre udalosti — jeden zdroj pravdy namiesto if/else po celom kóde.
 ///
-/// Logika: formálnosť (1–10, ako pri kúskoch v šatníku) + typ miesta + teplota
-/// rozhodujú, či sú šortky vôbec v hre. Nie „koncert = nie“, ale napr.
-/// vonkajší rock koncert pri 32 °C ≠ filharmónia.
+/// Formálnosť + typ miesta + teplota rozhodujú o outfite. Konkrétny interpret,
+/// značka ani pomenované miesto nikdy samy neurčujú venue či formálnosť.
 enum EventVenueType {
   outdoor,
   indoorCasual,
@@ -32,11 +31,9 @@ class EventDressCodeSpec {
     venue: EventVenueType.any,
   );
 
-  /// Šortky len ak to sedí k formálnosti, miestu a teplote.
   bool allowShorts(int tempC) {
     if (formalityTarget >= 7) return false;
     if (formalityTarget >= 5 && venue != EventVenueType.outdoor) return false;
-    // Vonku / turistika: v lete pri miernom teple (17+) sú kraťasy bežné.
     if (venue == EventVenueType.outdoor && tempC >= 17) return true;
     if (formalityTarget <= 3 && tempC >= 17) return true;
     return formalityTarget <= 4 && tempC >= 26;
@@ -59,21 +56,14 @@ class EventDressCodeSpec {
 }
 
 extension EventVenueTypeWire on EventVenueType {
-  String get wireName {
-    switch (this) {
-      case EventVenueType.outdoor:
-        return 'outdoor';
-      case EventVenueType.indoorCasual:
-        return 'indoor_casual';
-      case EventVenueType.indoorFormal:
-        return 'indoor_formal';
-      case EventVenueType.any:
-        return 'any';
-    }
-  }
+  String get wireName => switch (this) {
+    EventVenueType.outdoor => 'outdoor',
+    EventVenueType.indoorCasual => 'indoor_casual',
+    EventVenueType.indoorFormal => 'indoor_formal',
+    EventVenueType.any => 'any',
+  };
 }
 
-/// Archetyp udalosti — match podľa kľúčových slov v konverzácii.
 class EventDressCodeArchetype {
   final String id;
   final List<String> keywords;
@@ -88,11 +78,10 @@ class EventDressCodeArchetype {
   });
 }
 
-/// Centrálny katalóg — nové príležitosti pridávaš sem, nie do 5 súborov.
 abstract final class EventDressCodeCatalog {
   static const String concertClarificationMessage =
-      'Je to vonku (festival, štadión), alebo v sále (filharmónia, klub)? '
-      'Kto hrá? Napr. rockový koncert vonku pri teple je iný outfit ako komorný večer v hale.';
+      'Je to vonku (festival, štadión, amfiteáter), alebo v sále či klube? '
+      'Typ priestoru môže zmeniť vrstvy aj formálnosť.';
 
   static const List<EventDressCodeArchetype> archetypes = [
     EventDressCodeArchetype(
@@ -110,7 +99,6 @@ abstract final class EventDressCodeCatalog {
         labelSk: 'filharmónia / gala',
         formalityTarget: 8,
         venue: EventVenueType.indoorFormal,
-        preferJeans: false,
       ),
     ),
     EventDressCodeArchetype(
@@ -130,42 +118,26 @@ abstract final class EventDressCodeCatalog {
         labelSk: 'pohreb',
         formalityTarget: 8,
         venue: EventVenueType.indoorFormal,
-        preferJeans: false,
       ),
     ),
     EventDressCodeArchetype(
       id: 'wedding',
-      keywords: [
-        'svadb',
-        'svadbu',
-        'svadbe',
-        'svadbou',
-        'svadobn',
-      ],
+      keywords: ['svadb', 'svadbu', 'svadbe', 'svadbou', 'svadobn'],
       spec: EventDressCodeSpec(
         id: 'wedding',
         labelSk: 'svadba',
         formalityTarget: 8,
         venue: EventVenueType.indoorFormal,
-        preferJeans: false,
       ),
     ),
     EventDressCodeArchetype(
       id: 'interview',
-      keywords: [
-        'pohovor',
-        'pohovore',
-        'pohovoru',
-        'pohovorom',
-        'job interview',
-        'interview',
-      ],
+      keywords: ['pohovor', 'pohovore', 'pohovoru', 'pohovorom', 'job interview', 'interview'],
       spec: EventDressCodeSpec(
         id: 'interview',
         labelSk: 'pohovor',
         formalityTarget: 7,
         venue: EventVenueType.indoorFormal,
-        preferJeans: false,
       ),
     ),
     EventDressCodeArchetype(
@@ -197,7 +169,6 @@ abstract final class EventDressCodeCatalog {
         'oslavy',
         'oslave',
         'osláv',
-        'osláv',
         'promóci',
         'promoci',
         'stužkov',
@@ -223,12 +194,6 @@ abstract final class EventDressCodeCatalog {
         'štadión',
         'open air',
         'open-air',
-        'rock koncert',
-        'rockov',
-        'elan',
-        'elán',
-        'ac/dc',
-        'acdc',
         'amfik',
         'amfite',
         'amfiteáter',
@@ -298,15 +263,7 @@ abstract final class EventDressCodeCatalog {
     ),
     EventDressCodeArchetype(
       id: 'hike',
-      keywords: [
-        'hory',
-        'hor',
-        'turist',
-        'trek',
-        'hiking',
-        'do hory',
-        'v hor',
-      ],
+      keywords: ['hory', 'hor', 'turist', 'trek', 'hiking', 'do hory', 'v hor'],
       spec: EventDressCodeSpec(
         id: 'hike',
         labelSk: 'turistika / hory',
@@ -316,13 +273,7 @@ abstract final class EventDressCodeCatalog {
     ),
     EventDressCodeArchetype(
       id: 'mushroom',
-      keywords: [
-        'hubovan',
-        'huby',
-        'hrib',
-        'hriby',
-        'hribov',
-      ],
+      keywords: ['hubovan', 'huby', 'hrib', 'hriby', 'hribov'],
       spec: EventDressCodeSpec(
         id: 'mushroom',
         labelSk: 'huby / les',
@@ -332,14 +283,7 @@ abstract final class EventDressCodeCatalog {
     ),
     EventDressCodeArchetype(
       id: 'barbecue',
-      keywords: [
-        'grilov',
-        'grill',
-        'bbq',
-        'barbecue',
-        'opekac',
-        'opekač',
-      ],
+      keywords: ['grilov', 'grill', 'bbq', 'barbecue', 'opekac', 'opekač'],
       spec: EventDressCodeSpec(
         id: 'barbecue',
         labelSk: 'grilovanie',

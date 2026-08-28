@@ -78,6 +78,10 @@ jobs:
           lib/models/outfit_context_state.dart
           lib/utils/stylist_semantic_activity.dart
           lib/utils/stylist_travel_context.dart
+          lib/utils/activity_traits_inferencer.dart
+          lib/utils/event_clarification.dart
+          lib/utils/dress_code_resolver.dart
+          lib/data/event_dress_code.dart
           lib/utils/stylist_intent_resolver.dart
           lib/utils/stylist_activity_terrain.dart
       - name: Explicit hike grounding regression
@@ -86,3 +90,5 @@ jobs:
         run: flutter test test/stylist_semantic_activity_test.dart
       - name: Travel scope regression
         run: flutter test test/stylist_travel_context_test.dart
+      - name: No named-entity semantic authority regression
+        run: flutter test test/stylist_semantic_authority_no_named_entities_test.dart
