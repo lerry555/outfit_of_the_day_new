@@ -29,10 +29,14 @@ class OutfitContextState {
   final String? occasion;
   final String travelScope;
   final String transportMode;
+  final bool travelScopeNeedsClarification;
   final bool transitOutfitExplicit;
+  final bool destinationUseExplicit;
+  final bool packingExplicit;
   final bool arrivalWeatherUseful;
   final int? departureHourLocal;
   final int? arrivalHourLocal;
+  final int? departureOffsetMinutes;
   final bool clarifyRoundUsed;
   final List<String> clarifiedMaterialFields;
   final double? lastConfidence;
@@ -63,10 +67,14 @@ class OutfitContextState {
     this.occasion,
     this.travelScope = 'none',
     this.transportMode = 'unknown',
+    this.travelScopeNeedsClarification = false,
     this.transitOutfitExplicit = false,
+    this.destinationUseExplicit = false,
+    this.packingExplicit = false,
     this.arrivalWeatherUseful = false,
     this.departureHourLocal,
     this.arrivalHourLocal,
+    this.departureOffsetMinutes,
     this.clarifyRoundUsed = false,
     this.clarifiedMaterialFields = const [],
     this.lastConfidence,
@@ -213,10 +221,14 @@ class OutfitContextState {
       occasion: previous?.occasion,
       travelScope: travel.scope.wireName,
       transportMode: travel.transportMode.wireName,
+      travelScopeNeedsClarification: travel.scopeNeedsClarification,
       transitOutfitExplicit: travel.transitOutfitExplicit,
+      destinationUseExplicit: travel.destinationUseExplicit,
+      packingExplicit: travel.packingExplicit,
       arrivalWeatherUseful: travel.arrivalWeatherCouldHelp,
       departureHourLocal: travel.departureHourLocal,
       arrivalHourLocal: travel.arrivalHourLocal,
+      departureOffsetMinutes: travel.departureOffsetMinutes,
       clarifyRoundUsed: previous?.clarifyRoundUsed ?? false,
       clarifiedMaterialFields: previous?.clarifiedMaterialFields ?? const [],
       lastConfidence: previous?.lastConfidence,
@@ -272,7 +284,10 @@ class OutfitContextState {
     if ((raw['dateKey'] ?? '').toString().trim().isNotEmpty) {
       unresolved.remove('date');
     }
-    if (incomingActivity != null) unresolved.remove('activity');
+    if (incomingActivity != null) {
+      unresolved.remove('activity');
+      if (incomingActivity != 'travel') unresolved.remove('trip_scope');
+    }
 
     final nextUnresolved = unresolved.toList(growable: false);
     return OutfitContextState(
@@ -293,10 +308,14 @@ class OutfitContextState {
       occasion: (raw['occasion'] ?? occasion)?.toString(),
       travelScope: travelScope,
       transportMode: transportMode,
+      travelScopeNeedsClarification: travelScopeNeedsClarification,
       transitOutfitExplicit: transitOutfitExplicit,
+      destinationUseExplicit: destinationUseExplicit,
+      packingExplicit: packingExplicit,
       arrivalWeatherUseful: arrivalWeatherUseful,
       departureHourLocal: departureHourLocal,
       arrivalHourLocal: arrivalHourLocal,
+      departureOffsetMinutes: departureOffsetMinutes,
       clarifyRoundUsed: clarifyRoundUsed,
       clarifiedMaterialFields: clarifiedMaterialFields,
       lastConfidence: confidence ?? lastConfidence,
@@ -335,11 +354,17 @@ class OutfitContextState {
     'travelContext': <String, dynamic>{
       'scope': travelScope,
       'transportMode': transportMode,
+      'scopeNeedsClarification': travelScopeNeedsClarification,
       'transitOutfitExplicit': transitOutfitExplicit,
-      'destinationRequiredForPrimaryOutfit': !transitOutfitExplicit,
+      'destinationUseExplicit': destinationUseExplicit,
+      'packingExplicit': packingExplicit,
+      'destinationRequiredForPrimaryOutfit':
+          destinationUseExplicit || packingExplicit,
       'arrivalWeatherCouldHelp': arrivalWeatherUseful,
       if (departureHourLocal != null) 'departureHourLocal': departureHourLocal,
       if (arrivalHourLocal != null) 'arrivalHourLocal': arrivalHourLocal,
+      if (departureOffsetMinutes != null)
+        'departureOffsetMinutes': departureOffsetMinutes,
     },
     'clarifyRoundUsed': clarifyRoundUsed,
     if (clarifiedMaterialFields.isNotEmpty)
@@ -379,10 +404,14 @@ class OutfitContextState {
     occasion: occasion,
     travelScope: travelScope,
     transportMode: transportMode,
+    travelScopeNeedsClarification: travelScopeNeedsClarification,
     transitOutfitExplicit: transitOutfitExplicit,
+    destinationUseExplicit: destinationUseExplicit,
+    packingExplicit: packingExplicit,
     arrivalWeatherUseful: arrivalWeatherUseful,
     departureHourLocal: departureHourLocal,
     arrivalHourLocal: arrivalHourLocal,
+    departureOffsetMinutes: departureOffsetMinutes,
     clarifyRoundUsed: clarifyRoundUsed ?? this.clarifyRoundUsed,
     clarifiedMaterialFields:
         clarifiedMaterialFields ?? this.clarifiedMaterialFields,
@@ -424,13 +453,22 @@ class OutfitContextState {
     final genericActivity =
         activityHint == null ||
         (activityHint == 'travel' && !travel.transitOutfitExplicit);
+    final destinationRequired = travel.travelMentioned
+        ? travel.destinationRequiredForPrimaryOutfit
+        : remote;
 
     if (remote &&
         (providerBroad || !locationKnown) &&
-        travel.destinationRequiredForPrimaryOutfit) {
+        destinationRequired) {
       result.add('destination');
     }
-    if (remote && genericActivity) result.add('activity');
+
+    if (travel.scopeNeedsClarification) {
+      result.add('trip_scope');
+    } else if (remote && genericActivity) {
+      result.add('activity');
+    }
+
     if (remote &&
         !dateKnown &&
         (_isMultiDay(conversation) ||
@@ -449,7 +487,7 @@ class OutfitContextState {
     if (_isCorrectionOrChallenge(latest) &&
         result.isEmpty &&
         !locationKnown &&
-        travel.destinationRequiredForPrimaryOutfit) {
+        destinationRequired) {
       result.addAll(const ['destination', 'activity']);
     }
     return result.toSet().toList(growable: false);
