@@ -23,10 +23,9 @@ class StylistChatService {
            stylePreferences ??
            UserStylePreferencesReader(firestore: firestore, auth: auth);
 
-  /// This branch is an explicit opt-in build. Released clients on master do
-  /// not send this marker, so a selective backend deploy can serve both paths
-  /// without silently moving existing users onto the experiment.
-  static const conversationBrainVersion = 'brain_v1';
+  /// Brain V2 is an isolated experiment. The client talks directly to the
+  /// dedicated Sol callable instead of entering the legacy Stylist pipeline.
+  static const conversationBrainVersion = 'brain_v2_sol';
 
   final FirebaseFirestore? _firestoreOverride;
   final FirebaseAuth? _authOverride;
@@ -38,6 +37,9 @@ class StylistChatService {
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
   StylistJobConsumer? _cachedJobs;
+  String? _solAgentSessionId;
+  String? _solAgentBoundChatId;
+  bool _solAgentHasSentTurn = false;
 
   StylistJobConsumer get jobs =>
       _injectedJobConsumer ??
@@ -115,6 +117,21 @@ class StylistChatService {
     Map<String, dynamic>? shoppingWardrobeSignal,
   }) async {
     try {
+      // Brain V2 intentionally bypasses travel enrichment, semantic grounding,
+      // hand-built history and the legacy stylistChat router. Text and photo
+      // turns go straight to the dedicated GPT-5.6 Sol agent.
+      if (conversationBrainVersion == 'brain_v2_sol' &&
+          (mode == 'chat' || mode == 'rate_photo')) {
+        return await _sendSolAgentV2(
+          message,
+          history: history,
+          clientContext: clientContext,
+          imageUrl: imageUrl,
+          notifyJobId: notifyJobId,
+          chatId: chatId,
+        );
+      }
+
       final callable = FirebaseFunctions.instanceFor(
         region: 'us-east1',
       ).httpsCallable('stylistChat');
@@ -130,8 +147,8 @@ class StylistChatService {
       );
 
       // Brain V1 gets provider-backed geographic truth and meaning-first travel
-      // scope before the request reaches the model. This is deliberately
-      // best-effort: a geocoder/weather outage must not break ordinary chat.
+      // scope before the request reaches the model. This remains only for
+      // legacy non-V2 modes retained on this experimental branch.
       if (mode == 'chat' && effectiveOutfitContextState.isNotEmpty) {
         try {
           final enrichment = await StylistTravelRequestEnricher.enrich(
@@ -212,20 +229,13 @@ class StylistChatService {
       if (stylePayload != null) {
         payload['userStylePreferences'] = stylePayload;
       }
-      // Analýza fotky (OpenAI Vision) + čítanie šatníka trvá dlhšie, preto
-      // pre rate_photo dávame väčší časový limit.
       final callTimeout = mode == 'rate_photo'
           ? const Duration(seconds: 90)
           : const Duration(seconds: 45);
-      // Prechodný výpadok (napr. appka na chvíľu v pozadí → uspaté spojenie)
-      // dokáže zhodiť request. Skúsime ho preto raz/dvakrát zopakovať.
       final result = await _callWithRetry(
         callable,
         jsonSafeMapForCallable(payload),
         callTimeout,
-        // Brain/context clarification is authoritative. A transport failure
-        // must surface rather than silently create a second conversational
-        // decision with potentially different clarification state.
         maxAttempts: mode == 'chat' ? 1 : 3,
       );
 
@@ -279,6 +289,114 @@ class StylistChatService {
       'eventContext': null,
       'excludeItemKeywords': const <String>[],
     };
+  }
+
+  String _resolveSolAgentSessionId({
+    String? chatId,
+    String? notifyJobId,
+    required List<Map<String, String>> history,
+  }) {
+    final persistedChatId = (chatId ?? '').trim();
+    final hasPriorUserTurn = history.any((item) => item['role'] == 'user');
+    String freshDraft() {
+      final seed = (notifyJobId ?? '').trim();
+      return 'draft_${seed.isNotEmpty ? seed : DateTime.now().microsecondsSinceEpoch}';
+    }
+
+    if (_solAgentSessionId == null) {
+      _solAgentBoundChatId = persistedChatId.isEmpty ? null : persistedChatId;
+      _solAgentSessionId = persistedChatId.isEmpty ? freshDraft() : persistedChatId;
+      return _solAgentSessionId!;
+    }
+
+    if (persistedChatId.isNotEmpty) {
+      if (_solAgentBoundChatId == null) {
+        // The first draft turn has now been persisted locally. Keep the draft
+        // session for continuity; the server mirrors its latest response ID to
+        // the real chat ID so app restart can resume from there.
+        _solAgentBoundChatId = persistedChatId;
+      } else if (_solAgentBoundChatId != persistedChatId) {
+        // User opened another stored conversation.
+        _solAgentBoundChatId = persistedChatId;
+        _solAgentSessionId = persistedChatId;
+      }
+    } else if (_solAgentHasSentTurn && !hasPriorUserTurn) {
+      // User started a brand-new chat before a persisted chat ID is available.
+      _solAgentBoundChatId = null;
+      _solAgentSessionId = freshDraft();
+    }
+
+    return _solAgentSessionId!;
+  }
+
+  Future<Map<String, dynamic>> _sendSolAgentV2(
+    String message, {
+    required List<Map<String, String>> history,
+    Map<String, dynamic>? clientContext,
+    String? imageUrl,
+    String? notifyJobId,
+    String? chatId,
+  }) async {
+    final sessionId = _resolveSolAgentSessionId(
+      chatId: chatId,
+      notifyJobId: notifyJobId,
+      history: history,
+    );
+    final callable = FirebaseFunctions.instanceFor(
+      region: 'us-east1',
+    ).httpsCallable('stylistAgentV2');
+    final payload = <String, dynamic>{
+      'message': message,
+      'sessionId': sessionId,
+      'clientNow': (clientContext?['now'] ?? DateTime.now().toIso8601String())
+          .toString(),
+      if ((chatId ?? '').trim().isNotEmpty) 'chatId': chatId!.trim(),
+      if ((imageUrl ?? '').trim().isNotEmpty) 'imageUrl': imageUrl!.trim(),
+    };
+
+    try {
+      final result = await callable
+          .call(jsonSafeMapForCallable(payload))
+          .timeout(const Duration(seconds: 65));
+      _solAgentHasSentTurn = true;
+      final data = result.data;
+      if (data is! Map) {
+        return <String, dynamic>{
+          'ok': false,
+          'offline': false,
+          'reply': '',
+          'suggestedItems': const <Map<String, dynamic>>[],
+          'action': 'chat',
+        };
+      }
+      return <String, dynamic>{
+        'ok': true,
+        'reply': (data['reply'] ?? _genericErrorReply).toString(),
+        'suggestedItems': const <Map<String, dynamic>>[],
+        'action': 'chat',
+        'eventContext': null,
+        'excludeItemKeywords': const <String>[],
+        'agentVersion': (data['agentVersion'] ?? 'sol_v2').toString(),
+        'model': (data['model'] ?? 'gpt-5.6-sol').toString(),
+        'webSearchUsed': data['webSearchUsed'] == true,
+        'webSearchCalls': data['webSearchCalls'] is num
+            ? (data['webSearchCalls'] as num).toInt()
+            : 0,
+      };
+    } catch (error, stackTrace) {
+      _solAgentHasSentTurn = true;
+      debugPrint('STYLIST SOL V2 callable error: $error');
+      debugPrint('$stackTrace');
+      return <String, dynamic>{
+        'ok': false,
+        'offline': _looksLikeConnectivityError(error),
+        'reply': '',
+        'suggestedItems': const <Map<String, dynamic>>[],
+        'action': 'chat',
+        'eventContext': null,
+        'excludeItemKeywords': const <String>[],
+      };
+    }
   }
 
   /// Cloud Function dobehne na serveri aj keď klientovi medzitým spadlo
@@ -460,7 +578,6 @@ class StylistChatService {
         return await callable.call(payload).timeout(timeout);
       } catch (error) {
         lastError = error;
-        // Opakujeme len pri prechodných sieťových chybách; iné chyby hneď hore.
         if (attempt >= maxAttempts || !_looksLikeConnectivityError(error)) {
           rethrow;
         }
@@ -470,26 +587,23 @@ class StylistChatService {
         await Future<void>.delayed(Duration(milliseconds: 600 * attempt));
       }
     }
-    // Sem sa nedostaneme, ale Dart to vyžaduje.
     throw lastError ?? Exception('callable failed');
   }
 
-  /// Rozozná, či ide o problém s pripojením (offline / nedostupný server /
-  /// timeout) — vtedy chceme používateľovi ukázať jasnú hlášku o internete.
+  /// Only actual transport unavailability is treated as offline. Generic
+  /// Firebase `internal` and backend deadlines are server failures, not proof
+  /// that the user's internet connection is down.
   static bool _looksLikeConnectivityError(Object error) {
     if (error is TimeoutException) return true;
     if (error is FirebaseFunctionsException) {
-      const networkCodes = {'unavailable', 'deadline-exceeded', 'internal'};
+      const networkCodes = {'unavailable'};
       if (networkCodes.contains(error.code)) return true;
     }
     final text = error.toString().toLowerCase();
-    return text.contains('unavailable') ||
-        text.contains('failed host lookup') ||
+    return text.contains('failed host lookup') ||
         text.contains('unable to resolve host') ||
         text.contains('socketexception') ||
-        text.contains('network') ||
-        text.contains('timed out') ||
-        text.contains('timeout');
+        text.contains('network is unreachable');
   }
 
   static Map<String, dynamic> jsonSafeMapForCallable(
