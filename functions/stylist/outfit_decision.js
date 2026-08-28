@@ -26,7 +26,7 @@ const CANONICAL_SEMANTIC_ACTIVITIES = new Set([
 ]);
 
 const ACTIVITY_FIELD_ALIASES = new Set([
-  "activity", "activity_type", "outing_type", "trip_scope",
+  "activity", "activity_type", "outing_type",
 ]);
 
 function normalizeImpactField(value) {
@@ -101,13 +101,32 @@ function evidenceIsBareGenericTrip(evidence) {
   return words.length > 0 && words.every((word) => generic.has(word));
 }
 
+function providerLocationIsWeatherSpecific(state) {
+  if (!state || typeof state !== "object") return false;
+  const location = state.locationContext;
+  if (!location || typeof location !== "object" || Array.isArray(location)) {
+    return state.activityLocationKnown === true;
+  }
+  if (location.providerAuthorityEnabled !== true) {
+    return state.activityLocationKnown === true;
+  }
+  return location.providerVerified === true &&
+    location.needsMoreSpecificity !== true &&
+    Boolean(String(location.weatherLabel || state.activityLocationLabel || "").trim());
+}
+
 function applySemanticGroundingToState(state, decision) {
   if (!state || typeof state !== "object") return [];
   const activity = decision?.semanticGrounding?.activity;
   if (!activity) return [];
 
   const unresolved = groundingFields(state);
-  if (!unresolved.some((field) => ACTIVITY_FIELD_ALIASES.has(field))) return [];
+  const activityUnknown = unresolved.some((field) => ACTIVITY_FIELD_ALIASES.has(field));
+  const travel = state.travelContext && typeof state.travelContext === "object" &&
+    !Array.isArray(state.travelContext) ? state.travelContext : {};
+  const ambiguousTravelScope = unresolved.includes("trip_scope") &&
+    travel.scopeNeedsClarification === true;
+  if (!activityUnknown && !ambiguousTravelScope) return [];
   if (!evidenceIsUserAuthored(activity.evidence, state) ||
       evidenceIsBareGenericTrip(activity.evidence)) {
     return [];
@@ -115,38 +134,33 @@ function applySemanticGroundingToState(state, decision) {
 
   state.activityHint = activity.value;
   if (activity.label) state.activityLabel = activity.label;
-  // Existing eventContext transport exposes `occasion` to the Flutter client.
-  // For Brain V1 it also carries an evidence-verified semantic activity so the
-  // client can reconcile its local fast-path unknown without weakening the
-  // candidate/validator authority. `other` stays an internal category; the
-  // human label travels separately.
   state.occasion = activity.value;
   if (decision.eventContext && typeof decision.eventContext === "object") {
     decision.eventContext.occasion = activity.value;
     if (activity.label) decision.eventContext.activityLabel = activity.label;
   }
 
-  const remaining = unresolved.filter((field) => !ACTIVITY_FIELD_ALIASES.has(field));
+  let remaining = unresolved.filter((field) => !ACTIVITY_FIELD_ALIASES.has(field));
+  if (ambiguousTravelScope && activity.value !== "travel") {
+    remaining = remaining.filter((field) => field !== "trip_scope");
+    state.travelContext = {
+      ...travel,
+      scope: "destination",
+      scopeNeedsClarification: false,
+      destinationUseExplicit: true,
+      destinationRequiredForPrimaryOutfit: true,
+    };
+    if (!providerLocationIsWeatherSpecific(state) && !remaining.includes("destination")) {
+      remaining.push("destination");
+    }
+  }
+
   state.unresolvedMaterialFields = remaining;
   state.groundingStatus = remaining.length === 0 ? "sufficient" : "needs_grounding";
-  // This request-local flag only prevents the old correction fallback from
-  // asking again after the corrected activity is now explicitly grounded.
   if (remaining.length === 0) state.userCorrectionDetected = false;
   return ["activity"];
 }
 
-/**
- * @param {Object|null} parsed
- * @returns {{
- *   confidence: number|null,
- *   decisionRisk: string|null,
- *   assumptions: string[],
- *   clarifyReason: string|null,
- *   impactFields: string[],
- *   semanticGrounding: Object|null,
- *   eventContext: Object|null,
- * }}
- */
 function parseOutfitDecisionFields(parsed) {
   const confidenceRaw = parsed?.confidence ?? parsed?.readiness;
   const confidence =
@@ -197,12 +211,6 @@ function parseOutfitDecisionFields(parsed) {
   };
 }
 
-/**
- * @param {string} action
- * @param {Object} decision
- * @param {Object|boolean} clarificationState
- * @returns {string}
- */
 function resolveOutfitAction(action, decision, clarificationState) {
   const semanticResolvedFields =
     applySemanticGroundingToState(clarificationState, decision);
@@ -213,9 +221,6 @@ function resolveOutfitAction(action, decision, clarificationState) {
   }
   if (action !== "clarify") return action;
 
-  // Only semantic grounding may turn a conservative model `clarify` into a
-  // non-question after it has proven the requested fact from user-authored
-  // evidence. Ordinary material clarification behavior remains unchanged.
   if (semanticResolvedFields.length > 0 &&
       !requiresGroundingClarification(clarificationState)) {
     return "chat";
