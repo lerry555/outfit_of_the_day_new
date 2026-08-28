@@ -1,0 +1,58 @@
+name: Apply Brain universal research v1
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+    paths:
+      - tools/apply_brain_universal_research_v1.py
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 0
+      - name: Apply deterministic refactor
+        run: python3 tools/apply_brain_universal_research_v1.py
+      - name: Syntax check
+        run: |
+          node --check functions/stylist/openai_responses_web_search_v1.js
+          node --check functions/stylist/ai_model_registry.js
+          node --check functions/stylist/ai_router.js
+          node --check functions/stylist/chat_prompts.js
+          node --check functions/stylist/conversation_brain_persona_v1.js
+          node --check functions/index.js
+      - name: Focused unit tests
+        run: |
+          node --test functions/stylist/openai_responses_web_search_v1.test.js
+          node --test functions/stylist/conversation_brain_web_policy_v1.test.js
+          node --test functions/stylist/conversation_brain_chat_prompt_v1.test.js
+          node --test functions/stylist/chat_prompts.test.js
+      - name: Commit generated refactor
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            functions/index.js \
+            functions/stylist/openai_responses_web_search_v1.js \
+            functions/stylist/openai_responses_web_search_v1.test.js \
+            functions/stylist/conversation_brain_web_policy_v1.test.js \
+            functions/stylist/ai_model_registry.js \
+            functions/stylist/ai_router.js \
+            functions/stylist/chat_prompts.js \
+            functions/stylist/conversation_brain_persona_v1.js \
+            .github/workflows/brain-v1-ci.yml
+          if git diff --cached --quiet; then
+            echo "No generated changes"
+          else
+            git commit -m "feat: give Conversation Brain conditional web research"
+            git push origin HEAD:brain-v1-experiment
+          fi
