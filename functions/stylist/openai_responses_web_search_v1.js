@@ -39,6 +39,8 @@ function buildConversationBrainResponsesBodyV1({
     input: normalizeResponsesInputV1(messages),
     tools: [{type: "web_search", search_context_size: contextSize}],
     tool_choice: "auto",
+    // Guard one Brain execution against tool loops. Every later chat turn builds
+    // a fresh Responses request and receives its own allowance.
     max_tool_calls: 3,
     include: ["web_search_call.action.sources"],
     reasoning: {effort},
@@ -73,6 +75,78 @@ function safeWebSource(source) {
   };
 }
 
+function safeInteger(value, min, max) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || !Number.isInteger(number)) return null;
+  if (number < min || number > max) return null;
+  return number;
+}
+
+function normalizeVenueType(value) {
+  const raw = cleanText(value, 80).toLowerCase();
+  if (!raw) return null;
+  if (raw.includes("outdoor") || raw.includes("vonku")) return "outdoor";
+  if (raw.includes("formal") || raw.includes("gala") || raw.includes("filharmon")) {
+    return "indoor_formal";
+  }
+  if (raw.includes("indoor") || raw.includes("vnútri") || raw.includes("vnutri")) {
+    return "indoor_casual";
+  }
+  if (raw === "any") return "any";
+  return null;
+}
+
+function safePublicResearchContext(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const out = {};
+
+  const performer = cleanText(raw.performer || raw.artist, 160);
+  if (performer) out.performer = performer;
+
+  const dressRaw = raw.dressCode && typeof raw.dressCode === "object" &&
+    !Array.isArray(raw.dressCode) ? raw.dressCode : null;
+  if (dressRaw) {
+    const formalityTarget = safeInteger(
+      dressRaw.formalityTarget ?? dressRaw.formality,
+      1,
+      10,
+    );
+    if (formalityTarget != null) {
+      const dressCode = {formalityTarget};
+      const id = cleanText(dressRaw.id, 80);
+      const labelSk = cleanText(dressRaw.labelSk || dressRaw.label, 120);
+      const venueType = normalizeVenueType(dressRaw.venueType || dressRaw.venue);
+      if (id) dressCode.id = id;
+      if (labelSk) dressCode.labelSk = labelSk;
+      if (venueType) dressCode.venueType = venueType;
+      out.dressCode = Object.freeze(dressCode);
+    }
+  }
+
+  const eventStartHour = safeInteger(raw.eventStartHour, 0, 23);
+  const eventEndHour = safeInteger(raw.eventEndHour, 0, 23);
+  const durationMinutes = safeInteger(raw.durationMinutes, 1, 7 * 24 * 60);
+  if (eventStartHour != null) out.eventStartHour = eventStartHour;
+  if (eventEndHour != null) out.eventEndHour = eventEndHour;
+  if (durationMinutes != null) out.durationMinutes = durationMinutes;
+
+  return Object.keys(out).length ? Object.freeze(out) : null;
+}
+
+function extractPublicResearchContextFromResponse(json) {
+  const text = extractConversationBrainResponseTextV1(json);
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    const eventContext = parsed && parsed.eventContext;
+    const publicResearch = eventContext && typeof eventContext === "object" &&
+      !Array.isArray(eventContext) ? eventContext.publicResearch : null;
+    return safePublicResearchContext(publicResearch);
+  } catch (_) {
+    return null;
+  }
+}
+
 function extractConversationBrainWebResearchV1(json) {
   const output = Array.isArray(json && json.output) ? json.output : [];
   let callCount = 0;
@@ -104,10 +178,13 @@ function extractConversationBrainWebResearchV1(json) {
     }
   }
 
+  const publicContext = callCount > 0 ?
+    extractPublicResearchContextFromResponse(json) : null;
   return Object.freeze({
     used: callCount > 0,
     callCount,
     sources: Object.freeze(sources.slice(0, 12).map(Object.freeze)),
+    ...(publicContext ? {publicContext} : {}),
   });
 }
 
@@ -116,4 +193,5 @@ module.exports = {
   buildConversationBrainResponsesBodyV1,
   extractConversationBrainResponseTextV1,
   extractConversationBrainWebResearchV1,
+  safePublicResearchContext,
 };
