@@ -10,6 +10,7 @@
     "serve": "firebase emulators:start --only functions",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
+    "qa:brain-live": "node stylist/brain_live_qa_v1.js",
     "test:trusted-vision-handoff": "node --test trusted_vision_qualification_input.test.js",
     "test:live-parser-runtime": "node --test live_parser_backend_qualification_orchestrator.test.js live_parser_backend_qualification_runtime_parity.test.js",
     "test:live-shadow-runtime": "node --test wardrobe_live_shadow_runtime_wiring.test.js",
