@@ -23,11 +23,15 @@ abstract final class StylistDestinationMentionExtractor {
     final raw = input.trim();
     if (raw.isEmpty) return null;
 
-    // Prefer an explicit travel verb followed by a location preposition. This
-    // keeps "čo si obliecť do lietadla" from being mistaken for a destination.
+    // Prefer an explicit travel verb followed by a location preposition. A
+    // generic transport phrase may sit between them ("idem autom do..."). The
+    // phrase is semantic transport context only; geographic truth still comes
+    // exclusively from the external provider.
     final travel = RegExp(
       r'(?:^|\s)(?:let[ií]m|let[ií]me|polet[ií]m|polet[ií]me|odliet\w*|cestuj\w*|'
       r'idem|ideme|p[oô]jdem|p[oô]jdeme|chyst\w*)\s+(?:sa\s+)?'
+      r'(?:(?:autom|vlakom|autobusom|busom|tax[ií]kom|motorkou|motocyklom|'
+      r'lietadlom|trajektom|loďou|lodou)\s+)?'
       r'(?:do|v|vo|na|k|ku)\s+(.+)',
       caseSensitive: false,
     ).allMatches(raw).toList(growable: false);
@@ -73,12 +77,12 @@ abstract final class StylistDestinationMentionExtractor {
     if (normalizedLast.length >= 5 && normalizedLast.endsWith('ska')) {
       stems.add('${last.substring(0, last.length - 1)}o');
     }
-    if (normalizedLast.length >= 6 &&
-        (normalizedLast.endsWith('u') ||
-            normalizedLast.endsWith('e') ||
-            normalizedLast.endsWith('i') ||
-            normalizedLast.endsWith('a') ||
-            normalizedLast.endsWith('y'))) {
+    if ((normalizedLast.length >= 6 &&
+            (normalizedLast.endsWith('u') ||
+                normalizedLast.endsWith('e') ||
+                normalizedLast.endsWith('i') ||
+                normalizedLast.endsWith('a'))) ||
+        (normalizedLast.length >= 5 && normalizedLast.endsWith('y'))) {
       stems.add(last.substring(0, last.length - 1));
     }
     if (normalizedLast.length >= 7 &&
