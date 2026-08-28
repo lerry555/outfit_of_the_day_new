@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/style_preferences/style_preferences_runtime.dart';
 import 'stylist_job_consumer.dart';
+import 'stylist_travel_request_enricher.dart';
 import 'user_style_preferences_reader.dart';
 
 class StylistChatService {
@@ -95,20 +96,51 @@ class StylistChatService {
       final callable = FirebaseFunctions.instanceFor(
         region: 'us-east1',
       ).httpsCallable('stylistChat');
+
+      var effectiveWeatherContext = Map<String, dynamic>.from(
+        weatherContext ?? const {},
+      );
+      var effectiveOutfitContextState = Map<String, dynamic>.from(
+        outfitContextState ?? const {},
+      );
+      var enrichedClientContext = Map<String, dynamic>.from(
+        clientContext ?? const {},
+      );
+
+      // Brain V1 gets provider-backed geographic truth and meaning-first travel
+      // scope before the request reaches the model. This is deliberately
+      // best-effort: a geocoder/weather outage must not break ordinary chat.
+      if (mode == 'chat' && effectiveOutfitContextState.isNotEmpty) {
+        try {
+          final enrichment = await StylistTravelRequestEnricher.enrich(
+            message: message,
+            history: history,
+            clientContext: enrichedClientContext,
+            outfitContextState: effectiveOutfitContextState,
+            weatherContext: effectiveWeatherContext,
+          );
+          effectiveWeatherContext = enrichment.weatherContext;
+          effectiveOutfitContextState = enrichment.outfitContextState;
+          enrichedClientContext = enrichment.clientContext;
+        } catch (error) {
+          debugPrint('STYLIST CHAT travel enrichment skipped: $error');
+        }
+      }
+
       final effectiveClientContext = <String, dynamic>{
-        ...?clientContext,
+        ...enrichedClientContext,
         'conversationBrainVersion': conversationBrainVersion,
       };
       final payload = <String, dynamic>{
         'message': message,
         'history': history,
-        'weatherContext': weatherContext,
+        'weatherContext': effectiveWeatherContext,
         'clientContext': effectiveClientContext,
         'mode': mode,
         'includeWardrobe': includeWardrobe,
       };
-      if (outfitContextState != null && outfitContextState.isNotEmpty) {
-        payload['outfitContextState'] = outfitContextState;
+      if (effectiveOutfitContextState.isNotEmpty) {
+        payload['outfitContextState'] = effectiveOutfitContextState;
       }
       if (imageUrl != null && imageUrl.trim().isNotEmpty) {
         payload['imageUrl'] = imageUrl.trim();
