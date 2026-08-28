@@ -104,6 +104,45 @@ test("verified semantic activity creates transport context when model omits even
   assert.deepEqual(state.unresolvedMaterialFields, []);
 });
 
+test("explicit unlisted activity resolves without adding a parser-specific rule", () => {
+  const parsed = {
+    semanticGrounding: {
+      activity: {
+        value: "other",
+        label: "prednáška",
+        evidence: "idem tam na prednášku",
+        source: "user_explicit",
+      },
+    },
+  };
+  const decision = parseOutfitDecisionFields(parsed);
+  const state = {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["trip_scope"],
+    semanticEvidenceTexts: ["idem tam na prednášku"],
+  };
+
+  assert.equal(resolveOutfitAction("clarify", decision, state), "chat");
+  assert.equal(state.activityHint, "other");
+  assert.equal(state.activityLabel, "prednáška");
+  assert.deepEqual(state.unresolvedMaterialFields, []);
+  assert.equal(parsed.eventContext.occasion, "other");
+  assert.equal(parsed.eventContext.activityLabel, "prednáška");
+});
+
+test("other semantic activity requires an explicit human label", () => {
+  const decision = parseOutfitDecisionFields({
+    semanticGrounding: {
+      activity: {
+        value: "other",
+        evidence: "idem na prednášku",
+        source: "user_explicit",
+      },
+    },
+  });
+  assert.equal(decision.semanticGrounding, null);
+});
+
 test("semantic grounding cannot borrow assistant-only or invented evidence", () => {
   for (const evidence of ["ideme na túru", "túra v Tatrách"]) {
     const parsed = {
