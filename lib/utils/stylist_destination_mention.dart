@@ -98,6 +98,21 @@ abstract final class StylistDestinationMentionExtractor {
     if (candidate.length < 2) return false;
     final normalized = StylistSemanticActivity.normalize(candidate);
     if (normalized.isEmpty) return false;
+
+    // A common-noun activity/environment after "do/na/v" is not geographic
+    // evidence. Proper-name casing still allows real places that happen to
+    // share such a word to reach the provider, which then decides what they are.
+    final hasProperNameSignal = RegExp(r'[A-ZÁÄČĎÉÍĽĹŇÓÔŔŠŤÚÝŽ]').hasMatch(candidate);
+    if (!hasProperNameSignal &&
+        (StylistSemanticActivity.resolveExplicit(candidate) != null ||
+            StylistSemanticActivity.looksLikeGenericTrip(candidate) ||
+            RegExp(
+              r'^(?:hor\w*|les\w*|prirod\w*|park\w*|plaz\w*|centrum\w*|mesto\w*)$',
+              caseSensitive: false,
+            ).hasMatch(normalized))) {
+      return false;
+    }
+
     if (RegExp(
       r'^(?:lietadl\w*|letisk\w*|vlak\w*|auto\w*|autobus\w*|bus\w*|'
       r'praca\w*|robot\w*|skol\w*|kino\w*|koncert\w*|restaur\w*|'
