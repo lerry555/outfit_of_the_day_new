@@ -11,9 +11,14 @@ function normalizeResponsesInputV1(messages) {
     const role = ["system", "developer", "assistant", "user"].includes(roleRaw) ?
       roleRaw : "user";
     const content = cleanText(message && message.content, 24000);
+    // Responses API distinguishes model-authored history from new input.
+    // Replayed assistant messages are output_text; system/developer/user
+    // messages are input_text. Sending input_text for an assistant message is
+    // rejected by the API with invalid_value.
+    const contentType = role === "assistant" ? "output_text" : "input_text";
     return {
       role,
-      content: [{type: "input_text", text: content}],
+      content: [{type: contentType, text: content}],
     };
   }).filter((message) => message.content[0].text.length > 0);
 }
