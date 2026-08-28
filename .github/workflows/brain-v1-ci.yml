@@ -1,9 +1,10 @@
-name: Brain V1 unit checks
+name: Brain experiment unit checks
 
 on:
   push:
     branches:
       - brain-v1-experiment
+      - brain-v2-sol-agent
   workflow_dispatch:
 
 permissions:
@@ -25,8 +26,10 @@ jobs:
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci --ignore-scripts
-      - name: Syntax check Brain V1 seams
+      - name: Syntax check Brain seams
         run: |
+          node --check functions/index_v2.js
+          node --check functions/stylist/sol_agent_v2.js
           node --check functions/stylist/conversation_brain_persona_v1.js
           node --check functions/stylist/conversation_brain_v1.js
           node --check functions/stylist/ai_model_registry.js
@@ -37,6 +40,8 @@ jobs:
           node --check functions/stylist/openai_responses_web_search_v1.js
           node --check functions/stylist/brain_live_qa_v1.js
           node --check functions/stylist/brain_live_qa_firebase_launcher_v1.js
+      - name: Sol agent V2 contracts
+        run: node --test functions/stylist/sol_agent_v2.test.js
       - name: Brain V1 focused contracts
         run: >-
           node --test
@@ -83,7 +88,7 @@ jobs:
           cache: true
       - name: Resolve Flutter dependencies
         run: flutter pub get
-      - name: Analyze Brain V1 client seams
+      - name: Analyze Brain client seams
         run: >-
           flutter analyze --no-fatal-infos
           lib/Services/stylist_chat_service.dart
