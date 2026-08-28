@@ -3,6 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  normalizeResponsesInputV1,
   buildConversationBrainResponsesBodyV1,
   extractConversationBrainResponseTextV1,
   extractConversationBrainWebResearchV1,
@@ -31,6 +32,20 @@ test("Brain Responses body exposes conditional hosted web search", () => {
   assert.deepEqual(body.include, ["web_search_call.action.sources"]);
 });
 
+test("Responses history uses output_text for assistant and input_text for inputs", () => {
+  const normalized = normalizeResponsesInputV1([
+    {role: "system", content: "system"},
+    {role: "user", content: "question"},
+    {role: "assistant", content: "answer"},
+    {role: "developer", content: "instruction"},
+  ]);
+
+  assert.equal(normalized[0].content[0].type, "input_text");
+  assert.equal(normalized[1].content[0].type, "input_text");
+  assert.equal(normalized[2].content[0].type, "output_text");
+  assert.equal(normalized[3].content[0].type, "input_text");
+});
+
 test("Every later chat turn gets a fresh web-search allowance", () => {
   const firstTurn = buildConversationBrainResponsesBodyV1({
     model: "gpt-5.6-terra",
@@ -51,6 +66,7 @@ test("Every later chat turn gets a fresh web-search allowance", () => {
 
   assert.equal(firstTurn.max_tool_calls, 3);
   assert.equal(laterTurn.max_tool_calls, 3);
+  assert.equal(laterTurn.input[2].content[0].type, "output_text");
   assert.notStrictEqual(firstTurn, laterTurn);
 });
 
