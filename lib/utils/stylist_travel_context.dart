@@ -54,9 +54,6 @@ class StylistTravelContext {
     this.departureOffsetMinutes,
   });
 
-  /// A destination is mandatory for the *primary* outfit only when the user
-  /// explicitly wants the destination part of the trip. Unknown travel scope
-  /// must be clarified for purpose rather than silently treated as transit.
   bool get destinationRequiredForPrimaryOutfit =>
       destinationUseExplicit || packingExplicit;
 
@@ -89,10 +86,7 @@ class StylistTravelContext {
 }
 
 /// Meaning-first travel classifier used by the Stylist grounding gate.
-///
-/// It deliberately contains no country, city, airport, airline or attraction
-/// names. Those are external facts and must be resolved by location/search
-/// services, not by a hard-coded language whitelist.
+/// Geographic proper nouns are never semantic evidence here.
 abstract final class StylistTravelContextResolver {
   static StylistTravelContext resolve(String input) {
     final text = StylistSemanticActivity.normalize(input);
@@ -109,11 +103,8 @@ abstract final class StylistTravelContextResolver {
       r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam|co\s+na\s+seba|potrebujem\s+nieco\s+na\s+seba|potrebujem\s+outfit)\b',
     );
 
-    // Transit means the user explicitly targets what they wear DURING the
-    // movement. Merely mentioning a car/plane/train next to the word "outfit"
-    // is not enough: "idem autom do Berlína, potrebujem outfit" is intentionally
-    // ambiguous until we know whether the outfit is for the drive, destination,
-    // or both.
+    // Mentioning a transport mode beside "outfit" is intentionally not enough
+    // to infer transit use. The user must target the movement phase itself.
     final transitOutfitExplicit = _has(
           text,
           r'\b(?:do|na|v|vo|pocas)\s+(?:lietadl\w*|palub\w*|let\w*|vlak\w*|auto|auta|aute|autom|autu|bus\w*|autobus\w*|cest\w*|presun\w*|trajekt\w*|lod\w*|jazd\w*)\b',
@@ -124,17 +115,14 @@ abstract final class StylistTravelContextResolver {
         );
 
     final explicitActivity = StylistSemanticActivity.resolveExplicit(input);
+    // A real non-travel activity remains destination use even when the user
+    // ALSO explicitly asks for transit clothing; that is exactly mixed scope.
     final explicitDestinationActivity =
-        travelMentioned &&
-        explicitActivity != null &&
-        explicitActivity != 'travel' &&
-        !transitOutfitExplicit;
+        travelMentioned && explicitActivity != null && explicitActivity != 'travel';
 
-    // Merely saying what happens after arrival is useful route context, but it
-    // does not automatically mean the outfit must serve that phase. "Outfit do
-    // auta, potom hotel" remains transit-only. Destination use becomes explicit
-    // through a real destination activity or wording that asks what is worn/used
-    // after arrival.
+    // "Po príchode idem do hotela" is route context, not proof that the outfit
+    // must serve the hotel. Destination use needs an actual activity or explicit
+    // wording about what is worn/needed after arrival.
     final destinationUseExplicit =
         explicitDestinationActivity ||
         _has(
