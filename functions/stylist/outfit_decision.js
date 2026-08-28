@@ -85,9 +85,6 @@ function evidenceIsUserAuthored(evidence, state) {
   });
 }
 
-// A semantic resolver must never upgrade a bare generic outing into a specific
-// activity. Longer evidence can still include "výlet" when it also explicitly
-// says what the user will do (e.g. "výlet na bicykli").
 function evidenceIsBareGenericTrip(evidence) {
   const text = normalizeEvidenceText(evidence);
   if (!text) return true;
@@ -221,17 +218,17 @@ function resolveOutfitAction(action, decision, clarificationState) {
   }
   if (action !== "clarify") return action;
 
-  if (semanticResolvedFields.length > 0 &&
-      !requiresGroundingClarification(clarificationState)) {
-    return "chat";
-  }
-
   const state = clarificationState && typeof clarificationState === "object" ?
     clarificationState : {};
   const previouslyAsked = new Set(
     Array.isArray(state.clarifiedMaterialFields) ?
-      state.clarifiedMaterialFields.map((value) => String(value || "").trim()).filter(Boolean) :
+      state.clarifiedMaterialFields
+        .map((value) => normalizeImpactField(value))
+        .filter(Boolean) :
       [],
+  );
+  const resolvedNow = new Set(
+    semanticResolvedFields.map(normalizeImpactField).filter(Boolean),
   );
   const requested = [
     ...(Array.isArray(decision?.impactFields) ? decision.impactFields : []),
@@ -239,7 +236,17 @@ function resolveOutfitAction(action, decision, clarificationState) {
   ];
   const hasNewMaterialTarget = requested
     .map(normalizeImpactField)
-    .some((field) => MATERIAL_IMPACT_FIELDS.has(field) && !previouslyAsked.has(field));
+    .some((field) =>
+      MATERIAL_IMPACT_FIELDS.has(field) &&
+      !previouslyAsked.has(field) &&
+      !resolvedNow.has(field),
+    );
+
+  // Semantic grounding removes only the fact it actually proved. If the Brain
+  // simultaneously identified a DIFFERENT material uncertainty (for example
+  // it understood "prednáška" but still needs to know whether the user is the
+  // speaker or an attendee), preserve that clarification instead of silently
+  // turning it into chat/generation.
   return hasNewMaterialTarget ? "clarify" : "chat";
 }
 
