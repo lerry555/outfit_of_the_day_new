@@ -82,18 +82,24 @@ abstract final class StylistTravelContextResolver {
     );
     final travelMentioned = mode != StylistTransportMode.unknown || genericTravel;
 
-    final transitOutfitExplicit = _has(
+    // Transit is a request about what to wear DURING the movement itself. A
+    // generic sentence such as "cestujem ... čo si obliecť na mieste" must not
+    // become transit merely because it contains both "cestujem" and "obliecť".
+    final explicitTransitPhrase = _has(
+      text,
+      r'\b(?:do|na|pocas|po)\s+(?:lietadl\w*|let\w*|palub\w*|vlak\w*|cest\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
+    );
+    final outfitPlusConcreteTransport =
+        _has(
           text,
-          r'\b(?:do|na|pocas|po)\s+(?:lietadl\w*|let\w*|palub\w*|vlak\w*|cest\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
-        ) ||
-        (_has(
-              text,
-              r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam)\b',
-            ) &&
-            _has(
-              text,
-              r'\b(?:lietadl\w*|let\w*|palub\w*|vlak\w*|cest\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
-            ));
+          r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam)\b',
+        ) &&
+        _has(
+          text,
+          r'\b(?:lietadl\w*|let\w*|palub\w*|vlak\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
+        );
+    final transitOutfitExplicit =
+        explicitTransitPhrase || outfitPlusConcreteTransport;
 
     final destinationUseExplicit = _has(
       text,
