@@ -1,12 +1,13 @@
-/// Z konverzácie vyčíta deň udalosti: relatívne výrazy (dnes / zajtra /
-/// pozajtra) aj slovenské názvy dní v týždni vrátane skloňovaných tvarov
-/// („v stredu“, „vo štvrtok“, „cez víkend“…). Vracia konkrétny dátum, alebo
-/// `null`, keď používateľ deň explicitne nespomenul.
+/// Z konverzácie vyčíta dátum udalosti: relatívne výrazy (dnes / zajtra /
+/// pozajtra), slovenské názvy dní v týždni a bežné explicitné kalendárne
+/// formáty. Konkrétne dátumy nie sú whitelistované — parser pracuje iba so
+/// všeobecnou syntaxou dátumu a kalendárnou validáciou.
 class StylistDayParser {
   const StylistDayParser._();
 
   /// Mapuje stem (bez diakritiky) → číslo dňa podľa [DateTime.weekday]
-  /// (pondelok = 1 … nedeľa = 7). Uvádzame aj časté skloňované tvary.
+  /// (pondelok = 1 … nedeľa = 7). Ide o lokalizačnú gramatiku, nie zoznam
+  /// udalostí alebo pomenovaných entít.
   static const Map<String, int> _weekdayWords = {
     'pondelok': DateTime.monday,
     'pondelka': DateTime.monday,
@@ -29,7 +30,9 @@ class StylistDayParser {
     'nedelou': DateTime.sunday,
   };
 
-  /// Vráti dátum udalosti alebo `null`, ak v texte nie je žiadny explicitný deň.
+  /// Vráti konkrétny dátum udalosti alebo `null`, ak v texte nie je žiadny
+  /// platný explicitný časový údaj. Najneskôr vyslovený časový fakt vyhráva,
+  /// takže prirodzená oprava typu „nie zajtra, ale 12.12.“ prepíše starší údaj.
   static DateTime? resolveDate(String conversation, {DateTime? now}) {
     final base = now ?? DateTime.now();
     final today = DateTime(base.year, base.month, base.day);
@@ -37,37 +40,88 @@ class StylistDayParser {
     DateTime? resolved;
     var resolvedAt = -1;
 
-    void consider(String word, DateTime date) {
+    void considerAt(int at, DateTime? date) {
+      if (date == null || at < resolvedAt) return;
+      resolvedAt = at;
+      resolved = date;
+    }
+
+    void considerWord(String word, DateTime date) {
       final matches = RegExp('\\b${RegExp.escape(word)}\\b').allMatches(blob);
       if (matches.isEmpty) return;
-      final at = matches.last.start;
-      if (at >= resolvedAt) {
-        resolvedAt = at;
-        resolved = date;
-      }
+      considerAt(matches.last.start, date);
+    }
+
+    // Explicit ISO date: 2026-12-12. Word/digit guards prevent accidentally
+    // parsing a longer identifier or a timestamp fragment as another date.
+    final iso = RegExp(r'(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)');
+    for (final match in iso.allMatches(blob)) {
+      final year = int.tryParse(match.group(1)!);
+      final month = int.tryParse(match.group(2)!);
+      final day = int.tryParse(match.group(3)!);
+      considerAt(match.start, _validDate(year, month, day));
+    }
+
+    // Slovak/European numeric forms: 12.12., 12.12.2026, 12/12, 12/12/2026.
+    // A missing year means the next occurrence of that calendar day: this year
+    // if it is today/future, otherwise next year. That makes a future-planning
+    // chat useful without hardcoding the current year.
+    final european = RegExp(
+      r'(?<!\d)(\d{1,2})\s*([./])\s*(\d{1,2})(?:\s*\2\s*(\d{4}))?\s*\.?\s*(?!\d)',
+    );
+    for (final match in european.allMatches(blob)) {
+      final day = int.tryParse(match.group(1)!);
+      final month = int.tryParse(match.group(3)!);
+      final explicitYear = int.tryParse(match.group(4) ?? '');
+      final date = explicitYear != null
+          ? _validDate(explicitYear, month, day)
+          : _nextOccurrence(month: month, day: day, today: today);
+      considerAt(match.start, date);
     }
 
     // The latest explicit temporal fact wins. This is important for natural
-    // corrections such as "nie zajtra, až v sobotu"; an earlier relative day
-    // must not eclipse the later correction.
-    consider('pozajtra', today.add(const Duration(days: 2)));
-    consider('zajtra', today.add(const Duration(days: 1)));
-    consider('tomorrow', today.add(const Duration(days: 1)));
-    consider('dnes', today);
-    consider('dneska', today);
-    consider('today', today);
+    // corrections such as "nie zajtra, až v sobotu".
+    considerWord('pozajtra', today.add(const Duration(days: 2)));
+    considerWord('zajtra', today.add(const Duration(days: 1)));
+    considerWord('tomorrow', today.add(const Duration(days: 1)));
+    considerWord('dnes', today);
+    considerWord('dneska', today);
+    considerWord('today', today);
     for (final entry in _weekdayWords.entries) {
       var diff = (entry.value - today.weekday) % 7;
       if (diff < 0) diff += 7;
-      consider(entry.key, today.add(Duration(days: diff)));
+      considerWord(entry.key, today.add(Duration(days: diff)));
     }
     return resolved;
   }
 
-  /// Hľadá celé slovo (so slovnými hranicami), aby „stredu“ nepadlo na
-  /// „prostredie“ či „streda“ na „stredisko“.
-  static bool _hasWord(String text, String word) {
-    return RegExp('\\b${RegExp.escape(word)}\\b').hasMatch(text);
+  static DateTime? _nextOccurrence({
+    required int? month,
+    required int? day,
+    required DateTime today,
+  }) {
+    var candidate = _validDate(today.year, month, day);
+    if (candidate == null) return null;
+    if (candidate.isBefore(today)) {
+      candidate = _validDate(today.year + 1, month, day);
+    }
+    return candidate;
+  }
+
+  /// DateTime v Dart-e normalizuje napr. 31.2. na marec. Round-trip kontrola
+  /// preto zabezpečí, že neexistujúci dátum nie je prijatý ako iný deň.
+  static DateTime? _validDate(int? year, int? month, int? day) {
+    if (year == null || month == null || day == null) return null;
+    if (year < 1900 || year > 2200 || month < 1 || month > 12 || day < 1) {
+      return null;
+    }
+    final candidate = DateTime(year, month, day);
+    if (candidate.year != year ||
+        candidate.month != month ||
+        candidate.day != day) {
+      return null;
+    }
+    return candidate;
   }
 
   static String _fold(String input) {
