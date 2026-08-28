@@ -51,7 +51,10 @@ jobs:
       - name: Home review preference regression
         run: node --test functions/stylist/home_final_review_preferences.test.js
       - name: Outfit decision regression
-        run: node --test functions/stylist/outfit_decision.test.js
+        run: >-
+          node --test
+          functions/stylist/outfit_decision.test.js
+          functions/stylist/outfit_decision_travel_scope.test.js
       - name: Style preference regression
         run: node --test functions/stylist/style_preferences_context.test.js
       - name: Wardrobe summary regression
