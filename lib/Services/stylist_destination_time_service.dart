@@ -38,14 +38,8 @@ abstract final class StylistDestinationTimeService {
 
     final timezoneId = metadata.timezoneId?.trim();
     if (timezoneId != null && timezoneId.isNotEmpty) {
-      try {
-        _ensureTimeZones();
-        final location = tz.getLocation(timezoneId);
-        final local = tz.TZDateTime.from(instant, location);
-        return local.timeZoneOffset.inMinutes;
-      } catch (_) {
-        // Fall through to the provider's current offset only for near-now use.
-      }
+      final exact = offsetMinutesForTimeZoneId(timezoneId, instant);
+      if (exact != null) return exact;
     }
 
     final fallback = metadata.fallbackMinutes;
@@ -56,6 +50,21 @@ abstract final class StylistDestinationTimeService {
       return null;
     }
     return fallback;
+  }
+
+  /// Pure IANA-timezone evaluation used by travel logic and regression tests.
+  /// It handles DST and date-line offsets for the supplied instant.
+  static int? offsetMinutesForTimeZoneId(String timezoneId, DateTime atUtc) {
+    final id = timezoneId.trim();
+    if (id.isEmpty) return null;
+    try {
+      _ensureTimeZones();
+      final location = tz.getLocation(id);
+      final local = tz.TZDateTime.from(atUtc.toUtc(), location);
+      return local.timeZoneOffset.inMinutes;
+    } catch (_) {
+      return null;
+    }
   }
 
   static Future<_TimeZoneCacheEntry?> _metadata(
