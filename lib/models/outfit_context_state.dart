@@ -1,3 +1,4 @@
+import '../models/stylist_resolved_location.dart';
 import '../utils/stylist_day_parser.dart';
 import '../utils/stylist_destination_parser.dart';
 import '../utils/stylist_semantic_activity.dart';
@@ -6,13 +7,19 @@ import '../utils/stylist_trip_parser.dart';
 
 /// Deterministic known context for one Stylist outfit request.
 ///
-/// Proper nouns are not allowed to become semantic truth here. Named locations
-/// remain optional location facts; activity and travel scope come from generic
-/// meaning and may later be evidence-verified by the Conversation Brain.
+/// Activity/travel meaning comes from generic semantics. When
+/// [providerLocationAuthorityEnabled] is true, geographic truth comes only
+/// from a provider-verified [StylistResolvedLocation], never from a named-place
+/// whitelist or an unchecked model field.
 class OutfitContextState {
   final String? gpsDefaultCity;
   final String? activityLocationLabel;
   final bool activityLocationKnown;
+  final bool providerLocationAuthorityEnabled;
+  final bool locationProviderVerified;
+  final String? locationGranularity;
+  final bool locationNeedsSpecificity;
+  final String? resolvedLocationDisplayName;
   final bool routineLocalOutfit;
   final bool remoteActivityPlanned;
   final int? hourLocal;
@@ -42,6 +49,11 @@ class OutfitContextState {
     this.gpsDefaultCity,
     this.activityLocationLabel,
     this.activityLocationKnown = false,
+    this.providerLocationAuthorityEnabled = false,
+    this.locationProviderVerified = false,
+    this.locationGranularity,
+    this.locationNeedsSpecificity = false,
+    this.resolvedLocationDisplayName,
     this.routineLocalOutfit = false,
     this.remoteActivityPlanned = false,
     this.hourLocal,
@@ -87,6 +99,8 @@ class OutfitContextState {
     required String gpsCityLabel,
     OutfitContextState? previous,
     String latestUserText = '',
+    StylistResolvedLocation? resolvedLocation,
+    bool preferProviderLocation = false,
   }) {
     final blob = conversation.toLowerCase();
     final latest = latestUserText.trim().isEmpty ? conversation : latestUserText;
@@ -98,24 +112,37 @@ class OutfitContextState {
     final travel = StylistTravelContextResolver.resolve(conversation);
     final latestTravel = StylistTravelContextResolver.resolve(latest);
 
-    final latestInferred = StylistDestinationParser.inferFromConversation(latest);
-    final inferred = correctionChangesPlaceOrActivity
+    final providerSpecific = resolvedLocation?.weatherSpecific == true;
+    final providerBroad = resolvedLocation?.needsMoreSpecificity == true;
+    final latestInferred = preferProviderLocation
+        ? null
+        : StylistDestinationParser.inferFromConversation(latest);
+    final legacyInferred = correctionChangesPlaceOrActivity
         ? null
         : latestInferred ??
               previous?.activityLocationLabel ??
-              StylistDestinationParser.inferFromConversation(conversation);
-    final inferredOk =
-        inferred != null &&
-        inferred.trim().isNotEmpty &&
-        StylistDestinationParser.isPlausibleDestination(inferred);
+              (preferProviderLocation
+                  ? null
+                  : StylistDestinationParser.inferFromConversation(conversation));
+    final legacyInferredOk =
+        legacyInferred != null &&
+        legacyInferred.trim().isNotEmpty &&
+        StylistDestinationParser.isPlausibleDestination(legacyInferred);
+    final locationLabel = providerSpecific
+        ? resolvedLocation!.weatherLabel.trim()
+        : legacyInferredOk
+            ? legacyInferred
+            : null;
+    final locationKnown = providerSpecific || legacyInferredOk;
 
     final remote =
         travel.travelMentioned ||
         StylistSemanticActivity.looksRemotePlan(blob) ||
         _isMultiDay(blob) ||
-        (inferredOk &&
+        resolvedLocation != null ||
+        (locationKnown &&
             gps.isNotEmpty &&
-            inferred.trim().toLowerCase() != gps.toLowerCase());
+            locationLabel!.toLowerCase() != gps.toLowerCase());
     final routine =
         _routineLocalHints.any(blob.contains) &&
         !remote &&
@@ -145,7 +172,7 @@ class OutfitContextState {
       dateKey = 'today';
     }
 
-    final activityLocationKnown = inferredOk || (routine && gps.isNotEmpty);
+    final activityLocationKnown = locationKnown || (routine && gps.isNotEmpty);
     final latestActivityHint = StylistSemanticActivity.resolveExplicit(latest);
     final activityHint = correctionChangesPlaceOrActivity
         ? latestActivityHint ??
@@ -159,7 +186,8 @@ class OutfitContextState {
     final unresolved = _materialUnknowns(
       remote: remote,
       routine: routine,
-      locationKnown: inferredOk,
+      locationKnown: locationKnown,
+      providerBroad: providerBroad,
       activityHint: activityHint,
       dateKnown: dateKey != null,
       conversation: conversation,
@@ -169,8 +197,13 @@ class OutfitContextState {
 
     return OutfitContextState(
       gpsDefaultCity: gps.isNotEmpty ? gps : null,
-      activityLocationLabel: inferredOk ? inferred : null,
+      activityLocationLabel: locationLabel,
       activityLocationKnown: activityLocationKnown,
+      providerLocationAuthorityEnabled: preferProviderLocation,
+      locationProviderVerified: resolvedLocation?.providerVerified == true,
+      locationGranularity: resolvedLocation?.granularity.name,
+      locationNeedsSpecificity: providerBroad,
+      resolvedLocationDisplayName: resolvedLocation?.displayName,
       routineLocalOutfit: routine,
       remoteActivityPlanned: remote,
       hourLocal: hourFromText,
@@ -224,8 +257,10 @@ class OutfitContextState {
   }) {
     final raw = eventContext ?? const <String, dynamic>{};
     final loc = (raw['locationLabel'] ?? '').toString().trim();
-    final locOk =
-        loc.isNotEmpty && StylistDestinationParser.isPlausibleDestination(loc);
+    final legacyLocOk =
+        !providerLocationAuthorityEnabled &&
+        loc.isNotEmpty &&
+        StylistDestinationParser.isPlausibleDestination(loc);
     final hour = raw['hourLocal'];
     final parsedHour = hour is int ? hour : int.tryParse(hour?.toString() ?? '');
     final incomingActivity = StylistSemanticActivity.canonicalize(
@@ -233,7 +268,7 @@ class OutfitContextState {
     );
 
     final unresolved = unresolvedMaterialFields.toSet();
-    if (locOk) unresolved.remove('destination');
+    if (legacyLocOk || activityLocationKnown) unresolved.remove('destination');
     if ((raw['dateKey'] ?? '').toString().trim().isNotEmpty) {
       unresolved.remove('date');
     }
@@ -242,8 +277,13 @@ class OutfitContextState {
     final nextUnresolved = unresolved.toList(growable: false);
     return OutfitContextState(
       gpsDefaultCity: gpsDefaultCity,
-      activityLocationLabel: locOk ? loc : activityLocationLabel,
-      activityLocationKnown: locOk || activityLocationKnown,
+      activityLocationLabel: legacyLocOk ? loc : activityLocationLabel,
+      activityLocationKnown: legacyLocOk || activityLocationKnown,
+      providerLocationAuthorityEnabled: providerLocationAuthorityEnabled,
+      locationProviderVerified: locationProviderVerified,
+      locationGranularity: locationGranularity,
+      locationNeedsSpecificity: locationNeedsSpecificity,
+      resolvedLocationDisplayName: resolvedLocationDisplayName,
       routineLocalOutfit: routineLocalOutfit,
       remoteActivityPlanned: remoteActivityPlanned,
       hourLocal: parsedHour ?? hourLocal,
@@ -283,6 +323,15 @@ class OutfitContextState {
     if (dateKey != null) 'dateKey': dateKey,
     if (activityHint != null) 'activityHint': activityHint,
     if (occasion != null) 'occasion': occasion,
+    'locationContext': <String, dynamic>{
+      'providerAuthorityEnabled': providerLocationAuthorityEnabled,
+      'providerVerified': locationProviderVerified,
+      if (activityLocationLabel != null) 'weatherLabel': activityLocationLabel,
+      if (resolvedLocationDisplayName != null)
+        'displayName': resolvedLocationDisplayName,
+      if (locationGranularity != null) 'granularity': locationGranularity,
+      'needsMoreSpecificity': locationNeedsSpecificity,
+    },
     'travelContext': <String, dynamic>{
       'scope': travelScope,
       'transportMode': transportMode,
@@ -299,7 +348,8 @@ class OutfitContextState {
     if (lastDecisionRisk != null) 'lastDecisionRisk': lastDecisionRisk,
     if (lastAssumptions.isNotEmpty) 'lastAssumptions': lastAssumptions,
     if (lastClarifyReason != null) 'lastClarifyReason': lastClarifyReason,
-    if (lastImpactFields.isNotEmpty) 'lastImpactFields': lastImpactFields,
+    if (lastImpactFields.isNotEmpty)
+      'lastImpactFields': lastImpactFields,
     if (unresolvedMaterialFields.isNotEmpty)
       'unresolvedMaterialFields': unresolvedMaterialFields,
     'groundingStatus': groundingStatus,
@@ -315,6 +365,11 @@ class OutfitContextState {
     gpsDefaultCity: gpsDefaultCity,
     activityLocationLabel: activityLocationLabel,
     activityLocationKnown: activityLocationKnown,
+    providerLocationAuthorityEnabled: providerLocationAuthorityEnabled,
+    locationProviderVerified: locationProviderVerified,
+    locationGranularity: locationGranularity,
+    locationNeedsSpecificity: locationNeedsSpecificity,
+    resolvedLocationDisplayName: resolvedLocationDisplayName,
     routineLocalOutfit: routineLocalOutfit,
     remoteActivityPlanned: remoteActivityPlanned,
     hourLocal: hourLocal,
@@ -357,6 +412,7 @@ class OutfitContextState {
     required bool remote,
     required bool routine,
     required bool locationKnown,
+    required bool providerBroad,
     required String? activityHint,
     required bool dateKnown,
     required String conversation,
@@ -370,7 +426,7 @@ class OutfitContextState {
         (activityHint == 'travel' && !travel.transitOutfitExplicit);
 
     if (remote &&
-        !locationKnown &&
+        (providerBroad || !locationKnown) &&
         travel.destinationRequiredForPrimaryOutfit) {
       result.add('destination');
     }
