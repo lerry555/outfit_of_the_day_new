@@ -151,7 +151,7 @@ class StylistSemanticActivity {
     }
     if (_has(
           text,
-          r'\b(?:centrum\w*|centre\w*|mesto\w*|meste\w*|mestom\w*)\b',
+          r'\b(?:centr\w*|mesto\w*|meste\w*|mestom\w*)\b',
         ) &&
         _has(
           text,
