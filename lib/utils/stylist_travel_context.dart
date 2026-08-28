@@ -6,23 +6,23 @@ enum StylistTransportMode { unknown, air, rail, road, sea }
 
 extension StylistTravelScopeWire on StylistTravelScope {
   String get wireName => switch (this) {
-    StylistTravelScope.none => 'none',
-    StylistTravelScope.transit => 'transit',
-    StylistTravelScope.destination => 'destination',
-    StylistTravelScope.packing => 'packing',
-    StylistTravelScope.mixed => 'mixed',
-    StylistTravelScope.unknown => 'unknown',
-  };
+        StylistTravelScope.none => 'none',
+        StylistTravelScope.transit => 'transit',
+        StylistTravelScope.destination => 'destination',
+        StylistTravelScope.packing => 'packing',
+        StylistTravelScope.mixed => 'mixed',
+        StylistTravelScope.unknown => 'unknown',
+      };
 }
 
 extension StylistTransportModeWire on StylistTransportMode {
   String get wireName => switch (this) {
-    StylistTransportMode.unknown => 'unknown',
-    StylistTransportMode.air => 'air',
-    StylistTransportMode.rail => 'rail',
-    StylistTransportMode.road => 'road',
-    StylistTransportMode.sea => 'sea',
-  };
+        StylistTransportMode.unknown => 'unknown',
+        StylistTransportMode.air => 'air',
+        StylistTransportMode.rail => 'rail',
+        StylistTransportMode.road => 'road',
+        StylistTransportMode.sea => 'sea',
+      };
 }
 
 class StylistTravelContext {
@@ -34,7 +34,9 @@ class StylistTravelContext {
   final bool destinationUseExplicit;
   final bool packingExplicit;
   final int? departureHourLocal;
+  final int? departureMinuteLocal;
   final int? arrivalHourLocal;
+  final int? arrivalMinuteLocal;
   final int? departureOffsetMinutes;
 
   const StylistTravelContext({
@@ -46,7 +48,9 @@ class StylistTravelContext {
     this.destinationUseExplicit = false,
     this.packingExplicit = false,
     this.departureHourLocal,
+    this.departureMinuteLocal,
     this.arrivalHourLocal,
+    this.arrivalMinuteLocal,
     this.departureOffsetMinutes,
   });
 
@@ -64,21 +68,24 @@ class StylistTravelContext {
       (destinationUseExplicit || transitOutfitExplicit || scopeNeedsClarification);
 
   Map<String, dynamic> toApiPayload() => <String, dynamic>{
-    'travelMentioned': travelMentioned,
-    'scope': scope.wireName,
-    'transportMode': transportMode.wireName,
-    'outfitRequestPresent': outfitRequestPresent,
-    'scopeNeedsClarification': scopeNeedsClarification,
-    'transitOutfitExplicit': transitOutfitExplicit,
-    'destinationUseExplicit': destinationUseExplicit,
-    'packingExplicit': packingExplicit,
-    'destinationRequiredForPrimaryOutfit': destinationRequiredForPrimaryOutfit,
-    'arrivalWeatherCouldHelp': arrivalWeatherCouldHelp,
-    if (departureHourLocal != null) 'departureHourLocal': departureHourLocal,
-    if (arrivalHourLocal != null) 'arrivalHourLocal': arrivalHourLocal,
-    if (departureOffsetMinutes != null)
-      'departureOffsetMinutes': departureOffsetMinutes,
-  };
+        'travelMentioned': travelMentioned,
+        'scope': scope.wireName,
+        'transportMode': transportMode.wireName,
+        'outfitRequestPresent': outfitRequestPresent,
+        'scopeNeedsClarification': scopeNeedsClarification,
+        'transitOutfitExplicit': transitOutfitExplicit,
+        'destinationUseExplicit': destinationUseExplicit,
+        'packingExplicit': packingExplicit,
+        'destinationRequiredForPrimaryOutfit': destinationRequiredForPrimaryOutfit,
+        'arrivalWeatherCouldHelp': arrivalWeatherCouldHelp,
+        if (departureHourLocal != null) 'departureHourLocal': departureHourLocal,
+        if (departureMinuteLocal != null)
+          'departureMinuteLocal': departureMinuteLocal,
+        if (arrivalHourLocal != null) 'arrivalHourLocal': arrivalHourLocal,
+        if (arrivalMinuteLocal != null) 'arrivalMinuteLocal': arrivalMinuteLocal,
+        if (departureOffsetMinutes != null)
+          'departureOffsetMinutes': departureOffsetMinutes,
+      };
 }
 
 /// Meaning-first travel classifier used by the Stylist grounding gate.
@@ -99,7 +106,7 @@ abstract final class StylistTravelContextResolver {
     final travelMentioned = mode != StylistTransportMode.unknown || genericTravel;
     final outfitRequestPresent = _has(
       text,
-      r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam|co\s+na\s+seba|potrebujem\s+nieco\s+na\s+seba)\b',
+      r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam|co\s+na\s+seba|potrebujem\s+nieco\s+na\s+seba|potrebujem\s+outfit)\b',
     );
 
     // Transit means the user explicitly targets what they wear DURING the
@@ -109,11 +116,11 @@ abstract final class StylistTravelContextResolver {
     // or both.
     final transitOutfitExplicit = _has(
           text,
-          r'\b(?:do|na|v|vo|pocas)\s+(?:lietadl\w*|palub\w*|let\w*|vlak\w*|aut\w*|bus\w*|autobus\w*|cest\w*|presun\w*|trajekt\w*|lod\w*|jazd\w*)\b',
+          r'\b(?:do|na|v|vo|pocas)\s+(?:lietadl\w*|palub\w*|let\w*|vlak\w*|auto|auta|aute|autom|autu|bus\w*|autobus\w*|cest\w*|presun\w*|trajekt\w*|lod\w*|jazd\w*)\b',
         ) ||
         _has(
           text,
-          r'\b(?:pocas\s+(?:cesty|letu|jazdy|presunu)|na\s+cestovanie|na\s+presun|cestovny\s+outfit)\b',
+          r'\b(?:pocas\s+(?:cesty|letu|jazdy|presunu|plavby)|na\s+cestovanie|na\s+presun|cestovny\s+outfit)\b',
         );
 
     final explicitActivity = StylistSemanticActivity.resolveExplicit(input);
@@ -146,6 +153,8 @@ abstract final class StylistTravelContextResolver {
                         ? StylistTravelScope.destination
                         : StylistTravelScope.unknown;
 
+    final departureClock = _departureClock(text);
+    final arrivalClock = _arrivalClock(text);
     return StylistTravelContext(
       travelMentioned: travelMentioned,
       scope: scope,
@@ -154,8 +163,10 @@ abstract final class StylistTravelContextResolver {
       transitOutfitExplicit: transitOutfitExplicit,
       destinationUseExplicit: destinationUseExplicit,
       packingExplicit: packingExplicit,
-      departureHourLocal: _departureHour(text),
-      arrivalHourLocal: _arrivalHour(text),
+      departureHourLocal: departureClock?.$1,
+      departureMinuteLocal: departureClock?.$2,
+      arrivalHourLocal: arrivalClock?.$1,
+      arrivalMinuteLocal: arrivalClock?.$2,
       departureOffsetMinutes: _departureOffsetMinutes(text),
     );
   }
@@ -163,42 +174,59 @@ abstract final class StylistTravelContextResolver {
   static StylistTransportMode _transportMode(String text) {
     if (_has(
       text,
-      r'\b(?:lietadl\w*|letim\w*|letime\w*|letiet\w*|odlet\w*|prilet\w*|pristav\w*|letisk\w*|flight\w*|plane\w*|palub\w*)\b',
+      r'\b(?:lietadl\w*|letim\w*|letime\w*|letiet\w*|letu|lete|letom|odlet\w*|prilet\w*|odliet\w*|priliet\w*|pristav\w*|letisk\w*|flight\w*|plane\w*|palub\w*)\b',
     )) {
       return StylistTransportMode.air;
     }
-    if (_has(text, r'\b(?:vlak\w*|zeleznic\w*|train\w*)\b')) {
+    if (_has(
+      text,
+      r'\b(?:vlak\w*|zeleznic\w*|nadraz\w*|train\w*|rail\w*)\b',
+    )) {
       return StylistTransportMode.rail;
     }
     if (_has(
       text,
-      r'\b(?:autom\w*|auto\w*|autobus\w*|bus\w*|car\w*|road\s+trip)\b',
+      r'\b(?:auto|auta|aute|autom|autu|autobus\w*|bus\w*|taxi\w*|car\w*|road\s+trip|motork\w*|motocyk\w*)\b',
     )) {
       return StylistTransportMode.road;
     }
     if (_has(
       text,
-      r'\b(?:lod\w*|trajekt\w*|ferry\w*|cruise\w*|plavb\w*)\b',
+      r'\b(?:lod\w*|trajekt\w*|ferry\w*|cruise\w*|plavb\w*|ship\w*)\b',
     )) {
       return StylistTransportMode.sea;
     }
     return StylistTransportMode.unknown;
   }
 
-  static int? _departureHour(String text) => _hourAfter(
-    text,
-    r'\b(?:odlet\w*|odchadz\w*|vyraz\w*|letim\w*|letime\w*|cestuj\w*)\b',
-  );
+  static (int, int)? _departureClock(String text) => _clockAfter(
+        text,
+        r'\b(?:odlet\w*|odliet\w*|odchadz\w*|vyraz\w*|startuj\w*|letim\w*|letime\w*|cestuj\w*|'
+        r'(?:vlak\w*|autobus\w*|bus\w*|trajekt\w*|lod\w*)\s+(?:ide|odchadz\w*|vyraz\w*))\b',
+      );
 
-  static int? _arrivalHour(String text) => _hourAfter(
-    text,
-    r'\b(?:prilet\w*|pristav\w*|doraz\w*|prichadz\w*|pridem\w*|prideme\w*)\b',
-  );
+  static (int, int)? _arrivalClock(String text) => _clockAfter(
+        text,
+        r'\b(?:prilet\w*|priliet\w*|pristav\w*|doraz\w*|prichadz\w*|pridem\w*|prideme\w*|'
+        r'(?:vlak\w*|autobus\w*|bus\w*|trajekt\w*|lod\w*)\s+(?:pride|doraz\w*))\b',
+      );
 
   static int? _departureOffsetMinutes(String text) {
     if (_has(text, r'\b(?:za|o)\s+pol\s+hodin\w*\b')) return 30;
     if (_has(text, r'\b(?:za|o)\s+stvrt\w*\s+hodin\w*\b')) return 15;
     if (_has(text, r'\b(?:za|o)\s+tri\s+stvrt\w*\s+hodin\w*\b')) return 45;
+
+    final compound = RegExp(
+      r'\b(?:za|o)\s+(\d{1,2})\s*(?:h|hod|hodin\w*)\s*(?:a\s*)?(\d{1,2})\s*(?:min|minut\w*)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (compound != null) {
+      final hours = int.tryParse(compound.group(1) ?? '');
+      final minutes = int.tryParse(compound.group(2) ?? '');
+      if (hours != null && minutes != null && hours <= 24 && minutes < 60) {
+        return hours * 60 + minutes;
+      }
+    }
 
     final minutes = RegExp(
       r'\b(?:za|o)\s+(\d{1,3})\s*(?:min|minut\w*)\b',
@@ -243,15 +271,18 @@ abstract final class StylistTravelContextResolver {
     return null;
   }
 
-  static int? _hourAfter(String text, String leadPattern) {
+  static (int, int)? _clockAfter(String text, String leadPattern) {
     final match = RegExp(
-      '$leadPattern[^0-9]{0,28}(?:o|okolo)?\\s*(\\d{1,2})(?::\\d{2})?',
+      '$leadPattern[^0-9]{0,40}(?:o|okolo)?\\s*(\\d{1,2})(?::(\\d{2}))?',
       caseSensitive: false,
     ).firstMatch(text);
     if (match == null) return null;
-    final value = int.tryParse(match.group(1) ?? '');
-    if (value == null || value < 0 || value > 23) return null;
-    return value;
+    final hour = int.tryParse(match.group(1) ?? '');
+    final minute = int.tryParse(match.group(2) ?? '0') ?? 0;
+    if (hour == null || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+      return null;
+    }
+    return (hour, minute);
   }
 
   static bool _has(String text, String pattern) =>
