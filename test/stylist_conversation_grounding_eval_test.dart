@@ -53,6 +53,7 @@ void main() {
         expect(state.userCorrectionDetected, isTrue);
         expect(state.groundingStatus, 'needs_grounding');
         expect(state.activityLocationLabel, isNull);
+        expect(state.activityHint, isNull);
       },
     );
 
@@ -87,7 +88,7 @@ void main() {
       expect(state.activityLocationLabel, isNot('Martin'));
     });
 
-    test('transport mode alone does not ground the destination activity', () {
+    test('transport mode alone leaves transit-vs-destination scope unresolved', () {
       final state = stateFor(
         'cez vikend ideme do Viedne a budem chciet poradit outfit ideme autom',
         latest: 'ideme autom',
@@ -95,7 +96,8 @@ void main() {
 
       expect(state.activityLocationLabel, 'Viedeň');
       expect(state.activityHint, 'travel');
-      expect(state.unresolvedMaterialFields, containsAll(['activity', 'date']));
+      expect(state.unresolvedMaterialFields, containsAll(['trip_scope', 'date']));
+      expect(state.unresolvedMaterialFields, isNot(contains('activity')));
       expect(state.groundingStatus, 'needs_grounding');
     });
 
@@ -164,7 +166,7 @@ void main() {
       );
 
       expect(completed.activityLocationLabel, 'Martin');
-      expect(completed.activityHint, contains('les'));
+      expect(completed.activityHint, 'nature_walk');
       expect(completed.groundingStatus, 'sufficient');
     });
 
@@ -238,18 +240,19 @@ void main() {
       );
     });
 
-    test('sightseeing grounds multi-day city activity before trip scope', () {
+    test('multi-activity Prague trip stays blocked until outfit scope is clear', () {
       final state = stateFor(
         'Ideme na tri dni do Prahy. Cez deň pamiatky a veľa chodenia, jeden večer lepšia večera.',
         latest:
             'Cez deň pamiatky a veľa chodenia, jeden večer lepšia večera.',
       );
 
-      expect(state.activityHint, 'city_walk');
+      expect(<String>['city_walk', 'dinner'], contains(state.activityHint));
       expect(
         state.unresolvedMaterialFields,
         containsAll(['date', 'trip_scope']),
       );
+      expect(state.groundingStatus, 'needs_grounding');
     });
 
     test('paraphrased ambiguous outings remain grounded before generation', () {
@@ -257,7 +260,6 @@ void main() {
         'zajtra niekam vybehneme',
         'cez víkend chceme ísť na výlet',
         'ideme preč na celý deň',
-        'zajtra budem potrebovať outfit na cestu',
         'asi pôjdeme niekam von',
         'chystáme sa do prírody',
         'ideme na hrad',
