@@ -29,32 +29,46 @@ class StylistTravelContext {
   final bool travelMentioned;
   final StylistTravelScope scope;
   final StylistTransportMode transportMode;
+  final bool outfitRequestPresent;
   final bool transitOutfitExplicit;
   final bool destinationUseExplicit;
   final bool packingExplicit;
   final int? departureHourLocal;
   final int? arrivalHourLocal;
+  final int? departureOffsetMinutes;
 
   const StylistTravelContext({
     this.travelMentioned = false,
     this.scope = StylistTravelScope.none,
     this.transportMode = StylistTransportMode.unknown,
+    this.outfitRequestPresent = false,
     this.transitOutfitExplicit = false,
     this.destinationUseExplicit = false,
     this.packingExplicit = false,
     this.departureHourLocal,
     this.arrivalHourLocal,
+    this.departureOffsetMinutes,
   });
 
-  bool get destinationRequiredForPrimaryOutfit => !transitOutfitExplicit;
+  /// A destination is mandatory for the *primary* outfit only when the user
+  /// explicitly wants the destination part of the trip. Unknown travel scope
+  /// must be clarified for purpose rather than silently treated as transit.
+  bool get destinationRequiredForPrimaryOutfit =>
+      destinationUseExplicit || packingExplicit;
+
+  bool get scopeNeedsClarification =>
+      travelMentioned && outfitRequestPresent && scope == StylistTravelScope.unknown;
 
   bool get arrivalWeatherCouldHelp =>
-      travelMentioned && (transitOutfitExplicit || destinationUseExplicit);
+      travelMentioned &&
+      (destinationUseExplicit || transitOutfitExplicit || scopeNeedsClarification);
 
   Map<String, dynamic> toApiPayload() => <String, dynamic>{
     'travelMentioned': travelMentioned,
     'scope': scope.wireName,
     'transportMode': transportMode.wireName,
+    'outfitRequestPresent': outfitRequestPresent,
+    'scopeNeedsClarification': scopeNeedsClarification,
     'transitOutfitExplicit': transitOutfitExplicit,
     'destinationUseExplicit': destinationUseExplicit,
     'packingExplicit': packingExplicit,
@@ -62,6 +76,8 @@ class StylistTravelContext {
     'arrivalWeatherCouldHelp': arrivalWeatherCouldHelp,
     if (departureHourLocal != null) 'departureHourLocal': departureHourLocal,
     if (arrivalHourLocal != null) 'arrivalHourLocal': arrivalHourLocal,
+    if (departureOffsetMinutes != null)
+      'departureOffsetMinutes': departureOffsetMinutes,
   };
 }
 
@@ -81,30 +97,38 @@ abstract final class StylistTravelContextResolver {
       r'\b(?:cest\w*|presun\w*|dovolen\w*|trip\w*|travel\w*)\b',
     );
     final travelMentioned = mode != StylistTransportMode.unknown || genericTravel;
-
-    // Transit is a request about what to wear DURING the movement itself. A
-    // generic sentence such as "cestujem ... čo si obliecť na mieste" must not
-    // become transit merely because it contains both "cestujem" and "obliecť".
-    final explicitTransitPhrase = _has(
+    final outfitRequestPresent = _has(
       text,
-      r'\b(?:do|na|pocas|po)\s+(?:lietadl\w*|let\w*|palub\w*|vlak\w*|cest\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
+      r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam|co\s+na\s+seba|potrebujem\s+nieco\s+na\s+seba)\b',
     );
-    final outfitPlusConcreteTransport =
+
+    // Transit means the user explicitly targets what they wear DURING the
+    // movement. Merely mentioning a car/plane/train next to the word "outfit"
+    // is not enough: "idem autom do Berlína, potrebujem outfit" is intentionally
+    // ambiguous until we know whether the outfit is for the drive, destination,
+    // or both.
+    final transitOutfitExplicit = _has(
+          text,
+          r'\b(?:do|na|v|vo|pocas)\s+(?:lietadl\w*|palub\w*|let\w*|vlak\w*|aut\w*|bus\w*|autobus\w*|cest\w*|presun\w*|trajekt\w*|lod\w*|jazd\w*)\b',
+        ) ||
         _has(
           text,
-          r'\b(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba|co\s+si\s+mam)\b',
-        ) &&
-        _has(
-          text,
-          r'\b(?:lietadl\w*|let\w*|palub\w*|vlak\w*|presun\w*|aut\w*|bus\w*|trajekt\w*|lod\w*)\b',
+          r'\b(?:pocas\s+(?:cesty|letu|jazdy|presunu)|na\s+cestovanie|na\s+presun|cestovny\s+outfit)\b',
         );
-    final transitOutfitExplicit =
-        explicitTransitPhrase || outfitPlusConcreteTransport;
 
-    final destinationUseExplicit = _has(
-      text,
-      r'\b(?:po\s+prilete|po\s+pristati|po\s+prichode|na\s+mieste|v\s+cieli|v\s+destinacii|pocas\s+pobytu|na\s+pobyt|tam\s+(?:budem|budeme|chcem|chceme|pojdem|pojdeme))\b',
-    );
+    final explicitActivity = StylistSemanticActivity.resolveExplicit(input);
+    final explicitDestinationActivity =
+        travelMentioned &&
+        explicitActivity != null &&
+        explicitActivity != 'travel' &&
+        !transitOutfitExplicit;
+
+    final destinationUseExplicit =
+        explicitDestinationActivity ||
+        _has(
+          text,
+          r'\b(?:po\s+prilete|po\s+pristati|po\s+prichode|po\s+vystupeni|na\s+mieste|v\s+cieli|v\s+destinacii|pocas\s+pobytu|na\s+pobyt|tam\s+(?:budem|budeme|chcem|chceme|pojdem|pojdeme))\b',
+        );
     final packingExplicit = _has(
       text,
       r'\b(?:zbal\w*|balen\w*|packing\w*|kufr\w*|batozin\w*|zobrat\w*\s+so\s+sebou|vziat\w*\s+so\s+sebou)\b',
@@ -126,11 +150,13 @@ abstract final class StylistTravelContextResolver {
       travelMentioned: travelMentioned,
       scope: scope,
       transportMode: mode,
+      outfitRequestPresent: outfitRequestPresent,
       transitOutfitExplicit: transitOutfitExplicit,
       destinationUseExplicit: destinationUseExplicit,
       packingExplicit: packingExplicit,
       departureHourLocal: _departureHour(text),
       arrivalHourLocal: _arrivalHour(text),
+      departureOffsetMinutes: _departureOffsetMinutes(text),
     );
   }
 
@@ -168,6 +194,54 @@ abstract final class StylistTravelContextResolver {
     text,
     r'\b(?:prilet\w*|pristav\w*|doraz\w*|prichadz\w*|pridem\w*|prideme\w*)\b',
   );
+
+  static int? _departureOffsetMinutes(String text) {
+    if (_has(text, r'\b(?:za|o)\s+pol\s+hodin\w*\b')) return 30;
+    if (_has(text, r'\b(?:za|o)\s+stvrt\w*\s+hodin\w*\b')) return 15;
+    if (_has(text, r'\b(?:za|o)\s+tri\s+stvrt\w*\s+hodin\w*\b')) return 45;
+
+    final minutes = RegExp(
+      r'\b(?:za|o)\s+(\d{1,3})\s*(?:min|minut\w*)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (minutes != null) {
+      final value = int.tryParse(minutes.group(1) ?? '');
+      if (value != null && value > 0 && value <= 720) return value;
+    }
+
+    final hours = RegExp(
+      r'\b(?:za|o)\s+(\d{1,2})\s*(?:h|hod|hodin\w*)\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (hours != null) {
+      final value = int.tryParse(hours.group(1) ?? '');
+      if (value != null && value > 0 && value <= 48) return value * 60;
+    }
+
+    final wordHours = RegExp(
+      r'\b(?:za|o)\s+(jednu|jeden|dve|dva|tri|styri|pat|sest|sedem|osem|devat|desat)\s+hodin\w*\b',
+      caseSensitive: false,
+    ).firstMatch(text);
+    if (wordHours != null) {
+      const values = <String, int>{
+        'jednu': 1,
+        'jeden': 1,
+        'dve': 2,
+        'dva': 2,
+        'tri': 3,
+        'styri': 4,
+        'pat': 5,
+        'sest': 6,
+        'sedem': 7,
+        'osem': 8,
+        'devat': 9,
+        'desat': 10,
+      };
+      final value = values[wordHours.group(1)];
+      if (value != null) return value * 60;
+    }
+    return null;
+  }
 
   static int? _hourAfter(String text, String leadPattern) {
     final match = RegExp(
