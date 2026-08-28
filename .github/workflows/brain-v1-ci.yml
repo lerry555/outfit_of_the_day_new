@@ -35,6 +35,7 @@ jobs:
           node --check functions/stylist/frozen_stylist_authority_v1.js
           node --check functions/stylist/outfit_decision.js
           node --check functions/stylist/openai_responses_web_search_v1.js
+          node --check functions/stylist/brain_live_qa_v1.js
       - name: Brain V1 focused contracts
         run: >-
           node --test
@@ -48,6 +49,7 @@ jobs:
           node --test
           functions/stylist/openai_responses_web_search_v1.test.js
           functions/stylist/conversation_brain_web_policy_v1.test.js
+          functions/stylist/brain_live_qa_v1.test.js
       - name: Frozen explanation regression
         run: node --test functions/stylist/frozen_stylist_explanation_user_facing_v1.test.js
       - name: Secret binding regression
