@@ -37,18 +37,14 @@ void main() {
       }
     });
 
-    test('destination outfit still keeps destination material', () {
-      final state = OutfitContextState.buildFrom(
-        conversation:
-            'V pondelok cestujem do Qwertystanu a chcem vedieť čo si mám obliecť na mieste.',
-        latestUserText:
-            'V pondelok cestujem do Qwertystanu a chcem vedieť čo si mám obliecť na mieste.',
-        gpsCityLabel: 'Martin',
+    test('destination outfit keeps destination material at the scope layer', () {
+      final travel = StylistTravelContextResolver.resolve(
+        'V pondelok cestujem niekam preč a chcem vedieť čo si mám obliecť na mieste.',
       );
 
-      expect(state.travelScope, 'destination');
-      expect(state.transitOutfitExplicit, isFalse);
-      expect(state.unresolvedMaterialFields, contains('destination'));
+      expect(travel.scope, StylistTravelScope.destination);
+      expect(travel.transitOutfitExplicit, isFalse);
+      expect(travel.destinationRequiredForPrimaryOutfit, isTrue);
     });
 
     test('arrival and departure timing are extracted by meaning, not airport names', () {
