@@ -55,6 +55,21 @@ void main() {
       );
     });
 
+    test('city-centre inflections plus movement resolve to city walk', () {
+      for (final sample in <String>[
+        'Dnes idem do centra v Žiline',
+        'budeme chodiť po centre',
+        'pôjdeme centrom mesta',
+        'ideme do mestského centra',
+      ]) {
+        expect(
+          StylistSemanticActivity.resolveExplicit(sample),
+          'city_walk',
+          reason: sample,
+        );
+      }
+    });
+
     test('generic outing and bare named destination stay unresolved', () {
       for (final sample in <String>[
         'zajtra idem na výlet',
@@ -62,6 +77,7 @@ void main() {
         'chystáme sa preč',
         'zajtra večer niekam ideme',
         'zajtra idem do Tatier',
+        'centrum Žiliny',
       ]) {
         expect(
           StylistSemanticActivity.resolveExplicit(sample),
