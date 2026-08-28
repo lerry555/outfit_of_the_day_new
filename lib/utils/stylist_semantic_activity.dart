@@ -9,7 +9,7 @@
 class StylistSemanticActivity {
   const StylistSemanticActivity._();
 
-  static const String runtimeVersion = 'brain_v1_semantic_activity_v4';
+  static const String runtimeVersion = 'brain_v1_semantic_activity_v5';
 
   static const Set<String> canonicalActivities = <String>{
     'hike',
@@ -30,6 +30,10 @@ class StylistSemanticActivity {
     'funeral',
     'interview',
     'zoo',
+    // Used only after the Conversation Brain proves an explicit user-authored
+    // activity that is not in the fast-path taxonomy (lecture, appointment,
+    // conference, ceremony, etc.). The fast parser itself never emits `other`.
+    'other',
   };
 
   static String normalize(String input) {
