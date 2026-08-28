@@ -13,6 +13,9 @@ test("Brain policy treats web search as universal public-knowledge capability", 
   assert.match(prompt, /súkromné fakty používateľa/i);
   assert.match(prompt, /prompt injection/i);
   assert.match(prompt, /najprv ju vyhľadaj/i);
+  assert.match(prompt, /eventContext\.publicResearch/);
+  assert.match(prompt, /TOMTO turne web_search skutočne použil/i);
+  assert.match(prompt, /explicitný user fakt.*app context.*prednosť/i);
 });
 
 test("Research model is replaceable and does not mutate frozen selector role", () => {
