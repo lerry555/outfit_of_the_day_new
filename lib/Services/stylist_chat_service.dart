@@ -69,6 +69,28 @@ class StylistChatService {
         .toList(growable: false);
   }
 
+  /// Public web research is server-validated and may only fill gaps. Existing
+  /// eventContext is derived from user/app authority and therefore always wins.
+  @visibleForTesting
+  static Map<String, dynamic>? resolvedEventContextFromData(Map data) {
+    final authoritative = data['eventContext'] is Map
+        ? Map<String, dynamic>.from(data['eventContext'] as Map)
+        : <String, dynamic>{};
+    final webResearch = data['webResearch'];
+    final publicContext =
+        webResearch is Map &&
+            webResearch['used'] == true &&
+            webResearch['publicContext'] is Map
+        ? Map<String, dynamic>.from(webResearch['publicContext'] as Map)
+        : <String, dynamic>{};
+
+    if (authoritative.isEmpty && publicContext.isEmpty) return null;
+    return <String, dynamic>{
+      ...publicContext,
+      ...authoritative,
+    };
+  }
+
   Future<Map<String, dynamic>> sendMessage(
     String message, {
     List<Map<String, String>> history = const [],
@@ -223,9 +245,7 @@ class StylistChatService {
           'action': (data['action'] ?? 'chat').toString(),
           'offerWardrobe': data['offerWardrobe'] == true,
           'improveHint': (data['improveHint'] ?? '').toString(),
-          'eventContext': data['eventContext'] is Map
-              ? Map<String, dynamic>.from(data['eventContext'] as Map)
-              : null,
+          'eventContext': resolvedEventContextFromData(data),
           'excludeItemKeywords': data['excludeItemKeywords'] is List
               ? (data['excludeItemKeywords'] as List)
                     .map((v) => v.toString().trim())
@@ -366,9 +386,7 @@ class StylistChatService {
       'action': (data['action'] ?? 'chat').toString(),
       'offerWardrobe': data['offerWardrobe'] == true,
       'improveHint': (data['improveHint'] ?? '').toString(),
-      'eventContext': data['eventContext'] is Map
-          ? Map<String, dynamic>.from(data['eventContext'] as Map)
-          : null,
+      'eventContext': resolvedEventContextFromData(data),
       'excludeItemKeywords': data['excludeItemKeywords'] is List
           ? (data['excludeItemKeywords'] as List)
                 .map((v) => v.toString().trim())
