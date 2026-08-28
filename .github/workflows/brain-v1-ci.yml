@@ -96,5 +96,7 @@ jobs:
         run: flutter test test/stylist_semantic_activity_test.dart
       - name: Travel scope and timing regression
         run: flutter test test/stylist_travel_context_test.dart
+      - name: Destination timezone and DST regression
+        run: flutter test test/stylist_destination_time_service_test.dart
       - name: No named-entity semantic authority regression
         run: flutter test test/stylist_semantic_authority_no_named_entities_test.dart
