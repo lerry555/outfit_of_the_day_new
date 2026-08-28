@@ -93,12 +93,15 @@ jobs:
           lib/utils/stylist_travel_context.dart
           lib/utils/stylist_travel_endpoints.dart
           lib/utils/stylist_destination_mention.dart
+          lib/utils/stylist_day_parser.dart
           lib/utils/activity_traits_inferencer.dart
           lib/utils/event_clarification.dart
           lib/utils/dress_code_resolver.dart
           lib/data/event_dress_code.dart
           lib/utils/stylist_intent_resolver.dart
           lib/utils/stylist_activity_terrain.dart
+      - name: Explicit calendar date regression
+        run: flutter test test/stylist_day_parser_explicit_date_test.dart
       - name: Explicit hike grounding regression
         run: flutter test test/brain_v1_explicit_hike_grounding_test.dart
       - name: Semantic activity regression
