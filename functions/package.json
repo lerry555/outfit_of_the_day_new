@@ -1,7 +1,7 @@
 {
   "name": "functions",
   "description": "Cloud Functions for Firebase",
-  "main": "index.js",
+  "main": "index_v2.js",
   "private": true,
   "engines": {
     "node": "20"
@@ -12,6 +12,7 @@
     "logs": "firebase functions:log",
     "qa:brain-live": "node stylist/brain_live_qa_v1.js",
     "qa:brain-live-firebase": "node stylist/brain_live_qa_firebase_launcher_v1.js --live",
+    "test:sol-agent-v2": "node --test stylist/sol_agent_v2.test.js",
     "test:trusted-vision-handoff": "node --test trusted_vision_qualification_input.test.js",
     "test:live-parser-runtime": "node --test live_parser_backend_qualification_orchestrator.test.js live_parser_backend_qualification_runtime_parity.test.js",
     "test:live-shadow-runtime": "node --test wardrobe_live_shadow_runtime_wiring.test.js",
