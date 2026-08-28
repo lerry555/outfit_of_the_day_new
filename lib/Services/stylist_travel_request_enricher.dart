@@ -133,9 +133,6 @@ abstract final class StylistTravelRequestEnricher {
       return;
     }
 
-    // Never preserve a legacy named-place guess after a provider-backed
-    // destination mention has been attempted. A broad/unknown place may still
-    // be perfectly fine for a transit-only outfit, but it is not weather truth.
     state.remove('activityLocationLabel');
     state['activityLocationKnown'] = false;
     if (destinationRequired) {
@@ -160,9 +157,6 @@ abstract final class StylistTravelRequestEnricher {
     String? departureSource;
     int? relativeOffsetMinutes;
 
-    // Relative phrases such as "za pol hodinu" are anchored only on the turn
-    // where the user says them. Re-reading the old phrase on a later follow-up
-    // must never move the departure another 30 minutes into the future.
     if (latestTravel.departureOffsetMinutes != null) {
       relativeOffsetMinutes = latestTravel.departureOffsetMinutes;
       departureUtc = nowUtc.add(Duration(minutes: relativeOffsetMinutes!));
@@ -197,17 +191,20 @@ abstract final class StylistTravelRequestEnricher {
 
     if (travel.transportMode != StylistTransportMode.road ||
         departureUtc == null ||
-        resolved == null) {
+        resolved == null ||
+        !resolved.weatherSpecific) {
       return out;
     }
 
-    final originLat = _double(client['latitude']);
-    final originLon = _double(client['longitude']);
-    if (originLat == null || originLon == null) return out;
+    final origin = await _verifiedRoadOrigin(client);
+    if (origin == null) {
+      out['roadTimingDeferredReason'] = 'origin_not_verified';
+      return out;
+    }
 
     final directKm = greatCircleDistanceKm(
-      originLat,
-      originLon,
+      origin.latitude,
+      origin.longitude,
       resolved.latitude,
       resolved.longitude,
     );
@@ -216,6 +213,7 @@ abstract final class StylistTravelRequestEnricher {
 
     final arrivalUtc = departureUtc.add(Duration(minutes: durationMinutes));
     out.addAll(<String, dynamic>{
+      'originCoordinateSource': origin.source,
       'directDistanceKm': directKm.round(),
       'estimatedRoadDurationMinutes': durationMinutes,
       'estimatedArrivalAtUtc': arrivalUtc.toIso8601String(),
@@ -223,8 +221,6 @@ abstract final class StylistTravelRequestEnricher {
       'arrivalEstimateConfidence': 'rough',
     });
 
-    // For a near-term trip, convert the UTC estimate into the destination's
-    // provider-backed local clock. Failure is non-fatal: UTC/duration remain.
     if (departureUtc.difference(nowUtc).abs() <= const Duration(days: 7)) {
       final offset = await StylistDestinationTimeService.utcOffsetMinutes(
         latitude: resolved.latitude,
@@ -239,6 +235,53 @@ abstract final class StylistTravelRequestEnricher {
       }
     }
     return out;
+  }
+
+  static Future<({double latitude, double longitude, String source})?>
+      _verifiedRoadOrigin(Map<String, dynamic> client) async {
+    final rawLat = _double(client['latitude']);
+    final rawLon = _double(client['longitude']);
+    final label = (client['userGpsLocation'] ?? client['defaultWeatherCity'] ?? '')
+        .toString()
+        .trim();
+
+    if (label.isEmpty) {
+      if (rawLat == null || rawLon == null) return null;
+      return (latitude: rawLat, longitude: rawLon, source: 'device_coordinates');
+    }
+
+    final provider = await StylistGlobalLocationService.resolveQuery(
+      label,
+      evidence: label,
+    );
+    if (provider == null || !provider.weatherSpecific) {
+      // With a human-readable GPS label present, a coordinate that cannot be
+      // reconciled with it is not strong enough for a travel ETA.
+      return null;
+    }
+
+    if (rawLat == null || rawLon == null) {
+      return (
+        latitude: provider.latitude,
+        longitude: provider.longitude,
+        source: 'gps_label_provider',
+      );
+    }
+
+    final mismatchKm = greatCircleDistanceKm(
+      rawLat,
+      rawLon,
+      provider.latitude,
+      provider.longitude,
+    );
+    if (mismatchKm > 80) {
+      return (
+        latitude: provider.latitude,
+        longitude: provider.longitude,
+        source: 'gps_label_provider_coordinate_repair',
+      );
+    }
+    return (latitude: rawLat, longitude: rawLon, source: 'device_coordinates');
   }
 
   static Future<Map<String, dynamic>?> _arrivalWeather({
@@ -390,8 +433,6 @@ abstract final class StylistTravelRequestEnricher {
                 : 88.0;
     var minutes = (roadKm / averageKmh * 60).round();
     if (minutes > 270) {
-      // Small generic rest allowance. Traffic, borders and stops remain outside
-      // this estimate and are why confidence is explicitly `rough`.
       minutes += (minutes ~/ 180) * 10;
     }
     return minutes.clamp(5, 24 * 60);
