@@ -146,9 +146,6 @@ class StylistChatService {
         clientContext ?? const {},
       );
 
-      // Brain V1 gets provider-backed geographic truth and meaning-first travel
-      // scope before the request reaches the model. This remains only for
-      // legacy non-V2 modes retained on this experimental branch.
       if (mode == 'chat' && effectiveOutfitContextState.isNotEmpty) {
         try {
           final enrichment = await StylistTravelRequestEnricher.enrich(
@@ -311,17 +308,12 @@ class StylistChatService {
 
     if (persistedChatId.isNotEmpty) {
       if (_solAgentBoundChatId == null) {
-        // The first draft turn has now been persisted locally. Keep the draft
-        // session for continuity; the server mirrors its latest response ID to
-        // the real chat ID so app restart can resume from there.
         _solAgentBoundChatId = persistedChatId;
       } else if (_solAgentBoundChatId != persistedChatId) {
-        // User opened another stored conversation.
         _solAgentBoundChatId = persistedChatId;
         _solAgentSessionId = persistedChatId;
       }
     } else if (_solAgentHasSentTurn && !hasPriorUserTurn) {
-      // User started a brand-new chat before a persisted chat ID is available.
       _solAgentBoundChatId = null;
       _solAgentSessionId = freshDraft();
     }
@@ -373,7 +365,11 @@ class StylistChatService {
         'ok': true,
         'reply': (data['reply'] ?? _genericErrorReply).toString(),
         'suggestedItems': const <Map<String, dynamic>>[],
-        'action': 'chat',
+        // `stop` is an internal compatibility envelope only. It makes the
+        // legacy screen render Sol's reply immediately without running its
+        // grounding/auto-outfit/weather post-processors. No stop wording is
+        // shown to the user.
+        'action': 'stop',
         'eventContext': null,
         'excludeItemKeywords': const <String>[],
         'agentVersion': (data['agentVersion'] ?? 'sol_v2').toString(),
@@ -399,13 +395,6 @@ class StylistChatService {
     }
   }
 
-  /// Cloud Function dobehne na serveri aj keď klientovi medzitým spadlo
-  /// spojenie (appka šla na pozadie). Výsledok si vtedy vie klient dotiahnuť
-  /// z `users/{uid}/stylistJobs/{jobId}`, kam ho funkcia zapísala. Počúva na
-  /// tento dokument až kým sa neobjaví hotový výsledok (alebo do timeoutu).
-  ///
-  /// Does not delete the job. Callers must persist the chat first, then
-  /// [deleteJob].
   Future<Map<String, dynamic>?> awaitJobResult(
     String jobId, {
     Duration timeout = const Duration(minutes: 3),
@@ -432,10 +421,6 @@ class StylistChatService {
     );
   }
 
-  /// Loads Stylist preference context. Missing docs, empty values, and
-  /// transient read failures resolve to `null` (omit the payload field).
-  /// Soft taste follows [StylePreferencesRuntime], while explicit outfit
-  /// presentation remains authoritative independently of that rollout flag.
   @visibleForTesting
   static Future<Map<String, dynamic>?> resolveStylePreferencesPayload(
     UserStylePreferencesReader reader,
@@ -487,8 +472,6 @@ class StylistChatService {
     } catch (_) {}
   }
 
-  /// Prevedie surový `result` z Firestore do rovnakého tvaru, aký vracia
-  /// `sendMessage`, aby ho klient vedel spracovať rovnakou cestou.
   static Map<String, dynamic> normalizeJobResult(Map<String, dynamic> data) {
     final reply = data['reply'];
     final suggestedItems = data['suggestedItems'];
@@ -563,9 +546,6 @@ class StylistChatService {
     };
   }
 
-  /// Zavolá callable a pri prechodnej chybe pripojenia to ešte raz skúsi.
-  /// Rieši to typický prípad, keď používateľ na chvíľu prepne z appky preč a
-  /// systém uspí jej sieťové spojenia práve počas dlhšieho volania.
   static Future<HttpsCallableResult> _callWithRetry(
     HttpsCallable callable,
     Map<String, dynamic> payload,
@@ -590,9 +570,6 @@ class StylistChatService {
     throw lastError ?? Exception('callable failed');
   }
 
-  /// Only actual transport unavailability is treated as offline. Generic
-  /// Firebase `internal` and backend deadlines are server failures, not proof
-  /// that the user's internet connection is down.
   static bool _looksLikeConnectivityError(Object error) {
     if (error is TimeoutException) return true;
     if (error is FirebaseFunctionsException) {
