@@ -137,9 +137,11 @@ function applySemanticGroundingToState(state, decision) {
     if (activity.label) decision.eventContext.activityLabel = activity.label;
   }
 
+  const resolvedFields = ["activity"];
   let remaining = unresolved.filter((field) => !ACTIVITY_FIELD_ALIASES.has(field));
   if (ambiguousTravelScope && activity.value !== "travel") {
     remaining = remaining.filter((field) => field !== "trip_scope");
+    resolvedFields.push("trip_scope");
     state.travelContext = {
       ...travel,
       scope: "destination",
@@ -155,7 +157,7 @@ function applySemanticGroundingToState(state, decision) {
   state.unresolvedMaterialFields = remaining;
   state.groundingStatus = remaining.length === 0 ? "sufficient" : "needs_grounding";
   if (remaining.length === 0) state.userCorrectionDetected = false;
-  return ["activity"];
+  return resolvedFields;
 }
 
 function parseOutfitDecisionFields(parsed) {
@@ -242,7 +244,7 @@ function resolveOutfitAction(action, decision, clarificationState) {
       !resolvedNow.has(field),
     );
 
-  // Semantic grounding removes only the fact it actually proved. If the Brain
+  // Semantic grounding removes only the facts it actually proved. If the Brain
   // simultaneously identified a DIFFERENT material uncertainty (for example
   // it understood "prednáška" but still needs to know whether the user is the
   // speaker or an attendee), preserve that clarification instead of silently
