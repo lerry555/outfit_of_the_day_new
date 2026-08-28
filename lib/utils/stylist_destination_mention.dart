@@ -26,7 +26,7 @@ abstract final class StylistDestinationMentionExtractor {
     // Prefer an explicit travel verb followed by a location preposition. This
     // keeps "čo si obliecť do lietadla" from being mistaken for a destination.
     final travel = RegExp(
-      r'(?:^|\s)(?:let[ií]m|let[ií]me|polet[ií]m|polet[ií]me|cestuj\w*|'
+      r'(?:^|\s)(?:let[ií]m|let[ií]me|polet[ií]m|polet[ií]me|odliet\w*|cestuj\w*|'
       r'idem|ideme|p[oô]jdem|p[oô]jdeme|chyst\w*)\s+(?:sa\s+)?'
       r'(?:do|v|vo|na|k|ku)\s+(.+)',
       caseSensitive: false,
@@ -38,7 +38,8 @@ abstract final class StylistDestinationMentionExtractor {
       }
     }
 
-    // Follow-up after a destination question can naturally be just "Londýn".
+    // Follow-up after a destination question can naturally be just a place
+    // name. We still only extract the phrase; the provider decides what it is.
     if (allowBareReply) {
       final candidate = _trimCandidate(raw);
       final words = candidate.split(RegExp(r'\s+')).where((e) => e.isNotEmpty);
@@ -53,28 +54,51 @@ abstract final class StylistDestinationMentionExtractor {
     return null;
   }
 
+  /// Provider query variants are morphology fallbacks, never a place-name
+  /// dictionary. The original user phrase is always tried first. Additional
+  /// variants only trim common case endings so a global geocoder can recover a
+  /// nominative/partial match (e.g. a genitive destination) without hard-coded
+  /// cities or countries.
   static List<String> providerQueryVariants(String query) {
     final clean = _trimCandidate(query);
     if (clean.isEmpty) return const [];
     final variants = <String>[clean];
     final words = clean.split(RegExp(r'\s+')).toList();
-    if (words.isNotEmpty) {
-      final last = words.last;
-      final normalizedLast = StylistSemanticActivity.normalize(last);
-      String? replacement;
-      if (normalizedLast.length >= 5 && normalizedLast.endsWith('ska')) {
-        replacement = '${last.substring(0, last.length - 1)}o';
-      } else if (normalizedLast.length >= 6 &&
-          (normalizedLast.endsWith('u') ||
-              normalizedLast.endsWith('e') ||
-              normalizedLast.endsWith('i') ||
-              normalizedLast.endsWith('a'))) {
-        replacement = last.substring(0, last.length - 1);
-      }
-      if (replacement != null && replacement.trim().isNotEmpty) {
-        variants.add([...words.take(words.length - 1), replacement].join(' '));
-      }
+    if (words.isEmpty) return variants;
+
+    final last = words.last;
+    final normalizedLast = StylistSemanticActivity.normalize(last);
+    final stems = <String>{};
+
+    if (normalizedLast.length >= 5 && normalizedLast.endsWith('ska')) {
+      stems.add('${last.substring(0, last.length - 1)}o');
     }
+    if (normalizedLast.length >= 6 &&
+        (normalizedLast.endsWith('u') ||
+            normalizedLast.endsWith('e') ||
+            normalizedLast.endsWith('i') ||
+            normalizedLast.endsWith('a') ||
+            normalizedLast.endsWith('y'))) {
+      stems.add(last.substring(0, last.length - 1));
+    }
+    if (normalizedLast.length >= 7 &&
+        (normalizedLast.endsWith('ou') ||
+            normalizedLast.endsWith('om') ||
+            normalizedLast.endsWith('och'))) {
+      final trimBy = normalizedLast.endsWith('och') ? 3 : 2;
+      stems.add(last.substring(0, last.length - trimBy));
+    }
+
+    for (final stem in stems) {
+      if (stem.trim().isEmpty) continue;
+      variants.add([...words.take(words.length - 1), stem].join(' '));
+    }
+
+    // An ASCII-normalized variant helps providers when user diacritics and the
+    // provider's localized index differ. It is still the same user phrase.
+    final normalizedWhole = StylistSemanticActivity.normalize(clean);
+    if (normalizedWhole.length >= 2) variants.add(normalizedWhole);
+
     return variants.toSet().toList(growable: false);
   }
 
