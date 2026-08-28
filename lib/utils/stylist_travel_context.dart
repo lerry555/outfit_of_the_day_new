@@ -130,11 +130,18 @@ abstract final class StylistTravelContextResolver {
         explicitActivity != 'travel' &&
         !transitOutfitExplicit;
 
+    // Merely saying what happens after arrival is useful route context, but it
+    // does not automatically mean the outfit must serve that phase. "Outfit do
+    // auta, potom hotel" remains transit-only. Destination use becomes explicit
+    // through a real destination activity or wording that asks what is worn/used
+    // after arrival.
     final destinationUseExplicit =
         explicitDestinationActivity ||
         _has(
           text,
-          r'\b(?:po\s+prilete|po\s+pristati|po\s+prichode|po\s+vystupeni|na\s+mieste|v\s+cieli|v\s+destinacii|pocas\s+pobytu|na\s+pobyt|tam\s+(?:budem|budeme|chcem|chceme|pojdem|pojdeme))\b',
+          r'\b(?:na\s+mieste|v\s+cieli|v\s+destinacii|pocas\s+pobytu|na\s+pobyt|'
+          r'(?:outfit\w*|obliec\w*|oblecen\w*|na\s+seba)\s+(?:po\s+prilete|po\s+pristati|po\s+prichode|po\s+vystupeni)|'
+          r'(?:po\s+prilete|po\s+pristati|po\s+prichode|po\s+vystupeni)\s+(?:chcem|potrebujem)\s+(?:outfit\w*|nieco\s+na\s+seba|vyzerat\w*))\b',
         );
     final packingExplicit = _has(
       text,
@@ -273,7 +280,7 @@ abstract final class StylistTravelContextResolver {
 
   static (int, int)? _clockAfter(String text, String leadPattern) {
     final match = RegExp(
-      '$leadPattern[^0-9]{0,40}(?:o|okolo)?\\s*(\\d{1,2})(?::(\\d{2}))?',
+      '$leadPattern[^0-9]{0,40}(?:o|okolo)?\\s*(\\d{1,2})(?:(?::|\\s)(\\d{2}))?',
       caseSensitive: false,
     ).firstMatch(text);
     if (match == null) return null;
