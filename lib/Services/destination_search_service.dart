@@ -18,6 +18,7 @@ class DestinationSuggestion {
   final String displayName;
   final String name;
   final String country;
+  final String? countryCode;
   final String? adminRegion;
   final double latitude;
   final double longitude;
@@ -29,6 +30,7 @@ class DestinationSuggestion {
     required this.displayName,
     required this.name,
     required this.country,
+    this.countryCode,
     this.adminRegion,
     required this.latitude,
     required this.longitude,
@@ -39,8 +41,6 @@ class DestinationSuggestion {
   DestinationGranularity get granularity =>
       DestinationSearchService.granularityForFeatureCode(featureCode);
 
-  /// Destination-weather recommendations need a concrete locality/airport.
-  /// Administrative regions and countries may span very different weather.
   bool get weatherSpecific =>
       granularity == DestinationGranularity.locality ||
       granularity == DestinationGranularity.airport;
@@ -136,7 +136,7 @@ abstract final class DestinationSearchService {
       'format': 'json',
     });
     try {
-      final res = await http.get(uri);
+      final res = await http.get(uri).timeout(const Duration(seconds: 7));
       if (res.statusCode != 200) return const [];
       final json = jsonDecode(res.body);
       final raw = json is Map<String, dynamic> ? json['results'] : null;
@@ -149,6 +149,7 @@ abstract final class DestinationSearchService {
         final id = (item['id'] as num?)?.toInt();
         final name = (item['name'] as String?)?.trim();
         final country = (item['country'] as String?)?.trim();
+        final countryCode = (item['country_code'] as String?)?.trim().toUpperCase();
         final lat = (item['latitude'] as num?)?.toDouble();
         final lon = (item['longitude'] as num?)?.toDouble();
         if (name == null || name.isEmpty || lat == null || lon == null) continue;
@@ -166,6 +167,7 @@ abstract final class DestinationSearchService {
           displayName: displayParts.join(', '),
           name: name,
           country: safeCountry,
+          countryCode: countryCode,
           adminRegion: admin,
           latitude: lat,
           longitude: lon,
@@ -186,6 +188,7 @@ abstract final class DestinationSearchService {
     final name = normalizeQuery(item.name);
     final admin = normalizeQuery(item.adminRegion ?? '');
     final country = normalizeQuery(item.country);
+    final code = normalizeQuery(item.countryCode ?? '');
     final display = normalizeQuery(item.displayName);
     var score = 0.0;
 
@@ -204,7 +207,7 @@ abstract final class DestinationSearchService {
     } else if (admin.startsWith(query)) {
       score += 32;
     }
-    if (country == query) score += 35;
+    if (country == query || code == query) score += 35;
     if (display.startsWith(query)) score += 20;
 
     final pop = item.population ?? 0;
