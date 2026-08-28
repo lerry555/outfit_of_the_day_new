@@ -41,6 +41,7 @@ abstract final class StylistTravelRequestEnricher {
     final weather = Map<String, dynamic>.from(weatherContext ?? const {});
     final conversation = _userConversation(message, history);
     final travel = StylistTravelContextResolver.resolve(conversation);
+    final latestTravel = StylistTravelContextResolver.resolve(message);
     final travelPayload = Map<String, dynamic>.from(travel.toApiPayload());
     state['travelContext'] = travelPayload;
 
@@ -71,6 +72,7 @@ abstract final class StylistTravelRequestEnricher {
 
     final timing = await _deriveTravelTiming(
       travel: travel,
+      latestTravel: latestTravel,
       state: state,
       client: client,
       resolved: resolved,
@@ -145,6 +147,7 @@ abstract final class StylistTravelRequestEnricher {
 
   static Future<Map<String, dynamic>> _deriveTravelTiming({
     required StylistTravelContext travel,
+    required StylistTravelContext latestTravel,
     required Map<String, dynamic> state,
     required Map<String, dynamic> client,
     required StylistResolvedLocation? resolved,
@@ -155,26 +158,33 @@ abstract final class StylistTravelRequestEnricher {
 
     DateTime? departureUtc;
     String? departureSource;
-    if (travel.departureOffsetMinutes != null) {
-      departureUtc = nowUtc.add(Duration(minutes: travel.departureOffsetMinutes!));
+    int? relativeOffsetMinutes;
+
+    // Relative phrases such as "za pol hodinu" are anchored only on the turn
+    // where the user says them. Re-reading the old phrase on a later follow-up
+    // must never move the departure another 30 minutes into the future.
+    if (latestTravel.departureOffsetMinutes != null) {
+      relativeOffsetMinutes = latestTravel.departureOffsetMinutes;
+      departureUtc = nowUtc.add(Duration(minutes: relativeOffsetMinutes!));
       departureSource = 'user_relative';
     } else if (travel.departureHourLocal != null) {
       final localDate = _eventDate(state, client, now);
-      final localDeparture = DateTime(
-        localDate.year,
-        localDate.month,
-        localDate.day,
-        travel.departureHourLocal!,
+      final offsetMinutes = _int(client['timezoneOffsetMinutes']) ??
+          now.timeZoneOffset.inMinutes;
+      departureUtc = localWallClockToUtc(
+        date: localDate,
+        hour: travel.departureHourLocal!,
+        minute: 0,
+        utcOffsetMinutes: offsetMinutes,
       );
-      departureUtc = localDeparture.toUtc();
       departureSource = 'user_clock';
     }
 
     final out = <String, dynamic>{
       if (departureUtc != null) 'departureAtUtc': departureUtc.toIso8601String(),
       if (departureSource != null) 'departureSource': departureSource,
-      if (travel.departureOffsetMinutes != null)
-        'departureOffsetMinutes': travel.departureOffsetMinutes,
+      if (relativeOffsetMinutes != null)
+        'departureOffsetMinutes': relativeOffsetMinutes,
     };
 
     if (travel.arrivalHourLocal != null) {
@@ -332,6 +342,16 @@ abstract final class StylistTravelRequestEnricher {
       '${value.year.toString().padLeft(4, '0')}-'
       '${value.month.toString().padLeft(2, '0')}-'
       '${value.day.toString().padLeft(2, '0')}';
+
+  static DateTime localWallClockToUtc({
+    required DateTime date,
+    required int hour,
+    required int minute,
+    required int utcOffsetMinutes,
+  }) {
+    final wallAsUtc = DateTime.utc(date.year, date.month, date.day, hour, minute);
+    return wallAsUtc.subtract(Duration(minutes: utcOffsetMinutes));
+  }
 
   static double greatCircleDistanceKm(
     double lat1,
