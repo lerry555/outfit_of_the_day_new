@@ -49,8 +49,7 @@ jobs:
             functions/stylist/ai_model_registry.js \
             functions/stylist/ai_router.js \
             functions/stylist/chat_prompts.js \
-            functions/stylist/conversation_brain_persona_v1.js \
-            .github/workflows/brain-v1-ci.yml
+            functions/stylist/conversation_brain_persona_v1.js
           if git diff --cached --quiet; then
             echo "No generated changes"
           else
