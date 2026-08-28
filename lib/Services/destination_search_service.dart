@@ -3,6 +3,16 @@ import 'dart:math' as math;
 
 import 'package:http/http.dart' as http;
 
+enum DestinationGranularity {
+  locality,
+  adminRegion,
+  country,
+  continent,
+  airport,
+  other,
+  unknown,
+}
+
 class DestinationSuggestion {
   final int? geonameId;
   final String displayName;
@@ -25,84 +35,49 @@ class DestinationSuggestion {
     this.population,
     this.featureCode,
   });
+
+  DestinationGranularity get granularity =>
+      DestinationSearchService.granularityForFeatureCode(featureCode);
+
+  /// Destination-weather recommendations need a concrete locality/airport.
+  /// Administrative regions and countries may span very different weather.
+  bool get weatherSpecific =>
+      granularity == DestinationGranularity.locality ||
+      granularity == DestinationGranularity.airport;
 }
 
+/// Provider-driven global location search.
+///
+/// There are intentionally no country/city/resort/airport name boosts here.
+/// Ranking is based only on how the provider result matches the user's query,
+/// population and generic GeoNames feature classes.
 abstract final class DestinationSearchService {
   DestinationSearchService._();
 
   static const _host = 'geocoding-api.open-meteo.com';
   static const _path = '/v1/search';
 
-  /// Pri 2 znakoch API vracia len „presné“ zhody — doplníme významné mestá / letoviská.
-  static const Map<String, List<String>> _twoLetterExtraQueries = {
-    'hu': ['Hurghada'],
-    'lo': ['London', 'Lyon'],
-    'pa': ['Paris', 'Palermo', 'Palma'],
-    'ba': ['Barcelona', 'Bangkok', 'Bratislava', 'Bari'],
-    'vi': ['Vienna', 'Vilnius'],
-    'br': ['Brussels', 'Brno', 'Bratislava'],
-    'mu': ['Munich', 'Mumbai'],
-    'ma': ['Madrid', 'Malaga', 'Manchester'],
-    'du': ['Dublin', 'Dubrovnik'],
-    'be': ['Berlin', 'Bergen', 'Belfast'],
-    'to': ['Toronto', 'Tokyo'],
-    'mi': ['Milan', 'Miami'],
-    'ri': ['Riga', 'Rimini'],
-    'ze': ['Zermatt'],
-    'je': ['Jerusalem'],
-  };
-
-  static const Map<String, String> _fallbackAliases = {
-    'londyn': 'london',
-    'rim': 'rome',
-    'pariz': 'paris',
-    'viden': 'vienna',
-    'barcelona': 'barcelona',
-    'hurghada': 'hurghada',
-    'bratislava': 'bratislava',
-    'budapest': 'budapest',
-    'praha': 'prague',
-  };
-
   static Future<List<DestinationSuggestion>> search(String query) async {
     final trimmed = query.trim();
     final normalized = normalizeQuery(trimmed);
     if (normalized.length < 2) return const [];
 
-    final queries = <String>{trimmed};
-    if (normalized.length == 2) {
-      final extra = _twoLetterExtraQueries[normalized];
-      if (extra != null) {
-        queries.addAll(extra);
-      }
-    }
-
-    final alias = _fallbackAliases[normalized];
-    if (alias != null) {
-      queries.add(alias);
-    }
-
-    final byId = <int, DestinationSuggestion>{};
-    for (final q in queries) {
-      final batch = await _fetchGeocoding(q);
-      for (final s in batch) {
-        final key = s.geonameId ?? _fallbackDedupeKey(s);
-        byId[key] = s;
-      }
-    }
-
-    if (byId.isEmpty) return const [];
-
-    final ranked = byId.values.toList()
+    final batch = await _fetchGeocoding(trimmed);
+    if (batch.isEmpty) return const [];
+    final ranked = List<DestinationSuggestion>.from(batch)
       ..sort((a, b) => _score(b, normalized).compareTo(_score(a, normalized)));
-    return ranked.take(12).toList();
+    return ranked.take(12).toList(growable: false);
   }
 
-  /// Fallback keď GeoNames ID chýba v objekte (nemalo by).
-  static int _fallbackDedupeKey(DestinationSuggestion s) {
-    final lat = (s.latitude * 1000).round();
-    final lon = (s.longitude * 1000).round();
-    return Object.hash(s.name, s.country, lat, lon);
+  static DestinationGranularity granularityForFeatureCode(String? raw) {
+    final code = (raw ?? '').trim().toUpperCase();
+    if (code.isEmpty) return DestinationGranularity.unknown;
+    if (code.startsWith('PPL')) return DestinationGranularity.locality;
+    if (code.startsWith('ADM')) return DestinationGranularity.adminRegion;
+    if (code.startsWith('PCL')) return DestinationGranularity.country;
+    if (code == 'CONT') return DestinationGranularity.continent;
+    if (code.startsWith('AIR')) return DestinationGranularity.airport;
+    return DestinationGranularity.other;
   }
 
   static String normalizeQuery(String value) {
@@ -160,175 +135,100 @@ abstract final class DestinationSearchService {
       'language': 'sk',
       'format': 'json',
     });
-    final res = await http.get(uri);
-    if (res.statusCode != 200) return const [];
-    final json = jsonDecode(res.body);
-    final raw = (json is Map<String, dynamic> ? json['results'] : null);
-    if (raw is! List) return const [];
+    try {
+      final res = await http.get(uri);
+      if (res.statusCode != 200) return const [];
+      final json = jsonDecode(res.body);
+      final raw = json is Map<String, dynamic> ? json['results'] : null;
+      if (raw is! List) return const [];
 
-    final out = <DestinationSuggestion>[];
-    for (final item in raw) {
-      if (item is! Map<String, dynamic>) continue;
-      final id = (item['id'] as num?)?.toInt();
-      final name = (item['name'] as String?)?.trim();
-      final country = (item['country'] as String?)?.trim();
-      final lat = (item['latitude'] as num?)?.toDouble();
-      final lon = (item['longitude'] as num?)?.toDouble();
-      if (name == null || country == null || lat == null || lon == null) continue;
-      final admin = (item['admin1'] as String?)?.trim();
-      final pop = (item['population'] as num?)?.toInt();
-      final fc = (item['feature_code'] as String?)?.trim();
-      final display = admin != null && admin.isNotEmpty && admin != name
-          ? '$name, $admin, $country'
-          : '$name, $country';
-      out.add(
-        DestinationSuggestion(
+      final out = <DestinationSuggestion>[];
+      final seen = <String>{};
+      for (final item in raw) {
+        if (item is! Map<String, dynamic>) continue;
+        final id = (item['id'] as num?)?.toInt();
+        final name = (item['name'] as String?)?.trim();
+        final country = (item['country'] as String?)?.trim();
+        final lat = (item['latitude'] as num?)?.toDouble();
+        final lon = (item['longitude'] as num?)?.toDouble();
+        if (name == null || name.isEmpty || lat == null || lon == null) continue;
+        final safeCountry = country ?? '';
+        final admin = (item['admin1'] as String?)?.trim();
+        final pop = (item['population'] as num?)?.toInt();
+        final fc = (item['feature_code'] as String?)?.trim();
+        final displayParts = <String>[
+          name,
+          if (admin != null && admin.isNotEmpty && admin != name) admin,
+          if (safeCountry.isNotEmpty) safeCountry,
+        ];
+        final suggestion = DestinationSuggestion(
           geonameId: id,
-          displayName: display,
+          displayName: displayParts.join(', '),
           name: name,
-          country: country,
+          country: safeCountry,
           adminRegion: admin,
           latitude: lat,
           longitude: lon,
           population: pop,
           featureCode: fc,
-        ),
-      );
+        );
+        final key = id?.toString() ??
+            '${name.toLowerCase()}:${lat.toStringAsFixed(4)}:${lon.toStringAsFixed(4)}';
+        if (seen.add(key)) out.add(suggestion);
+      }
+      return out;
+    } catch (_) {
+      return const [];
     }
-    return out;
   }
 
-  static const _tourismHints = [
-    'beach',
-    'resort',
-    'bay',
-    'island',
-    'coast',
-    'national park',
-    'plaza',
-    'paris',
-    'london',
-    'barcelona',
-    'dubai',
-    'maldives',
-    'bali',
-    'phuket',
-    'tenerife',
-    'mallorca',
-    'ibiza',
-    'santorini',
-    'mykonos',
-    'hurghada',
-    'sharm',
-    'antalya',
-    'monaco',
-    'venice',
-    'venezia',
-    'florence',
-    'firenze',
-    'nice',
-    'cannes',
-    'capri',
-  ];
+  static double _score(DestinationSuggestion item, String query) {
+    final name = normalizeQuery(item.name);
+    final admin = normalizeQuery(item.adminRegion ?? '');
+    final country = normalizeQuery(item.country);
+    final display = normalizeQuery(item.displayName);
+    var score = 0.0;
 
-  static double _score(DestinationSuggestion item, String q) {
-    final nName = normalizeQuery(item.name);
-    final nAdmin = normalizeQuery(item.adminRegion ?? '');
-    final nCountry = normalizeQuery(item.country);
-    final nDisplay = normalizeQuery(item.displayName);
-    final fc = item.featureCode ?? '';
-
-    var text = 0.0;
-    if (nName == q) {
-      text += 220;
-    } else if (nName.startsWith(q)) {
-      text += 160;
-    } else if (_wordStartsWith(nName, q)) {
-      text += 120;
-    } else if (nName.contains(q)) {
-      text += 70;
+    if (name == query) {
+      score += 240;
+    } else if (name.startsWith(query)) {
+      score += 170;
+    } else if (_wordStartsWith(name, query)) {
+      score += 125;
+    } else if (name.contains(query)) {
+      score += 70;
     }
 
-    if (nAdmin == q) {
-      text += 45;
-    } else if (nAdmin.startsWith(q)) {
-      text += 38;
-    } else if (nAdmin.contains(q)) {
-      text += 22;
+    if (admin == query) {
+      score += 45;
+    } else if (admin.startsWith(query)) {
+      score += 32;
     }
-
-    if (nDisplay.startsWith(q)) {
-      text += 28;
-    } else if (nDisplay.contains(q)) {
-      text += 12;
-    }
-
-    if (nCountry.startsWith(q) || nCountry.contains(q)) {
-      text += 6;
-    }
+    if (country == query) score += 35;
+    if (display.startsWith(query)) score += 20;
 
     final pop = item.population ?? 0;
-    if (pop > 0) {
-      text += math.min(85, math.log(pop + 1) * 9);
-    }
-
-    final feat = _featureWeight(fc);
-    text += feat;
-
-    if (fc.startsWith('AIR') || fc == 'RSTN' || fc == 'FY') {
-      text -= 180;
-    }
-
-    final blob = '$nName $nAdmin $nDisplay';
-    for (final h in _tourismHints) {
-      if (blob.contains(h)) {
-        text += 12;
-        break;
-      }
-    }
-
-    if (q.length >= 3 && nName.startsWith(q)) {
-      text += 25;
-    }
-
-    return text;
+    if (pop > 0) score += math.min(80, math.log(pop + 1) * 8);
+    score += _featureWeight(item.granularity);
+    return score;
   }
 
-  static bool _wordStartsWith(String normalizedName, String q) {
-    if (normalizedName.startsWith(q)) return true;
-    final parts = normalizedName.split(RegExp(r'\s+|-'));
-    for (final p in parts) {
-      if (p.startsWith(q)) return true;
-    }
-    return false;
+  static bool _wordStartsWith(String value, String query) {
+    if (value.startsWith(query)) return true;
+    return value
+        .split(RegExp(r'\s+|-'))
+        .where((part) => part.isNotEmpty)
+        .any((part) => part.startsWith(query));
   }
 
-  /// GeoNames P = obývané miesta; hlavné mestá a sidlá regiónov majú prednosť.
-  static double _featureWeight(String fc) {
-    switch (fc) {
-      case 'PPLC':
-        return 55;
-      case 'PPLA':
-      case 'PPLA2':
-      case 'PPLA3':
-      case 'PPLA4':
-        return 42;
-      case 'PPL':
-      case 'PPLG':
-        return 28;
-      case 'PPLX':
-      case 'PPLR':
-      case 'PPLS':
-      case 'PPLQ':
-        return 8;
-      case 'ADM1':
-      case 'ADM2':
-      case 'ADM3':
-      case 'ADM4':
-        return 5;
-      default:
-        if (fc.startsWith('PPL')) return 18;
-        return 0;
-    }
-  }
+  static double _featureWeight(DestinationGranularity granularity) =>
+      switch (granularity) {
+        DestinationGranularity.locality => 45,
+        DestinationGranularity.airport => 18,
+        DestinationGranularity.adminRegion => 10,
+        DestinationGranularity.country => 4,
+        DestinationGranularity.continent => 0,
+        DestinationGranularity.other => 6,
+        DestinationGranularity.unknown => 0,
+      };
 }
