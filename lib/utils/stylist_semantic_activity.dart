@@ -155,7 +155,7 @@ class StylistSemanticActivity {
         ) &&
         _has(
           text,
-          r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*)\b',
+          r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*|idem\w*|ideme\w*|ist\w*|pojd\w*)\b',
         )) {
       return 'city_walk';
     }
