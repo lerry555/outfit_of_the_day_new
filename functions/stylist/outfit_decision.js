@@ -4,8 +4,9 @@
  * Deterministic context remains the authority for known facts. Brain V1 may
  * resolve a locally-unparsed *activity* only when it supplies a canonical value
  * plus verbatim evidence that is present in recent user-authored text carried
- * by outfitContextState. This lets natural Slovak phrasing work without turning
- * the model into an unchecked source of facts.
+ * by outfitContextState. Unlisted but explicit activities use value `other`
+ * together with a short user-grounded label; this avoids adding a new parser
+ * branch for every real-world activity.
  */
 
 const VALID_RISKS = new Set(["low", "medium", "high"]);
@@ -21,11 +22,11 @@ const MATERIAL_IMPACT_FIELDS = new Set([
 const CANONICAL_SEMANTIC_ACTIVITIES = new Set([
   "hike", "nature_walk", "city_walk", "dinner", "travel", "work", "gym",
   "run", "cycling", "barbecue", "mushroom", "date", "cinema", "concert",
-  "wedding", "funeral", "interview", "zoo",
+  "wedding", "funeral", "interview", "zoo", "other",
 ]);
 
 const ACTIVITY_FIELD_ALIASES = new Set([
-  "activity", "activity_type", "outing_type",
+  "activity", "activity_type", "outing_type", "trip_scope",
 ]);
 
 function normalizeImpactField(value) {
@@ -64,11 +65,13 @@ function parseSemanticGrounding(parsed) {
   const value = normalizeImpactField(activity.value);
   const evidence = String(activity.evidence || "").trim();
   const source = String(activity.source || "").trim().toLowerCase();
+  const label = String(activity.label || "").trim().slice(0, 80);
   if (!CANONICAL_SEMANTIC_ACTIVITIES.has(value) ||
       source !== "user_explicit" || evidence.length < 2) {
     return null;
   }
-  return {activity: {value, evidence, source}};
+  if (value === "other" && label.length < 2) return null;
+  return {activity: {value, evidence, source, ...(label ? {label} : {})}};
 }
 
 function evidenceIsUserAuthored(evidence, state) {
@@ -93,7 +96,7 @@ function evidenceIsBareGenericTrip(evidence) {
     "ja", "my", "idem", "ideme", "pojdem", "pojdeme", "chcem", "chceme",
     "chystam", "chystame", "sa", "na", "do", "von", "prec", "niekam",
     "zajtra", "dnes", "pozajtra", "vylet", "vyletik", "cesta", "cestu",
-    "nejaky", "nejaku", "asi", "potom",
+    "nejaky", "nejaku", "asi", "potom", "outfit", "potrebujem",
   ]);
   return words.length > 0 && words.every((word) => generic.has(word));
 }
@@ -111,13 +114,16 @@ function applySemanticGroundingToState(state, decision) {
   }
 
   state.activityHint = activity.value;
+  if (activity.label) state.activityLabel = activity.label;
   // Existing eventContext transport exposes `occasion` to the Flutter client.
-  // For Brain V1 this also carries an evidence-verified canonical activity so
-  // the client can reconcile its stale local unknown without weakening the
-  // candidate/validator authority.
+  // For Brain V1 it also carries an evidence-verified semantic activity so the
+  // client can reconcile its local fast-path unknown without weakening the
+  // candidate/validator authority. `other` stays an internal category; the
+  // human label travels separately.
   state.occasion = activity.value;
   if (decision.eventContext && typeof decision.eventContext === "object") {
     decision.eventContext.occasion = activity.value;
+    if (activity.label) decision.eventContext.activityLabel = activity.label;
   }
 
   const remaining = unresolved.filter((field) => !ACTIVITY_FIELD_ALIASES.has(field));
