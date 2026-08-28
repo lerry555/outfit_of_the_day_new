@@ -75,9 +75,15 @@ jobs:
           flutter analyze --no-fatal-infos
           lib/Services/stylist_chat_service.dart
           lib/Services/stylist_frozen_candidate_decision_service.dart
+          lib/Services/stylist_travel_request_enricher.dart
+          lib/Services/stylist_destination_time_service.dart
+          lib/Services/stylist_global_location_service.dart
           lib/models/outfit_context_state.dart
+          lib/models/stylist_resolved_location.dart
           lib/utils/stylist_semantic_activity.dart
           lib/utils/stylist_travel_context.dart
+          lib/utils/stylist_travel_endpoints.dart
+          lib/utils/stylist_destination_mention.dart
           lib/utils/activity_traits_inferencer.dart
           lib/utils/event_clarification.dart
           lib/utils/dress_code_resolver.dart
@@ -88,7 +94,7 @@ jobs:
         run: flutter test test/brain_v1_explicit_hike_grounding_test.dart
       - name: Semantic activity regression
         run: flutter test test/stylist_semantic_activity_test.dart
-      - name: Travel scope regression
+      - name: Travel scope and timing regression
         run: flutter test test/stylist_travel_context_test.dart
       - name: No named-entity semantic authority regression
         run: flutter test test/stylist_semantic_authority_no_named_entities_test.dart
