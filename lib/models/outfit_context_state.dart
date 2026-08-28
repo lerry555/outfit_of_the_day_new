@@ -112,9 +112,10 @@ class OutfitContextState {
   }) {
     final blob = conversation.toLowerCase();
     final latest = latestUserText.trim().isEmpty ? conversation : latestUserText;
+    final authorityChallenge = _isAuthorityChallenge(latest);
     final correction = _isCorrectionOrChallenge(latest);
     final correctionChangesPlaceOrActivity =
-        correction && _changesPlaceOrActivity(latest);
+        !authorityChallenge && correction && _changesPlaceOrActivity(latest);
     final gps = gpsCityLabel.split(',').first.trim();
 
     final travel = StylistTravelContextResolver.resolve(conversation);
@@ -122,10 +123,12 @@ class OutfitContextState {
 
     final providerSpecific = resolvedLocation?.weatherSpecific == true;
     final providerBroad = resolvedLocation?.needsMoreSpecificity == true;
-    final latestInferred = preferProviderLocation
+    // A challenge such as "kde som tvrdil, že idem do X?" names X only to
+    // reject/inspect an earlier claim. It is not fresh user authority for X.
+    final latestInferred = preferProviderLocation || authorityChallenge
         ? null
         : StylistDestinationParser.inferFromConversation(latest);
-    final legacyInferred = correctionChangesPlaceOrActivity
+    final legacyInferred = authorityChallenge || correctionChangesPlaceOrActivity
         ? null
         : latestInferred ??
               previous?.activityLocationLabel ??
@@ -181,15 +184,21 @@ class OutfitContextState {
     }
 
     final activityLocationKnown = locationKnown || (routine && gps.isNotEmpty);
-    final latestActivityHint = StylistSemanticActivity.resolveExplicit(latest);
-    final activityHint = correctionChangesPlaceOrActivity
-        ? latestActivityHint ??
-              (latestTravel.transitOutfitExplicit ? 'travel' : null)
-        : latestActivityHint ??
-              (latestTravel.transitOutfitExplicit ? 'travel' : null) ??
-              previous?.activityHint ??
-              StylistSemanticActivity.resolveExplicit(conversation) ??
-              (travel.transitOutfitExplicit ? 'travel' : null);
+    // The same authority rule applies to activity wording inside a challenge:
+    // quoted/rejected activity text must not become a newly asserted plan.
+    final latestActivityHint = authorityChallenge
+        ? null
+        : StylistSemanticActivity.resolveExplicit(latest);
+    final activityHint = authorityChallenge
+        ? null
+        : correctionChangesPlaceOrActivity
+            ? latestActivityHint ??
+                  (latestTravel.transitOutfitExplicit ? 'travel' : null)
+            : latestActivityHint ??
+                  (latestTravel.transitOutfitExplicit ? 'travel' : null) ??
+                  previous?.activityHint ??
+                  StylistSemanticActivity.resolveExplicit(conversation) ??
+                  (travel.transitOutfitExplicit ? 'travel' : null);
 
     final unresolved = _materialUnknowns(
       remote: remote,
@@ -516,11 +525,16 @@ class OutfitContextState {
     ).hasMatch(value);
   }
 
-  static bool _isCorrectionOrChallenge(String value) {
+  static bool _isAuthorityChallenge(String value) {
     final text = value.toLowerCase().trim();
     return text.contains('kde som tvrdil') ||
         text.contains('to som nepoved') ||
-        text.contains('to som nehovor') ||
+        text.contains('to som nehovor');
+  }
+
+  static bool _isCorrectionOrChallenge(String value) {
+    final text = value.toLowerCase().trim();
+    return _isAuthorityChallenge(value) ||
         text.contains('ja nejdem') ||
         text.contains('nejdeme ') ||
         text.contains('nie zajtra') ||
