@@ -140,21 +140,34 @@ function createSolAgentV2Handler({
     if (!uid) throw makeHttpsError("unauthenticated", "auth_required");
 
     const message = cleanText(data && data.message, 12000);
+    const sessionId = cleanText(data && data.sessionId, 180);
     const chatId = cleanText(data && data.chatId, 180);
+    const stateId = sessionId || chatId;
     const imageUrlRaw = cleanText(data && data.imageUrl, 2000);
     const imageUrl = imageUrlRaw && isHttpUrl(imageUrlRaw) ? imageUrlRaw : "";
     const clientNow = cleanText(data && data.clientNow, 120);
 
-    if (!chatId) throw makeHttpsError("invalid-argument", "chat_id_required");
+    if (!stateId) throw makeHttpsError("invalid-argument", "session_id_required");
     if (!message && !imageUrl) throw makeHttpsError("invalid-argument", "message_or_image_required");
 
-    const sessionRef = db.collection("users").doc(uid)
-      .collection("stylistAgentV2Sessions").doc(chatId);
+    const sessions = db.collection("users").doc(uid).collection("stylistAgentV2Sessions");
+    const sessionRef = sessions.doc(stateId);
+    const persistedChatRef = chatId && chatId !== stateId ? sessions.doc(chatId) : null;
 
     let previousResponseId = "";
     try {
       const snapshot = await sessionRef.get();
       previousResponseId = cleanText(snapshot && snapshot.data && snapshot.data()?.previousResponseId, 200);
+      // Existing chats opened after an app restart use their persisted chatId.
+      // During the first live session a temporary sessionId may be used before
+      // the local chat document exists; once chatId appears we mirror state to it.
+      if (!previousResponseId && persistedChatRef) {
+        const persistedSnapshot = await persistedChatRef.get();
+        previousResponseId = cleanText(
+          persistedSnapshot && persistedSnapshot.data && persistedSnapshot.data()?.previousResponseId,
+          200,
+        );
+      }
     } catch (error) {
       log.warn("stylistAgentV2 session read failed", {
         code: safeProviderErrorCode(error),
@@ -222,12 +235,14 @@ function createSolAgentV2Handler({
         throw makeHttpsError("internal", "stylist_agent_v2_empty_response");
       }
 
-      await sessionRef.set({
+      const statePatch = {
         previousResponseId: responseId,
         model: SOL_AGENT_V2_MODEL,
         agentVersion: SOL_AGENT_V2_VERSION,
         updatedAt: timestamp(),
-      }, {merge: true});
+      };
+      await sessionRef.set(statePatch, {merge: true});
+      if (persistedChatRef) await persistedChatRef.set(statePatch, {merge: true});
 
       log.info("stylistAgentV2 completed", {
         model: SOL_AGENT_V2_MODEL,
@@ -236,6 +251,7 @@ function createSolAgentV2Handler({
         replyChars: reply.length,
         imageAttached: Boolean(imageUrl),
         usedPreviousResponse: Boolean(previousResponseId),
+        mirroredToPersistedChat: Boolean(persistedChatRef),
         webSearchUsed: web.used,
         webSearchCalls: web.callCount,
         webSourceHosts: web.sourceHosts,
