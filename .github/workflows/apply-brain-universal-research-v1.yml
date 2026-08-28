@@ -6,6 +6,7 @@ on:
       - brain-v1-experiment
     paths:
       - tools/apply_brain_universal_research_v1.py
+      - tools/brain_universal_research_v1.trigger
 
 permissions:
   contents: write
