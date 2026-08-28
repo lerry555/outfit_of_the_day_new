@@ -57,6 +57,63 @@ void main() {
       expect(event?['durationMinutes'], 120);
     });
 
+    test('authoritative dress code replaces researched dress code as one unit', () {
+      final event = StylistChatService.resolvedEventContextFromData({
+        'eventContext': {
+          'dressCode': {
+            'formalityTarget': 8,
+            'venueType': 'indoor_formal',
+          },
+        },
+        'webResearch': {
+          'used': true,
+          'callCount': 1,
+          'publicContext': {
+            'performer': 'Public Artist',
+            'dressCode': {
+              'id': 'old_public_profile',
+              'labelSk': 'starší verejný profil',
+              'formalityTarget': 2,
+              'venueType': 'outdoor',
+            },
+          },
+        },
+      });
+
+      final dressCode = event?['dressCode'] as Map;
+      expect(dressCode['formalityTarget'], 8);
+      expect(dressCode['venueType'], 'indoor_formal');
+      expect(dressCode.containsKey('id'), isFalse);
+      expect(event?['performer'], 'Public Artist');
+    });
+
+    test('unrelated authoritative facts can coexist with researched gaps', () {
+      final event = StylistChatService.resolvedEventContextFromData({
+        'eventContext': {
+          'hourLocal': 19,
+          'occasion': 'concert',
+        },
+        'webResearch': {
+          'used': true,
+          'callCount': 1,
+          'publicContext': {
+            'performer': 'Verified Artist',
+            'dressCode': {
+              'formalityTarget': 3,
+              'venueType': 'indoor_casual',
+            },
+            'durationMinutes': 150,
+          },
+        },
+      });
+
+      expect(event?['hourLocal'], 19);
+      expect(event?['occasion'], 'concert');
+      expect(event?['performer'], 'Verified Artist');
+      expect(event?['durationMinutes'], 150);
+      expect((event?['dressCode'] as Map)['venueType'], 'indoor_casual');
+    });
+
     test('ignores publicContext when web search was not actually used', () {
       final event = StylistChatService.resolvedEventContextFromData({
         'webResearch': {
@@ -68,6 +125,67 @@ void main() {
       });
 
       expect(event, isNull);
+    });
+
+    test('later turn cannot inherit earlier research implicitly', () {
+      final firstTurn = StylistChatService.resolvedEventContextFromData({
+        'webResearch': {
+          'used': true,
+          'callCount': 1,
+          'publicContext': {
+            'performer': 'First Event',
+            'dressCode': {
+              'formalityTarget': 3,
+              'venueType': 'indoor_casual',
+            },
+          },
+        },
+      });
+      final laterTurn = StylistChatService.resolvedEventContextFromData({
+        'eventContext': {
+          'performer': 'User switched to another event',
+          'occasion': 'dinner',
+        },
+      });
+
+      expect(firstTurn?['performer'], 'First Event');
+      expect(laterTurn?['performer'], 'User switched to another event');
+      expect(laterTurn?['occasion'], 'dinner');
+      expect(laterTurn?.containsKey('dressCode'), isFalse);
+    });
+
+    test('a new searched event gets its own public context', () {
+      final firstTurn = StylistChatService.resolvedEventContextFromData({
+        'webResearch': {
+          'used': true,
+          'callCount': 1,
+          'publicContext': {
+            'performer': 'Event A',
+            'dressCode': {
+              'formalityTarget': 3,
+              'venueType': 'indoor_casual',
+            },
+          },
+        },
+      });
+      final secondTurn = StylistChatService.resolvedEventContextFromData({
+        'webResearch': {
+          'used': true,
+          'callCount': 1,
+          'publicContext': {
+            'performer': 'Event B',
+            'dressCode': {
+              'formalityTarget': 2,
+              'venueType': 'outdoor',
+            },
+          },
+        },
+      });
+
+      expect(firstTurn?['performer'], 'Event A');
+      expect((firstTurn?['dressCode'] as Map)['venueType'], 'indoor_casual');
+      expect(secondTurn?['performer'], 'Event B');
+      expect((secondTurn?['dressCode'] as Map)['venueType'], 'outdoor');
     });
 
     test('research reaches outfit event and occasion guidance', () {
