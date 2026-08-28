@@ -104,7 +104,7 @@ test("verified semantic activity creates transport context when model omits even
   assert.deepEqual(state.unresolvedMaterialFields, []);
 });
 
-test("explicit unlisted activity resolves without adding a parser-specific rule", () => {
+test("explicit unlisted activity resolves ambiguous travel purpose generically", () => {
   const parsed = {
     semanticGrounding: {
       activity: {
@@ -120,14 +120,82 @@ test("explicit unlisted activity resolves without adding a parser-specific rule"
     groundingStatus: "needs_grounding",
     unresolvedMaterialFields: ["trip_scope"],
     semanticEvidenceTexts: ["idem tam na prednášku"],
+    activityLocationKnown: true,
+    travelContext: {
+      scope: "unknown",
+      scopeNeedsClarification: true,
+      transportMode: "road",
+    },
+    locationContext: {
+      providerAuthorityEnabled: true,
+      providerVerified: true,
+      needsMoreSpecificity: false,
+      weatherLabel: "Berlin",
+    },
   };
 
   assert.equal(resolveOutfitAction("clarify", decision, state), "chat");
   assert.equal(state.activityHint, "other");
   assert.equal(state.activityLabel, "prednáška");
+  assert.equal(state.travelContext.scope, "destination");
+  assert.equal(state.travelContext.destinationUseExplicit, true);
   assert.deepEqual(state.unresolvedMaterialFields, []);
   assert.equal(parsed.eventContext.occasion, "other");
   assert.equal(parsed.eventContext.activityLabel, "prednáška");
+});
+
+test("resolved travel purpose keeps broad destination unresolved", () => {
+  const parsed = {
+    semanticGrounding: {
+      activity: {
+        value: "other",
+        label: "prednáška",
+        evidence: "idem tam na prednášku",
+        source: "user_explicit",
+      },
+    },
+  };
+  const decision = parseOutfitDecisionFields(parsed);
+  const state = {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["trip_scope"],
+    semanticEvidenceTexts: ["idem tam na prednášku"],
+    activityLocationKnown: false,
+    travelContext: {scope: "unknown", scopeNeedsClarification: true},
+    locationContext: {
+      providerAuthorityEnabled: true,
+      providerVerified: true,
+      needsMoreSpecificity: true,
+      granularity: "country",
+    },
+  };
+
+  assert.equal(resolveOutfitAction("generate_outfit", decision, state), "clarify");
+  assert.equal(state.travelContext.scope, "destination");
+  assert.deepEqual(state.unresolvedMaterialFields, ["destination"]);
+});
+
+test("semantic activity never erases multi-day packing scope", () => {
+  const parsed = {
+    semanticGrounding: {
+      activity: {
+        value: "city_walk",
+        evidence: "budeme chodiť po centre",
+        source: "user_explicit",
+      },
+    },
+  };
+  const decision = parseOutfitDecisionFields(parsed);
+  const state = {
+    groundingStatus: "needs_grounding",
+    unresolvedMaterialFields: ["activity", "trip_scope"],
+    semanticEvidenceTexts: ["budeme chodiť po centre"],
+    travelContext: {scope: "packing", scopeNeedsClarification: false},
+  };
+
+  assert.equal(resolveOutfitAction("generate_outfit", decision, state), "clarify");
+  assert.equal(state.activityHint, "city_walk");
+  assert.deepEqual(state.unresolvedMaterialFields, ["trip_scope"]);
 });
 
 test("other semantic activity requires an explicit human label", () => {
