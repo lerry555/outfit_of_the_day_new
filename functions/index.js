@@ -88,6 +88,11 @@ const {
   createNoRetryFetchExecutor,
 } = require("./stylist/ai_stylist_no_retry_fetch_v1");
 const {
+  buildConversationBrainResponsesBodyV1,
+  extractConversationBrainResponseTextV1,
+  extractConversationBrainWebResearchV1,
+} = require("./stylist/openai_responses_web_search_v1");
+const {
   OPENWEATHER_API_KEY_SECRET,
   resolveOpenWeatherSecret,
 } = require("./weather/openweather_secret_binding");
@@ -1713,7 +1718,47 @@ exports.attachCleanImageOnWardrobeWrite = functions
       model = "gpt-4o-mini",
       temperature = 0.65,
       max_tokens: maxTokens,
+      useWebSearch = false,
+      reasoningEffort = "low",
+      searchContextSize = "low",
+      onWebResearch,
     } = options;
+
+    if (useWebSearch) {
+      const body = buildConversationBrainResponsesBodyV1({
+        model,
+        messages,
+        maxOutputTokens: maxTokens,
+        reasoningEffort,
+        searchContextSize,
+      });
+      const response = await fetch("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        logger.error("OpenAI Stylist Brain Responses error:", response.status,
+          String(errorText || "").slice(0, 800));
+        throw new Error(`OpenAI Responses API vrátilo chybu ${response.status}`);
+      }
+      const data = await response.json();
+      const research = extractConversationBrainWebResearchV1(data);
+      if (typeof onWebResearch === "function") onWebResearch(research);
+      logger.info("stylistChat: brain_web_research", {
+        used: research.used,
+        callCount: research.callCount,
+        sourceCount: research.sources.length,
+        model,
+      });
+      const text = extractConversationBrainResponseTextV1(data);
+      if (!text) throw new Error("OpenAI Responses nevrátilo text.");
+      return text;
+    }
 
     const body = {
       model,
@@ -4066,10 +4111,15 @@ exports.attachCleanImageOnWardrobeWrite = functions
       ];
 
       try {
+        let webResearch = Object.freeze({used: false, callCount: 0, sources: []});
         const raw = await callStylistChatOpenAi(messages, {
           model: routing.modelId,
           max_tokens: routing.maxTokens,
           temperature: routing.temperature,
+          useWebSearch: routing.webSearchEnabled === true,
+          reasoningEffort: routing.reasoningEffort || "low",
+          searchContextSize: routing.searchContextSize || "low",
+          onWebResearch: (value) => { webResearch = value; },
         });
         const parsed = extractFirstJsonObject(raw);
         if (parsed?.shoppingAction) {
@@ -4182,6 +4232,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           clarifyReason,
           impactFields: effectiveImpactFields,
           clearShoppingContext,
+          webResearch: webResearch.used ? webResearch : null,
         });
       } catch (error) {
         logger.error("stylistChat error:", error);

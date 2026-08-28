@@ -41,13 +41,17 @@ function routeStylistRequest(input) {
     // synthetic prompt tier; non-opted-in callers retain their legacy tier.
     tier: brainOptIn ? "brain_v1" : legacyTier,
     legacyTier,
-    modelId: modelConfig.id,
-    maxTokens: modelConfig.maxTokens,
+    modelId: brainOptIn ? (modelConfig.webModelId || modelConfig.id) : modelConfig.id,
+    maxTokens: brainOptIn ?
+      (modelConfig.webMaxTokens || modelConfig.maxTokens) : modelConfig.maxTokens,
     temperature: modelConfig.temperature,
     pipeline: mode === "explain_outfit" ?
       "legacy_explain" : mode === "rate_photo" ? "vision" :
         brainOptIn ? "conversation_brain_v1" : "context_clarification",
     brainVersion: brainOptIn ? CONVERSATION_BRAIN_VERSION : null,
+    webSearchEnabled: brainOptIn && modelConfig.webSearch === "auto",
+    searchContextSize: brainOptIn ? (modelConfig.searchContextSize || "low") : null,
+    reasoningEffort: brainOptIn ? (modelConfig.reasoningEffort || "low") : null,
     confidence,
     reason,
     signals,

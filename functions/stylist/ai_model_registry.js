@@ -54,7 +54,17 @@ const STYLIST_MODEL_REGISTRY = {
 // stronger model. Changing the brain model later is a one-line registry swap.
 const STYLIST_ROLE_MODELS = Object.freeze({
   conversationBrain: Object.freeze({
-    provider: "openai", id: "gpt-4o", maxTokens: 700, temperature: 0.3,
+    // The legacy `id` remains the explanation transport model. Brain chat uses
+    // `webModelId` through the Responses API so hosted tools can be optional.
+    provider: "openai",
+    id: "gpt-4o",
+    maxTokens: 700,
+    temperature: 0.3,
+    webModelId: "gpt-5.6-terra",
+    webMaxTokens: 900,
+    webSearch: "auto",
+    searchContextSize: "low",
+    reasoningEffort: "low",
   }),
   contextClarification: Object.freeze({
     provider: "openai", id: "gpt-4o", maxTokens: 500, temperature: 0,
