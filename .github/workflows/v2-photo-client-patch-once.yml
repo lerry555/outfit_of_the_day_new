@@ -1,0 +1,72 @@
+name: One-shot V2 photo client patch
+
+on:
+  push:
+    branches:
+      - brain-v2-sol-agent
+    paths:
+      - .github/workflows/v2-photo-client-patch-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-photo-flow:
+    if: contains(github.event.head_commit.message, '[v2-photo-patch]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout V2 branch
+        uses: actions/checkout@v4
+        with:
+          ref: brain-v2-sol-agent
+          fetch-depth: 0
+
+      - name: Patch V2 photo flow only
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('lib/screens/stylist_chat_screen.dart')
+          text = path.read_text(encoding='utf-8')
+
+          marker = '''    // Ak už poznáme miesto, alebo z textu vidno jasný zámer (chce názor na\n'''
+          direct = '''    // Brain V2: po úspešnom uploade odovzdáme fotku rovno Solu.\n    // Legacy lokálne otázky o zámere/mieste ostávajú iba ako rollback cesta.\n    if (StylistChatService.conversationBrainVersion == 'brain_v2_sol') {\n      _photoStage = _PhotoStage.awaitingContext;\n      await _runPhotoRating(text, wardrobeAccess: false);\n      return;\n    }\n\n'''
+          if direct not in text:
+              if marker not in text:
+                  raise SystemExit('direct-photo insertion marker not found')
+              text = text.replace(marker, direct + marker, 1)
+
+          start = text.find('  Future<void> _runPhotoRating(')
+          end = text.find('  /// Fáza 4:', start)
+          if start < 0 or end < 0:
+              raise SystemExit('photo rating function bounds not found')
+          segment = text[start:end]
+          old = '''      final history = _buildHistoryForBackend();\n      final weatherContext = await _resolveWeatherContextForRequest(\n        lightweight: true,\n      );\n      final clientContext = _buildClientContext(\n        cityName: weatherContext['cityName']?.toString(),\n      );\n'''
+          new = '''      final history = _buildHistoryForBackend();\n      final useSolV2 =\n          StylistChatService.conversationBrainVersion == 'brain_v2_sol';\n      // Sol V2 zatiaľ nepoužíva legacy weather payload. Pri vision turne mu\n      // stačí aktuálny čas; vyhneme sa tak parserom a weather pre-processingu.\n      final weatherContext = useSolV2\n          ? <String, dynamic>{}\n          : await _resolveWeatherContextForRequest(lightweight: true);\n      final clientContext = useSolV2\n          ? <String, dynamic>{'now': DateTime.now().toIso8601String()}\n          : _buildClientContext(\n              cityName: weatherContext['cityName']?.toString(),\n            );\n'''
+          if new not in segment:
+              if old not in segment:
+                  raise SystemExit('photo weather block not found')
+              segment = segment.replace(old, new, 1)
+              text = text[:start] + segment + text[end:]
+
+          path.write_text(text, encoding='utf-8')
+          PY
+
+      - name: Verify exact patch shape
+        run: |
+          git diff --check
+          grep -F "Brain V2: po úspešnom uploade odovzdáme fotku rovno Solu." lib/screens/stylist_chat_screen.dart
+          grep -F "final useSolV2 =" lib/screens/stylist_chat_screen.dart
+
+      - name: Commit client patch
+        run: |
+          if git diff --quiet; then
+            echo "No changes needed."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add lib/screens/stylist_chat_screen.dart
+          git commit -m "fix: send V2 photos directly to Sol"
+          git push origin HEAD:brain-v2-sol-agent
