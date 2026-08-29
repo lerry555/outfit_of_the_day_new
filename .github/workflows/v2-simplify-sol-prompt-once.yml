@@ -26,7 +26,6 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
-          import re
 
           agent_path = Path('functions/stylist/sol_agent_v2.js')
           agent = agent_path.read_text(encoding='utf-8')
@@ -44,18 +43,27 @@ jobs:
             "Dĺžku odpovede prispôsob otázke; nebuď zbytočne stručný, ak používateľ žiada hodnotenie alebo radu.",
           ].join("\\n");'''
 
-          pattern = r'const SOL_AGENT_V2_INSTRUCTIONS = \[.*?\]\.join\("\\\\n"\);'
-          updated, count = re.subn(pattern, new_prompt, agent, count=1, flags=re.S)
-          if count != 1:
-            raise SystemExit(f'expected one prompt block, replaced {count}')
+          start_marker = 'const SOL_AGENT_V2_INSTRUCTIONS = ['
+          end_marker = '].join("\\n");'
+          start = agent.find(start_marker)
+          if start < 0:
+            raise SystemExit('prompt start marker missing')
+          end = agent.find(end_marker, start)
+          if end < 0:
+            raise SystemExit('prompt end marker missing')
+          end += len(end_marker)
+          updated = agent[:start] + new_prompt + agent[end:]
+          if 'reasoning: {effort: "low"}' not in updated:
+            raise SystemExit('low reasoning marker missing')
           updated = updated.replace('reasoning: {effort: "low"}', 'reasoning: {effort: "medium"}', 1)
-          if updated == agent:
-            raise SystemExit('agent was not changed')
           agent_path.write_text(updated, encoding='utf-8')
 
           test_path = Path('functions/stylist/sol_agent_v2.test.js')
           tests = test_path.read_text(encoding='utf-8')
-          tests = tests.replace('assert.deepEqual(body.reasoning, {effort: "low"});', 'assert.deepEqual(body.reasoning, {effort: "medium"});', 1)
+          old_reasoning = 'assert.deepEqual(body.reasoning, {effort: "low"});'
+          if old_reasoning not in tests:
+            raise SystemExit('test low reasoning marker missing')
+          tests = tests.replace(old_reasoning, 'assert.deepEqual(body.reasoning, {effort: "medium"});', 1)
           anchor = '  assert.match(body.instructions, /Aktuálny čas používateľa/);\n'
           extra = '  assert.match(body.instructions, /neblokuj ju spresňujúcou otázkou/i);\n  assert.match(body.instructions, /Obrázok je normálna súčasť správy/i);\n  assert.doesNotMatch(body.instructions, /hala verzus vonku/i);\n'
           if anchor not in tests:
