@@ -1027,6 +1027,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return;
     }
 
+    // Brain V2: po úspešnom uploade odovzdáme fotku rovno Solu.
+    // Legacy lokálne otázky o zámere/mieste ostávajú iba ako rollback cesta.
+    if (StylistChatService.conversationBrainVersion == 'brain_v2_sol') {
+      _photoStage = _PhotoStage.awaitingContext;
+      await _runPhotoRating(text, wardrobeAccess: false);
+      return;
+    }
+
     // Ak už poznáme miesto, alebo z textu vidno jasný zámer (chce názor na
     // outfit, prípadne spomenul príležitosť ako pohreb/svadbu), netreba sa
     // pýtať — rovno hodnotíme. Počasie sa vyrieši z konverzácie alebo z polohy.
@@ -1181,12 +1189,18 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
     try {
       final history = _buildHistoryForBackend();
-      final weatherContext = await _resolveWeatherContextForRequest(
-        lightweight: true,
-      );
-      final clientContext = _buildClientContext(
-        cityName: weatherContext['cityName']?.toString(),
-      );
+      final useSolV2 =
+          StylistChatService.conversationBrainVersion == 'brain_v2_sol';
+      // Sol V2 zatiaľ nepoužíva legacy weather payload. Pri vision turne mu
+      // stačí aktuálny čas; vyhneme sa tak parserom a weather pre-processingu.
+      final weatherContext = useSolV2
+          ? <String, dynamic>{}
+          : await _resolveWeatherContextForRequest(lightweight: true);
+      final clientContext = useSolV2
+          ? <String, dynamic>{'now': DateTime.now().toIso8601String()}
+          : _buildClientContext(
+              cityName: weatherContext['cityName']?.toString(),
+            );
       final jobId = _newJobId();
       _inFlightJobId = jobId;
       var response = await _stylistChatService.sendMessage(
