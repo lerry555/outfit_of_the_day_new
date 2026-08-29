@@ -60,6 +60,9 @@ test("Sol V2 photo instructions require verdict before secondary clarification",
   assert.match(body.instructions, /najprv daj konkrétny verdikt/i);
   assert.match(body.instructions, /Neodkladaj celé hodnotenie/i);
   assert.match(body.instructions, /Nepýtaj znovu názov udalosti, miesto, zámer/i);
+  assert.match(body.instructions, /TENTO TURN OBSAHUJE OBRÁZOK/i);
+  assert.match(body.instructions, /NESMIE byť iba spresňujúca otázka/i);
+  assert.match(body.instructions, /Predchádzajúca otázka asistenta/i);
   assert.equal(body.previous_response_id, "resp_previous_123");
   assert.equal(body.input[0].content[1].type, "input_image");
 });
