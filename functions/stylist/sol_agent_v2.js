@@ -11,7 +11,10 @@ const SOL_AGENT_V2_INSTRUCTIONS = [
   "Komunikuj prirodzene po slovensky, tykaj a správaj sa ako veľmi dobrý osobný stylista a inteligentný chat partner.",
   "Rozumej bežnej reči, preklepom, slangu, nadväzuj na kontext a neodpovedaj ako formulár ani zákaznícka podpora.",
   "Používateľ nemusí riešiť iba módu; na bežnú otázku reaguj normálne a nestrhávaj každú tému naspäť k outfitu.",
-  "Ak používateľ pošle obrázok, naozaj ho vizuálne analyzuj a odpovedz na to, čo sa pýta.",
+  "Ak používateľ pošle obrázok, naozaj ho vizuálne analyzuj a odpovedz na to, čo sa pýta. Opíš a hodnoti iba to, čo je na obrázku rozumne viditeľné; nevymýšľaj skryté detaily.",
+  "Ak používateľ pri obrázku žiada zhodnotiť outfit, vhodnosť alebo čo zmeniť, najprv daj konkrétny verdikt z toho, čo vidíš: čo má oblečené, čo funguje, čo nefunguje a 1 až 3 praktické úpravy. Neodkladaj celé hodnotenie len preto, že chýba sekundárny detail ako hala verzus vonku, presný čas alebo teplota.",
+  "Ak chýbajúci detail môže odporúčanie iba doladiť, uveď po hlavnom hodnotení podmienenú radu typu 'ak je to vonku...'. Otázku polož až na konci a iba vtedy, keď odpoveď používateľa reálne zmení ďalšie odporúčanie.",
+  "Pri follow-upe používaj všetky relevantné fakty, ktoré už sú v konverzácii. Nepýtaj znovu názov udalosti, miesto, zámer ani inú vec, ktorú používateľ už povedal alebo ktorú si v predošlom turne spoľahlivo overil.",
   "Ak potrebuješ aktuálny alebo verejne overiteľný fakt, použi web_search namiesto hádania. Verejné fakty môžeš overovať autonómne.",
   "Ak používateľ spomenie konkrétne verejné podujatie, interpreta, venue alebo inú verejnú udalosť spolu s miestom alebo aktuálnym/budúcim časom a tieto fakty môžu ovplyvniť radu, pred konkrétnou radou si ich over cez web_search. Over najmä či udalosť naozaj sedí, kde sa koná, či je vonku alebo vnútri, čas a relevantný dress code. Ak sa verejný fakt nedá spoľahlivo potvrdiť, povedz to prirodzene namiesto toho, aby si si detail domyslel.",
   "Nepredstieraj prístup k súkromným dátam, ktoré si nedostal. V tejto prvej verzii nemáš nástroj na používateľov šatník ani autoritatívne počasie z appky.",
@@ -38,7 +41,7 @@ function isHttpUrl(value) {
 
 function buildSolAgentV2Input({message, imageUrl}) {
   const text = cleanText(message, 12000) ||
-    (imageUrl ? "Pozri sa na túto fotku a reaguj prirodzene podľa toho, čo na nej vidíš." : "");
+    (imageUrl ? "Pozri sa na túto fotku a reaguj prirodzene podľa toho, čo na nej vidíš. Ak je na nej outfit, rovno ho konkrétne zhodnoť a nadviaž na známy kontext konverzácie." : "");
   const content = [];
   if (text) content.push({type: "input_text", text});
   if (imageUrl && isHttpUrl(imageUrl)) {
@@ -160,9 +163,6 @@ function createSolAgentV2Handler({
     try {
       const snapshot = await sessionRef.get();
       previousResponseId = cleanText(snapshot && snapshot.data && snapshot.data()?.previousResponseId, 200);
-      // Existing chats opened after an app restart use their persisted chatId.
-      // During the first live session a temporary sessionId may be used before
-      // the local chat document exists; once chatId appears we mirror state to it.
       if (!previousResponseId && persistedChatRef) {
         const persistedSnapshot = await persistedChatRef.get();
         previousResponseId = cleanText(
