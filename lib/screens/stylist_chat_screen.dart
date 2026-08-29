@@ -1027,11 +1027,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return;
     }
 
-    // Brain V2: po úspešnom uploade odovzdáme fotku rovno Solu.
-    // Legacy lokálne otázky o zámere/mieste ostávajú iba ako rollback cesta.
+    // Brain V2: obrázok je normálny konverzačný turn. Žiadny legacy
+    // rate_photo state machine, lokálne clarify fázy ani wardrobe-consent flow.
     if (StylistChatService.conversationBrainVersion == 'brain_v2_sol') {
-      _photoStage = _PhotoStage.awaitingContext;
-      await _runPhotoRating(text, wardrobeAccess: false);
+      await _runSolV2PhotoTurn(text);
       return;
     }
 
@@ -1063,6 +1062,69 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _isSending = false;
     });
     _scrollToBottom();
+  }
+
+  /// Brain V2 treats a photo exactly like a normal Sol chat message with an
+  /// additional native image input. No legacy photo state machine runs here.
+  Future<void> _runSolV2PhotoTurn(String text) async {
+    final imageUrl = _activePhotoUrl;
+    if (imageUrl == null || imageUrl.isEmpty) {
+      if (mounted) setState(() => _isSending = false);
+      return;
+    }
+
+    if (mounted) {
+      setState(() => _sendingStatusLabel = 'Stylista píše');
+    }
+
+    try {
+      final response = await _stylistChatService.sendMessage(
+        text,
+        history: _buildHistoryForBackend(),
+        clientContext: <String, dynamic>{
+          'now': DateTime.now().toIso8601String(),
+        },
+        mode: 'chat',
+        imageUrl: imageUrl,
+        chatId: _activeChatId,
+      );
+      if (!mounted) return;
+
+      final reply = _sanitizeStylistReplyForDisplay(
+        (response['reply'] ?? '').toString(),
+      ).trim();
+      final ok = response['ok'] == true && reply.isNotEmpty;
+
+      setState(() {
+        _messages.add(
+          StylistChatMessage(
+            text: ok ? reply : 'Niečo sa pokazilo 😅 Skús to prosím ešte raz.',
+            isUser: false,
+          ),
+        );
+        _photoStage = _PhotoStage.none;
+        _activePhotoUrl = null;
+        _photoImproveHint = null;
+        _isSending = false;
+      });
+      _scrollToBottom();
+    } catch (error) {
+      debugPrint('STYLIST SOL V2 photo turn error: $error');
+      if (!mounted) return;
+      setState(() {
+        _messages.add(
+          const StylistChatMessage(
+            text: 'Niečo sa pokazilo 😅 Skús to prosím ešte raz.',
+            isUser: false,
+          ),
+        );
+        _photoStage = _PhotoStage.none;
+        _activePhotoUrl = null;
+        _photoImproveHint = null;
+        _isSending = false;
+      });
+      _scrollToBottom();
+    }
   }
 
   /// Heuristika: rozpozná, či používateľ v texte k fotke už jasne žiada

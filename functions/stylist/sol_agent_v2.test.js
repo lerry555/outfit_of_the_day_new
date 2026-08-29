@@ -51,20 +51,17 @@ test("Sol V2 sends an uploaded photo as native Responses image input", () => {
   ]);
 });
 
-test("Sol V2 photo instructions require verdict before secondary clarification", () => {
+test("Sol V2 photo turn stays a normal native conversation turn", () => {
   const body = buildSolAgentV2Request({
     message: "Zhodnoť celý outfit. Hodí sa mi to na ten koncert?",
     imageUrl: "https://example.com/outfit.jpg",
     previousResponseId: "resp_previous_123",
   });
-  assert.match(body.instructions, /najprv daj konkrétny verdikt/i);
-  assert.match(body.instructions, /Neodkladaj celé hodnotenie/i);
-  assert.match(body.instructions, /Nepýtaj znovu názov udalosti, miesto, zámer/i);
-  assert.match(body.instructions, /TENTO TURN OBSAHUJE OBRÁZOK/i);
-  assert.match(body.instructions, /NESMIE byť iba spresňujúca otázka/i);
-  assert.match(body.instructions, /Predchádzajúca otázka asistenta/i);
   assert.equal(body.previous_response_id, "resp_previous_123");
+  assert.equal(body.input[0].role, "user");
+  assert.equal(body.input[0].content[0].type, "input_text");
   assert.equal(body.input[0].content[1].type, "input_image");
+  assert.doesNotMatch(body.instructions, /TENTO TURN OBSAHUJE OBRÁZOK/i);
 });
 
 test("Sol V2 can handle an image-only turn proactively", () => {

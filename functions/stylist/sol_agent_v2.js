@@ -59,17 +59,9 @@ function buildSolAgentV2Request({message, imageUrl, previousResponseId, clientNo
   }
 
   const now = cleanText(clientNow, 120);
-  const imageTurnInstruction = imageUrl ? [
-    "TENTO TURN OBSAHUJE OBRÁZOK. Vizuálnu úlohu používateľa vybav hneď v tejto odpovedi.",
-    "Ak používateľ žiada zhodnotiť outfit, vhodnosť outfitu alebo čo zmeniť, odpoveď NESMIE byť iba spresňujúca otázka ani iba žiadosť o ďalší kontext.",
-    "Najprv musíš uviesť konkrétny vizuálny verdikt podľa obrázka: čo vidíš, či to funguje pre známy účel a čo by si zmenil. Až potom môžeš na konci položiť nanajvýš jednu doplňujúcu otázku, ak by odpoveď reálne zmenila ďalšiu radu.",
-    "Predchádzajúca otázka asistenta v konverzácii nie je dôvod odložiť aktuálne hodnotenie obrázka. Použi už známy kontext a pri neistote daj podmienenú radu typu 'ak je to vonku...'.",
-  ].join("\n") : "";
-  const instructions = [
-    SOL_AGENT_V2_INSTRUCTIONS,
-    now ? `Aktuálny čas používateľa podľa appky: ${now}` : "",
-    imageTurnInstruction,
-  ].filter(Boolean).join("\n\n");
+  const instructions = now ?
+    `${SOL_AGENT_V2_INSTRUCTIONS}\n\nAktuálny čas používateľa podľa appky: ${now}` :
+    SOL_AGENT_V2_INSTRUCTIONS;
 
   return {
     model: SOL_AGENT_V2_MODEL,
