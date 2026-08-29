@@ -21,12 +21,15 @@ test("Sol V2 request stays minimal and gives Sol autonomous web search", () => {
   assert.deepEqual(body.tools, [{type: "web_search", search_context_size: "low"}]);
   assert.equal(body.tool_choice, "auto");
   assert.equal(body.max_tool_calls, 3);
-  assert.deepEqual(body.reasoning, {effort: "low"});
+  assert.deepEqual(body.reasoning, {effort: "medium"});
   assert.equal(body.store, true);
   assert.equal(body.previous_response_id, undefined);
   assert.equal(body.input[0].role, "user");
   assert.equal(body.input[0].content[0].type, "input_text");
   assert.match(body.instructions, /Aktuálny čas používateľa/);
+  assert.match(body.instructions, /neblokuj ju spresňujúcou otázkou/i);
+  assert.match(body.instructions, /Obrázok je normálna súčasť správy/i);
+  assert.doesNotMatch(body.instructions, /hala verzus vonku/i);
 });
 
 test("Sol V2 uses native previous_response_id instead of resending chat history", () => {
