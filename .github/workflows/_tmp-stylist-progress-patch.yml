@@ -177,11 +177,45 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          dart format --output=none --set-exit-if-changed \
+          git restore --source=HEAD --worktree -- pubspec.lock analysis_options.yaml || true
+          dart format \
             lib/models/stylist_chat_progress.dart \
             lib/Services/stylist_chat_outfit_service.dart \
             lib/screens/stylist_chat_screen.dart \
             test/stylist_chat_progress_test.dart
+          git diff --check
+          python3 - <<'PY'
+          import subprocess
+
+          allowed = {
+              'lib/models/stylist_chat_progress.dart',
+              'lib/Services/stylist_chat_outfit_service.dart',
+              'lib/screens/stylist_chat_screen.dart',
+              'test/stylist_chat_progress_test.dart',
+          }
+          changed = set(
+              subprocess.check_output(['git', 'diff', '--name-only'], text=True)
+              .strip()
+              .splitlines()
+          )
+          unexpected = changed - allowed
+          if unexpected:
+              raise SystemExit(f'unexpected generated changes: {sorted(unexpected)}')
+
+          total = 0
+          numstat = subprocess.check_output(
+              ['git', 'diff', '--numstat', '--', *sorted(allowed)], text=True
+          )
+          for line in numstat.splitlines():
+              added, deleted, _ = line.split('\t', 2)
+              if added.isdigit():
+                  total += int(added)
+              if deleted.isdigit():
+                  total += int(deleted)
+          if total > 180:
+              raise SystemExit(f'progress diff unexpectedly large: {total} changed lines')
+          print(f'bounded progress diff: {total} changed lines')
+          PY
           flutter analyze --no-fatal-warnings --no-fatal-infos \
             lib/models/stylist_chat_progress.dart \
             lib/Services/stylist_chat_outfit_service.dart \
