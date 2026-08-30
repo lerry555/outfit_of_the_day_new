@@ -46,6 +46,29 @@ jobs:
                   )
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
+          def replace_once_in_scope(
+              label: str,
+              path: str,
+              start_marker: str,
+              end_marker: str,
+              old: str,
+              new: str,
+          ) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if text.count(start_marker) != 1 or text.count(end_marker) != 1:
+                  raise SystemExit(f'{label} in {path}: method scope is ambiguous')
+              start = text.index(start_marker)
+              end = text.index(end_marker, start)
+              section = text[start:end]
+              count = section.count(old)
+              if count != 1:
+                  raise SystemExit(
+                      f'{label} in {path}: expected one anchor in active method, found {count}'
+                  )
+              section = section.replace(old, new, 1)
+              p.write_text(text[:start] + section + text[end:], encoding='utf-8')
+
           service = 'lib/Services/stylist_chat_outfit_service.dart'
           screen = 'lib/screens/stylist_chat_screen.dart'
 
@@ -92,33 +115,49 @@ jobs:
               "  String _sendingStatusLabel = 'Stylista píše...';\n  Set<String> _lastOutfitItemIds = const {};\n",
               "  String _sendingStatusLabel = 'Stylista píše...';\n\n  void _setSendingProgress(StylistChatProgressPhase phase) {\n    if (!mounted || !_isSending) return;\n    final next = phase.labelSk;\n    if (_sendingStatusLabel == next) return;\n    setState(() => _sendingStatusLabel = next);\n  }\n\n  Set<String> _lastOutfitItemIds = const {};\n",
           )
-          replace_once(
+
+          send_start = "  Future<void> _sendMessage() async {\n"
+          send_end = "  Future<void> _showImageSourceSheet() async {\n"
+          replace_once_in_scope(
               'normal text-chat initial phase',
               screen,
+              send_start,
+              send_end,
               "    setState(() {\n      _messages.add(StylistChatMessage(text: text, isUser: true));\n      _controller.clear();\n      _userMessageCount += 1;\n      _isSending = true;\n      _sendingStatusLabel = 'Stylista píše';\n    });\n",
               "    setState(() {\n      _messages.add(StylistChatMessage(text: text, isUser: true));\n      _controller.clear();\n      _userMessageCount += 1;\n      _isSending = true;\n      _sendingStatusLabel =\n          StylistChatProgressPhase.resolvingContext.labelSk;\n    });\n",
           )
-          replace_once(
+          replace_once_in_scope(
               'normal text-chat weather phase',
               screen,
+              send_start,
+              send_end,
               "      final timing = Stopwatch()..start();\n      final weatherContext = await _resolveWeatherContextForRequest(\n",
               "      final timing = Stopwatch()..start();\n      _setSendingProgress(StylistChatProgressPhase.checkingWeather);\n      final weatherContext = await _resolveWeatherContextForRequest(\n",
           )
-          replace_once(
+          replace_once_in_scope(
               'normal text-chat brain phase',
               screen,
+              send_start,
+              send_end,
               "      final shoppingRequestContext = useShoppingTransport\n          ? <String, dynamic>{\n              ..._shoppingState.toApiPayload(),\n              // One user turn retains this ID across callable retries, so a\n              // durable backend mutation cannot advance the pool twice.\n              'operationId': jobId,\n            }\n          : null;\n      var response = await _stylistChatService.sendMessage(\n",
               "      final shoppingRequestContext = useShoppingTransport\n          ? <String, dynamic>{\n              ..._shoppingState.toApiPayload(),\n              // One user turn retains this ID across callable retries, so a\n              // durable backend mutation cannot advance the pool twice.\n              'operationId': jobId,\n            }\n          : null;\n      _setSendingProgress(StylistChatProgressPhase.thinkingWithContext);\n      var response = await _stylistChatService.sendMessage(\n",
           )
-          replace_once(
+
+          hybrid_start = "  Future<void> _runHybridOutfitGeneration({\n"
+          hybrid_end = "  Future<void> _offerShoppingForWardrobeGap(\n"
+          replace_once_in_scope(
               'hybrid outfit phase entry',
               screen,
+              hybrid_start,
+              hybrid_end,
               "    if (mounted) {\n      setState(() => _sendingStatusLabel = 'Hľadám vhodný outfit…');\n    }\n    StylistChatOutfitResult? outfitResult;\n",
               "    _setSendingProgress(StylistChatProgressPhase.analyzingWardrobe);\n    StylistChatOutfitResult? outfitResult;\n",
           )
-          replace_once(
+          replace_once_in_scope(
               'active V2 progress callback wiring',
               screen,
+              hybrid_start,
+              hybrid_end,
               "      outfitResult = await _stylistChatOutfitService.generateForEvent(\n        event: event,\n        excludeItemKeywords: excludeKeywords,\n        previousOutfitItemIds: _lastOutfitItemIds,\n        forceDifferentOutfit: forceDifferent,\n        conversationHint: _conversationHintText(),\n        groundedActivityType: _outfitContextState.activityHint,\n        requestedBottomFamily: requestedBottomFamily,\n        requestedSwap: requestedSwap,\n      );\n",
               "      outfitResult = await _stylistChatOutfitService.generateForEvent(\n        event: event,\n        excludeItemKeywords: excludeKeywords,\n        previousOutfitItemIds: _lastOutfitItemIds,\n        forceDifferentOutfit: forceDifferent,\n        conversationHint: _conversationHintText(),\n        groundedActivityType: _outfitContextState.activityHint,\n        requestedBottomFamily: requestedBottomFamily,\n        requestedSwap: requestedSwap,\n        onProgress: _setSendingProgress,\n      );\n",
           )
