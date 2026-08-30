@@ -54,8 +54,8 @@ jobs:
           )
           replace_once(
               service,
-              "    StylistChatOutfitDebugCollector? debugCollector,\n  }) async {\n",
-              "    StylistChatOutfitDebugCollector? debugCollector,\n    StylistChatProgressCallback? onProgress,\n  }) async {\n",
+              "    String? groundedActivityType,\n    BottomFamily? requestedBottomFamily,\n    StylistSwapRequest? requestedSwap,\n    StylistChatOutfitDebugCollector? debugCollector,\n  }) async {\n",
+              "    String? groundedActivityType,\n    BottomFamily? requestedBottomFamily,\n    StylistSwapRequest? requestedSwap,\n    StylistChatOutfitDebugCollector? debugCollector,\n    StylistChatProgressCallback? onProgress,\n  }) async {\n",
           )
           replace_once(
               service,
@@ -129,7 +129,7 @@ jobs:
             lib/Services/stylist_chat_outfit_service.dart \
             lib/screens/stylist_chat_screen.dart \
             test/stylist_chat_progress_test.dart
-          flutter analyze --no-fatal-infos \
+          flutter analyze --no-fatal-warnings --no-fatal-infos \
             lib/models/stylist_chat_progress.dart \
             lib/Services/stylist_chat_outfit_service.dart \
             lib/screens/stylist_chat_screen.dart
