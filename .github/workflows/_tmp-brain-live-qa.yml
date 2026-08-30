@@ -13,7 +13,7 @@ permissions:
 jobs:
   live-qa:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     steps:
       - name: Checkout experiment branch
         uses: actions/checkout@v4
@@ -73,8 +73,8 @@ jobs:
             exit 0
           fi
 
-          echo "mode=firebase" >> "$GITHUB_OUTPUT"
-          echo "No explicit Actions credential secret found; Firebase launcher will try runner default credentials."
+          echo "mode=deployed_callable" >> "$GITHUB_OUTPUT"
+          echo "No Actions credential secret found; probing deployed stylistChat callable."
       - name: Run paid Brain V1 live QA suite from GitHub OpenAI secret
         if: steps.auth.outputs.mode == 'direct_openai'
         working-directory: functions
@@ -87,3 +87,190 @@ jobs:
         env:
           BRAIN_LIVE_QA: '1'
         run: npm run qa:brain-live-firebase
+      - name: Probe deployed Brain V1 callable end-to-end
+        if: steps.auth.outputs.mode == 'deployed_callable'
+        shell: bash
+        env:
+          FIREBASE_PROJECT_ID: outfitoftheday-4d401
+        run: |
+          node <<'NODE'
+          const endpoint = `https://us-east1-${process.env.FIREBASE_PROJECT_ID}.cloudfunctions.net/stylistChat`;
+          const allowedActions = new Set(['chat', 'clarify', 'generate_outfit', 'show_items']);
+          const scenarios = [
+            {
+              id: 'current-public-event-needs-web',
+              turns: [{
+                message: 'O tri týždne idem do Michaloviec na koncert AC/DC. Čo si mám obliecť?',
+                state: {
+                  activityLocationLabel: 'Michalovce',
+                  activityLocationKnown: true,
+                  activityHint: 'concert',
+                  groundingStatus: 'sufficient',
+                  unresolvedMaterialFields: [],
+                },
+                expectWeb: true,
+              }],
+            },
+            {
+              id: 'unknown-public-term-needs-web-before-clarify',
+              turns: [{
+                message: "Na pozvánke na verejné podujatie mám dress code 'Neo Alpine Formal 2026'. Čo to znamená pre outfit?",
+                state: {
+                  groundingStatus: 'needs_grounding',
+                  unresolvedMaterialFields: ['activity'],
+                },
+                expectWeb: true,
+              }],
+            },
+            {
+              id: 'common-fashion-does-not-need-web',
+              turns: [{
+                message: 'Hodí sa biele tričko k tmavomodrým džínsom?',
+                state: {groundingStatus: 'sufficient', unresolvedMaterialFields: []},
+                expectWeb: false,
+                actions: ['chat'],
+              }],
+            },
+            {
+              id: 'private-shorthand-must-not-use-web',
+              turns: [{
+                message: "S kamarátmi máme súkromnú skratku 'modrý režim'. Zajtra ideme na modrý režim, čo si mám obliecť?",
+                state: {
+                  groundingStatus: 'needs_grounding',
+                  unresolvedMaterialFields: ['activity', 'destination'],
+                },
+                expectWeb: false,
+                actions: ['clarify', 'chat'],
+              }],
+            },
+            {
+              id: 'private-place-must-not-use-web',
+              turns: [{
+                message: 'Zajtra idem s Katkou na naše miesto. Čo si mám dať?',
+                state: {
+                  groundingStatus: 'needs_grounding',
+                  unresolvedMaterialFields: ['activity', 'destination'],
+                },
+                expectWeb: false,
+                actions: ['clarify', 'chat'],
+              }],
+            },
+            {
+              id: 'topic-switch-does-not-carry-stale-research',
+              turns: [
+                {
+                  message: 'O tri týždne idem do Michaloviec na koncert AC/DC. Čo si mám obliecť?',
+                  state: {
+                    activityLocationLabel: 'Michalovce',
+                    activityLocationKnown: true,
+                    activityHint: 'concert',
+                    groundingStatus: 'sufficient',
+                    unresolvedMaterialFields: [],
+                  },
+                  expectWeb: true,
+                },
+                {
+                  message: 'Inak nechaj koncert tak. Hodí sa všeobecne čierne tričko k sivým nohaviciam?',
+                  state: {groundingStatus: 'sufficient', unresolvedMaterialFields: []},
+                  expectWeb: false,
+                  actions: ['chat'],
+                  forbiddenReplyTerms: ['AC/DC', 'Michalov'],
+                },
+              ],
+            },
+          ];
+
+          async function callStylist(payload) {
+            const controller = new AbortController();
+            const timer = setTimeout(() => controller.abort(), 110000);
+            try {
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({data: payload}),
+                signal: controller.signal,
+              });
+              const text = await response.text();
+              let envelope;
+              try {
+                envelope = JSON.parse(text);
+              } catch (_) {
+                throw new Error(`callable_non_json_http_${response.status}`);
+              }
+              if (!response.ok || envelope.error) {
+                const code = String(envelope?.error?.status || envelope?.error?.message || response.status).slice(0, 160);
+                throw new Error(`callable_error:${code}`);
+              }
+              const result = envelope.result ?? envelope.data;
+              if (!result || typeof result !== 'object') {
+                throw new Error('callable_result_missing');
+              }
+              return result;
+            } finally {
+              clearTimeout(timer);
+            }
+          }
+
+          let failed = false;
+          let requestCount = 0;
+          for (const scenario of scenarios) {
+            const history = [];
+            for (let i = 0; i < scenario.turns.length; i += 1) {
+              const turn = scenario.turns[i];
+              requestCount += 1;
+              const started = Date.now();
+              try {
+                const data = await callStylist({
+                  message: turn.message,
+                  history,
+                  weatherContext: {},
+                  clientContext: {
+                    conversationBrainVersion: 'brain_v1',
+                    timezone: 'Europe/Bratislava',
+                    nowIso: new Date().toISOString(),
+                  },
+                  outfitContextState: turn.state,
+                  mode: 'chat',
+                  includeWardrobe: false,
+                });
+                const reply = typeof data.reply === 'string' ? data.reply.trim() : '';
+                const action = String(data.action || '').trim();
+                const webResearch = data.webResearch && typeof data.webResearch === 'object'
+                  ? data.webResearch
+                  : null;
+                const webUsed = webResearch?.used === true;
+                const webCallCount = Number(webResearch?.callCount || 0);
+                const failures = [];
+                if (!reply) failures.push('reply_missing');
+                if (!allowedActions.has(action)) failures.push(`action_invalid:${action || 'missing'}`);
+                if (webUsed !== turn.expectWeb) failures.push(`web_expected_${turn.expectWeb}_actual_${webUsed}`);
+                if (webCallCount < 0 || webCallCount > 3) failures.push(`web_call_count:${webCallCount}`);
+                if (Array.isArray(turn.actions) && !turn.actions.includes(action)) {
+                  failures.push(`action_expected_${turn.actions.join('|')}_actual_${action}`);
+                }
+                for (const term of turn.forbiddenReplyTerms || []) {
+                  if (reply.toLowerCase().includes(term.toLowerCase())) failures.push(`stale_reply_term:${term}`);
+                }
+                const publicKeys = Object.keys(webResearch?.publicContext || {});
+                const durationMs = Date.now() - started;
+                console.log(
+                  `Brain deployed QA | ${scenario.id}#${i + 1} | ${failures.length ? 'FAIL' : 'PASS'} | ` +
+                  `action=${action || 'missing'} web=${webUsed} calls=${webCallCount} ` +
+                  `replyLen=${reply.length} publicKeys=${publicKeys.join(',') || '-'} durationMs=${durationMs}`,
+                );
+                if (failures.length) {
+                  failed = true;
+                  console.log(`  failures=${failures.join(',')}`);
+                }
+                history.push({role: 'user', content: turn.message});
+                history.push({role: 'assistant', content: reply});
+                if (history.length > 8) history.splice(0, history.length - 8);
+              } catch (error) {
+                failed = true;
+                console.log(`Brain deployed QA | ${scenario.id}#${i + 1} | ERROR | ${String(error?.message || error).slice(0, 240)}`);
+              }
+            }
+          }
+          console.log(`Brain deployed QA | requests=${requestCount} | passed=${!failed}`);
+          if (failed) process.exitCode = 1;
+          NODE
