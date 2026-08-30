@@ -104,6 +104,14 @@ jobs:
           lib/data/event_dress_code.dart
           lib/utils/stylist_intent_resolver.dart
           lib/utils/stylist_activity_terrain.dart
+      - name: Analyze Stylist progress seam
+        run: >-
+          flutter analyze --no-fatal-warnings --no-fatal-infos
+          lib/models/stylist_chat_progress.dart
+          lib/Services/stylist_chat_outfit_service.dart
+          lib/screens/stylist_chat_screen.dart
+      - name: Stylist progress regression
+        run: flutter test test/stylist_chat_progress_test.dart
       - name: Public research client merge regression
         run: flutter test test/stylist_public_research_context_test.dart
       - name: Conversation trajectory regression
