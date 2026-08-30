@@ -112,6 +112,8 @@ jobs:
           lib/screens/stylist_chat_screen.dart
       - name: Stylist progress regression
         run: flutter test test/stylist_chat_progress_test.dart
+      - name: Brain V1 V2 offline bundle
+        run: flutter test test/brain_v1_v2_offline_bundle_test.dart
       - name: Public research client merge regression
         run: flutter test test/stylist_public_research_context_test.dart
       - name: Conversation trajectory regression
