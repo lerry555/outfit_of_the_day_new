@@ -90,6 +90,11 @@ void main() {
     final frozenClient = _read(
       'lib/Services/stylist_frozen_candidate_decision_service.dart',
     );
+    final frozenResolve = _scope(
+      frozenClient,
+      '  Future<StylistFrozenCandidateDecisionResultV1> resolve({',
+      '  static Map<String, dynamic> _candidatePayload(',
+    );
 
     expect(activeGenerate, contains('NativeWardrobeV2Runtime.resolveAll(wardrobe)'));
     expect(activeGenerate, contains('V2FlexibleCandidateMatrix.generate('));
@@ -106,8 +111,8 @@ void main() {
 
     expect(frozenClient, contains(".httpsCallable('resolveStylistFrozenCandidatesV1')"));
     expect(frozenClient, contains("'frozenCandidates': candidates"));
-    expect(frozenClient, contains('rejectAllFallback'));
-    expect(frozenClient, isNot(contains('candidates.first')));
+    expect(frozenResolve, contains('rejectAllFallback'));
+    expect(frozenResolve, isNot(contains('candidates.first')));
   });
 
   test('server validator owns safety and Brain cannot replace frozen selection', () {
