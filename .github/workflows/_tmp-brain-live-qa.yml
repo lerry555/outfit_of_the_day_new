@@ -32,19 +32,28 @@ jobs:
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci --ignore-scripts
-      - name: Prepare Firebase authentication
+      - name: Prepare live QA credentials
+        id: auth
         shell: bash
         env:
+          OPENAI_API_KEY_SECRET: ${{ secrets.OPENAI_API_KEY }}
           FIREBASE_TOKEN_SECRET: ${{ secrets.FIREBASE_TOKEN }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
           GOOGLE_APPLICATION_CREDENTIALS_JSON: ${{ secrets.GOOGLE_APPLICATION_CREDENTIALS_JSON }}
         run: |
           set -euo pipefail
+          if [ -n "${OPENAI_API_KEY_SECRET:-}" ]; then
+            echo "::add-mask::$OPENAI_API_KEY_SECRET"
+            printf 'OPENAI_API_KEY=%s\n' "$OPENAI_API_KEY_SECRET" >> "$GITHUB_ENV"
+            echo "mode=direct_openai" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           if [ -n "${FIREBASE_TOKEN_SECRET:-}" ]; then
             echo "::add-mask::$FIREBASE_TOKEN_SECRET"
             printf 'FIREBASE_TOKEN=%s\n' "$FIREBASE_TOKEN_SECRET" >> "$GITHUB_ENV"
-            echo "firebase_auth_mode=token" >> "$GITHUB_OUTPUT"
+            echo "mode=firebase" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -60,13 +69,20 @@ jobs:
             printf '%s' "$service_account" > "$credential_file"
             chmod 600 "$credential_file"
             printf 'GOOGLE_APPLICATION_CREDENTIALS=%s\n' "$credential_file" >> "$GITHUB_ENV"
-            echo "firebase_auth_mode=service_account" >> "$GITHUB_OUTPUT"
+            echo "mode=firebase" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "firebase_auth_mode=runner_default" >> "$GITHUB_OUTPUT"
-          echo "No explicit Firebase credential secret found; trying runner default credentials without exposing any secret."
-      - name: Run paid Brain V1 live QA suite
+          echo "mode=firebase" >> "$GITHUB_OUTPUT"
+          echo "No explicit Actions credential secret found; Firebase launcher will try runner default credentials."
+      - name: Run paid Brain V1 live QA suite from GitHub OpenAI secret
+        if: steps.auth.outputs.mode == 'direct_openai'
+        working-directory: functions
+        env:
+          BRAIN_LIVE_QA: '1'
+        run: npm run qa:brain-live
+      - name: Run paid Brain V1 live QA suite from Firebase secret
+        if: steps.auth.outputs.mode == 'firebase'
         working-directory: functions
         env:
           BRAIN_LIVE_QA: '1'
