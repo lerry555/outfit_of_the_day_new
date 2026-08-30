@@ -1,0 +1,152 @@
+name: Temporary Stylist progress patch
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+    paths:
+      - .github/workflows/_tmp-stylist-progress-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-progress:
+    if: github.ref == 'refs/heads/brain-v1-experiment'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 1
+
+      - name: Verify branch and triggering HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "brain-v1-experiment"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Apply fail-closed progress wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one patch anchor, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          service = 'lib/Services/stylist_chat_outfit_service.dart'
+          screen = 'lib/screens/stylist_chat_screen.dart'
+
+          replace_once(
+              service,
+              "import '../models/stylist_trip_window.dart';\n",
+              "import '../models/stylist_trip_window.dart';\nimport '../models/stylist_chat_progress.dart';\n",
+          )
+          replace_once(
+              service,
+              "    StylistChatOutfitDebugCollector? debugCollector,\n  }) async {\n",
+              "    StylistChatOutfitDebugCollector? debugCollector,\n    StylistChatProgressCallback? onProgress,\n  }) async {\n",
+          )
+          replace_once(
+              service,
+              "    final user = _auth.currentUser;\n    if (user == null) return null;\n    final wardrobe = await _loadNormalizedWardrobe(user.uid);\n",
+              "    final user = _auth.currentUser;\n    if (user == null) return null;\n    onProgress?.call(StylistChatProgressPhase.analyzingWardrobe);\n    final wardrobe = await _loadNormalizedWardrobe(user.uid);\n",
+          )
+          replace_once(
+              service,
+              "    final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe)\n",
+              "    onProgress?.call(StylistChatProgressPhase.buildingOutfit);\n    final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe)\n",
+          )
+          replace_once(
+              service,
+              "    V2FlexibleOutfitResult? selected;\n",
+              "    onProgress?.call(StylistChatProgressPhase.finalizing);\n    V2FlexibleOutfitResult? selected;\n",
+          )
+
+          replace_once(
+              screen,
+              "import '../models/stylist_trip_window.dart';\n",
+              "import '../models/stylist_trip_window.dart';\nimport '../models/stylist_chat_progress.dart';\n",
+          )
+          replace_once(
+              screen,
+              "  String _sendingStatusLabel = 'Stylista píše...';\n  Set<String> _lastOutfitItemIds = const {};\n",
+              "  String _sendingStatusLabel = 'Stylista píše...';\n\n  void _setSendingProgress(StylistChatProgressPhase phase) {\n    if (!mounted || !_isSending) return;\n    final next = phase.labelSk;\n    if (_sendingStatusLabel == next) return;\n    setState(() => _sendingStatusLabel = next);\n  }\n\n  Set<String> _lastOutfitItemIds = const {};\n",
+          )
+          replace_once(
+              screen,
+              "      _isSending = true;\n      _sendingStatusLabel = 'Stylista píše';\n",
+              "      _isSending = true;\n      _sendingStatusLabel =\n          StylistChatProgressPhase.resolvingContext.labelSk;\n",
+          )
+          replace_once(
+              screen,
+              "      final timing = Stopwatch()..start();\n      final weatherContext = await _resolveWeatherContextForRequest(\n",
+              "      final timing = Stopwatch()..start();\n      _setSendingProgress(StylistChatProgressPhase.checkingWeather);\n      final weatherContext = await _resolveWeatherContextForRequest(\n",
+          )
+          replace_once(
+              screen,
+              "          : null;\n      var response = await _stylistChatService.sendMessage(\n",
+              "          : null;\n      _setSendingProgress(StylistChatProgressPhase.thinkingWithContext);\n      var response = await _stylistChatService.sendMessage(\n",
+          )
+          replace_once(
+              screen,
+              "    if (mounted) {\n      setState(() => _sendingStatusLabel = 'Hľadám vhodný outfit…');\n    }\n    StylistChatOutfitResult? outfitResult;\n",
+              "    _setSendingProgress(StylistChatProgressPhase.analyzingWardrobe);\n    StylistChatOutfitResult? outfitResult;\n",
+          )
+          replace_once(
+              screen,
+              "        requestedBottomFamily: requestedBottomFamily,\n        requestedSwap: requestedSwap,\n      );\n",
+              "        requestedBottomFamily: requestedBottomFamily,\n        requestedSwap: requestedSwap,\n        onProgress: _setSendingProgress,\n      );\n",
+          )
+          PY
+          git diff --check
+
+      - name: Use Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+
+      - name: Verify progress seam
+        shell: bash
+        run: |
+          set -euo pipefail
+          dart format --output=none --set-exit-if-changed \
+            lib/models/stylist_chat_progress.dart \
+            lib/Services/stylist_chat_outfit_service.dart \
+            lib/screens/stylist_chat_screen.dart \
+            test/stylist_chat_progress_test.dart
+          flutter analyze --no-fatal-infos \
+            lib/models/stylist_chat_progress.dart \
+            lib/Services/stylist_chat_outfit_service.dart \
+            lib/screens/stylist_chat_screen.dart
+          flutter test test/stylist_chat_progress_test.dart
+
+      - name: Commit progress wiring and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "brain-v1-experiment"
+          git rm .github/workflows/_tmp-stylist-progress-patch.yml
+          git diff --check
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add lib/models/stylist_chat_progress.dart \
+            lib/Services/stylist_chat_outfit_service.dart \
+            lib/screens/stylist_chat_screen.dart \
+            test/stylist_chat_progress_test.dart
+          git commit -m "feat: wire Stylist progress phases"
+          git push origin HEAD:brain-v1-experiment
