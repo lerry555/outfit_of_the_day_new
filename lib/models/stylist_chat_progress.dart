@@ -24,6 +24,5 @@ extension StylistChatProgressPhaseUi on StylistChatProgressPhase {
   };
 }
 
-typedef StylistChatProgressCallback = void Function(
-  StylistChatProgressPhase phase,
-);
+typedef StylistChatProgressCallback =
+    void Function(StylistChatProgressPhase phase);

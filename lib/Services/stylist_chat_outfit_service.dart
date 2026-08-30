@@ -7,6 +7,7 @@ import '../data/stylist_opinion.dart';
 import '../data/wardrobe_analysis.dart';
 import '../debug/stylist_chat_outfit_debug_collector.dart';
 import '../models/stylist_trip_window.dart';
+import '../models/stylist_chat_progress.dart';
 import '../utils/activity_outfit_identity.dart';
 import '../utils/comfort_target.dart';
 import '../utils/footwear_family_guidance.dart';
@@ -225,9 +226,11 @@ class StylistChatOutfitService {
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
     StylistChatOutfitDebugCollector? debugCollector,
+    StylistChatProgressCallback? onProgress,
   }) async {
     final user = _auth.currentUser;
     if (user == null) return null;
+    onProgress?.call(StylistChatProgressPhase.analyzingWardrobe);
     final wardrobe = await _loadNormalizedWardrobe(user.uid);
     if (wardrobe.isEmpty) return null;
     final stylePreferences = await _stylePreferencesReader.loadForUid(user.uid);
@@ -310,6 +313,7 @@ class StylistChatOutfitService {
       ...excludedItemIds,
       ..._idsMatchingExcludeKeywords(wardrobe, excludeItemKeywords),
     };
+    onProgress?.call(StylistChatProgressPhase.buildingOutfit);
     final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe)
         .where((item) => !excluded.contains(item.itemId))
         .where((item) {
@@ -412,6 +416,7 @@ class StylistChatOutfitService {
           ..sort((a, b) => b.score.compareTo(a.score));
     if (matrix.isEmpty) return null;
 
+    onProgress?.call(StylistChatProgressPhase.finalizing);
     V2FlexibleOutfitResult? selected;
     String? finalExplanation;
     List<String> rejectAllReasonCodes = const <String>[];

@@ -28,6 +28,7 @@ import '../Services/user_location_service.dart';
 import '../utils/slovak_city_locative.dart';
 import '../utils/slovak_outfit_instrumental.dart';
 import '../models/stylist_trip_window.dart';
+import '../models/stylist_chat_progress.dart';
 import '../utils/bottom_family_guidance.dart';
 import '../utils/event_clarification.dart';
 import '../utils/stylist_bottom_request.dart';
@@ -229,6 +230,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   String? _activePhotoUrl;
   String? _photoImproveHint;
   String _sendingStatusLabel = 'Stylista píše...';
+
+  void _setSendingProgress(StylistChatProgressPhase phase) {
+    if (!mounted || !_isSending) return;
+    final next = phase.labelSk;
+    if (_sendingStatusLabel == next) return;
+    setState(() => _sendingStatusLabel = next);
+  }
+
   Set<String> _lastOutfitItemIds = const {};
   Map<String, dynamic>? _cachedWeatherContext;
   DateTime? _weatherCachedAt;
@@ -759,7 +768,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _controller.clear();
       _userMessageCount += 1;
       _isSending = true;
-      _sendingStatusLabel = 'Stylista píše';
+      _sendingStatusLabel = StylistChatProgressPhase.resolvingContext.labelSk;
     });
     _scrollToBottom();
 
@@ -814,6 +823,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         'correction=${_outfitContextState.userCorrectionDetected}',
       );
       final timing = Stopwatch()..start();
+      _setSendingProgress(StylistChatProgressPhase.checkingWeather);
       final weatherContext = await _resolveWeatherContextForRequest(
         lightweight: !needsWardrobe,
         allowGpsEventFallback:
@@ -849,6 +859,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
               'operationId': jobId,
             }
           : null;
+      _setSendingProgress(StylistChatProgressPhase.thinkingWithContext);
       var response = await _stylistChatService.sendMessage(
         text,
         history: history,
@@ -1462,7 +1473,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // field (or add a low-impact time question) before the destination and
       // activity are actually grounded.
       final brainReply = (response['reply'] ?? '').toString().trim();
-      final brainAlreadyClarified = action == 'clarify' && brainReply.isNotEmpty;
+      final brainAlreadyClarified =
+          action == 'clarify' && brainReply.isNotEmpty;
       if (!brainAlreadyClarified) {
         response['reply'] = _groundingClarificationText(
           _outfitContextState.unresolvedMaterialFields,
@@ -1943,9 +1955,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         _blockIfConversationNeedsClarification(sourceText: userText)) {
       return;
     }
-    if (mounted) {
-      setState(() => _sendingStatusLabel = 'Hľadám vhodný outfit…');
-    }
+    _setSendingProgress(StylistChatProgressPhase.analyzingWardrobe);
     StylistChatOutfitResult? outfitResult;
     List<String> rejectAllReasons = const <String>[];
     String rejectAllExplanation = '';
@@ -1959,6 +1969,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         groundedActivityType: _outfitContextState.activityHint,
         requestedBottomFamily: requestedBottomFamily,
         requestedSwap: requestedSwap,
+        onProgress: _setSendingProgress,
       );
     } on StylistFrozenDecisionRejectedExceptionV1 catch (error) {
       rejectAllReasons = error.reasonCodes;
