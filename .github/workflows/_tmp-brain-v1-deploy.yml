@@ -38,22 +38,6 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
-      - name: Ensure deploy identity can read secret metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          SA_EMAIL="$(python3 - <<'PY'
-          import json, os
-          with open(os.environ['GOOGLE_APPLICATION_CREDENTIALS'], encoding='utf-8') as f:
-              print(json.load(f)['client_email'])
-          PY
-          )"
-          gcloud projects add-iam-policy-binding outfitoftheday-4d401 \
-            --member="serviceAccount:${SA_EMAIL}" \
-            --role="roles/secretmanager.viewer" \
-            --condition=None \
-            --quiet >/dev/null
-
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci
