@@ -454,6 +454,12 @@ class StylistChatOutfitService {
             // not a bottom/shorts exception; every other displayed item stays
             // frozen and the normal suitability guards still apply.
             allowCrossFamilySameSlot: true,
+            requireCoolerReplacement:
+                requestedSwap.thermalPreference ==
+                StylistSwapThermalPreference.cooler,
+            requireWarmerReplacement:
+                requestedSwap.thermalPreference ==
+                StylistSwapThermalPreference.warmer,
           ),
         );
       }

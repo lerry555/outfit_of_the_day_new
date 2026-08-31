@@ -1576,7 +1576,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         'STYLIST CHAT auto_generate_outfit reason=explicit_swap '
         'slot=${swapRequest.slot.name} '
         'bottom=${swapRequest.bottomFamily?.name ?? "-"} '
-        'shoes=${swapRequest.shoeFamily?.name ?? "-"}',
+        'shoes=${swapRequest.shoeFamily?.name ?? "-"} '
+        'thermal=${swapRequest.thermalPreference?.name ?? "-"}',
       );
       await _runHybridOutfitGeneration(
         userText: userText,

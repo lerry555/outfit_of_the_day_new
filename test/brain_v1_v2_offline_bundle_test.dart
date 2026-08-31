@@ -1,6 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:outfitofTheDay/utils/bottom_family_guidance.dart';
+import 'package:outfitofTheDay/utils/footwear_family_guidance.dart';
+import 'package:outfitofTheDay/utils/stylist_swap_request.dart';
 import 'package:outfitofTheDay/Services/stylist_chat_service.dart';
 
 String _read(String path) => File(path).readAsStringSync();
@@ -206,5 +209,68 @@ void main() {
       matrix,
       isNot(contains("'primaryColorHarmony': repeatedPrimary ? 0.8 : 0")),
     );
+  });
+
+
+  test('swap parser keeps rejection polarity global across clothing slots', () {
+    final hotJeans = StylistSwapRequest.parse('v rifliach mi bude teplo');
+    expect(hotJeans, isNotNull);
+    expect(hotJeans!.slot, StylistSwapSlot.bottom);
+    expect(hotJeans.bottomFamily, isNull);
+    expect(hotJeans.thermalPreference, StylistSwapThermalPreference.cooler);
+
+    expect(StylistSwapRequest.parse('Nebude mi v rifliach teplo?'), isNull);
+
+    final shorts = StylistSwapRequest.parse('nechcem rifle, daj kratasy');
+    expect(shorts, isNotNull);
+    expect(shorts!.slot, StylistSwapSlot.bottom);
+    expect(shorts.bottomFamily, BottomFamily.shorts);
+
+    final jeans = StylistSwapRequest.parse('kratasy nechcem, daj rifle');
+    expect(jeans, isNotNull);
+    expect(jeans!.bottomFamily, BottomFamily.jeans);
+
+    final top = StylistSwapRequest.parse('toto tricko mi nesedi');
+    expect(top, isNotNull);
+    expect(top!.slot, StylistSwapSlot.top);
+
+    final shoes = StylistSwapRequest.parse('tieto topanky ma tlacia');
+    expect(shoes, isNotNull);
+    expect(shoes!.slot, StylistSwapSlot.shoes);
+    expect(shoes.shoeFamily, isNull);
+
+    final boots = StylistSwapRequest.parse('tenisky ma tlacia, daj cizmy');
+    expect(boots, isNotNull);
+    expect(boots!.slot, StylistSwapSlot.shoes);
+    expect(boots.shoeFamily, FootwearFamily.boots);
+
+    final outer = StylistSwapRequest.parse('v tej bunde mi bude teplo');
+    expect(outer, isNotNull);
+    expect(outer!.slot, StylistSwapSlot.outerwear);
+    expect(outer.thermalPreference, StylistSwapThermalPreference.cooler);
+
+    final coldTop = StylistSwapRequest.parse('v tomto tricku mi bude zima');
+    expect(coldTop, isNotNull);
+    expect(coldTop!.slot, StylistSwapSlot.top);
+    expect(coldTop.thermalPreference, StylistSwapThermalPreference.warmer);
+
+    final directJeans = StylistSwapRequest.parse('daj mi rifle');
+    expect(directJeans, isNotNull);
+    expect(directJeans!.bottomFamily, BottomFamily.jeans);
+
+    final bareShorts = StylistSwapRequest.parse('kratasy');
+    expect(bareShorts, isNotNull);
+    expect(bareShorts!.bottomFamily, BottomFamily.shorts);
+
+    final replaceJeans = StylistSwapRequest.parse('vymen mi rifle');
+    expect(replaceJeans, isNotNull);
+    expect(replaceJeans!.slot, StylistSwapSlot.bottom);
+    expect(replaceJeans.bottomFamily, isNull);
+
+    final replaceWithShorts = StylistSwapRequest.parse(
+      'vymen rifle za kratasy',
+    );
+    expect(replaceWithShorts, isNotNull);
+    expect(replaceWithShorts!.bottomFamily, BottomFamily.shorts);
   });
 }

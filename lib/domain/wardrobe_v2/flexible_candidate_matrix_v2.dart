@@ -282,6 +282,8 @@ abstract final class V2FlexibleSwapOrchestrator {
     required Iterable<ResolvedWardrobeItemV2> wardrobe,
     required V2CandidateMatrixContext context,
     bool allowCrossFamilySameSlot = false,
+    bool requireCoolerReplacement = false,
+    bool requireWarmerReplacement = false,
   }) {
     final target = current.items.where((x) => x.itemId == itemId).firstOrNull;
     if (target == null) return null;
@@ -291,8 +293,16 @@ abstract final class V2FlexibleSwapOrchestrator {
         .toList(growable: false);
     final candidates = wardrobe
         .where((x) => x.itemId != itemId)
-        .where(
-          (candidate) => SwapCandidateSelectorV2.compatible(
+        .where((candidate) {
+          if (requireCoolerReplacement &&
+              candidate.item.warmth >= target.item.warmth) {
+            return false;
+          }
+          if (requireWarmerReplacement &&
+              candidate.item.warmth <= target.item.warmth) {
+            return false;
+          }
+          return SwapCandidateSelectorV2.compatible(
             replaced: target.item,
             candidates: [candidate.item],
             compositionGroup: target.compositionGroup,
@@ -303,8 +313,8 @@ abstract final class V2FlexibleSwapOrchestrator {
             ),
             remainingOutfit: remaining,
             allowCrossFamilySameSlot: allowCrossFamilySameSlot,
-          ).isNotEmpty,
-        );
+          ).isNotEmpty;
+        });
     V2FlexibleOutfitResult? best;
     var bestScore = double.negativeInfinity;
     for (final candidate in candidates) {
