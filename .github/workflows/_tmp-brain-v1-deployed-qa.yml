@@ -1,4 +1,4 @@
-name: Brain V1 exact runtime log read
+name: Brain V1 deployed QA one-shot
 
 on:
   push:
@@ -11,10 +11,10 @@ permissions:
   contents: read
 
 jobs:
-  runtime-log-read:
+  deployed-qa:
     if: github.ref == 'refs/heads/brain-v1-experiment'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout experiment branch
         uses: actions/checkout@v4
@@ -26,21 +26,229 @@ jobs:
           test "$GITHUB_REF_NAME" = "brain-v1-experiment"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Use Node 20
+        uses: actions/setup-node@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+          node-version: '20'
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Read exact failed Brain execution
+      - name: Run deployed A/B gate and Brain V1 live QA
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read \
-            'resource.type="cloud_function" AND resource.labels.function_name="stylistChat" AND resource.labels.region="us-east1" AND labels.execution_id="y2ji2cwjc8kn"' \
-            --project outfitoftheday-4d401 \
-            --order=asc \
-            --limit=100 \
-            --format=json
+          node - <<'NODE'
+          const ENDPOINT = "https://us-east1-outfitoftheday-4d401.cloudfunctions.net/stylistChat";
+          const NOW = "2026-08-31T09:44:00+02:00";
+          const BASE_CLIENT = Object.freeze({
+            now: NOW,
+            todayDateKey: "2026-08-31",
+            tomorrowDateKey: "2026-09-01",
+          });
+          const ALLOWED_ACTIONS = new Set(["chat", "clarify", "generate_outfit", "show_items"]);
+          const PUBLIC_KEYS = new Set(["performer", "dressCode", "eventStartHour", "eventEndHour", "durationMinutes"]);
+          const DRESS_KEYS = new Set(["id", "labelSk", "formalityTarget", "venueType"]);
+          const INTERNAL_REPLY = /\b(?:candidateId|validator|deterministic|pipeline|provider|reasoning_effort|web_search_call)\b/i;
+          const URL_REPLY = /(?:https?:\/\/|www\.)/i;
+
+          function clean(v) {
+            return typeof v === "string" ? v.trim() : "";
+          }
+
+          function baseData(message, outfitContextState, history = [], brain = true) {
+            return {
+              message,
+              mode: "chat",
+              includeWardrobe: false,
+              history,
+              clientContext: {
+                ...BASE_CLIENT,
+                ...(brain ? {conversationBrainVersion: "brain_v1"} : {}),
+              },
+              outfitContextState: outfitContextState || {
+                groundingStatus: "sufficient",
+                unresolvedMaterialFields: [],
+              },
+            };
+          }
+
+          async function callCallable(data) {
+            const startedAt = Date.now();
+            const response = await fetch(ENDPOINT, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({data}),
+            });
+            const text = await response.text();
+            let json = null;
+            try { json = JSON.parse(text); } catch (_) {}
+            const durationMs = Date.now() - startedAt;
+            if (!response.ok || !json || json.error) {
+              const error = json && json.error ? json.error : {};
+              return {
+                ok: false,
+                status: response.status,
+                code: clean(error.status || error.code) || "HTTP_ERROR",
+                message: clean(error.message).slice(0, 160),
+                durationMs,
+              };
+            }
+            const result = json.result ?? json.data;
+            if (!result || typeof result !== "object") {
+              return {ok: false, status: response.status, code: "RESULT_MISSING", message: "", durationMs};
+            }
+            return {ok: true, status: response.status, result, durationMs};
+          }
+
+          function inspectTurn(call, expect = {}) {
+            const failures = [];
+            if (!call.ok) {
+              failures.push(`call_failed:${call.code}:${call.status}`);
+              return {passed: false, failures, action: "", webUsed: false, webCallCount: 0, durationMs: call.durationMs};
+            }
+            const result = call.result;
+            const reply = clean(result.reply);
+            const action = clean(result.action || "chat") || "chat";
+            const wr = result.webResearch && typeof result.webResearch === "object" ? result.webResearch : null;
+            const webUsed = wr?.used === true;
+            const webCallCount = Number(wr?.callCount || 0);
+            if (!reply) failures.push("reply_missing");
+            if (!ALLOWED_ACTIONS.has(action)) failures.push(`action_invalid:${action}`);
+            if (URL_REPLY.test(reply)) failures.push("reply_contains_url");
+            if (INTERNAL_REPLY.test(reply)) failures.push("reply_exposes_internal_pipeline");
+            if (!Number.isInteger(webCallCount) || webCallCount < 0 || webCallCount > 3) failures.push(`web_call_count_out_of_bounds:${webCallCount}`);
+            if (typeof expect.webUsed === "boolean" && webUsed !== expect.webUsed) failures.push(`web_used_expected_${expect.webUsed}_actual_${webUsed}`);
+            if (Array.isArray(expect.actions) && expect.actions.length && !expect.actions.includes(action)) failures.push(`action_expected_${expect.actions.join("|")}_actual_${action}`);
+            for (const needle of expect.replyMustNotContain || []) {
+              if (reply.toLowerCase().includes(String(needle).toLowerCase())) failures.push(`reply_contains_stale_term:${needle}`);
+            }
+            const publicContext = wr?.publicContext && typeof wr.publicContext === "object" ? wr.publicContext : null;
+            if (publicContext) {
+              if (!webUsed) failures.push("public_context_without_web");
+              for (const key of Object.keys(publicContext)) {
+                if (!PUBLIC_KEYS.has(key)) failures.push(`public_context_forbidden_key:${key}`);
+              }
+              if (publicContext.dressCode && typeof publicContext.dressCode === "object") {
+                for (const key of Object.keys(publicContext.dressCode)) {
+                  if (!DRESS_KEYS.has(key)) failures.push(`dress_code_forbidden_key:${key}`);
+                }
+              }
+            }
+            const hosts = [];
+            for (const source of Array.isArray(wr?.sources) ? wr.sources : []) {
+              try {
+                const host = new URL(source.url).hostname.toLowerCase();
+                if (host && !hosts.includes(host)) hosts.push(host);
+              } catch (_) {}
+            }
+            return {
+              passed: failures.length === 0,
+              failures,
+              action,
+              webUsed,
+              webCallCount,
+              sourceHosts: hosts.slice(0, 8),
+              publicContextKeys: publicContext ? Object.keys(publicContext) : [],
+              durationMs: call.durationMs,
+              reply,
+            };
+          }
+
+          function printCase(id, report, turn = 1) {
+            const failures = report.failures.length ? ` | failures=${report.failures.join(",")}` : "";
+            const sources = report.sourceHosts?.length ? ` | sources=${report.sourceHosts.join(",")}` : "";
+            const publicKeys = report.publicContextKeys?.length ? ` | public=${report.publicContextKeys.join(",")}` : "";
+            console.log(`CASE ${id} turn=${turn}: ${report.passed ? "PASS" : "FAIL"} | action=${report.action} | web=${report.webUsed} | calls=${report.webCallCount} | durationMs=${report.durationMs}${sources}${publicKeys}${failures}`);
+          }
+
+          (async () => {
+            const commonMessage = "Hodí sa biele tričko k tmavomodrým džínsom?";
+            const commonState = {groundingStatus: "sufficient", unresolvedMaterialFields: []};
+
+            console.log("A/B GATE");
+            const legacyCall = await callCallable(baseData(commonMessage, commonState, [], false));
+            const legacyPass = legacyCall.ok && !!clean(legacyCall.result?.reply);
+            console.log(`LEGACY: ${legacyPass ? "PASS" : "FAIL"} | status=${legacyCall.status} | code=${legacyCall.code || "ok"} | durationMs=${legacyCall.durationMs}`);
+
+            const commonBrainCall = await callCallable(baseData(commonMessage, commonState, [], true));
+            const commonBrainReport = inspectTurn(commonBrainCall, {webUsed: false, actions: ["chat"]});
+            console.log(`BRAIN_V1: ${commonBrainReport.passed ? "PASS" : "FAIL"} | status=${commonBrainCall.status} | code=${commonBrainCall.code || "ok"} | action=${commonBrainReport.action} | web=${commonBrainReport.webUsed} | durationMs=${commonBrainCall.durationMs}`);
+
+            if (!legacyPass || !commonBrainReport.passed) {
+              console.error("A/B RESULT: FAIL");
+              if (!commonBrainReport.passed) console.error(`BRAIN failures=${commonBrainReport.failures.join(",")}`);
+              process.exit(1);
+            }
+            console.log("A/B RESULT: PASS");
+            console.log("FULL BRAIN V1 LIVE QA");
+
+            const reports = [];
+
+            const eventMessage = "O tri týždne idem do Michaloviec na koncert AC/DC. Čo si mám obliecť?";
+            const eventState = {
+              activityLocationLabel: "Michalovce",
+              activityLocationKnown: true,
+              activityHint: "concert",
+              groundingStatus: "sufficient",
+              unresolvedMaterialFields: [],
+            };
+            const eventCall = await callCallable(baseData(eventMessage, eventState));
+            const eventReport = inspectTurn(eventCall, {webUsed: true});
+            reports.push({id: "current-public-event-needs-web", turns: [eventReport]});
+            printCase("current-public-event-needs-web", eventReport);
+
+            const unknownCall = await callCallable(baseData(
+              "Na pozvánke na verejné podujatie mám dress code 'Neo Alpine Formal 2026'. Čo to znamená pre outfit?",
+              {groundingStatus: "needs_grounding", unresolvedMaterialFields: ["activity"]},
+            ));
+            const unknownReport = inspectTurn(unknownCall, {webUsed: true});
+            reports.push({id: "unknown-public-term-needs-web-before-clarify", turns: [unknownReport]});
+            printCase("unknown-public-term-needs-web-before-clarify", unknownReport);
+
+            reports.push({id: "common-fashion-does-not-need-web", turns: [commonBrainReport]});
+            printCase("common-fashion-does-not-need-web", commonBrainReport);
+
+            const shorthandCall = await callCallable(baseData(
+              "S kamarátmi máme súkromnú skratku 'modrý režim'. Zajtra ideme na modrý režim, čo si mám obliecť?",
+              {groundingStatus: "needs_grounding", unresolvedMaterialFields: ["activity", "destination"]},
+            ));
+            const shorthandReport = inspectTurn(shorthandCall, {webUsed: false, actions: ["clarify", "chat"]});
+            reports.push({id: "private-shorthand-must-not-use-web", turns: [shorthandReport]});
+            printCase("private-shorthand-must-not-use-web", shorthandReport);
+
+            const privatePlaceCall = await callCallable(baseData(
+              "Zajtra idem s Katkou na naše miesto. Čo si mám dať?",
+              {groundingStatus: "needs_grounding", unresolvedMaterialFields: ["activity", "destination"]},
+            ));
+            const privatePlaceReport = inspectTurn(privatePlaceCall, {webUsed: false, actions: ["clarify", "chat"]});
+            reports.push({id: "private-place-must-not-use-web", turns: [privatePlaceReport]});
+            printCase("private-place-must-not-use-web", privatePlaceReport);
+
+            const topic1Call = await callCallable(baseData(eventMessage, eventState));
+            const topic1Report = inspectTurn(topic1Call, {webUsed: true});
+            printCase("topic-switch-does-not-carry-stale-research", topic1Report, 1);
+            const history = topic1Call.ok ? [
+              {role: "user", content: eventMessage},
+              {role: "assistant", content: clean(topic1Call.result.reply)},
+            ] : [];
+            const topic2Call = await callCallable(baseData(
+              "Inak nechaj koncert tak. Hodí sa všeobecne čierne tričko k sivým nohaviciam?",
+              {groundingStatus: "sufficient", unresolvedMaterialFields: []},
+              history,
+            ));
+            const topic2Report = inspectTurn(topic2Call, {
+              webUsed: false,
+              actions: ["chat"],
+              replyMustNotContain: ["AC/DC", "Michalov"],
+            });
+            printCase("topic-switch-does-not-carry-stale-research", topic2Report, 2);
+            reports.push({id: "topic-switch-does-not-carry-stale-research", turns: [topic1Report, topic2Report]});
+
+            const scenarioPassed = reports.map((s) => ({id: s.id, passed: s.turns.every((t) => t.passed)}));
+            for (const scenario of scenarioPassed) console.log(`SCENARIO ${scenario.id}: ${scenario.passed ? "PASS" : "FAIL"}`);
+            const allPassed = scenarioPassed.every((s) => s.passed);
+            console.log(`RESULT: ${allPassed ? "PASS" : "FAIL"} | scenarios=6 | brainRequests=7 | legacyRequests=1`);
+            if (!allPassed) process.exit(1);
+          })().catch((error) => {
+            console.error(`QA aborted: ${clean(error?.message) || "unknown_error"}`);
+            process.exit(1);
+          });
+          NODE
