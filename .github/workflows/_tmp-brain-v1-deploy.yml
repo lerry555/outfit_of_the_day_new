@@ -45,6 +45,7 @@ jobs:
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@latest
 
+      # One-shot trigger after lazy vision KB initialization fix.
       - name: Deploy only stylistChat from experiment branch
         shell: bash
         run: |
