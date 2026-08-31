@@ -42,10 +42,21 @@ jobs:
         working-directory: functions
         run: npm ci
 
+      - name: Generate deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node functions/scripts/generate_deploy_taxonomy_artifacts.js >/tmp/deploy-taxonomy-artifacts.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
+          test -s functions/artifacts/clothing_knowledge_base_prior_v1.json
+          test -s functions/artifacts/clothing_knowledge_base_prior_v1.manifest.json
+
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@latest
 
-      # One-shot trigger after lazy vision KB initialization fix.
       - name: Deploy only stylistChat from experiment branch
         shell: bash
         run: |
