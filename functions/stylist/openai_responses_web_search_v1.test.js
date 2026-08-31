@@ -25,7 +25,8 @@ test("Brain Responses body exposes conditional hosted web search", () => {
   // This is a per-Responses-request loop guard, not a lifetime chat quota.
   // Every subsequent user turn creates a fresh request with its own allowance.
   assert.equal(body.max_tool_calls, 3);
-  assert.equal(body.text.format.type, "json_object");
+  // Hosted web search must not be combined with Responses JSON mode.
+  assert.equal(body.text, undefined);
   assert.equal(body.reasoning.effort, "low");
   assert.equal(body.max_output_tokens, 777);
   assert.equal(body.store, false);
