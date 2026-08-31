@@ -185,7 +185,7 @@ void main() {
     expect(screen, contains('generation_suppressed reason=context_only_plan'));
     expect(screen, contains("'currentOutfit': currentOutfit"));
     expect(server, contains('clientContext.currentOutfit'));
-    expect(server, contains('currentOutfit=${JSON.stringify(currentOutfit)}'));
+    expect(server, contains(r'currentOutfit=${JSON.stringify(currentOutfit)}'));
     expect(prompts, contains('samotné oznámenie plánu alebo aktivity'));
     expect(prompts, contains('Samotné sufficient grounding NIKDY neoprávňuje generate_outfit'));
   });
