@@ -1,5 +1,6 @@
 name: Brain V1 deploy one-shot
 
+# One-shot trigger after removing incompatible Responses JSON mode.
 on:
   push:
     branches:
