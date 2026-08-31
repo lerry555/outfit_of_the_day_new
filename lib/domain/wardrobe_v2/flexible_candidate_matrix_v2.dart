@@ -291,7 +291,8 @@ abstract final class V2FlexibleSwapOrchestrator {
         .where((x) => x.itemId != itemId)
         .map((x) => x.item)
         .toList(growable: false);
-    final candidates = wardrobe
+    final source = wardrobe.toList(growable: false);
+    final candidates = source
         .where((x) => x.itemId != itemId)
         .where((candidate) {
           if (requireCoolerReplacement &&
@@ -307,10 +308,12 @@ abstract final class V2FlexibleSwapOrchestrator {
             candidates: [candidate.item],
             compositionGroup: target.compositionGroup,
             minimumFormality: context.minimumFormality,
-            requiredOccasions: context.requiredOccasions,
-            requiredFunctions: target.item.outfitFunctions.toSet().intersection(
-              context.requiredFunctions,
-            ),
+            // Do not reject a user-requested replacement solely because one
+            // item lacks an exact occasion/function tag. The completed outfit
+            // is evaluated below with physical + functional + suitability
+            // rules, which is the correct global authority for a swap.
+            requiredOccasions: const <String>{},
+            requiredFunctions: const <String>{},
             remainingOutfit: remaining,
             allowCrossFamilySameSlot: allowCrossFamilySameSlot,
           ).isNotEmpty;
@@ -326,10 +329,39 @@ abstract final class V2FlexibleSwapOrchestrator {
           display: candidate.raw,
         );
         if (next.validate().isNotEmpty) continue;
-        final score = V2FlexibleOutfitScorer.score(
-          next,
-          context,
-        ).values.fold(0.0, (a, b) => a + b);
+        if (OutfitSuitabilityPolicyV2.isPhysicallyUnsuitable(
+          candidate.item,
+          tempC: OutfitSuitabilityPolicyV2.effectiveTempC(
+            tempC: context.tempC,
+            feelsLikeC: context.feelsLikeC,
+          ),
+          seasonKey: context.seasonKey,
+          isRainy: context.isRainy || context.weatherProtectionRequired,
+          activityType: context.activityType,
+        )) {
+          continue;
+        }
+        final functional = FunctionalSuitabilityEvaluatorV1.assessCandidate(
+          outfit: next,
+          source: source,
+          requirements: ActivityFunctionalRequirementsV1(
+            activityType: context.activityType,
+            outdoor: context.outdoor,
+            isRainy: context.isRainy || context.weatherProtectionRequired,
+            wetGroundRisk: context.wetGroundRisk,
+            minimumFormality: context.decisionFormalityFloor,
+            durationMinutes: context.activityDurationMinutes,
+            terrain: context.terrain,
+            tempC: OutfitSuitabilityPolicyV2.effectiveTempC(
+              tempC: context.tempC,
+              feelsLikeC: context.feelsLikeC,
+            ),
+          ),
+        );
+        if (!functional.selectable) continue;
+        final breakdown = V2FlexibleOutfitScorer.score(next, context);
+        breakdown['functionalCapability'] = functional.scoreAdjustment;
+        final score = breakdown.values.fold(0.0, (a, b) => a + b);
         if (score > bestScore) {
           bestScore = score;
           best = next;

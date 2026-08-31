@@ -99,6 +99,9 @@ class StylistSwapRequest {
     final norm = _norm(text);
     if (norm.isEmpty) return null;
 
+    final selectionQuestion = _selectionQuestion(norm);
+    if (selectionQuestion != null) return selectionQuestion;
+
     final hasActionCue = _hasActionCue(norm);
     if (_asksAboutExistingChoice(norm) && !hasActionCue) return null;
     if (_isQuestionOnly(norm) && !hasActionCue) return null;
@@ -179,6 +182,34 @@ class StylistSwapRequest {
     }
 
     return null;
+  }
+
+  static StylistSwapRequest? _selectionQuestion(String norm) {
+    final asksWhatToWear = RegExp(
+      r'\b(?:ktor\w*|ak\w*|co)\b.*\b(?:si\s+mam|mam\s+si|mam)\b.*\b(?:dat|obliect|obut|vybrat)\b',
+    ).hasMatch(norm);
+    if (!asksWhatToWear) return null;
+
+    final mentionsTop =
+        _containsAny(norm, _topWords) || RegExp(r'\btop\b').hasMatch(norm);
+    final mentionsBottom = _containsAny(norm, _bottomWords);
+    final mentionsShoes = _containsAny(norm, _shoeWords);
+    final mentionsOuter = _containsAny(norm, _outerWords);
+    final slot = _singleMentionedSlot(
+      top: mentionsTop,
+      bottom: mentionsBottom,
+      shoes: mentionsShoes,
+      outerwear: mentionsOuter,
+    );
+    if (slot == null) return null;
+
+    return StylistSwapRequest(
+      slot: slot,
+      bottomFamily:
+          slot == StylistSwapSlot.bottom ? StylistBottomRequest.parse(norm) : null,
+      shoeFamily:
+          slot == StylistSwapSlot.shoes ? _shoeFamilyFromText(norm) : null,
+    );
   }
 
   static StylistSwapSlot? _singleMentionedSlot({

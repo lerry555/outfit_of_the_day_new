@@ -462,6 +462,9 @@ class OutfitContextState {
     final genericActivity =
         activityHint == null ||
         (activityHint == 'travel' && !travel.transitOutfitExplicit);
+    final genericUrbanOutingSufficient = _genericUrbanOutingSufficient(
+      conversation,
+    );
     final destinationRequired = travel.travelMentioned
         ? travel.destinationRequiredForPrimaryOutfit
         : remote;
@@ -474,7 +477,11 @@ class OutfitContextState {
 
     if (travel.scopeNeedsClarification) {
       result.add('trip_scope');
-    } else if (remote && genericActivity) {
+    } else if (
+      remote &&
+      genericActivity &&
+      !genericUrbanOutingSufficient
+    ) {
       result.add('activity');
     }
 
@@ -500,6 +507,16 @@ class OutfitContextState {
       result.addAll(const ['destination', 'activity']);
     }
     return result.toSet().toList(growable: false);
+  }
+
+  static bool _genericUrbanOutingSufficient(String value) {
+    final text = StylistSemanticActivity.normalize(value);
+    // "idem do mesta/centra" is enough to style a generic urban outing, but
+    // it is deliberately NOT evidence of walking, dinner, a date, etc.
+    return RegExp(
+      r'\b(?:do|v|na)\s+(?:mest\w*|centr\w*)\b',
+      caseSensitive: false,
+    ).hasMatch(text);
   }
 
   static bool _isMultiDay(String value) => RegExp(

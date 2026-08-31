@@ -239,6 +239,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   }
 
   Set<String> _lastOutfitItemIds = const {};
+  List<Map<String, dynamic>> _currentOutfitItems = const <Map<String, dynamic>>[];
   Map<String, dynamic>? _cachedWeatherContext;
   DateTime? _weatherCachedAt;
   int? _lastResolvedEventTempC;
@@ -1576,6 +1577,19 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     // outfitu. Inak by „zmen mi tričko“ spadlo do generate_outfit a zmenilo všetko.
     final swapRequest = StylistSwapRequest.parse(userText);
     if (_conversationAlreadyHasOutfitCards() && swapRequest != null) {
+      // A reopened chat may have outfit cards while the ephemeral ID cache is
+      // empty. Rebuild the authoritative current outfit before a one-slot swap.
+      if (_lastOutfitItemIds.isEmpty) {
+        final restored = _resolvedCurrentOutfitItems();
+        final restoredIds = restored
+            .map((item) => (item['id'] ?? '').toString().trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        if (restoredIds.isNotEmpty) {
+          _currentOutfitItems = restored;
+          _lastOutfitItemIds = restoredIds;
+        }
+      }
       final event = _eventFromConversation(
         rawEvent: response['eventContext'] as Map<String, dynamic>?,
         fallbackLocation: UserLocationService.instance.cityLabel,
@@ -2022,39 +2036,71 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         outfitResult.flexibleOutfit,
       ),
     );
-    _lastOutfitItemIds = suggestedItems
+    final nextIds = suggestedItems
         .map((e) => (e['id'] ?? '').toString().trim())
         .where((id) => id.isNotEmpty)
         .toSet();
 
-    // Keď si používateľ výslovne vypýtal výmenu jedného kusu, nechceme znova
-    // opísať CELÝ outfit tými istými vetami (pôsobí to ako copy-paste). Dáme
-    // krátku, vecnú odpoveď zameranú na zmenený kúsok. Ak sa kvôli zladeniu
-    // muselo zmeniť viac kúskov, krátko to vysvetlíme (nie celý opis).
-    final swapSlot =
-        requestedSwap?.slot ??
-        (requestedBottomFamily != null ? StylistSwapSlot.bottom : null);
-    if (swapSlot != null) {
-      final keptCount = previousIds.intersection(_lastOutfitItemIds).length;
-      final onlyOneChanged =
-          previousIds.isNotEmpty && keptCount >= previousIds.length - 1;
-      final shortReply = onlyOneChanged
-          ? _shortSwapReply(suggestedItems: suggestedItems, slot: swapSlot)
-          : _multiChangeSwapReply(
-              suggestedItems: suggestedItems,
-              slot: swapSlot,
-            );
-      if (shortReply != null) {
+    if (requestedSwap != null && previousIds.isNotEmpty) {
+      final added = nextIds.difference(previousIds);
+      final removed = previousIds.difference(nextIds);
+      final strictSingleSlotDelta =
+          nextIds.length == previousIds.length &&
+          added.length == 1 &&
+          removed.length == 1;
+      if (!strictSingleSlotDelta) {
+        debugPrint(
+          'STYLIST CHAT explicit_swap_rejected reason=multi_item_delta '
+          'added=$added removed=$removed',
+        );
+        setState(() {
+          _messages.add(
+            const StylistChatMessage(
+              text:
+                  'Túto výmenu nechcem spraviť tak, že ti potichu zmením aj ďalšie kúsky. Skúsim radšej inú náhradu len za ten jeden kus.',
+              isUser: false,
+            ),
+          );
+          _isSending = false;
+        });
+        _scrollToBottom();
+        return;
+      }
+    }
+
+    _lastOutfitItemIds = nextIds;
+    _currentOutfitItems = List<Map<String, dynamic>>.unmodifiable(
+      suggestedItems.map((item) => Map<String, dynamic>.from(item)),
+    );
+
+    // An explicit one-slot request is a true local edit: every other item stays
+    // frozen internally, and the UI shows only the item the user asked about.
+    if (requestedSwap != null) {
+      final swapSlot = requestedSwap.slot;
+      const slotOrderFor = <StylistSwapSlot, int>{
+        StylistSwapSlot.top: 0,
+        StylistSwapSlot.outerwear: 1,
+        StylistSwapSlot.bottom: 2,
+        StylistSwapSlot.shoes: 3,
+      };
+      final swapDisplayItems = suggestedItems
+          .where((item) => _stylistWearSlotOrder(item) == slotOrderFor[swapSlot])
+          .toList(growable: false);
+      final shortReply = _shortSwapReply(
+        suggestedItems: suggestedItems,
+        slot: swapSlot,
+      );
+      if (shortReply != null && swapDisplayItems.isNotEmpty) {
         debugPrint(
           'STYLIST CHAT reply_source=local_swap_${swapSlot.name} '
-          'onlyOneChanged=$onlyOneChanged',
+          'display_items=${swapDisplayItems.length}',
         );
         setState(() {
           _messages.add(
             StylistChatMessage(
               text: shortReply,
               isUser: false,
-              suggestedItems: suggestedItems,
+              suggestedItems: swapDisplayItems,
             ),
           );
           _isSending = false;
@@ -3062,6 +3108,47 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return null;
   }
 
+  List<Map<String, dynamic>> _resolvedCurrentOutfitItems() {
+    if (_currentOutfitItems.isNotEmpty) {
+      return _currentOutfitItems
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+
+    var current = <Map<String, dynamic>>[];
+    for (final message in _messages) {
+      if (message.isUser || message.suggestedItems.isEmpty) continue;
+      final incoming = _sortStylistSuggestedItems(
+        message.suggestedItems
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: false),
+      );
+      if (incoming.length >= 2) {
+        current = incoming;
+        continue;
+      }
+      if (current.isEmpty || incoming.length != 1) continue;
+      final lower = message.text.toLowerCase();
+      final looksLikePartialSwap =
+          lower.contains('vymenil som') ||
+          lower.contains('prehodil som') ||
+          lower.contains('dal som ti');
+      if (!looksLikePartialSwap) continue;
+      final replacement = incoming.single;
+      final slot = _stylistWearSlotOrder(replacement);
+      final index = current.indexWhere(
+        (item) => _stylistWearSlotOrder(item) == slot,
+      );
+      if (index >= 0) {
+        current[index] = replacement;
+      } else {
+        current.add(replacement);
+      }
+      current = _sortStylistSuggestedItems(current);
+    }
+    return current;
+  }
+
   List<Map<String, String>> _currentDisplayedOutfitContext() {
     String valueFor(Map<String, dynamic> item, List<String> keys) {
       for (final key in keys) {
@@ -3089,9 +3176,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return '';
     }
 
-    for (final message in _messages.reversed) {
-      if (message.isUser || message.suggestedItems.isEmpty) continue;
-      return message.suggestedItems
+    final current = _resolvedCurrentOutfitItems();
+    if (current.isNotEmpty) {
+      return current
           .take(6)
           .map((item) {
             final name = valueFor(

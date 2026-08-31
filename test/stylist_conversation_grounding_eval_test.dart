@@ -23,7 +23,7 @@ void main() {
       );
 
       expect(state.activityLocationLabel, 'Žilina');
-      expect(state.activityHint, 'city_walk');
+      expect(state.activityHint, isNull);
       expect(state.unresolvedMaterialFields, isEmpty);
       expect(state.groundingStatus, 'sufficient');
     });
@@ -150,15 +150,15 @@ void main() {
       final corrected = OutfitContextState.buildFrom(
         conversation:
             'Zajtra idem do Žiliny na prechadzku po meste. '
-            'Nie, nejdeme do mesta, ideme do lesa.',
-        latestUserText: 'Nie, nejdeme do mesta, ideme do lesa.',
+            'Nie, nejdeme do mesta, ideme na prechádzku do lesa.',
+        latestUserText: 'Nie, nejdeme do mesta, ideme na prechádzku do lesa.',
         gpsCityLabel: 'Martin',
         previous: initial,
       );
       final completed = OutfitContextState.buildFrom(
         conversation:
             'Zajtra idem do Žiliny na prechadzku po meste. '
-            'Nie, nejdeme do mesta, ideme do lesa. '
+            'Nie, nejdeme do mesta, ideme na prechádzku do lesa. '
             'Ostávame pri Martine asi dve hodiny.',
         latestUserText: 'Ostávame pri Martine asi dve hodiny.',
         gpsCityLabel: 'Martin',

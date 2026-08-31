@@ -9,7 +9,7 @@
 class StylistSemanticActivity {
   const StylistSemanticActivity._();
 
-  static const String runtimeVersion = 'brain_v1_semantic_activity_v6';
+  static const String runtimeVersion = 'brain_v1_semantic_activity_v7';
 
   static const Set<String> canonicalActivities = <String>{
     'hike',
@@ -159,23 +159,24 @@ class StylistSemanticActivity {
     final naturePlaceIndex = text.lastIndexOf(
       RegExp(r'\b(?:les\w*|prirod\w*|luk\w*)\b', caseSensitive: false),
     );
-    final walkingMovement = _has(
+    // A destination verb (idem/ideme/ísť/pôjdeme) says WHERE the user is
+    // going, not HOW they will move there. Only explicit walking/sightseeing
+    // language may create a *_walk activity. This prevents generic city or
+    // forest outings from being rewritten as a made-up walk.
+    final explicitWalkingMovement = _has(
       text,
-      r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*|idem\w*|ideme\w*|ist\w*|pojd\w*|vyraz\w*)\b',
+      r'\b(?:prechadz\w*|prej\w*\s+sa|krac\w*|popozer\w*|sightseeing\w*|peso)\b',
     );
-    final explicitForestPath = _has(
-      text,
-      r'\b(?:do|v|po)\s+les\w*\b',
-    );
-    final cityWalkEvidence = cityPlaceIndex >= 0 && walkingMovement;
-    final natureWalkEvidence =
-        naturePlaceIndex >= 0 && (explicitForestPath || walkingMovement);
+    final cityWalkEvidence = cityPlaceIndex >= 0 && explicitWalkingMovement;
+    final natureWalkEvidence = naturePlaceIndex >= 0 && explicitWalkingMovement;
 
     if (cityWalkEvidence && natureWalkEvidence) {
       return naturePlaceIndex > cityPlaceIndex ? 'nature_walk' : 'city_walk';
     }
     if (cityWalkEvidence) return 'city_walk';
-    if (_has(text, r'\bpo\s+mete\b') ||
+    // Keep the known typo-tolerant sightseeing phrase, but never let bare
+    // "idem do mesta" become a walk.
+    if (_has(text, r'\bpopozer\w*\s+po\s+(?:mete|mest\w*)\b') ||
         _has(text, r'\bpopozer\w*\s+mest\w*\b')) {
       return 'city_walk';
     }

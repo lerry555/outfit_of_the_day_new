@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/utils/bottom_family_guidance.dart';
 import 'package:outfitofTheDay/utils/footwear_family_guidance.dart';
 import 'package:outfitofTheDay/utils/stylist_swap_request.dart';
+import 'package:outfitofTheDay/utils/stylist_semantic_activity.dart';
 import 'package:outfitofTheDay/Services/stylist_chat_service.dart';
 
 String _read(String path) => File(path).readAsStringSync();
@@ -188,6 +189,9 @@ void main() {
     expect(server, contains(r'currentOutfit=${JSON.stringify(currentOutfit)}'));
     expect(prompts, contains('samotné oznámenie plánu alebo aktivity'));
     expect(prompts, contains('Samotné sufficient grounding NIKDY neoprávňuje generate_outfit'));
+    expect(prompts, contains('NIKDY nepripisuj používateľovi'));
+    expect(prompts, contains('nesmieš ho v ďalšej odpovedi'));
+    expect(prompts, contains('NIE automaticky prechádzka'));
   });
 
   test('manual chat regressions keep local weather and quality guardrails', () {
@@ -213,6 +217,15 @@ void main() {
       reason: 'Explicit single-slot swaps must be global, not bottom-only.',
     );
     expect(matrix, contains('bool allowCrossFamilySameSlot = false'));
+    final swapScope = matrix.substring(
+      matrix.indexOf('abstract final class V2FlexibleSwapOrchestrator'),
+    );
+    expect(swapScope, contains('FunctionalSuitabilityEvaluatorV1.assessCandidate'));
+    expect(swapScope, contains('requiredOccasions: const <String>{}'));
+    expect(swapScope, isNot(contains('requiredOccasions: context.requiredOccasions')));
+    expect(screen, contains('swapDisplayItems'));
+    expect(screen, contains('_currentOutfitItems'));
+    expect(screen, contains('explicit_swap_rejected reason=multi_item_delta'));
     expect(
       adapters,
       contains('candidate.canonicalFamily != replaced.canonicalFamily &&'),
@@ -289,5 +302,33 @@ void main() {
     );
     expect(replaceWithShorts, isNotNull);
     expect(replaceWithShorts!.bottomFamily, BottomFamily.shorts);
+
+    final whichShorts = StylistSwapRequest.parse('ktore kratasy si mam dat?');
+    expect(whichShorts, isNotNull);
+    expect(whichShorts!.slot, StylistSwapSlot.bottom);
+    expect(whichShorts.bottomFamily, BottomFamily.shorts);
+
+    final whichTop = StylistSwapRequest.parse('ake tricko si mam dat?');
+    expect(whichTop, isNotNull);
+    expect(whichTop!.slot, StylistSwapSlot.top);
+
+    final whichShoes = StylistSwapRequest.parse('ktore topanky si mam obut?');
+    expect(whichShoes, isNotNull);
+    expect(whichShoes!.slot, StylistSwapSlot.shoes);
+
+    expect(StylistSwapRequest.parse('preco rifle a nie kratasy?'), isNull);
+  });
+
+  test('generic destination movement is not silently relabelled as walking', () {
+    expect(StylistSemanticActivity.resolveExplicit('idem von do mesta'), isNull);
+    expect(StylistSemanticActivity.resolveExplicit('idem do lesa'), isNull);
+    expect(
+      StylistSemanticActivity.resolveExplicit('idem na prechadzku po meste'),
+      'city_walk',
+    );
+    expect(
+      StylistSemanticActivity.resolveExplicit('idem na prechadzku do lesa'),
+      'nature_walk',
+    );
   });
 }

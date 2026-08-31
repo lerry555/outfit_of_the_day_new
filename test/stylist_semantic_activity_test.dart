@@ -35,6 +35,10 @@ void main() {
       );
       expect(
         StylistSemanticActivity.resolveExplicit('ideme do lesa'),
+        isNull,
+      );
+      expect(
+        StylistSemanticActivity.resolveExplicit('ideme na prechadzku do lesa'),
         'nature_walk',
       );
       expect(
@@ -55,16 +59,26 @@ void main() {
       );
     });
 
-    test('city-centre inflections plus movement resolve to city walk', () {
+    test('city walk requires explicit walking or sightseeing semantics', () {
       for (final sample in <String>[
-        'Dnes idem do centra v Žiline',
-        'budeme chodiť po centre',
-        'pôjdeme centrom mesta',
-        'ideme do mestského centra',
+        'prechádzame sa po centre',
+        'ideme na prechádzku centrom mesta',
+        'budeme popozerať mesto',
       ]) {
         expect(
           StylistSemanticActivity.resolveExplicit(sample),
           'city_walk',
+          reason: sample,
+        );
+      }
+      for (final sample in <String>[
+        'Dnes idem do centra v Žiline',
+        'ideme do mestského centra',
+        'ahoj idem von do mesta',
+      ]) {
+        expect(
+          StylistSemanticActivity.resolveExplicit(sample),
+          isNull,
           reason: sample,
         );
       }
@@ -174,9 +188,9 @@ void main() {
       expect(reconciled.unresolvedMaterialFields, isNot(contains('activity')));
     });
   });
-  test('plain city outing uses local semantics while a real trip stays remote', () {
+  test('plain city outing stays casual while a real trip stays remote', () {
     const local = 'ahoj idem von do mesta, poraď mi s outfitom';
-    expect(StylistSemanticActivity.resolveExplicit(local), 'city_walk');
+    expect(StylistSemanticActivity.resolveExplicit(local), isNull);
     expect(StylistSemanticActivity.looksLikeGenericTrip(local), isFalse);
     expect(StylistSemanticActivity.looksRemotePlan(local), isFalse);
     expect(
