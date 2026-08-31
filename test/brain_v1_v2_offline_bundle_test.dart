@@ -181,10 +181,24 @@ void main() {
     );
 
     expect(screen, contains("lower.contains('počas')"));
-    expect(
-      screen,
-      contains('requestedSwap: swapRequest.bottomFamily == null ? swapRequest : null'),
+    expect(screen, contains('requestedSwap: swapRequest'));
+    final service = _read('lib/Services/stylist_chat_outfit_service.dart');
+    final matrix = _read(
+      'lib/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart',
     );
+    final adapters = _read(
+      'lib/domain/wardrobe_v2/wardrobe_v2_adapters.dart',
+    );
+    expect(
+      service,
+      contains('allowCrossFamilySameSlot: requestedSwap.bottomFamily != null'),
+    );
+    expect(matrix, contains('bool allowCrossFamilySameSlot = false'));
+    expect(
+      adapters,
+      contains('candidate.canonicalFamily != replaced.canonicalFamily &&'),
+    );
+    expect(adapters, contains('!allowCrossFamilySameSlot'));
     expect(weatherTip, contains('snapshot.mainChipTempC'));
     expect(policy, contains('tempC >= 28'));
     expect(policy, contains("type.contains('jean') || type.contains('denim')"));

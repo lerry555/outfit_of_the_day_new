@@ -1585,11 +1585,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         clientContext: clientContext,
         event: event,
         forceDifferent: true,
-        // „Daj mi radšej kraťasy“ is a constrained re-compose: changing
-        // the bottom may legitimately require a different top/shoes for a good
-        // outfit. Keep strict one-piece swap only when no family was requested.
-        requestedSwap: swapRequest.bottomFamily == null ? swapRequest : null,
-        // Pri spodku s konkrétnou rodinou necháme generovanie rešpektovať voľbu.
+        // Explicit single-slot requests keep every other displayed item
+        // frozen. A requested family (e.g. jeans -> shorts) only widens which
+        // lower-body candidates may replace the current bottom.
+        requestedSwap: swapRequest,
+        // Pri spodku s konkrétnou rodinou necháme swap rešpektovať voľbu.
         requestedBottomFamily: swapRequest.slot == StylistSwapSlot.bottom
             ? swapRequest.bottomFamily
             : null,

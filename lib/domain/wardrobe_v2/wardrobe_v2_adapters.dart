@@ -140,6 +140,7 @@ abstract final class SwapCandidateSelectorV2 {
     Set<String> requiredOccasions = const {},
     Set<String> requiredFunctions = const {},
     Iterable<WardrobeItemV2> remainingOutfit = const [],
+    bool allowCrossFamilySameSlot = false,
   }) => candidates.where((candidate) {
     if (minimumFormality != null && candidate.formality < minimumFormality) {
       return false;
@@ -156,14 +157,16 @@ abstract final class SwapCandidateSelectorV2 {
       return false;
     }
     if (candidate.canonicalType == replaced.canonicalType) return true;
-    if (candidate.canonicalFamily != replaced.canonicalFamily) return false;
-    if (candidate.accessoryGroup != replaced.accessoryGroup) return false;
-    if (candidate.bodySlots
+    final sharesBodySlot = candidate.bodySlots
         .toSet()
         .intersection(replaced.bodySlots.toSet())
-        .isEmpty) {
+        .isNotEmpty;
+    if (!sharesBodySlot) return false;
+    if (candidate.canonicalFamily != replaced.canonicalFamily &&
+        !allowCrossFamilySameSlot) {
       return false;
     }
+    if (candidate.accessoryGroup != replaced.accessoryGroup) return false;
     if (candidate.layerPosition != replaced.layerPosition &&
         candidate.layerPosition != 'not_applicable') {
       return false;

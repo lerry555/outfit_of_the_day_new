@@ -281,6 +281,7 @@ abstract final class V2FlexibleSwapOrchestrator {
     required String itemId,
     required Iterable<ResolvedWardrobeItemV2> wardrobe,
     required V2CandidateMatrixContext context,
+    bool allowCrossFamilySameSlot = false,
   }) {
     final target = current.items.where((x) => x.itemId == itemId).firstOrNull;
     if (target == null) return null;
@@ -301,6 +302,7 @@ abstract final class V2FlexibleSwapOrchestrator {
               context.requiredFunctions,
             ),
             remainingOutfit: remaining,
+            allowCrossFamilySameSlot: allowCrossFamilySameSlot,
           ).isNotEmpty,
         );
     V2FlexibleOutfitResult? best;

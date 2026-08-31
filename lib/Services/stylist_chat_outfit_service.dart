@@ -449,6 +449,7 @@ class StylistChatOutfitService {
             itemId: target.itemId,
             wardrobe: resolved,
             context: context,
+            allowCrossFamilySameSlot: requestedSwap.bottomFamily != null,
           ),
         );
       }
