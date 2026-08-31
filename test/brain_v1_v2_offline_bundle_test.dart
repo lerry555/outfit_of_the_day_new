@@ -170,4 +170,28 @@ void main() {
       reason: 'Progress transport must never become a selection authority.',
     );
   });
+  test('manual chat regressions keep local weather and quality guardrails', () {
+    final screen = _read('lib/screens/stylist_chat_screen.dart');
+    final weatherTip = _read('lib/utils/stylist_weather_tip.dart');
+    final policy = _read(
+      'lib/domain/wardrobe_v2/outfit_suitability_policy_v2.dart',
+    );
+    final matrix = _read(
+      'lib/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart',
+    );
+
+    expect(screen, contains("lower.contains('počas')"));
+    expect(
+      screen,
+      contains('requestedSwap: swapRequest.bottomFamily == null ? swapRequest : null'),
+    );
+    expect(weatherTip, contains('snapshot.mainChipTempC'));
+    expect(policy, contains('tempC >= 28'));
+    expect(policy, contains("type.contains('jean') || type.contains('denim')"));
+    expect(matrix, contains('repeatedNonNeutralPrimary'));
+    expect(
+      matrix,
+      isNot(contains("'primaryColorHarmony': repeatedPrimary ? 0.8 : 0")),
+    );
+  });
 }

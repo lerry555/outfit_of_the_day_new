@@ -448,7 +448,22 @@ abstract final class OutfitSuitabilityPolicyV2 {
         if (tempC >= 24 && warmth >= 5) score += strongPenalty;
         if (tempC <= 10 && warmth >= 5) score += 1.2;
       }
-      if (isShorts(type) && tempC <= 10) score += strongPenalty;
+      if (isShorts(type)) {
+        if (tempC <= 10) {
+          score += strongPenalty;
+        } else if (tempC >= 28) {
+          score += 3.0;
+        } else if (tempC >= 25) {
+          score += 1.5;
+        }
+      }
+      // Jeans are still valid in warm weather, but at real heat they should
+      // not beat a suitable shorts option merely on generic style scoring.
+      if (tempC >= 28 &&
+          item.bodySlots.contains('lower_body') &&
+          (type.contains('jean') || type.contains('denim'))) {
+        score += lightPenalty;
+      }
       if (isOpenFootwear(type) && tempC <= 8) score += majorPenalty;
     }
     if (items.isNotEmpty) {

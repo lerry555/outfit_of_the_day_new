@@ -209,7 +209,18 @@ abstract final class V2FlexibleOutfitScorer {
     final accent = items
         .expand((x) => x.colorProfile.accents.map((c) => c.family))
         .toSet();
-    final repeatedPrimary = primary.toSet().length < primary.length;
+    final primaryCounts = <String, int>{};
+    for (final family in primary) {
+      final key = family.trim().toLowerCase();
+      if (key.isEmpty || key == 'unknown') continue;
+      primaryCounts[key] = (primaryCounts[key] ?? 0) + 1;
+    }
+    const neutralFamilies = <String>{
+      'black', 'white', 'gray', 'grey', 'beige', 'cream', 'brown', 'navy',
+    };
+    final repeatedNonNeutralPrimary = primaryCounts.entries.any(
+      (entry) => entry.value > 1 && !neutralFamilies.contains(entry.key),
+    );
     final accentEcho = accent.any(primary.contains);
     final formalities = items.map((x) => x.formality).toList();
     final formalitySpread = formalities.isEmpty
@@ -244,7 +255,7 @@ abstract final class V2FlexibleOutfitScorer {
       'dressCode': outfit.completeness.dressCodeComplete ? 2 : -8,
       'functional': outfit.completeness.functionalComplete ? 2 : -8,
       'formalityCoherence': formalitySpread <= 3 ? 1.5 : -2,
-      'primaryColorHarmony': repeatedPrimary ? 0.8 : 0,
+      'primaryColorHarmony': repeatedNonNeutralPrimary ? -1.2 : 0,
       'accentCoordination': accentEcho ? 0.8 : 0,
       'metalHardware': metals.length <= 1 ? 0.5 : 0,
       'setCompatibility': contextualSet,

@@ -48,3 +48,21 @@ test("a genuinely unknown destination still allows one clarification", () => {
     "clarify",
   );
 });
+
+test("non-remote city walk uses GPS instead of asking destination", () => {
+  const state = {
+    groundingStatus: "sufficient",
+    unresolvedMaterialFields: [],
+    gpsDefaultCity: "Martin",
+    routineLocalOutfit: false,
+    remoteActivityPlanned: false,
+    activityLocationKnown: false,
+    activityHint: "city_walk",
+    clarifiedMaterialFields: [],
+  };
+
+  assert.equal(
+    resolveOutfitAction("clarify", {impactFields: ["location"]}, state),
+    "generate_outfit",
+  );
+});

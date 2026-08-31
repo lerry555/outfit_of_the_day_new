@@ -1585,9 +1585,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         clientContext: clientContext,
         event: event,
         forceDifferent: true,
-        requestedSwap: swapRequest,
-        // Pri spodku s konkrétnou rodinou necháme aj fallback generovanie
-        // rešpektovať voľbu, ak by sa swap nepodaril.
+        // „Daj mi radšej kraťasy“ is a constrained re-compose: changing
+        // the bottom may legitimately require a different top/shoes for a good
+        // outfit. Keep strict one-piece swap only when no family was requested.
+        requestedSwap: swapRequest.bottomFamily == null ? swapRequest : null,
+        // Pri spodku s konkrétnou rodinou necháme generovanie rešpektovať voľbu.
         requestedBottomFamily: swapRequest.slot == StylistSwapSlot.bottom
             ? swapRequest.bottomFamily
             : null,
@@ -2772,6 +2774,17 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         lower.contains('bude prsa') ||
         lower.contains('bude dáž') ||
         lower.contains('bude daz')) {
+      return true;
+    }
+    // Generic questions such as „aké hlásia počasie?“ must use the same
+    // Open-Meteo snapshot as the rest of the app instead of free-form model
+    // prose, otherwise a daily maximum can be mistaken for the current temp.
+    if (lower.contains('počas') ||
+        lower.contains('pocas') ||
+        lower.contains('predpove') ||
+        lower.contains('hlásia') ||
+        lower.contains('hlasia') ||
+        lower.contains('weather')) {
       return true;
     }
     return false;

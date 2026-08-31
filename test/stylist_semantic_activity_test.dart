@@ -174,4 +174,14 @@ void main() {
       expect(reconciled.unresolvedMaterialFields, isNot(contains('activity')));
     });
   });
+  test('plain city outing uses local semantics while a real trip stays remote', () {
+    const local = 'ahoj idem von do mesta, poraď mi s outfitom';
+    expect(StylistSemanticActivity.resolveExplicit(local), 'city_walk');
+    expect(StylistSemanticActivity.looksLikeGenericTrip(local), isFalse);
+    expect(StylistSemanticActivity.looksRemotePlan(local), isFalse);
+    expect(
+      StylistSemanticActivity.looksRemotePlan('zajtra idem na výlet'),
+      isTrue,
+    );
+  });
 }

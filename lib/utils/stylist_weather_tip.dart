@@ -246,20 +246,31 @@ class StylistWeatherTipBuilder {
     final hour = eventHour;
     final temp = _tempForHour(snapshot, hour);
     final place = (locationLabel ?? snapshot.cityName).split(',').first.trim();
+    final placePhrase = place.isNotEmpty ? SlovakCityLocative.inCity(place) : '';
+    final now = DateTime.now();
+    final isToday = snapshot.date.year == now.year &&
+        snapshot.date.month == now.month &&
+        snapshot.date.day == now.day;
     final buffer = StringBuffer();
 
     if (hour != null) {
-      if (place.isNotEmpty) {
-        buffer.write('V $place okolo $hour:00 bude približne $temp °C');
+      if (placePhrase.isNotEmpty) {
+        buffer.write('$placePhrase okolo $hour:00 bude približne $temp °C');
       } else {
         buffer.write('Okolo $hour:00 bude približne $temp °C');
       }
+    } else if (isToday) {
+      if (placePhrase.isNotEmpty) {
+        buffer.write('$placePhrase je teraz okolo ${snapshot.mainChipTempC} °C');
+      } else {
+        buffer.write('Teraz je okolo ${snapshot.mainChipTempC} °C');
+      }
     } else if (snapshot.morningTempC != null) {
       buffer.write('Ráno bude okolo ${snapshot.morningTempC} °C');
-      if (place.isNotEmpty) buffer.write(' v $place');
+      if (placePhrase.isNotEmpty) buffer.write(' $placePhrase');
     } else {
       buffer.write('Teplota bude okolo $temp °C');
-      if (place.isNotEmpty) buffer.write(' v $place');
+      if (placePhrase.isNotEmpty) buffer.write(' $placePhrase');
     }
     buffer.write('.');
 
