@@ -60,7 +60,6 @@ class StylistSwapRequest {
     'mikina',
     'mikinu',
     'hoodie',
-    'top',
   ];
   static const List<String> _bottomWords = [
     'nohav',
@@ -135,7 +134,10 @@ class StylistSwapRequest {
       );
     }
 
-    final mentionsTop = _containsAny(norm, _topWords);
+    // "top" is an English garment word only when it is a standalone token.
+    // Substring matching would also classify Slovak "topanky" as a top.
+    final mentionsTop =
+        _containsAny(norm, _topWords) || RegExp(r'\btop\b').hasMatch(norm);
     final mentionsBottom = _containsAny(norm, _bottomWords);
     final mentionsShoes = _containsAny(norm, _shoeWords);
     final mentionsOuter = _containsAny(norm, _outerWords);
