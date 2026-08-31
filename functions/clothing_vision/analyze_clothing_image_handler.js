@@ -60,7 +60,14 @@ function httpError(status, message, code) {
 function createAnalyzeClothingImageHandler(deps) {
   const logger = deps.logger || {info() {}, error() {}, warn() {}};
   const env = deps.env || process.env;
-  const kbIndex = deps.kbIndex || createKbIndex();
+  // The legacy/V1 validator is the only consumer of the knowledge-base index.
+  // Keep it lazy so Firebase can load this module while deploying unrelated
+  // functions (for example stylistChat) without requiring vision build artifacts.
+  let kbIndex = deps.kbIndex || null;
+  function getKbIndex() {
+    if (!kbIndex) kbIndex = createKbIndex();
+    return kbIndex;
+  }
 
   async function authorizeRequest(req) {
     const header = String(req.headers.authorization || "");
@@ -242,7 +249,7 @@ function createAnalyzeClothingImageHandler(deps) {
         {analyzerVersion: gemini.analyzerVersion, modelVersion: gemini.modelId},
       ) : geminiResult.parsed;
       const validated = useV2 ? validateAnalyzerV2(domainResult) :
-        validateProductionGeminiOutput(geminiResult.parsed, {kbIndex});
+        validateProductionGeminiOutput(geminiResult.parsed, {kbIndex: getKbIndex()});
       if (!validated.ok) {
         logger.error("analyzeClothingImage validation failed", {
           errors: validated.errors,
