@@ -149,26 +149,37 @@ class StylistSemanticActivity {
     if (_has(text, r'\b(?:pamiat\w*|sightseeing\w*|prehliadk\w*)\b')) {
       return 'city_walk';
     }
-    if (_has(text, r'\b(?:centr\w*|mest\w*)\b') &&
-        _has(
-          text,
-          r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*|idem\w*|ideme\w*|ist\w*|pojd\w*)\b',
-        )) {
-      return 'city_walk';
+
+    // Corrections can contain both the rejected and replacement place, e.g.
+    // "nejdeme do mesta, ideme do lesa". When both city and nature walking
+    // evidence are present, the later mentioned place is the authoritative one.
+    final cityPlaceIndex = text.lastIndexOf(
+      RegExp(r'\b(?:centr\w*|mest\w*)\b', caseSensitive: false),
+    );
+    final naturePlaceIndex = text.lastIndexOf(
+      RegExp(r'\b(?:les\w*|prirod\w*|luk\w*)\b', caseSensitive: false),
+    );
+    final walkingMovement = _has(
+      text,
+      r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*|idem\w*|ideme\w*|ist\w*|pojd\w*|vyraz\w*)\b',
+    );
+    final explicitForestPath = _has(
+      text,
+      r'\b(?:do|v|po)\s+les\w*\b',
+    );
+    final cityWalkEvidence = cityPlaceIndex >= 0 && walkingMovement;
+    final natureWalkEvidence =
+        naturePlaceIndex >= 0 && (explicitForestPath || walkingMovement);
+
+    if (cityWalkEvidence && natureWalkEvidence) {
+      return naturePlaceIndex > cityPlaceIndex ? 'nature_walk' : 'city_walk';
     }
+    if (cityWalkEvidence) return 'city_walk';
     if (_has(text, r'\bpo\s+mete\b') ||
         _has(text, r'\bpopozer\w*\s+mest\w*\b')) {
       return 'city_walk';
     }
-
-    if (_has(text, r'\b(?:do|v|po)\s+les\w*\b')) return 'nature_walk';
-    if (_has(text, r'\b(?:les\w*|prirod\w*|luk\w*)\b') &&
-        _has(
-          text,
-          r'\b(?:prechadz\w*|chod\w*|idem\w*|ideme\w*|ist\w*|pojd\w*|vyraz\w*)\b',
-        )) {
-      return 'nature_walk';
-    }
+    if (natureWalkEvidence) return 'nature_walk';
 
     if (_has(
       text,
