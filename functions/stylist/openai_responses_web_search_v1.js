@@ -50,7 +50,8 @@ function buildConversationBrainResponsesBodyV1({
     include: ["web_search_call.action.sources"],
     reasoning: {effort},
     max_output_tokens: maxTokens,
-    text: {format: {type: "json_object"}},
+    // Hosted web search is incompatible with Responses JSON mode. The Brain
+    // prompt itself requires JSON and the server still parses/validates it.
     store: false,
   };
 }
