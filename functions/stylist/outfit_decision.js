@@ -46,7 +46,9 @@ function materialFieldAlreadyGrounded(field, state) {
   if (!state || typeof state !== "object") return false;
   const canonical = canonicalMaterialField(field);
   if (canonical === "destination") {
-    return state.activityLocationKnown === true;
+    if (state.activityLocationKnown === true) return true;
+    const gps = String(state.gpsDefaultCity || "").trim();
+    return gps.length > 0 && state.remoteActivityPlanned !== true;
   }
   if (canonical === "activity") {
     return Boolean(String(state.activityHint || state.occasion || "").trim());
@@ -290,15 +292,19 @@ function resolveOutfitAction(action, decision, clarificationState) {
         resolvedNow.has(canonical) ||
         materialFieldAlreadyGrounded(canonical, state);
     });
+  const activityReady =
+    Boolean(String(state.activityHint || state.occasion || "").trim());
   const routineOutfitReady =
     state.groundingStatus !== "needs_grounding" &&
-    state.routineLocalOutfit === true &&
-    state.activityLocationKnown === true &&
-    Boolean(String(state.activityHint || state.occasion || "").trim());
+    activityReady &&
+    ((state.routineLocalOutfit === true && state.activityLocationKnown === true) ||
+      (state.remoteActivityPlanned !== true &&
+        Boolean(String(state.gpsDefaultCity || "").trim())));
 
-  // For a routine local outfit, GPS-backed location is already authoritative.
-  // If the Brain nevertheless asks only for facts that are already grounded,
-  // proceed instead of displaying another "kam sa chystáš?" loop.
+  // For a local outfit, GPS-backed location is already authoritative even when
+  // the user says simply "idem von do mesta" instead of one of the historical
+  // routine phrases. Only an actual remote/travel signal should require a
+  // destination clarification.
   if (routineOutfitReady && allRequestedMaterialAlreadyHandled) {
     return "generate_outfit";
   }
