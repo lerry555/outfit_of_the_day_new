@@ -189,10 +189,63 @@ function explanationPayload(normalized, decision) {
   });
 }
 
-function deterministicExplanation(decision) {
-  return decision.action === "reject_all" ?
-    "Z toho, čo máš, teraz neviem poskladať outfit, ktorý by som ti s čistým svedomím odporučil. Radšej ti poviem, čo v ňom chýba, než aby som predstieral, že je všetko v poriadku." :
-    "Toto je z tvojho šatníka najsilnejšia dostupná kombinácia. Ak je niektorý kúsok kompromis, ber ho ako najlepšiu aktuálnu možnosť, nie ako ideálne riešenie.";
+function listUserFacingItems(items) {
+  const names = (Array.isArray(items) ? items : [])
+    .map((item) => cleanText(item && item.name, 120))
+    .filter(Boolean);
+  if (!names.length) return "";
+  if (names.length === 1) return names[0];
+  if (names.length === 2) return `${names[0]} a ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")} a ${names[names.length - 1]}`;
+}
+
+function userFacingWeatherSummary(value) {
+  const raw = cleanText(value, 240);
+  if (!raw) return "";
+  const parts = [];
+  const temp = raw.match(/(-?\d+(?:\.\d+)?)\s*C\b/i);
+  if (temp) parts.push(`približne ${temp[1].replace(".", ",")} °C`);
+  if (/\brain=true\b/i.test(raw)) parts.push("s dažďom");
+  else if (/\brain=false\b/i.test(raw)) parts.push("bez dažďa");
+  if (/\bwind=true\b/i.test(raw)) parts.push("s vetrom");
+  return parts.join(", ");
+}
+
+function deterministicExplanation(decision, normalized = null) {
+  if (decision.action === "reject_all") {
+    return "Z toho, čo máš, teraz neviem poskladať outfit, ktorý by som ti s čistým svedomím odporučil. Radšej ti poviem, čo v ňom chýba, než aby som predstieral, že je všetko v poriadku.";
+  }
+  const selected = normalized && Array.isArray(normalized.frozenCandidates) ?
+    normalized.frozenCandidates.find((candidate) =>
+      candidate.candidateId === decision.selectedCandidateId) : null;
+  if (!selected) {
+    return "Z tvojho šatníka som vybral najsilnejšiu dostupnú kombináciu pre túto situáciu.";
+  }
+
+  const sentences = [];
+  const itemList = listUserFacingItems(selected.presentationItems);
+  if (itemList) sentences.push(`Vybral som ${itemList}.`);
+  const weather = userFacingWeatherSummary(
+    normalized.resolvedContext && normalized.resolvedContext.weather,
+  );
+  if (weather) sentences.push(`Počítam pritom s ${weather}.`);
+
+  const firstCompromise = selected.compromiseDetails && selected.compromiseDetails[0];
+  if (firstCompromise) {
+    const itemName = cleanText(firstCompromise.itemName, 120) || "jeden kúsok";
+    const ideal = cleanText(firstCompromise.idealReplacementDescription, 180);
+    sentences.push(
+      ideal ?
+        `${itemName} je tu kompromis; ideálnejšia náhrada by bola ${ideal}.` :
+        `${itemName} je tu najlepší dostupný kompromis.`,
+    );
+  } else if (selected.compromiseClassification &&
+      selected.compromiseClassification.level !== "none") {
+    sentences.push("Je to najlepšia dostupná možnosť, hoci nie úplne bez kompromisu.");
+  } else {
+    sentences.push("Z toho, čo máš v šatníku, je to pre túto situáciu najsilnejšia dostupná kombinácia.");
+  }
+  return sentences.join(" ");
 }
 
 function isUserFacingExplanationSafe(value) {
@@ -263,7 +316,8 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
       const explanationResult = await explanationClient.run(explanationPayload(normalized, decision));
       const explanationValid = explanationResult.ok &&
         isUserFacingExplanationSafe(explanationResult.value.explanation);
-      const explanation = explanationValid ? explanationResult.value.explanation : deterministicExplanation(decision);
+      const explanation = explanationValid ? explanationResult.value.explanation :
+        deterministicExplanation(decision, normalized);
       return Object.freeze({
         contractVersion: CONTRACT_VERSION,
         action: decision.action,

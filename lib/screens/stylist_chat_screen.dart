@@ -1451,6 +1451,18 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     _mergeOutfitContextFromResponse(response);
 
     var effectiveAction = action;
+    if (effectiveAction == 'generate_outfit' &&
+        !_conversationAlreadyHasOutfitCards() &&
+        StylistConversationSignals.isContextOnlyPlanStatement(userText)) {
+      // A declared plan is context only. Grounding becoming sufficient does
+      // not mean the user asked us to style them. This client invariant is a
+      // safety net even if a conversational model over-eagerly requests D/R.
+      effectiveAction = 'chat';
+      response['reply'] = 'Jasné 🙂';
+      debugPrint(
+        'STYLIST CHAT generation_suppressed reason=context_only_plan',
+      );
+    }
     var requestedImpactFields = response['impactFields'] is List
         ? (response['impactFields'] as List)
               .map((value) => value.toString().trim().toLowerCase())
@@ -3050,6 +3062,62 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return null;
   }
 
+  List<Map<String, String>> _currentDisplayedOutfitContext() {
+    String valueFor(Map<String, dynamic> item, List<String> keys) {
+      for (final key in keys) {
+        final raw = item[key];
+        if (raw == null) continue;
+        if (raw is List) {
+          final value = raw
+              .map((part) => part.toString().trim())
+              .where((part) => part.isNotEmpty)
+              .take(3)
+              .join(', ');
+          if (value.isNotEmpty) return value;
+          continue;
+        }
+        if (raw is Map) {
+          for (final nestedKey in const ['family', 'name', 'label']) {
+            final nested = raw[nestedKey]?.toString().trim() ?? '';
+            if (nested.isNotEmpty) return nested;
+          }
+          continue;
+        }
+        final value = raw.toString().trim();
+        if (value.isNotEmpty) return value;
+      }
+      return '';
+    }
+
+    for (final message in _messages.reversed) {
+      if (message.isUser || message.suggestedItems.isEmpty) continue;
+      return message.suggestedItems
+          .take(6)
+          .map((item) {
+            final name = valueFor(
+              item,
+              const ['name', 'displayName', 'title', 'canonicalType', 'type'],
+            );
+            final type = valueFor(
+              item,
+              const ['canonicalType', 'type', 'subType', 'category'],
+            );
+            final color = valueFor(
+              item,
+              const ['primaryColor', 'color', 'colorName', 'colors'],
+            );
+            return <String, String>{
+              if (name.isNotEmpty) 'name': name,
+              if (type.isNotEmpty) 'type': type,
+              if (color.isNotEmpty) 'color': color,
+            };
+          })
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
+    }
+    return const <Map<String, String>>[];
+  }
+
   Map<String, dynamic> _buildClientContext({String? cityName}) {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -3064,6 +3132,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     );
     final lat = UserLocationService.instance.latitude;
     final lon = UserLocationService.instance.longitude;
+    final currentOutfit = _currentDisplayedOutfitContext();
     return <String, dynamic>{
       'now': now.toIso8601String(),
       'todayDateKey': dateKey(today),
@@ -3076,6 +3145,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       },
       if (eventDestination != null && eventDestination.isNotEmpty)
         'eventDestination': eventDestination,
+      if (currentOutfit.isNotEmpty) 'currentOutfit': currentOutfit,
       if (lat != null) 'latitude': lat,
       if (lon != null) 'longitude': lon,
     };

@@ -78,15 +78,35 @@ test("Anthropic instructions forbid IDs and validation/scoring jargon", () => {
   }
 });
 
-test("deterministic explanation fallback remains user-facing", () => {
-  const selected = deterministicExplanation({action: "select_candidate"});
-  assert.equal(selected.includes("kontrolou"), false);
-  assert.equal(selected.includes("najsilnejšia dostupná kombinácia"), true);
+test("deterministic explanation fallback remains grounded in selected pieces and weather", () => {
+  const normalized = normalizeRequest(request(), owned);
+  const selected = deterministicExplanation({
+    action: "select_candidate",
+    selectedCandidateId: "candidate-internal-only",
+  }, normalized);
+  assert.equal(selected.includes("biela košeľa"), true);
+  assert.equal(selected.includes("sivé nohavice"), true);
+  assert.equal(selected.includes("18 °C"), true);
+  assert.equal(selected.includes("pružné turistické nohavice"), true);
   assert.equal(selected.includes("candidate"), false);
   assert.equal(
     deterministicExplanation({action: "reject_all"}).includes("reason code"),
     false,
   );
+});
+
+test("deterministic explanation never invents a compromise for a clean selected outfit", () => {
+  const clean = request();
+  clean.frozenCandidates[0].compromiseClassification = {level: "none", reasonCodes: []};
+  clean.frozenCandidates[0].compromiseDetails = [];
+  const normalized = normalizeRequest(clean, owned);
+  const selected = deterministicExplanation({
+    action: "select_candidate",
+    selectedCandidateId: "candidate-internal-only",
+  }, normalized);
+  assert.equal(selected.includes("kompromis"), false);
+  assert.equal(selected.includes("18 °C"), true);
+  assert.equal(selected.includes("najsilnejšia dostupná kombinácia"), true);
 });
 
 test("implementation jargon is rejected from user-facing explanation prose", () => {

@@ -3642,6 +3642,16 @@ exports.attachCleanImageOnWardrobeWrite = functions
         "",
     ).trim();
     const eventDestination = String(clientContext.eventDestination || "").trim();
+    const currentOutfit = Array.isArray(clientContext.currentOutfit) ?
+      clientContext.currentOutfit.slice(0, 6).map((raw) => {
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+        const item = {};
+        for (const key of ["name", "type", "color"]) {
+          const value = String(raw[key] || "").trim().slice(0, 120);
+          if (value) item[key] = value;
+        }
+        return Object.keys(item).length ? item : null;
+      }).filter(Boolean) : [];
     const lat = clientContext.latitude;
     const lon = clientContext.longitude;
     const parts = [];
@@ -3656,6 +3666,9 @@ exports.attachCleanImageOnWardrobeWrite = functions
       parts.push('weatherFromApp=true (NEPÝTAJ usera na počasie)');
     }
     if (eventDestination) parts.push(`eventDestination=${eventDestination}`);
+    if (currentOutfit.length) {
+      parts.push(`currentOutfit=${JSON.stringify(currentOutfit)}`);
+    }
     if (lat != null && lon != null) parts.push(`coords=${lat},${lon}`);
     return parts.length > 0 ? parts.join(", ") : JSON.stringify(clientContext);
   }

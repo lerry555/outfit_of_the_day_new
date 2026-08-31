@@ -173,6 +173,23 @@ void main() {
       reason: 'Progress transport must never become a selection authority.',
     );
   });
+  test('conversation plan statements cannot silently authorize outfit generation', () {
+    final signals = _read('lib/utils/stylist_conversation_signals.dart');
+    final screen = _read('lib/screens/stylist_chat_screen.dart');
+    final prompts = _read('functions/stylist/chat_prompts.js');
+    final server = _read('functions/index.js');
+
+    expect(signals, contains('isContextOnlyPlanStatement'));
+    expect(signals, contains('ideme'));
+    expect(signals, contains('porad'));
+    expect(screen, contains('generation_suppressed reason=context_only_plan'));
+    expect(screen, contains("'currentOutfit': currentOutfit"));
+    expect(server, contains('clientContext.currentOutfit'));
+    expect(server, contains('currentOutfit=${JSON.stringify(currentOutfit)}'));
+    expect(prompts, contains('samotné oznámenie plánu alebo aktivity'));
+    expect(prompts, contains('Samotné sufficient grounding NIKDY neoprávňuje generate_outfit'));
+  });
+
   test('manual chat regressions keep local weather and quality guardrails', () {
     final screen = _read('lib/screens/stylist_chat_screen.dart');
     final weatherTip = _read('lib/utils/stylist_weather_tip.dart');
