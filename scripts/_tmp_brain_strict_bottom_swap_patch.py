@@ -66,11 +66,19 @@ replace_once(
 
 replace_once(
     "lib/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart",
-    """    required Iterable<ResolvedWardrobeItemV2> wardrobe,
+    """abstract final class V2FlexibleSwapOrchestrator {
+  static V2FlexibleOutfitResult? replace({
+    required V2FlexibleOutfitResult current,
+    required String itemId,
+    required Iterable<ResolvedWardrobeItemV2> wardrobe,
     required V2CandidateMatrixContext context,
   }) {
 """,
-    """    required Iterable<ResolvedWardrobeItemV2> wardrobe,
+    """abstract final class V2FlexibleSwapOrchestrator {
+  static V2FlexibleOutfitResult? replace({
+    required V2FlexibleOutfitResult current,
+    required String itemId,
+    required Iterable<ResolvedWardrobeItemV2> wardrobe,
     required V2CandidateMatrixContext context,
     bool allowCrossFamilySameSlot = false,
   }) {
@@ -78,10 +86,16 @@ replace_once(
 )
 replace_once(
     "lib/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart",
-    """            remainingOutfit: remaining,
+    """            requiredFunctions: target.item.outfitFunctions.toSet().intersection(
+              context.requiredFunctions,
+            ),
+            remainingOutfit: remaining,
           ).isNotEmpty,
 """,
-    """            remainingOutfit: remaining,
+    """            requiredFunctions: target.item.outfitFunctions.toSet().intersection(
+              context.requiredFunctions,
+            ),
+            remainingOutfit: remaining,
             allowCrossFamilySameSlot: allowCrossFamilySameSlot,
           ).isNotEmpty,
 """,
@@ -89,11 +103,17 @@ replace_once(
 
 replace_once(
     "lib/Services/stylist_chat_outfit_service.dart",
-    """            wardrobe: resolved,
+    """          V2FlexibleSwapOrchestrator.replace(
+            current: current,
+            itemId: target.itemId,
+            wardrobe: resolved,
             context: context,
           ),
 """,
-    """            wardrobe: resolved,
+    """          V2FlexibleSwapOrchestrator.replace(
+            current: current,
+            itemId: target.itemId,
+            wardrobe: resolved,
             context: context,
             allowCrossFamilySameSlot: requestedSwap.bottomFamily != null,
           ),
