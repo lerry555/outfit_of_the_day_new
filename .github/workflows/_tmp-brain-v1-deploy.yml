@@ -57,6 +57,20 @@ jobs:
           test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
           test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
 
+      - name: Narrow Firebase discovery to stylistChat
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp functions/index.js functions/index.full.js
+          cat > functions/index.js <<'NODE'
+          "use strict";
+          const full = require("./index.full");
+          if (!full || !full.stylistChat) {
+            throw new Error("stylistChat_export_missing");
+          }
+          exports.stylistChat = full.stylistChat;
+          NODE
+
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@latest
 
