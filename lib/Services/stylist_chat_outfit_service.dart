@@ -449,7 +449,11 @@ class StylistChatOutfitService {
             itemId: target.itemId,
             wardrobe: resolved,
             context: context,
-            allowCrossFamilySameSlot: requestedSwap.bottomFamily != null,
+            // Any explicit one-slot swap may consider another compatible
+            // family in the same body slot. This is a global swap invariant,
+            // not a bottom/shorts exception; every other displayed item stays
+            // frozen and the normal suitability guards still apply.
+            allowCrossFamilySameSlot: true,
           ),
         );
       }

@@ -186,9 +186,11 @@ void main() {
     final adapters = _read(
       'lib/domain/wardrobe_v2/wardrobe_v2_adapters.dart',
     );
+    expect(service, contains('allowCrossFamilySameSlot: true'));
     expect(
       service,
-      contains('allowCrossFamilySameSlot: requestedSwap.bottomFamily != null'),
+      isNot(contains('allowCrossFamilySameSlot: requestedSwap.bottomFamily')),
+      reason: 'Explicit single-slot swaps must be global, not bottom-only.',
     );
     expect(matrix, contains('bool allowCrossFamilySameSlot = false'));
     expect(
