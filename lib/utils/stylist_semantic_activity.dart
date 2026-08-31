@@ -9,7 +9,7 @@
 class StylistSemanticActivity {
   const StylistSemanticActivity._();
 
-  static const String runtimeVersion = 'brain_v1_semantic_activity_v5';
+  static const String runtimeVersion = 'brain_v1_semantic_activity_v6';
 
   static const Set<String> canonicalActivities = <String>{
     'hike',
@@ -187,7 +187,7 @@ class StylistSemanticActivity {
     final text = normalize(input);
     return _has(
       text,
-      r'\b(?:vylet\w*|cest\w*|dovolen\w*|niekam|prec|von)\b',
+      r'\b(?:vylet\w*|cest\w*|dovolen\w*|niekam|prec)\b',
     );
   }
 
@@ -203,7 +203,6 @@ class StylistSemanticActivity {
     }
     return activity == 'hike' ||
         activity == 'nature_walk' ||
-        activity == 'city_walk' ||
         activity == 'travel' ||
         activity == 'mushroom' ||
         activity == 'wedding' ||
