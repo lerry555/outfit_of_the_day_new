@@ -18,14 +18,15 @@ jobs:
           ref: brain-v1-experiment
           fetch-depth: 0
 
-      - name: Guard exact patch base and master
+      - name: Guard patch ancestry and master
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin brain-v1-experiment master
-          test "$(git rev-parse HEAD)" = "a7c509da2c8108d5bbeb72a2ddb0f8e4e8a3975e"
-          test "$(git rev-parse origin/brain-v1-experiment)" = "a7c509da2c8108d5bbeb72a2ddb0f8e4e8a3975e"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/brain-v1-experiment)"
+          git merge-base --is-ancestor a7c509da2c8108d5bbeb72a2ddb0f8e4e8a3975e HEAD
           test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+          test -f tool/_tmp_brain_v1_natural_stylist_patch.py
 
       - name: Apply guarded architecture patch
         run: python3 tool/_tmp_brain_v1_natural_stylist_patch.py
@@ -59,6 +60,9 @@ jobs:
             lib/domain/wardrobe_v2/native_outfit_engine_v2.dart \
             lib/screens/stylist_chat_screen.dart \
             test/brain_v1_v2_offline_bundle_test.dart
-          git diff --cached --quiet && { echo "No product changes staged"; exit 1; } || true
+          if git diff --cached --quiet; then
+            echo "No product changes staged"
+            exit 1
+          fi
           git commit -m "feat: make Brain own natural Stylist interaction"
           git push origin HEAD:brain-v1-experiment
