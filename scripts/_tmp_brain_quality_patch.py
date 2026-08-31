@@ -20,6 +20,15 @@ def insert_before_final_brace(path: str, block: str) -> None:
     p.write_text(text[:idx] + "\n" + block.rstrip() + text[idx:], encoding="utf-8")
 
 
+def append_block(path: str, block: str) -> None:
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    block = block.strip()
+    if block in text:
+        raise SystemExit(f"{path}: block already present")
+    p.write_text(text.rstrip() + "\n\n" + block + "\n", encoding="utf-8")
+
+
 replace_once(
     "lib/screens/stylist_chat_screen.dart",
     """    if (lower.contains('bude prša') ||
@@ -188,7 +197,7 @@ insert_before_final_brace(
 """,
 )
 
-insert_before_final_brace(
+append_block(
     "functions/stylist/outfit_decision_known_location.test.js",
     """test(\"non-remote city walk uses GPS instead of asking destination\", () => {
   const state = {
