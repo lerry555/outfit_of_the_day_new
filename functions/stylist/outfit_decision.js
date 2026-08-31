@@ -34,6 +34,36 @@ function normalizeImpactField(value) {
     .replace(/[\s-]+/g, "_");
 }
 
+function canonicalMaterialField(value) {
+  const field = normalizeImpactField(value);
+  if (field === "location") return "destination";
+  if (ACTIVITY_FIELD_ALIASES.has(field)) return "activity";
+  if (field === "hour") return "time";
+  return field;
+}
+
+function materialFieldAlreadyGrounded(field, state) {
+  if (!state || typeof state !== "object") return false;
+  const canonical = canonicalMaterialField(field);
+  if (canonical === "destination") {
+    return state.activityLocationKnown === true;
+  }
+  if (canonical === "activity") {
+    return Boolean(String(state.activityHint || state.occasion || "").trim());
+  }
+  if (canonical === "time") {
+    return state.hourExplicit === true && Number.isInteger(state.hourLocal);
+  }
+  if (canonical === "trip_scope") {
+    const travel = state.travelContext;
+    if (!travel || typeof travel !== "object" || Array.isArray(travel)) return false;
+    const scope = String(travel.scope || "").trim().toLowerCase();
+    return travel.scopeNeedsClarification === false &&
+      scope !== "" && scope !== "unknown";
+  }
+  return false;
+}
+
 function normalizeEvidenceText(value) {
   return String(value || "")
     .toLowerCase()
@@ -225,31 +255,55 @@ function resolveOutfitAction(action, decision, clarificationState) {
   const previouslyAsked = new Set(
     Array.isArray(state.clarifiedMaterialFields) ?
       state.clarifiedMaterialFields
-        .map((value) => normalizeImpactField(value))
+        .map((value) => canonicalMaterialField(value))
         .filter(Boolean) :
       [],
   );
   const resolvedNow = new Set(
-    semanticResolvedFields.map(normalizeImpactField).filter(Boolean),
+    semanticResolvedFields.map(canonicalMaterialField).filter(Boolean),
   );
   const requested = [
     ...(Array.isArray(decision?.impactFields) ? decision.impactFields : []),
     ...groundingFields(state),
   ];
-  const hasNewMaterialTarget = requested
+  const requestedMaterial = requested
     .map(normalizeImpactField)
-    .some((field) =>
-      MATERIAL_IMPACT_FIELDS.has(field) &&
-      !previouslyAsked.has(field) &&
-      !resolvedNow.has(field),
-    );
+    .filter((field) => MATERIAL_IMPACT_FIELDS.has(field));
+  const hasNewMaterialTarget = requestedMaterial.some((field) => {
+    const canonical = canonicalMaterialField(field);
+    return !previouslyAsked.has(canonical) &&
+      !resolvedNow.has(canonical) &&
+      !materialFieldAlreadyGrounded(canonical, state);
+  });
 
   // Semantic grounding removes only the facts it actually proved. If the Brain
   // simultaneously identified a DIFFERENT material uncertainty (for example
   // it understood "prednáška" but still needs to know whether the user is the
   // speaker or an attendee), preserve that clarification instead of silently
   // turning it into chat/generation.
-  return hasNewMaterialTarget ? "clarify" : "chat";
+  if (hasNewMaterialTarget) return "clarify";
+
+  const allRequestedMaterialAlreadyHandled = requestedMaterial.length > 0 &&
+    requestedMaterial.every((field) => {
+      const canonical = canonicalMaterialField(field);
+      return previouslyAsked.has(canonical) ||
+        resolvedNow.has(canonical) ||
+        materialFieldAlreadyGrounded(canonical, state);
+    });
+  const routineOutfitReady =
+    state.groundingStatus !== "needs_grounding" &&
+    state.routineLocalOutfit === true &&
+    state.activityLocationKnown === true &&
+    Boolean(String(state.activityHint || state.occasion || "").trim());
+
+  // For a routine local outfit, GPS-backed location is already authoritative.
+  // If the Brain nevertheless asks only for facts that are already grounded,
+  // proceed instead of displaying another "kam sa chystáš?" loop.
+  if (routineOutfitReady && allRequestedMaterialAlreadyHandled) {
+    return "generate_outfit";
+  }
+
+  return "chat";
 }
 
 module.exports = {
