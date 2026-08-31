@@ -1,4 +1,4 @@
-name: Brain V1 private-place runtime diagnostic
+name: Brain V1 private-place one-shot retry
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  runtime-log-read:
+  private-place-retry:
     if: github.ref == 'refs/heads/brain-v1-experiment'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,21 +26,72 @@ jobs:
           test "$GITHUB_REF_NAME" = "brain-v1-experiment"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v2
+      - name: Use Node 20
+        uses: actions/setup-node@v4
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+          node-version: '20'
 
-      - name: Set up gcloud
-        uses: google-github-actions/setup-gcloud@v2
-
-      - name: Read private-place failure window
+      - name: Retry only private-place deployed Brain scenario
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read \
-            'resource.type="cloud_function" AND resource.labels.function_name="stylistChat" AND resource.labels.region="us-east1" AND timestamp>="2026-08-31T08:04:20Z" AND timestamp<="2026-08-31T08:04:24Z"' \
-            --project outfitoftheday-4d401 \
-            --order=asc \
-            --limit=100 \
-            --format=json
+          node - <<'NODE'
+          const endpoint = "https://us-east1-outfitoftheday-4d401.cloudfunctions.net/stylistChat";
+          const data = {
+            message: "Zajtra idem s Katkou na naše miesto. Čo si mám dať?",
+            mode: "chat",
+            includeWardrobe: false,
+            history: [],
+            clientContext: {
+              now: "2026-08-31T09:44:00+02:00",
+              todayDateKey: "2026-08-31",
+              tomorrowDateKey: "2026-09-01",
+              conversationBrainVersion: "brain_v1",
+            },
+            outfitContextState: {
+              groundingStatus: "needs_grounding",
+              unresolvedMaterialFields: ["activity", "destination"],
+            },
+          };
+
+          function clean(value) {
+            return typeof value === "string" ? value.trim() : "";
+          }
+
+          (async () => {
+            const startedAt = Date.now();
+            const response = await fetch(endpoint, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({data}),
+            });
+            const text = await response.text();
+            let json = null;
+            try { json = JSON.parse(text); } catch (_) {}
+            const durationMs = Date.now() - startedAt;
+
+            if (!response.ok || !json || json.error) {
+              const error = json && json.error && typeof json.error === "object" ? json.error : {};
+              console.error(`PRIVATE_PLACE_RETRY: FAIL | status=${response.status} | code=${clean(error.status || error.code) || "HTTP_ERROR"} | durationMs=${durationMs}`);
+              process.exit(1);
+            }
+
+            const result = json.result ?? json.data;
+            const reply = clean(result && result.reply);
+            const action = clean(result && result.action || "chat") || "chat";
+            const research = result && result.webResearch && typeof result.webResearch === "object" ? result.webResearch : null;
+            const webUsed = research?.used === true;
+            const webCallCount = Number(research?.callCount || 0);
+            const failures = [];
+            if (!reply) failures.push("reply_missing");
+            if (!["clarify", "chat"].includes(action)) failures.push(`action_${action}`);
+            if (webUsed) failures.push("web_used");
+            if (webCallCount !== 0) failures.push(`web_calls_${webCallCount}`);
+
+            console.log(`PRIVATE_PLACE_RETRY: ${failures.length ? "FAIL" : "PASS"} | status=${response.status} | action=${action} | web=${webUsed} | calls=${webCallCount} | durationMs=${durationMs}${failures.length ? ` | failures=${failures.join(",")}` : ""}`);
+            if (failures.length) process.exit(1);
+          })().catch((error) => {
+            console.error(`PRIVATE_PLACE_RETRY: FAIL | transport=${clean(error && error.message || error).slice(0, 160)}`);
+            process.exit(1);
+          });
+          NODE
