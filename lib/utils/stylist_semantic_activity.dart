@@ -149,10 +149,7 @@ class StylistSemanticActivity {
     if (_has(text, r'\b(?:pamiat\w*|sightseeing\w*|prehliadk\w*)\b')) {
       return 'city_walk';
     }
-    if (_has(
-          text,
-          r'\b(?:centr\w*|mesto\w*|meste\w*|mestom\w*)\b',
-        ) &&
+    if (_has(text, r'\b(?:centr\w*|mest\w*)\b') &&
         _has(
           text,
           r'\b(?:prechadz\w*|chod\w*|popozer\w*|pozriet\w*|pozer\w*|idem\w*|ideme\w*|ist\w*|pojd\w*)\b',
