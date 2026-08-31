@@ -1,0 +1,41 @@
+name: Fix offline bundle literal
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+    paths:
+      - .github/workflows/_tmp-fix-offline-test.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 0
+      - name: Escape JavaScript template literal in Dart regression
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('test/brain_v1_v2_offline_bundle_test.dart')
+          text = p.read_text(encoding='utf-8')
+          old = "expect(server, contains('currentOutfit=${JSON.stringify(currentOutfit)}'));"
+          new = "expect(server, contains(r'currentOutfit=${JSON.stringify(currentOutfit)}'));"
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one test literal, got {text.count(old)}')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+          git diff --check
+      - name: Commit fix
+        run: |
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add test/brain_v1_v2_offline_bundle_test.dart
+          git commit -m "test: escape current outfit template literal"
+          git push origin HEAD:brain-v1-experiment
