@@ -1,4 +1,4 @@
-name: Brain V1 deployed runtime diagnostic
+name: Brain V1 exact runtime log read
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  runtime-diagnostic:
+  runtime-log-read:
     if: github.ref == 'refs/heads/brain-v1-experiment'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -26,11 +26,6 @@ jobs:
           test "$GITHUB_REF_NAME" = "brain-v1-experiment"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Use Node 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
@@ -39,62 +34,12 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Probe deployed Brain V1 once
+      - name: Read exact failed Brain execution
         shell: bash
         run: |
           set -euo pipefail
-          date -u +"%Y-%m-%dT%H:%M:%SZ" > /tmp/brain_probe_started_at
-          node - <<'NODE'
-          const endpoint = "https://us-east1-outfitoftheday-4d401.cloudfunctions.net/stylistChat";
-          const data = {
-            message: "Hodí sa biele tričko k tmavomodrým džínsom?",
-            mode: "chat",
-            includeWardrobe: false,
-            history: [],
-            clientContext: {
-              now: new Date().toISOString(),
-              todayDateKey: "2026-08-31",
-              tomorrowDateKey: "2026-09-01",
-              conversationBrainVersion: "brain_v1",
-            },
-            outfitContextState: {
-              groundingStatus: "sufficient",
-              unresolvedMaterialFields: [],
-            },
-          };
-          (async () => {
-            const startedAt = Date.now();
-            const response = await fetch(endpoint, {
-              method: "POST",
-              headers: {"Content-Type": "application/json"},
-              body: JSON.stringify({data}),
-            });
-            const text = await response.text();
-            let json = null;
-            try { json = JSON.parse(text); } catch (_) {}
-            const error = json && json.error && typeof json.error === "object" ? json.error : null;
-            console.log(JSON.stringify({
-              status: response.status,
-              durationMs: Date.now() - startedAt,
-              errorCode: error ? String(error.status || error.code || "") : "",
-              errorMessage: error ? String(error.message || "").slice(0, 160) : "",
-              hasResult: Boolean(json && (json.result || json.data)),
-            }));
-          })().catch((error) => {
-            console.error(`probe_transport_error:${String(error && error.message || error).slice(0, 180)}`);
-            process.exit(1);
-          });
-          NODE
-
-      - name: Read stylistChat runtime logs after probe
-        shell: bash
-        run: |
-          set -euo pipefail
-          sleep 4
-          START_TS="$(cat /tmp/brain_probe_started_at)"
-          echo "Reading stylistChat logs since ${START_TS}"
           gcloud logging read \
-            "resource.type=\"cloud_function\" AND resource.labels.function_name=\"stylistChat\" AND resource.labels.region=\"us-east1\" AND timestamp>=\"${START_TS}\"" \
+            'resource.type="cloud_function" AND resource.labels.function_name="stylistChat" AND resource.labels.region="us-east1" AND labels.execution_id="y2ji2cwjc8kn"' \
             --project outfitoftheday-4d401 \
             --order=asc \
             --limit=100 \
