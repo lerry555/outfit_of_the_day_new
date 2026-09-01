@@ -75,6 +75,25 @@ jobs:
               'Array.isArray(parsed?.excludeItemKeywords)?',
               'Array.isArray(parsed?.excludeItemKeywords) ?',
           )
+          old_helper = '''def replace_once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly 1 match, got {count}")
+              return text.replace(old, new, 1)
+          '''
+          new_helper = '''def replace_once(text, old, new, label):
+              count = text.count(old)
+              if label == "service generation semantic params":
+                  if count < 1:
+                      raise RuntimeError(f"{label}: expected at least 1 match, got {count}")
+                  return text.replace(old, new, 1)
+              if count != 1:
+                  raise RuntimeError(f"{label}: expected exactly 1 match, got {count}")
+              return text.replace(old, new, 1)
+          '''
+          if old_helper not in normalized:
+              raise RuntimeError('replace_once helper anchor missing')
+          normalized = normalized.replace(old_helper, new_helper, 1)
           p.write_text(normalized, encoding='utf-8')
           PY
 
