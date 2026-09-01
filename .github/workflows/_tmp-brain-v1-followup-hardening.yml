@@ -31,6 +31,27 @@ jobs:
           test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
           test -f tool/_tmp_brain_v1_followup_hardening.py
 
+      - name: Normalize generated patch anchor
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tool/_tmp_brain_v1_followup_hardening.py')
+          s = p.read_text(encoding='utf-8')
+          section = s.index('# 1) Conversation Brain contract: additive layer is a hard user mutation.')
+          start = s.index('s = replace_once(', section)
+          end = s.index('\n)\n', start) + 3
+          replacement = r'''s = regex_once(
+              s,
+              r'  `"preserveOtherSlots":true,"extraLayer":"none","presentation":"normal"\}\}\\n` \+',
+              '  `"preserveOtherSlots":true,"preserveCurrentOutfit":false,` +\n'
+              '  `"extraLayer":"none","layerFamily":"none","presentation":"normal"}}\\n` +',
+              'Brain directive JSON shape',
+          )
+          '''
+          p.write_text(s[:start] + replacement + s[end:], encoding='utf-8')
+          PY
+
       - name: Apply guarded follow-up architecture patch
         run: python3 tool/_tmp_brain_v1_followup_hardening.py
 
