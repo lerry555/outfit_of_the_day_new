@@ -104,6 +104,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          for name in ['functions/stylist/frozen_stylist_authority_v1.test.js']:
+              p = Path(name)
+              p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
           git diff --check
           git status --short
           grep -q "outfitDirective" functions/stylist/chat_prompts.js
