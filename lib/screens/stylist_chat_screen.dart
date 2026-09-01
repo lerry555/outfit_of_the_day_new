@@ -44,6 +44,8 @@ import '../utils/stylist_occasion_guidance.dart';
 import '../utils/stylist_semantic_activity.dart';
 import '../utils/stylist_outfit_explain_builder.dart';
 import '../utils/stylist_swap_request.dart';
+import '../utils/stylist_outfit_edit_routing.dart';
+import '../domain/wardrobe_v2/outfit_edit_plan_v1.dart';
 import '../utils/stylist_activity_terrain.dart';
 import '../utils/stylist_wardrobe_context_need.dart';
 import '../utils/stylist_conversation_signals.dart';
@@ -151,7 +153,8 @@ class StylistChatMessage {
           ? null
           : map['imageUrl'].toString(),
       sourceJobId: sourceJobId.isEmpty ? null : sourceJobId,
-      outfitUpdateSlot: (map['outfitUpdateSlot'] ?? '').toString().trim().isEmpty
+      outfitUpdateSlot:
+          (map['outfitUpdateSlot'] ?? '').toString().trim().isEmpty
           ? null
           : (map['outfitUpdateSlot'] ?? '').toString().trim(),
     );
@@ -254,7 +257,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   Set<String> _lastOutfitItemIds = const {};
   List<Set<String>> _recentOutfitItemIdSets = const <Set<String>>[];
   bool _recentOutfitHistoryLoaded = false;
-  List<Map<String, dynamic>> _currentOutfitItems = const <Map<String, dynamic>>[];
+  List<Map<String, dynamic>> _currentOutfitItems =
+      const <Map<String, dynamic>>[];
   bool _currentOutfitUsedCompromise = false;
   String _currentOutfitDecisionRationale = '';
   Map<String, dynamic>? _cachedWeatherContext;
@@ -1450,9 +1454,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return no.any(t.contains);
   }
 
-  Map<String, dynamic>? _brainOutfitDirective(
-    Map<String, dynamic> response,
-  ) {
+  Map<String, dynamic>? _brainOutfitDirective(Map<String, dynamic> response) {
     final raw = response['outfitDirective'];
     if (raw is! Map) return null;
     return Map<String, dynamic>.from(raw);
@@ -1467,7 +1469,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return value.isEmpty ? fallback : value;
   }
 
-  StylistSwapRequest? _swapRequestForTurn(
+  StylistSwapRequest? _legacySwapRequestForTurn(
     Map<String, dynamic> response,
     String userText,
   ) {
@@ -1514,9 +1516,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   bool _brainRequiresUpperLayer(Map<String, dynamic> response) {
     final directive = _brainOutfitDirective(response);
-    return const {'required_upper_layer', 'optional_upper_layer'}.contains(
-      _brainDirectiveValue(directive, 'extraLayer', 'none'),
-    );
+    return const {
+      'required_upper_layer',
+      'optional_upper_layer',
+    }.contains(_brainDirectiveValue(directive, 'extraLayer', 'none'));
   }
 
   String _brainRequiredUpperLayerFamily(Map<String, dynamic> response) {
@@ -1578,7 +1581,23 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
     _mergeOutfitContextFromResponse(response);
 
+    final editRouting = StylistOutfitEditRoutingV1.resolve(
+      response: response,
+      userText: userText,
+      legacyResolver: _legacySwapRequestForTurn,
+    );
+    final canonicalPlan = editRouting.canonicalPlan;
     var effectiveAction = action;
+    if (editRouting.canonicalPlanInvalid) {
+      effectiveAction = 'chat';
+      response['reply'] =
+          'Tejto úprave som nerozumel dosť presne, takže aktuálny outfit nemením.';
+      debugPrint('STYLIST CHAT canonical_edit_plan_invalid fail_closed=true');
+    } else if (canonicalPlan?.intent == OutfitEditIntentV1.none &&
+        effectiveAction == 'generate_outfit') {
+      effectiveAction = 'chat';
+      debugPrint('STYLIST CHAT canonical_edit_plan_non_mutating=true');
+    }
     if (effectiveAction == 'generate_outfit' &&
         !_conversationAlreadyHasOutfitCards() &&
         StylistConversationSignals.isContextOnlyPlanStatement(userText)) {
@@ -1587,9 +1606,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // safety net even if a conversational model over-eagerly requests D/R.
       effectiveAction = 'chat';
       response['reply'] = 'Jasné 🙂';
-      debugPrint(
-        'STYLIST CHAT generation_suppressed reason=context_only_plan',
-      );
+      debugPrint('STYLIST CHAT generation_suppressed reason=context_only_plan');
     }
     var requestedImpactFields = response['impactFields'] is List
         ? (response['impactFields'] as List)
@@ -1629,6 +1646,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     if (_outfitContextState.groundingStatus == 'sufficient' &&
         _outfitContextState.userCorrectionDetected &&
         _conversationAlreadyHasOutfitCards() &&
+        (!editRouting.canonicalPlanPresent ||
+            canonicalPlan?.intent != OutfitEditIntentV1.none) &&
         effectiveAction != 'stop') {
       effectiveAction = 'generate_outfit';
       debugPrint('STYLIST CHAT material_correction_refresh=true');
@@ -1652,6 +1671,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // silently turn into an ungrounded outfit decision.
       effectiveAction = 'chat';
       debugPrint('STYLIST CHAT repeated_or_empty_clarification_blocked');
+    }
+    if (_outfitContextState.groundingStatus != 'needs_grounding' &&
+        canonicalPlan?.intent == OutfitEditIntentV1.createOutfit &&
+        effectiveAction != 'stop') {
+      effectiveAction = 'generate_outfit';
     }
 
     if (effectiveAction == 'clarify') {
@@ -1697,12 +1721,54 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return;
     }
 
-    // Univerzálna skratka „vymeň len tento kus“ má prednosť PRED akciou modelu:
+    if (canonicalPlan?.intent == OutfitEditIntentV1.editCurrentOutfit) {
+      if (!_conversationAlreadyHasOutfitCards()) {
+        setState(() {
+          _messages.add(
+            const StylistChatMessage(
+              text:
+                  'Nemám tu aktuálny outfit, ktorý by som mohol bezpečne upraviť.',
+              isUser: false,
+            ),
+          );
+          _isSending = false;
+        });
+        _scrollToBottom();
+        return;
+      }
+      if (_lastOutfitItemIds.isEmpty) {
+        final restored = _resolvedCurrentOutfitItems();
+        final restoredIds = restored
+            .map((item) => (item['id'] ?? '').toString().trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        if (restoredIds.isNotEmpty) {
+          _currentOutfitItems = restored;
+          _lastOutfitItemIds = restoredIds;
+        }
+      }
+      await _runHybridOutfitGeneration(
+        userText: userText,
+        history: history,
+        weatherContext: weatherContext,
+        clientContext: clientContext,
+        event: _eventFromConversation(
+          rawEvent: response['eventContext'] as Map<String, dynamic>?,
+          fallbackLocation: UserLocationService.instance.cityLabel,
+        ),
+        outfitEditPlan: canonicalPlan,
+        presentationMode: canonicalPlan!.presentation,
+      );
+      return;
+    }
+
+    // Legacy compatibility only: old responses without a canonical Brain plan
+    // may still request the historical one-slot edit.
     // keď už outfit visí a používateľ chce vymeniť KTORÝKOĽVEK kus (vrch / spodok
     // / obuv / vrstvu), preskladáme HNEĎ len ten kus — bez ohľadu na to, či model
     // vrátil 'chat' alebo 'generate_outfit', a bez zbytočného prehadzovania celého
     // outfitu. Inak by „zmen mi tričko“ spadlo do generate_outfit a zmenilo všetko.
-    final swapRequest = _swapRequestForTurn(response, userText);
+    final swapRequest = editRouting.legacySwap;
     if (_conversationAlreadyHasOutfitCards() && swapRequest != null) {
       // A reopened chat may have outfit cards while the ephemeral ID cache is
       // empty. Rebuild the authoritative current outfit before a one-slot swap.
@@ -1773,23 +1839,36 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         weatherContext: weatherContext,
         clientContext: clientContext,
         event: event,
+        outfitEditPlan: canonicalPlan,
         excludeKeywords: response['excludeItemKeywords'] is List
             ? (response['excludeItemKeywords'] as List)
                   .map((e) => e.toString().trim())
                   .where((e) => e.isNotEmpty)
                   .toList(growable: false)
             : const <String>[],
-        forceDifferent: _shouldForceDifferentOutfit(userText),
-        requestedBottomFamily: _resolveRequestedBottomFamily(userText),
-        optionalUpperLayerRequested: _brainRequiresUpperLayer(response),
-        preserveCurrentOutfit: _brainPreservesCurrentOutfitForLayer(response),
-        requiredUpperLayerFamily: _brainRequiredUpperLayerFamily(response),
-        presentationMode: _brainPresentationMode(response),
+        forceDifferent: editRouting.canonicalPlanPresent
+            ? false
+            : _shouldForceDifferentOutfit(userText),
+        requestedBottomFamily: editRouting.canonicalPlanPresent
+            ? null
+            : _resolveRequestedBottomFamily(userText),
+        optionalUpperLayerRequested: editRouting.canonicalPlanPresent
+            ? false
+            : _brainRequiresUpperLayer(response),
+        preserveCurrentOutfit: editRouting.canonicalPlanPresent
+            ? false
+            : _brainPreservesCurrentOutfitForLayer(response),
+        requiredUpperLayerFamily: editRouting.canonicalPlanPresent
+            ? ''
+            : _brainRequiredUpperLayerFamily(response),
+        presentationMode:
+            canonicalPlan?.presentation ?? _brainPresentationMode(response),
       );
       return;
     }
 
-    if (action == 'chat' &&
+    if (!editRouting.canonicalPlanPresent &&
+        action == 'chat' &&
         _conversationAlreadyHasOutfitCards() &&
         _userQuestionsRestaurantFormality(userText)) {
       await _runHybridOutfitGeneration(
@@ -1807,7 +1886,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return;
     }
 
-    if (action == 'chat' &&
+    if (!editRouting.canonicalPlanPresent &&
+        action == 'chat' &&
         StylistConversationSignals.userExplicitlyWantsOutfitShown(userText) &&
         !_conversationAlreadyHasOutfitCards()) {
       final event = _eventFromConversation(
@@ -1856,7 +1936,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       }
     }
 
-    if (action == 'chat' && _shouldAutoGenerateOutfitAfterChat()) {
+    if (!editRouting.canonicalPlanPresent &&
+        action == 'chat' &&
+        _shouldAutoGenerateOutfitAfterChat()) {
       debugPrint(
         'STYLIST CHAT auto_generate_outfit reason=full_context_action_was_chat',
       );
@@ -2109,7 +2191,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   Future<void> _ensureRecentOutfitHistory() async {
     if (_recentOutfitHistoryLoaded) return;
     try {
-      _recentOutfitItemIdSets = await _chatStore.loadRecentFullOutfitItemIdSets();
+      _recentOutfitItemIdSets = await _chatStore
+          .loadRecentFullOutfitItemIdSets();
     } catch (_) {
       _recentOutfitItemIdSets = const <Set<String>>[];
     } finally {
@@ -2138,6 +2221,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     bool forceDifferent = false,
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
+    OutfitEditPlanV1? outfitEditPlan,
     bool optionalUpperLayerRequested = false,
     bool preserveCurrentOutfit = false,
     String requiredUpperLayerFamily = '',
@@ -2149,7 +2233,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         _blockIfConversationNeedsClarification(sourceText: userText)) {
       return;
     }
-    if (requestedSwap == null && !preserveCurrentOutfit) {
+    if (requestedSwap == null &&
+        outfitEditPlan?.intent != OutfitEditIntentV1.editCurrentOutfit &&
+        !preserveCurrentOutfit) {
       await _ensureRecentOutfitHistory();
     }
     _setSendingProgress(StylistChatProgressPhase.analyzingWardrobe);
@@ -2166,6 +2252,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         groundedActivityType: _outfitContextState.activityHint,
         requestedBottomFamily: requestedBottomFamily,
         requestedSwap: requestedSwap,
+        outfitEditPlan: outfitEditPlan,
         optionalUpperLayerRequested: optionalUpperLayerRequested,
         preserveCurrentOutfit: preserveCurrentOutfit,
         requiredUpperLayerFamily: requiredUpperLayerFamily == 'none'
@@ -2206,8 +2293,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
     final wardrobeAnalysis = outfitResult.wardrobeAnalysis;
     _currentOutfitUsedCompromise = wardrobeAnalysis.usedCompromise;
-    _currentOutfitDecisionRationale =
-        (outfitResult.finalExplanation ?? '').trim();
+    _currentOutfitDecisionRationale = (outfitResult.finalExplanation ?? '')
+        .trim();
 
     final previousIds = _lastOutfitItemIds;
     final suggestedItems = _sortStylistSuggestedItems(
@@ -2271,7 +2358,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
 
     _lastOutfitItemIds = nextIds;
-    if (requestedSwap == null) _rememberRecentOutfit(nextIds);
+    if (requestedSwap == null &&
+        outfitEditPlan?.intent != OutfitEditIntentV1.editCurrentOutfit) {
+      _rememberRecentOutfit(nextIds);
+    }
     _currentOutfitItems = List<Map<String, dynamic>>.unmodifiable(
       suggestedItems.map((item) => Map<String, dynamic>.from(item)),
     );
@@ -2287,12 +2377,13 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         StylistSwapSlot.shoes: 3,
       };
       final swapDisplayItems = suggestedItems
-          .where((item) => _stylistWearSlotOrder(item) == slotOrderFor[swapSlot])
+          .where(
+            (item) => _stylistWearSlotOrder(item) == slotOrderFor[swapSlot],
+          )
           .toList(growable: false);
-      final brainReply =
-          StylistUdrClientRoutingV1.frozenExplanationForDisplay(
-            outfitResult.finalExplanation,
-          );
+      final brainReply = StylistUdrClientRoutingV1.frozenExplanationForDisplay(
+        outfitResult.finalExplanation,
+      );
       final fallbackReply = _shortSwapReply(
         suggestedItems: suggestedItems,
         slot: swapSlot,
@@ -3360,18 +3451,25 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       return current
           .take(6)
           .map((item) {
-            final name = valueFor(
-              item,
-              const ['name', 'displayName', 'title', 'canonicalType', 'type'],
-            );
-            final type = valueFor(
-              item,
-              const ['canonicalType', 'type', 'subType', 'category'],
-            );
-            final color = valueFor(
-              item,
-              const ['primaryColor', 'color', 'colorName', 'colors'],
-            );
+            final name = valueFor(item, const [
+              'name',
+              'displayName',
+              'title',
+              'canonicalType',
+              'type',
+            ]);
+            final type = valueFor(item, const [
+              'canonicalType',
+              'type',
+              'subType',
+              'category',
+            ]);
+            final color = valueFor(item, const [
+              'primaryColor',
+              'color',
+              'colorName',
+              'colors',
+            ]);
             return <String, String>{
               if (name.isNotEmpty) 'name': name,
               if (type.isNotEmpty) 'type': type,

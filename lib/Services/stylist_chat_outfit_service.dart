@@ -38,6 +38,8 @@ import '../domain/wardrobe_v2/native_outfit_engine_v2.dart';
 import '../domain/wardrobe_v2/outfit_composition_v2.dart';
 import '../domain/wardrobe_v2/outfit_suitability_policy_v2.dart';
 import '../domain/wardrobe_v2/functional_suitability_v1.dart';
+import '../domain/wardrobe_v2/outfit_edit_executor_v1.dart';
+import '../domain/wardrobe_v2/outfit_edit_plan_v1.dart';
 import '../domain/style_preferences/style_preferences_runtime.dart';
 import '../Services/hourly_weather_service.dart';
 import '../Services/outfit_generation_service.dart';
@@ -227,6 +229,7 @@ class StylistChatOutfitService {
     String? groundedActivityType,
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
+    OutfitEditPlanV1? outfitEditPlan,
     bool optionalUpperLayerRequested = false,
     bool preserveCurrentOutfit = false,
     String requiredUpperLayerFamily = '',
@@ -322,7 +325,8 @@ class StylistChatOutfitService {
       ..._idsMatchingExcludeKeywords(wardrobe, excludeItemKeywords),
     };
     onProgress?.call(StylistChatProgressPhase.buildingOutfit);
-    final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe)
+    final allResolved = NativeWardrobeV2Runtime.resolveAll(wardrobe);
+    final resolved = allResolved
         .where((item) => !excluded.contains(item.itemId))
         .where((item) {
           if (requestedBottomFamily == null) return true;
@@ -332,7 +336,11 @@ class StylistChatOutfitService {
         .where((item) {
           if (requiredUpperLayerFamily.trim().isEmpty) return true;
           final isOptionalUpperLayer =
-              const {'mid', 'outer', 'shell'}.contains(item.item.layerPosition) &&
+              const {
+                'mid',
+                'outer',
+                'shell',
+              }.contains(item.item.layerPosition) &&
               item.item.bodySlots.contains('upper_body');
           if (!isOptionalUpperLayer) return true;
           return _matchesRequiredUpperLayerFamily(
@@ -363,6 +371,106 @@ class StylistChatOutfitService {
       wetGroundRisk: wetGroundMuddy,
       optionalUpperLayerRequested: optionalUpperLayerRequested,
     );
+    final frozenResolvedContext = <String, dynamic>{
+      'activity': outfitIntent.activityType,
+      'occasion': occasionProfile.label,
+      'environment': event.locationLabel,
+      'weather':
+          '${weather.tempC}C rain=${weather.isRainy} '
+          'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
+          'antecedentRain=$antecedentPrecipitation',
+      'formality': occasionProfile.dressCode.id,
+      'terrain': terrain.name,
+      if ((conversationHint ?? '').trim().isNotEmpty)
+        'userIntentContext': conversationHint!.trim(),
+      if (outfitEditPlan != null) 'outfitEditPlan': outfitEditPlan.toMap(),
+      'relevantKnownTimingFacts': <String, String>{
+        'eventDate':
+            '${event.date.year.toString().padLeft(4, '0')}-'
+            '${event.date.month.toString().padLeft(2, '0')}-'
+            '${event.date.day.toString().padLeft(2, '0')}',
+        'dayRelation': _dayRelation(event.date),
+        if (event.eventStartHour != null)
+          'eventStartHourLocal': event.eventStartHour.toString(),
+      },
+    };
+    if (outfitEditPlan?.intent == OutfitEditIntentV1.editCurrentOutfit) {
+      if (previousOutfitItemIds.isEmpty) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['current_outfit_missing'],
+          explanation:
+              'Aktuálny outfit nemám spoľahlivo uložený, preto ho nechcem čiastočne meniť.',
+        );
+      }
+      final current = OutfitEditExecutorV1.restoreCurrent(
+        wardrobe: allResolved,
+        currentItemIds: previousOutfitItemIds,
+        context: context,
+      );
+      if (current == null) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['current_outfit_restore_failed'],
+          explanation:
+              'Aktuálny outfit sa mi nepodarilo presne obnoviť podľa kúskov, preto ho nemením.',
+        );
+      }
+      final editCandidates = OutfitEditExecutorV1.generateCandidates(
+        plan: outfitEditPlan!,
+        current: current,
+        wardrobe: allResolved,
+        context: context,
+      );
+      if (editCandidates.isEmpty) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['atomic_outfit_edit_unavailable'],
+          explanation:
+              'Všetky požadované zmeny naraz sa mi nepodarilo bezpečne splniť, takže pôvodný outfit nechávam bez zmeny.',
+        );
+      }
+      onProgress?.call(StylistChatProgressPhase.finalizing);
+      final decision = await const StylistFrozenCandidateDecisionServiceV1()
+          .resolve(
+            candidates: editCandidates,
+            resolvedContext: frozenResolvedContext,
+            presentationMode: outfitEditPlan.presentation,
+            userRequest: userRequest,
+          );
+      final selectedId = decision.selectedCandidateId;
+      final accepted = selectedId == null
+          ? null
+          : editCandidates
+                .where((candidate) => candidate.candidateId == selectedId)
+                .firstOrNull;
+      if (!decision.selected || accepted == null) {
+        throw StylistFrozenDecisionRejectedExceptionV1(
+          decision.reasonCodes.isEmpty
+              ? const <String>['atomic_outfit_edit_rejected']
+              : decision.reasonCodes,
+          explanation: decision.explanation,
+        );
+      }
+      return StylistChatOutfitResult(
+        flexibleOutfit: accepted.outfit,
+        wardrobeAnalysis: _wardrobeGapAnalysisV2(
+          accepted.outfit,
+          accepted.functionalAssessment,
+        ),
+        weather: weather,
+        occasionProfile: occasionProfile,
+        wetGroundMuddy: wetGroundMuddy,
+        outfitIntent: outfitIntent,
+        activityIdentity: ActivityOutfitIdentity.evaluateFlexible(
+          outfit: accepted.outfit,
+          intent: outfitIntent,
+          wetGroundMuddy: wetGroundMuddy,
+        ),
+        finalExplanation: decision.explanation.trim().isEmpty
+            ? null
+            : decision.explanation.trim(),
+        rejectAllReasonCodes: decision.reasonCodes,
+        functionalAssessment: accepted.functionalAssessment,
+      );
+    }
     var generated = V2FlexibleCandidateMatrix.generate(
       wardrobe: resolved,
       context: context,
@@ -399,8 +507,7 @@ class StylistChatOutfitService {
               final warmth = warmthValues.isEmpty
                   ? 0.0
                   : warmthValues.reduce((a, b) => a + b) / warmthValues.length;
-              final targetWarmth =
-                  OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC);
+              final targetWarmth = OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC);
               final comfort = (5 - (warmth - targetWarmth).abs())
                   .clamp(0, 5)
                   .toDouble();
@@ -437,7 +544,11 @@ class StylistChatOutfitService {
               .where(
                 (candidate) => candidate.outfit.items.any(
                   (item) =>
-                      const {'mid', 'outer', 'shell'}.contains(item.item.layerPosition) &&
+                      const {
+                        'mid',
+                        'outer',
+                        'shell',
+                      }.contains(item.item.layerPosition) &&
                       item.item.bodySlots.contains('upper_body') &&
                       _matchesRequiredUpperLayerFamily(
                         item.item.canonicalType,
@@ -460,28 +571,6 @@ class StylistChatOutfitService {
     V2FlexibleOutfitResult? selected;
     String? finalExplanation;
     List<String> rejectAllReasonCodes = const <String>[];
-    final frozenResolvedContext = <String, dynamic>{
-      'activity': outfitIntent.activityType,
-      'occasion': occasionProfile.label,
-      'environment': event.locationLabel,
-      'weather':
-          '${weather.tempC}C rain=${weather.isRainy} '
-          'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
-          'antecedentRain=$antecedentPrecipitation',
-      'formality': occasionProfile.dressCode.id,
-      'terrain': terrain.name,
-      if ((conversationHint ?? '').trim().isNotEmpty)
-        'userIntentContext': conversationHint!.trim(),
-      'relevantKnownTimingFacts': <String, String>{
-        'eventDate':
-            '${event.date.year.toString().padLeft(4, '0')}-'
-            '${event.date.month.toString().padLeft(2, '0')}-'
-            '${event.date.day.toString().padLeft(2, '0')}',
-        'dayRelation': _dayRelation(event.date),
-        if (event.eventStartHour != null)
-          'eventStartHourLocal': event.eventStartHour.toString(),
-      },
-    };
     if (preserveCurrentOutfit &&
         requiredUpperLayerFamily.trim().isNotEmpty &&
         previousOutfitItemIds.isNotEmpty) {
@@ -518,12 +607,12 @@ class StylistChatOutfitService {
       );
       final lockedExplanation =
           await const StylistFrozenCandidateDecisionServiceV1().resolve(
-        candidates: <V2FlexibleCandidate>[lockedCandidate],
-        resolvedContext: frozenResolvedContext,
-        lockedSelection: true,
-        presentationMode: 'concise_full',
-        userRequest: userRequest,
-      );
+            candidates: <V2FlexibleCandidate>[lockedCandidate],
+            resolvedContext: frozenResolvedContext,
+            lockedSelection: true,
+            presentationMode: 'concise_full',
+            userRequest: userRequest,
+          );
       if (!lockedExplanation.selected) {
         throw StylistFrozenDecisionRejectedExceptionV1(
           lockedExplanation.reasonCodes,
@@ -584,13 +673,13 @@ class StylistChatOutfitService {
         );
         final lockedExplanation =
             await const StylistFrozenCandidateDecisionServiceV1().resolve(
-          candidates: <V2FlexibleCandidate>[lockedCandidate],
-          resolvedContext: frozenResolvedContext,
-          lockedSelection: true,
-          presentationMode: 'focused_item',
-          focusSlot: requestedSwap.slot.name,
-          userRequest: userRequest,
-        );
+              candidates: <V2FlexibleCandidate>[lockedCandidate],
+              resolvedContext: frozenResolvedContext,
+              lockedSelection: true,
+              presentationMode: 'focused_item',
+              focusSlot: requestedSwap.slot.name,
+              userRequest: userRequest,
+            );
         if (lockedExplanation.selected &&
             lockedExplanation.explanation.trim().isNotEmpty) {
           finalExplanation = lockedExplanation.explanation.trim();
@@ -598,7 +687,9 @@ class StylistChatOutfitService {
       }
     } else {
       final decisionPool = _preferNovelFullOutfitCandidates(
-        requiredUpperLayerFamily.trim().isEmpty ? matrix : matrixWithRequiredLayer,
+        requiredUpperLayerFamily.trim().isEmpty
+            ? matrix
+            : matrixWithRequiredLayer,
         recentOutfitItemIdSets,
       );
       final decision = await const StylistFrozenCandidateDecisionServiceV1()
@@ -660,8 +751,13 @@ class StylistChatOutfitService {
         (recent) => recent.length == ids.length && recent.containsAll(ids),
       );
     }
-    final novel = candidates.where((candidate) => !repeated(candidate)).toList();
-    return novel.isEmpty ? candidates : List<V2FlexibleCandidate>.unmodifiable(novel);
+
+    final novel = candidates
+        .where((candidate) => !repeated(candidate))
+        .toList();
+    return novel.isEmpty
+        ? candidates
+        : List<V2FlexibleCandidate>.unmodifiable(novel);
   }
 
   static bool _matchesRequiredUpperLayerFamily(
@@ -676,7 +772,9 @@ class StylistChatOutfitService {
       'blazer' => type.contains('blazer') || type.contains('suit_jacket'),
       'coat' => type.contains('coat') || type.contains('trench'),
       'jacket' =>
-        type.contains('jacket') || type.contains('parka') || type.contains('windbreaker'),
+        type.contains('jacket') ||
+            type.contains('parka') ||
+            type.contains('windbreaker'),
       _ => true,
     };
   }
@@ -690,7 +788,9 @@ class StylistChatOutfitService {
         .where((item) => previousOutfitItemIds.contains(item.itemId))
         .toList(growable: false);
     if (resolved.length != previousOutfitItemIds.length) return null;
-    final hasOnePiece = resolved.any((item) => item.item.bodySlots.contains('full_body'));
+    final hasOnePiece = resolved.any(
+      (item) => item.item.bodySlots.contains('full_body'),
+    );
     final compositionItems = <OutfitCompositionItemV2>[];
     for (final value in resolved) {
       final item = value.item;
@@ -698,20 +798,30 @@ class StylistChatOutfitService {
       final CompositionRoleV2 role;
       final bool required;
       if (item.bodySlots.contains('feet')) {
-        group = 'footwear'; role = CompositionRoleV2.core; required = true;
+        group = 'footwear';
+        role = CompositionRoleV2.core;
+        required = true;
       } else if (item.bodySlots.contains('full_body')) {
-        group = 'full_body_core'; role = CompositionRoleV2.core; required = true;
+        group = 'full_body_core';
+        role = CompositionRoleV2.core;
+        required = true;
       } else if (item.bodySlots.contains('lower_body') &&
           !item.bodySlots.contains('upper_body')) {
-        group = 'lower_body_core'; role = CompositionRoleV2.core; required = true;
+        group = 'lower_body_core';
+        role = CompositionRoleV2.core;
+        required = true;
       } else if (const {'mid', 'outer', 'shell'}.contains(item.layerPosition)) {
         group = 'layer_${item.layerPosition}';
-        role = CompositionRoleV2.conditional; required = false;
+        role = CompositionRoleV2.conditional;
+        required = false;
       } else if (item.bodySlots.contains('upper_body')) {
-        group = 'upper_body_core'; role = CompositionRoleV2.core; required = true;
+        group = 'upper_body_core';
+        role = CompositionRoleV2.core;
+        required = true;
       } else {
         group = item.accessoryGroup ?? 'finishing';
-        role = CompositionRoleV2.finishing; required = false;
+        role = CompositionRoleV2.finishing;
+        required = false;
       }
       compositionItems.add(
         OutfitCompositionItemV2(
@@ -725,7 +835,9 @@ class StylistChatOutfitService {
       );
     }
     final composition = OutfitCompositionV2(
-      template: hasOnePiece ? OutfitTemplateV2.onePiece : OutfitTemplateV2.separates,
+      template: hasOnePiece
+          ? OutfitTemplateV2.onePiece
+          : OutfitTemplateV2.separates,
       items: compositionItems,
     );
     if (composition.compatibilityErrors().isNotEmpty) return null;
@@ -753,7 +865,10 @@ class StylistChatOutfitService {
       final item = candidate.item;
       if (!item.bodySlots.contains('upper_body') ||
           !const {'mid', 'outer', 'shell'}.contains(item.layerPosition) ||
-          !_matchesRequiredUpperLayerFamily(item.canonicalType, requiredFamily)) {
+          !_matchesRequiredUpperLayerFamily(
+            item.canonicalType,
+            requiredFamily,
+          )) {
         continue;
       }
       if (OutfitSuitabilityPolicyV2.isPhysicallyUnsuitable(
@@ -789,7 +904,8 @@ class StylistChatOutfitService {
         minimumFormality: context.minimumFormality,
         requiredFunctions: context.requiredFunctions,
         displayByItemId: <String, Map<String, dynamic>>{
-          for (final existing in current.items) existing.itemId: existing.display,
+          for (final existing in current.items)
+            existing.itemId: existing.display,
           candidate.itemId: candidate.raw,
         },
       );
@@ -805,8 +921,10 @@ class StylistChatOutfitService {
   }
 
   @visibleForTesting
-  static bool requiredLayerFamilyMatchesForTest(String canonicalType, String family) =>
-      _matchesRequiredUpperLayerFamily(canonicalType, family);
+  static bool requiredLayerFamilyMatchesForTest(
+    String canonicalType,
+    String family,
+  ) => _matchesRequiredUpperLayerFamily(canonicalType, family);
 
   static bool _matchesRequestedBottomV2(
     WardrobeItemV2 item,

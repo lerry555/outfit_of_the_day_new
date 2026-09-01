@@ -28,6 +28,9 @@ const {
 } = require("./stylist/outfit_decision");
 const {groundingClarificationReply} = require("./stylist/grounding_reply");
 const {
+  sanitizeOutfitEditPlanV1,
+} = require("./stylist/outfit_edit_plan_v1");
+const {
   appendStylePreferencesSection,
   sanitizeUserStylePreferences,
 } = require("./stylist/style_preferences_context");
@@ -4272,6 +4275,8 @@ exports.attachCleanImageOnWardrobeWrite = functions
             .filter(Boolean) :
           [];
         const outfitDirective = sanitizeStylistOutfitDirective(parsed?.outfitDirective);
+        const outfitEditPlan = routing.brainVersion ?
+          sanitizeOutfitEditPlanV1(parsed?.outfitEditPlan) : undefined;
 
         let suggestedIds = [];
         if (action === "show_items") {
@@ -4300,6 +4305,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           eventContext,
           excludeItemKeywords,
           outfitDirective,
+          ...(routing.brainVersion ? {outfitEditPlan} : {}),
           confidence,
           decisionRisk,
           assumptions,
