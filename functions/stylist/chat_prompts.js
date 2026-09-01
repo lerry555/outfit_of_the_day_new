@@ -18,7 +18,9 @@ const JSON_OUTPUT =
   `"semanticGrounding":{},` +
   `"showItemIds":[],"eventContext":{},"excludeItemKeywords":[],` +
   `"outfitDirective":{"scope":"none","slot":"none","family":"none",` +
-  `"preserveOtherSlots":true,"extraLayer":"none","presentation":"normal"}}\n` +
+  `"preserveOtherSlots":true,"preserveCurrentOutfit":false,` +
+  `"extraLayer":"none","layerFamily":"none","presentation":"normal"}}
+` +
   `\nSEMANTICKÉ UZEMNENIE (iba explicitný user fakt):\n` +
   `- unresolvedMaterialFields sú výstup rýchleho deterministického parsera, nie dôkaz, že user danú vec nepovedal.\n` +
   `- Ak je unresolved "activity" alebo "trip_scope", MUSÍŠ pred voľbou action spraviť semantický pre-pass výhradne nad správami s rolou user: rozhodni, či user už významovo jasne opísal, NA ČO outfit použije alebo čo bude robiť, aj keď nepoužil názov aktivity ani očakávané kľúčové slovo.\n` +
@@ -65,8 +67,10 @@ const BRAIN_CORE_TONE =
   `- scope=full_outfit keď user žiada prvý/celý/nový outfit. presentation=normal pri prvom odporúčaní; presentation=concise_full keď už outfit vidí a chce ho iba znovu ukázať alebo zobraziť po úprave.\n` +
   `- scope=single_slot keď user chce vybrať alebo vymeniť presne jeden slot („ktoré kraťasy?“, „iné topánky“, „zmeň tričko“). slot=top|bottom|shoes|outerwear, preserveOtherSlots=true, presentation=focused_item.\n` +
   `- family používaj iba ak user rodinu naozaj určil: shorts|jeans|pants|joggers|sneakers|boots|sandals|formal_shoes; inak none.\n` +
-  `- extraLayer=optional_upper_layer iba keď user explicitne chce pridať záložnú vrstvu navrch/pre prípad chladu. Nevyvodzuj ju iba z večera alebo mesta.\n` +
-  `- Ak user povie „ukáž celý outfit a pridaj niečo navrch“, je to full_outfit + optional_upper_layer + concise_full, nie single-slot swap.\n` +
+  `- Ak user prikáže PRIDAŤ/DÁŤ/PRIhodiť vrstvu do outfitu, extraLayer=required_upper_layer. Je to tvrdá požiadavka používateľa, nie odporúčanie podľa počasia. Nesmieš ju zrušiť vetou typu „nebudeš ju potrebovať“.\n` +
+  `- layerFamily používaj pre explicitný druh pridávanej vrstvy: hoodie|sweater|jacket|coat|blazer|cardigan; inak none. Slovenské „mikina“ mapuj na hoodie (zahŕňa mikinu, hoodie aj mikinu na zips).\n` +
+  `- Keď currentOutfit existuje a user chce celý EXISTUJÚCI outfit ukázať s pridanou vrstvou, scope=full_outfit, preserveCurrentOutfit=true, extraLayer=required_upper_layer a presentation=concise_full. Základ outfitu sa NESMIE pregenerovať.\n` +
+  `- Ak user povie „ukáž celý outfit a pridaj mi do neho aj mikinu“, je to full_outfit + preserveCurrentOutfit=true + required_upper_layer + layerFamily=hoodie + concise_full.\n` +
   `- Ak user povie „ktoré kraťasy si mám dať?“, je to generate_outfit + single_slot(bottom, shorts) + focused_item. Odpoveď má znieť ako rada stylistu, nie ako interná operácia.\n` +
   `- Ak Client context obsahuje currentOutfit, je to autoritatívny outfit PRÁVE ZOBRAZENÝ používateľovi. Pri follow-upe typu „prečo?“, „je to vhodné?“, „čo na tom nie je ideálne?“ NIKDY netvrď, že outfit alebo konkrétne kúsky nevidíš; odpovedaj o currentOutfit.\n` +
   `- AUTORSTVO: outfit, ktorý si odporučil ty/systém stylistu, NIKDY nepripisuj používateľovi slovami „si zvolil“, „vybral si“ a pod., pokiaľ ho používateľ naozaj explicitne nevybral. Hovor „odporúčam ti“, „vybral som ti“, „zvolil som“.\n` +

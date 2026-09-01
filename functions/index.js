@@ -381,7 +381,12 @@ function sanitizeStylistOutfitDirective(raw) {
     "none", "shorts", "jeans", "pants", "joggers",
     "sneakers", "boots", "sandals", "formal_shoes",
   ]);
-  const allowedExtraLayers = new Set(["none", "optional_upper_layer"]);
+  const allowedExtraLayers = new Set([
+    "none", "required_upper_layer", "optional_upper_layer",
+  ]);
+  const allowedLayerFamilies = new Set([
+    "none", "hoodie", "sweater", "jacket", "coat", "blazer", "cardigan",
+  ]);
   const allowedPresentations = new Set(["normal", "concise_full", "focused_item"]);
   const pick = (value, allowed, fallback) => {
     const normalized = String(value || "").trim().toLowerCase();
@@ -393,6 +398,8 @@ function sanitizeStylistOutfitDirective(raw) {
   const family = scope === "single_slot" ?
     pick(raw.family, allowedFamilies, "none") : "none";
   const extraLayer = pick(raw.extraLayer, allowedExtraLayers, "none");
+  const layerFamily = extraLayer !== "none" ?
+    pick(raw.layerFamily, allowedLayerFamilies, "none") : "none";
   const presentation = pick(
     raw.presentation,
     allowedPresentations,
@@ -403,7 +410,10 @@ function sanitizeStylistOutfitDirective(raw) {
     slot,
     family,
     preserveOtherSlots: scope === "single_slot" ? raw.preserveOtherSlots !== false : false,
+    preserveCurrentOutfit:
+      scope === "full_outfit" && raw.preserveCurrentOutfit === true,
     extraLayer,
+    layerFamily,
     presentation,
   });
 }

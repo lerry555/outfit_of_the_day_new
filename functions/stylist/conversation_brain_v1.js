@@ -67,12 +67,12 @@ function explanationSystemPrompt() {
     "- effectiveAction, userFacingSelectedOutfit a userFacingCompromises sú nemenné. Nesmieš outfit zmeniť, doplniť, nahradiť ani potajomky odporučiť iný vlastnený kúsok.",
     "- Pri select_candidate pomenuj iba kúsky z userFacingSelectedOutfit. Vysvetli konkrétne, prečo kombinácia funguje pre situáciu, počasie alebo dress code.",
     "- presentationMode riadi ROZSAH odpovede, nikdy samotný výber kúskov.",
-    "- focused_item: odpovedz ako živý stylista na userRequest. Zameraj sa na kúsok vo focusSlot, povedz napr. „Zvolil by som tieto čierne šortky, pretože…“. NIKDY nepíš technické formulácie typu „vymenil som spodok/slot“. Stačí 1–2 prirodzené vety.",
-    "- concise_full: používateľ už outfit videl alebo si ho práve nechal upraviť. Neopakuj celý dlhý rozbor. Stačí 1–2 vety, ktoré potvrdia podstatnú zmenu/požiadavku; karty pod správou ukážu kúsky.",
-    "- normal: pri prvom odporúčaní daj stručné 2–4 vety, nie katalógový odsek.",
+    "- focused_item: JEDNA krátka prirodzená veta. Povedz iba ktorý kúsok odporúčaš k už existujúcemu outfitu. Neopakuj teplotu, dážď, mesto ani opis ostatných kúskov, pokiaľ sa na ne user výslovne nepýta. NIKDY nepíš technické formulácie typu „vymenil som spodok/slot“.",
+    "- concise_full: používateľ už outfit videl alebo si ho práve nechal upraviť. Max 1–2 krátke vety. Potvrď iba požadovanú zmenu a neprepisuj znovu počasie ani katalógový opis každého kúsku.",
+    "- normal: pri prvom odporúčaní max 2–3 stručné vety. Nevysvetľuj osobitne každý kus; povedz len to, čo je pre rozhodnutie užitočné.",
     "- userFacingContext.userIntentContext obsahuje iba userove vlastné slová k použitiu outfitu. Aktivitu typu prechádzka, stretnutie, večera a pod. smieš pomenovať len ak je v tomto kontexte explicitne podložená. Samotné „idem do mesta“ NIE JE prechádzka ani stretnutie.",
     "- Toto je TVOJE odporúčanie stylistu. Nikdy nepíš používateľovi „si zvolil“, „vybral si“ ani inú formuláciu, ktorá mu pripisuje tvoju voľbu, pokiaľ payload výslovne nehovorí, že ju zvolil používateľ. Použi „odporúčam ti“, „vybral som ti“ alebo „zvolil som“.",
-    "- Ak userFacingContext.weather obsahuje teplotu, pri odporúčaní ju uveď explicitne aspoň raz (napr. „pri 25 °C“); dážď/vietor spomeň, keď menia voľbu. Nikdy nepoužívaj inú teplotu.",
+    "- Počasie nie je povinná fráza. V normal režime ho spomeň najviac raz a iba keď reálne vysvetľuje voľbu. Vo focused_item a concise_full ho NEOPAKUJ, ak sa user nepýta na počasie alebo sa podmienky práve nezmenili. Ak teplotu uvedieš, musí byť presne z userFacingContext.weather.",
     "- Neprotireč vlastnému uzavretému výberu: ak payload neoznačuje vybraný outfit/kus ako kompromis, netvrď, že nevybraná alternatíva by bola lepšia alebo príjemnejšia. Ak kompromis existuje, smieš ho pomenovať iba podľa userFacingCompromises.",
     "- Nikdy nepíš, že konkrétne kúsky alebo hotový outfit nevidíš: userFacingSelectedOutfit je presne uzavretý outfit, ktorý sa zobrazuje používateľovi.",
     "- Ak userFacingCompromises nie je prázdne, povedz pravdu: ide o najlepšiu dostupnú vlastnenú možnosť, ale nie ideál. Stručne pomenuj slabinu a idealReplacementDescription, ak je dodaná.",
@@ -90,9 +90,12 @@ function buildConversationBrainExplanationBodyV1(canonicalPayload) {
   if (!model || model.provider !== "openai") {
     throw new Error("conversation_brain_model_unavailable");
   }
+  const presentationMode = text(canonicalPayload && canonicalPayload.presentationMode, 40);
+  const tokenBudget = presentationMode === "focused_item" ? 120 :
+    presentationMode === "concise_full" ? 220 : 420;
   return Object.freeze({
     model: model.id,
-    max_tokens: Math.min(Number(model.maxTokens) || 700, 700),
+    max_tokens: Math.min(Number(model.maxTokens) || tokenBudget, tokenBudget),
     temperature: Number.isFinite(model.temperature) ? model.temperature : 0.65,
     response_format: {
       type: "json_schema",

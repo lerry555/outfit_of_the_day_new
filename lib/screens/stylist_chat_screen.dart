@@ -251,6 +251,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   }
 
   Set<String> _lastOutfitItemIds = const {};
+  List<Set<String>> _recentOutfitItemIdSets = const <Set<String>>[];
+  bool _recentOutfitHistoryLoaded = false;
   List<Map<String, dynamic>> _currentOutfitItems = const <Map<String, dynamic>>[];
   bool _currentOutfitUsedCompromise = false;
   String _currentOutfitDecisionRationale = '';
@@ -1490,10 +1492,25 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return StylistSwapRequest.parse(userText);
   }
 
-  bool _brainRequestsOptionalUpperLayer(Map<String, dynamic> response) {
+  bool _brainRequiresUpperLayer(Map<String, dynamic> response) {
     final directive = _brainOutfitDirective(response);
-    return _brainDirectiveValue(directive, 'extraLayer', 'none') ==
-        'optional_upper_layer';
+    return const {'required_upper_layer', 'optional_upper_layer'}.contains(
+      _brainDirectiveValue(directive, 'extraLayer', 'none'),
+    );
+  }
+
+  String _brainRequiredUpperLayerFamily(Map<String, dynamic> response) {
+    final directive = _brainOutfitDirective(response);
+    return _brainDirectiveValue(directive, 'layerFamily', 'none');
+  }
+
+  bool _brainPreservesCurrentOutfitForLayer(Map<String, dynamic> response) {
+    final directive = _brainOutfitDirective(response);
+    if (directive == null || !_brainRequiresUpperLayer(response)) return false;
+    // Structural invariant: adding a requested layer to a visible full outfit
+    // is additive even if the model forgot the boolean flag.
+    return _brainDirectiveValue(directive, 'scope', 'none') == 'full_outfit' &&
+        _conversationAlreadyHasOutfitCards();
   }
 
   String _brainPresentationMode(Map<String, dynamic> response) {
@@ -1710,7 +1727,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         requestedBottomFamily: swapRequest.slot == StylistSwapSlot.bottom
             ? swapRequest.bottomFamily
             : null,
-        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        optionalUpperLayerRequested: false,
         presentationMode: _brainPresentationMode(response),
       );
       return;
@@ -1744,7 +1761,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : const <String>[],
         forceDifferent: _shouldForceDifferentOutfit(userText),
         requestedBottomFamily: _resolveRequestedBottomFamily(userText),
-        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        optionalUpperLayerRequested: _brainRequiresUpperLayer(response),
+        preserveCurrentOutfit: _brainPreservesCurrentOutfitForLayer(response),
+        requiredUpperLayerFamily: _brainRequiredUpperLayerFamily(response),
         presentationMode: _brainPresentationMode(response),
       );
       return;
@@ -1810,7 +1829,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
               : const <String>[],
           forceDifferent: _shouldForceDifferentOutfit(userText),
           requestedBottomFamily: _resolveRequestedBottomFamily(userText),
-          optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+          optionalUpperLayerRequested: _brainRequiresUpperLayer(response),
           presentationMode: _brainPresentationMode(response),
         );
         return;
@@ -1847,7 +1866,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : const <String>[],
         forceDifferent: _shouldForceDifferentOutfit(userText),
         requestedBottomFamily: _resolveRequestedBottomFamily(userText),
-        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        optionalUpperLayerRequested: _brainRequiresUpperLayer(response),
+        preserveCurrentOutfit: _brainPreservesCurrentOutfitForLayer(response),
+        requiredUpperLayerFamily: _brainRequiredUpperLayerFamily(response),
         presentationMode: _brainPresentationMode(response),
       );
       return;
@@ -2065,6 +2086,28 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     );
   }
 
+  Future<void> _ensureRecentOutfitHistory() async {
+    if (_recentOutfitHistoryLoaded) return;
+    try {
+      _recentOutfitItemIdSets = await _chatStore.loadRecentFullOutfitItemIdSets();
+    } catch (_) {
+      _recentOutfitItemIdSets = const <Set<String>>[];
+    } finally {
+      _recentOutfitHistoryLoaded = true;
+    }
+  }
+
+  void _rememberRecentOutfit(Set<String> ids) {
+    if (ids.length < 3) return;
+    final next = <Set<String>>[Set<String>.unmodifiable(ids)];
+    for (final prior in _recentOutfitItemIdSets) {
+      if (prior.length == ids.length && prior.containsAll(ids)) continue;
+      next.add(prior);
+      if (next.length >= 5) break;
+    }
+    _recentOutfitItemIdSets = List<Set<String>>.unmodifiable(next);
+  }
+
   Future<void> _runHybridOutfitGeneration({
     required String userText,
     required List<Map<String, String>> history,
@@ -2076,6 +2119,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
     bool optionalUpperLayerRequested = false,
+    bool preserveCurrentOutfit = false,
+    String requiredUpperLayerFamily = '',
     String presentationMode = 'normal',
   }) async {
     // Semantic clarification has already been decided by the GPT-4o context
@@ -2083,6 +2128,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     if (!_useAiClarifyFlow &&
         _blockIfConversationNeedsClarification(sourceText: userText)) {
       return;
+    }
+    if (requestedSwap == null && !preserveCurrentOutfit) {
+      await _ensureRecentOutfitHistory();
     }
     _setSendingProgress(StylistChatProgressPhase.analyzingWardrobe);
     StylistChatOutfitResult? outfitResult;
@@ -2099,6 +2147,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         requestedBottomFamily: requestedBottomFamily,
         requestedSwap: requestedSwap,
         optionalUpperLayerRequested: optionalUpperLayerRequested,
+        preserveCurrentOutfit: preserveCurrentOutfit,
+        requiredUpperLayerFamily: requiredUpperLayerFamily == 'none'
+            ? ''
+            : requiredUpperLayerFamily,
+        recentOutfitItemIdSets: _recentOutfitItemIdSets,
         presentationMode: presentationMode,
         userRequest: userText,
         onProgress: _setSendingProgress,
@@ -2147,6 +2200,29 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         .where((id) => id.isNotEmpty)
         .toSet();
 
+    if (preserveCurrentOutfit && previousIds.isNotEmpty) {
+      final added = nextIds.difference(previousIds);
+      final removed = previousIds.difference(nextIds);
+      if (removed.isNotEmpty || added.length != 1) {
+        debugPrint(
+          'STYLIST CHAT additive_layer_rejected reason=non_additive_delta '
+          'added=$added removed=$removed',
+        );
+        setState(() {
+          _messages.add(
+            const StylistChatMessage(
+              text:
+                  'Vrstva sa mi nepodarila pridať bez zmeny zvyšku outfitu, takže pôvodný outfit nechávam tak.',
+              isUser: false,
+            ),
+          );
+          _isSending = false;
+        });
+        _scrollToBottom();
+        return;
+      }
+    }
+
     if (requestedSwap != null && previousIds.isNotEmpty) {
       final added = nextIds.difference(previousIds);
       final removed = previousIds.difference(nextIds);
@@ -2175,6 +2251,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
 
     _lastOutfitItemIds = nextIds;
+    if (requestedSwap == null) _rememberRecentOutfit(nextIds);
     _currentOutfitItems = List<Map<String, dynamic>>.unmodifiable(
       suggestedItems.map((item) => Map<String, dynamic>.from(item)),
     );

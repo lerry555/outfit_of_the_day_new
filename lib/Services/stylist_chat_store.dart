@@ -124,6 +124,39 @@ class StylistChatStore {
     }
   }
 
+  /// Last full outfit cards across recent threads. Used only as a soft
+  /// diversity memory: safety and suitability still outrank novelty.
+  Future<List<Set<String>>> loadRecentFullOutfitItemIdSets({
+    int limitChats = 5,
+  }) async {
+    final col = _col;
+    if (col == null) return const <Set<String>>[];
+    final snap = await col
+        .orderBy('updatedAt', descending: true)
+        .limit(limitChats.clamp(1, 10))
+        .get();
+    final out = <Set<String>>[];
+    for (final doc in snap.docs) {
+      final rawMessages = doc.data()['messages'];
+      if (rawMessages is! List) continue;
+      for (final raw in rawMessages.reversed) {
+        if (raw is! Map || raw['isUser'] == true) continue;
+        final suggested = raw['suggestedItems'];
+        if (suggested is! List || suggested.length < 3) continue;
+        final ids = suggested
+            .whereType<Map>()
+            .map((item) => (item['id'] ?? '').toString().trim())
+            .where((id) => id.isNotEmpty)
+            .toSet();
+        if (ids.length >= 3) {
+          out.add(Set<String>.unmodifiable(ids));
+          break;
+        }
+      }
+    }
+    return List<Set<String>>.unmodifiable(out);
+  }
+
   Future<void> renameChat(String chatId, String title) async {
     final col = _col;
     if (col == null) return;

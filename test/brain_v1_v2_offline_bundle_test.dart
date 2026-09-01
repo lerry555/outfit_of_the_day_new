@@ -340,7 +340,9 @@ void main() {
 
     expect(prompts, contains('outfitDirective'));
     expect(prompts, contains('scope=single_slot'));
-    expect(prompts, contains('extraLayer=optional_upper_layer'));
+    expect(prompts, contains('extraLayer=required_upper_layer'));
+    expect(prompts, contains('preserveCurrentOutfit=true'));
+    expect(prompts, contains('layerFamily=hoodie'));
     expect(server, contains('sanitizeStylistOutfitDirective'));
     expect(screen, contains('_swapRequestForTurn(response, userText)'));
     expect(screen, contains('brain_locked_swap'));
@@ -349,6 +351,16 @@ void main() {
     expect(service, contains("presentationMode: 'focused_item'"));
     expect(native, contains('optionalUpperLayerRequested'));
     expect(native, contains('user_requested_backup_layer'));
+    expect(screen, contains('additive_layer_rejected reason=non_additive_delta'));
+    expect(screen, contains('_brainPreservesCurrentOutfitForLayer'));
+    expect(service, contains('locked_additive_layer'));
+    expect(service, contains('required_user_layer_unavailable'));
+    expect(service, contains('_preferNovelFullOutfitCandidates'));
+    expect(service, contains('_addRequiredUpperLayerToFrozenCurrent'));
+    expect(
+      service,
+      contains("const {'hoodie', 'zip_hoodie', 'sweatshirt'}.contains(type)"),
+    );
   });
 
   test('Stylist has one shared thermal target instead of a chat-only duplicate', () {
@@ -375,6 +387,9 @@ void main() {
     expect(brain, contains('focused_item'));
     expect(brain, contains('concise_full'));
     expect(brain, contains('Samotné „idem do mesta“ NIE JE prechádzka'));
+    expect(brain, contains('Počasie nie je povinná fráza'));
+    expect(brain, contains('focused_item: JEDNA krátka prirodzená veta'));
+    expect(authority, contains('deterministicFocused'));
   });
 
 }

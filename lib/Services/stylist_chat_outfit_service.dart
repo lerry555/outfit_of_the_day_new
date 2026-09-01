@@ -31,6 +31,7 @@ import '../utils/wardrobe_gap_analysis.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../domain/wardrobe_v2/wardrobe_item_v2.dart';
 import '../domain/wardrobe_v2/wardrobe_v2_adapters.dart';
+import '../domain/wardrobe_v2/wardrobe_v2_resolver.dart';
 import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import '../domain/wardrobe_v2/native_outfit_engine_v2.dart';
@@ -227,6 +228,9 @@ class StylistChatOutfitService {
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
     bool optionalUpperLayerRequested = false,
+    bool preserveCurrentOutfit = false,
+    String requiredUpperLayerFamily = '',
+    List<Set<String>> recentOutfitItemIdSets = const <Set<String>>[],
     String presentationMode = 'normal',
     String userRequest = '',
     StylistChatOutfitDebugCollector? debugCollector,
@@ -325,6 +329,17 @@ class StylistChatOutfitService {
           if (!item.item.bodySlots.contains('lower_body')) return true;
           return _matchesRequestedBottomV2(item.item, requestedBottomFamily);
         })
+        .where((item) {
+          if (requiredUpperLayerFamily.trim().isEmpty) return true;
+          final isOptionalUpperLayer =
+              const {'mid', 'outer', 'shell'}.contains(item.item.layerPosition) &&
+              item.item.bodySlots.contains('upper_body');
+          if (!isOptionalUpperLayer) return true;
+          return _matchesRequiredUpperLayerFamily(
+            item.item.canonicalType,
+            requiredUpperLayerFamily,
+          );
+        })
         .toList(growable: false);
     if (resolved.isEmpty) return null;
     final context = V2CandidateMatrixContext(
@@ -416,6 +431,30 @@ class StylistChatOutfitService {
             .toList()
           ..sort((a, b) => b.score.compareTo(a.score));
     if (matrix.isEmpty) return null;
+    final matrixWithRequiredLayer = requiredUpperLayerFamily.trim().isEmpty
+        ? matrix
+        : matrix
+              .where(
+                (candidate) => candidate.outfit.items.any(
+                  (item) =>
+                      const {'mid', 'outer', 'shell'}.contains(item.item.layerPosition) &&
+                      item.item.bodySlots.contains('upper_body') &&
+                      _matchesRequiredUpperLayerFamily(
+                        item.item.canonicalType,
+                        requiredUpperLayerFamily,
+                      ),
+                ),
+              )
+              .toList(growable: false);
+    if (requiredUpperLayerFamily.trim().isNotEmpty &&
+        matrixWithRequiredLayer.isEmpty &&
+        !preserveCurrentOutfit) {
+      throw const StylistFrozenDecisionRejectedExceptionV1(
+        <String>['required_user_layer_unavailable'],
+        explanation:
+            'V šatníku som nenašiel vhodnú požadovanú vrstvu, takže ju nechcem potichu vynechať.',
+      );
+    }
 
     onProgress?.call(StylistChatProgressPhase.finalizing);
     V2FlexibleOutfitResult? selected;
@@ -443,7 +482,58 @@ class StylistChatOutfitService {
           'eventStartHourLocal': event.eventStartHour.toString(),
       },
     };
-    if (requestedSwap != null && previousOutfitItemIds.isNotEmpty) {
+    if (preserveCurrentOutfit &&
+        requiredUpperLayerFamily.trim().isNotEmpty &&
+        previousOutfitItemIds.isNotEmpty) {
+      final current = _reconstructFrozenCurrentOutfit(
+        wardrobe: wardrobe,
+        previousOutfitItemIds: previousOutfitItemIds,
+        context: context,
+      );
+      if (current == null) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['current_outfit_restore_failed'],
+          explanation:
+              'Aktuálny outfit sa mi nepodarilo bezpečne obnoviť, preto ti ho nechcem potichu prehádzať.',
+        );
+      }
+      selected = _addRequiredUpperLayerToFrozenCurrent(
+        current: current,
+        wardrobe: resolved,
+        context: context,
+        requiredFamily: requiredUpperLayerFamily,
+      );
+      if (selected == null) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['required_user_layer_unavailable'],
+          explanation:
+              'K tomuto outfitu som v šatníku nenašiel vhodnú požadovanú vrstvu. Zvyšok outfitu som preto nezmenil.',
+        );
+      }
+      final lockedCandidate = V2FlexibleCandidate(
+        candidateId: 'locked_additive_layer',
+        outfit: selected,
+        score: 0,
+        scoreBreakdown: const <String, double>{},
+      );
+      final lockedExplanation =
+          await const StylistFrozenCandidateDecisionServiceV1().resolve(
+        candidates: <V2FlexibleCandidate>[lockedCandidate],
+        resolvedContext: frozenResolvedContext,
+        lockedSelection: true,
+        presentationMode: 'concise_full',
+        userRequest: userRequest,
+      );
+      if (!lockedExplanation.selected) {
+        throw StylistFrozenDecisionRejectedExceptionV1(
+          lockedExplanation.reasonCodes,
+          explanation: lockedExplanation.explanation,
+        );
+      }
+      finalExplanation = lockedExplanation.explanation.trim().isEmpty
+          ? null
+          : lockedExplanation.explanation.trim();
+    } else if (requestedSwap != null && previousOutfitItemIds.isNotEmpty) {
       final currentDocs = wardrobe.where((raw) {
         final id = OutfitGenerationService.wardrobeItemId(raw);
         return previousOutfitItemIds.contains(id);
@@ -507,9 +597,13 @@ class StylistChatOutfitService {
         }
       }
     } else {
+      final decisionPool = _preferNovelFullOutfitCandidates(
+        requiredUpperLayerFamily.trim().isEmpty ? matrix : matrixWithRequiredLayer,
+        recentOutfitItemIdSets,
+      );
       final decision = await const StylistFrozenCandidateDecisionServiceV1()
           .resolve(
-            candidates: matrix,
+            candidates: decisionPool,
             resolvedContext: frozenResolvedContext,
             presentationMode: presentationMode,
             userRequest: userRequest,
@@ -522,7 +616,7 @@ class StylistChatOutfitService {
           explanation: decision.explanation,
         );
       }
-      final accepted = matrix
+      final accepted = decisionPool
           .where((candidate) => candidate.candidateId == selectedId)
           .firstOrNull;
       if (accepted == null) return null;
@@ -554,6 +648,165 @@ class StylistChatOutfitService {
       functionalAssessment: selectedAssessment,
     );
   }
+
+  static List<V2FlexibleCandidate> _preferNovelFullOutfitCandidates(
+    List<V2FlexibleCandidate> candidates,
+    List<Set<String>> recentSets,
+  ) {
+    if (candidates.length <= 1 || recentSets.isEmpty) return candidates;
+    bool repeated(V2FlexibleCandidate candidate) {
+      final ids = candidate.outfit.items.map((item) => item.itemId).toSet();
+      return recentSets.any(
+        (recent) => recent.length == ids.length && recent.containsAll(ids),
+      );
+    }
+    final novel = candidates.where((candidate) => !repeated(candidate)).toList();
+    return novel.isEmpty ? candidates : List<V2FlexibleCandidate>.unmodifiable(novel);
+  }
+
+  static bool _matchesRequiredUpperLayerFamily(
+    String canonicalType,
+    String family,
+  ) {
+    final type = canonicalType.trim().toLowerCase();
+    return switch (family.trim().toLowerCase()) {
+      'hoodie' => const {'hoodie', 'zip_hoodie', 'sweatshirt'}.contains(type),
+      'sweater' => type.contains('sweater') || type.contains('pullover'),
+      'cardigan' => type.contains('cardigan'),
+      'blazer' => type.contains('blazer') || type.contains('suit_jacket'),
+      'coat' => type.contains('coat') || type.contains('trench'),
+      'jacket' =>
+        type.contains('jacket') || type.contains('parka') || type.contains('windbreaker'),
+      _ => true,
+    };
+  }
+
+  static V2FlexibleOutfitResult? _reconstructFrozenCurrentOutfit({
+    required List<Map<String, dynamic>> wardrobe,
+    required Set<String> previousOutfitItemIds,
+    required V2CandidateMatrixContext context,
+  }) {
+    final resolved = NativeWardrobeV2Runtime.resolveAll(wardrobe)
+        .where((item) => previousOutfitItemIds.contains(item.itemId))
+        .toList(growable: false);
+    if (resolved.length != previousOutfitItemIds.length) return null;
+    final hasOnePiece = resolved.any((item) => item.item.bodySlots.contains('full_body'));
+    final compositionItems = <OutfitCompositionItemV2>[];
+    for (final value in resolved) {
+      final item = value.item;
+      final String group;
+      final CompositionRoleV2 role;
+      final bool required;
+      if (item.bodySlots.contains('feet')) {
+        group = 'footwear'; role = CompositionRoleV2.core; required = true;
+      } else if (item.bodySlots.contains('full_body')) {
+        group = 'full_body_core'; role = CompositionRoleV2.core; required = true;
+      } else if (item.bodySlots.contains('lower_body') &&
+          !item.bodySlots.contains('upper_body')) {
+        group = 'lower_body_core'; role = CompositionRoleV2.core; required = true;
+      } else if (const {'mid', 'outer', 'shell'}.contains(item.layerPosition)) {
+        group = 'layer_${item.layerPosition}';
+        role = CompositionRoleV2.conditional; required = false;
+      } else if (item.bodySlots.contains('upper_body')) {
+        group = 'upper_body_core'; role = CompositionRoleV2.core; required = true;
+      } else {
+        group = item.accessoryGroup ?? 'finishing';
+        role = CompositionRoleV2.finishing; required = false;
+      }
+      compositionItems.add(
+        OutfitCompositionItemV2(
+          itemId: value.itemId,
+          item: item,
+          role: role,
+          compositionGroup: group,
+          required: required,
+          selectionReason: 'restore_frozen_current',
+        ),
+      );
+    }
+    final composition = OutfitCompositionV2(
+      template: hasOnePiece ? OutfitTemplateV2.onePiece : OutfitTemplateV2.separates,
+      items: compositionItems,
+    );
+    if (composition.compatibilityErrors().isNotEmpty) return null;
+    final result = V2FlexibleOutfitResult.fromComposition(
+      composition,
+      weatherProtectionRequired: context.weatherProtectionRequired,
+      minimumFormality: context.minimumFormality,
+      requiredFunctions: context.requiredFunctions,
+      displayByItemId: {for (final value in resolved) value.itemId: value.raw},
+    );
+    return result.validate().isEmpty ? result : null;
+  }
+
+  static V2FlexibleOutfitResult? _addRequiredUpperLayerToFrozenCurrent({
+    required V2FlexibleOutfitResult current,
+    required Iterable<ResolvedWardrobeItemV2> wardrobe,
+    required V2CandidateMatrixContext context,
+    required String requiredFamily,
+  }) {
+    final currentIds = current.items.map((item) => item.itemId).toSet();
+    V2FlexibleOutfitResult? best;
+    var bestScore = double.negativeInfinity;
+    for (final candidate in wardrobe) {
+      if (currentIds.contains(candidate.itemId)) continue;
+      final item = candidate.item;
+      if (!item.bodySlots.contains('upper_body') ||
+          !const {'mid', 'outer', 'shell'}.contains(item.layerPosition) ||
+          !_matchesRequiredUpperLayerFamily(item.canonicalType, requiredFamily)) {
+        continue;
+      }
+      if (OutfitSuitabilityPolicyV2.isPhysicallyUnsuitable(
+        item,
+        tempC: OutfitSuitabilityPolicyV2.effectiveTempC(
+          tempC: context.tempC,
+          feelsLikeC: context.feelsLikeC,
+        ),
+        seasonKey: context.seasonKey,
+        isRainy: context.isRainy || context.weatherProtectionRequired,
+        activityType: context.activityType,
+      )) {
+        continue;
+      }
+      final composition = OutfitCompositionV2(
+        template: current.template,
+        items: <OutfitCompositionItemV2>[
+          ...current.toComposition().items,
+          OutfitCompositionItemV2(
+            itemId: candidate.itemId,
+            item: item,
+            role: CompositionRoleV2.conditional,
+            compositionGroup: 'layer_user_required',
+            required: true,
+            selectionReason: 'user_required_additive_layer',
+          ),
+        ],
+      );
+      if (composition.compatibilityErrors().isNotEmpty) continue;
+      final next = V2FlexibleOutfitResult.fromComposition(
+        composition,
+        weatherProtectionRequired: context.weatherProtectionRequired,
+        minimumFormality: context.minimumFormality,
+        requiredFunctions: context.requiredFunctions,
+        displayByItemId: <String, Map<String, dynamic>>{
+          for (final existing in current.items) existing.itemId: existing.display,
+          candidate.itemId: candidate.raw,
+        },
+      );
+      if (next.validate().isNotEmpty) continue;
+      final breakdown = V2FlexibleOutfitScorer.score(next, context);
+      final score = breakdown.values.fold(0.0, (a, b) => a + b);
+      if (score > bestScore) {
+        bestScore = score;
+        best = next;
+      }
+    }
+    return best;
+  }
+
+  @visibleForTesting
+  static bool requiredLayerFamilyMatchesForTest(String canonicalType, String family) =>
+      _matchesRequiredUpperLayerFamily(canonicalType, family);
 
   static bool _matchesRequestedBottomV2(
     WardrobeItemV2 item,

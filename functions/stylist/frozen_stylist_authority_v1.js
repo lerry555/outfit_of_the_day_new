@@ -237,39 +237,38 @@ function userFacingWeatherSummary(value) {
 
 function deterministicExplanation(decision, normalized = null) {
   if (decision.action === "reject_all") {
-    return "Z toho, čo máš, teraz neviem poskladať outfit, ktorý by som ti s čistým svedomím odporučil. Radšej ti poviem, čo v ňom chýba, než aby som predstieral, že je všetko v poriadku.";
+    return "Z toho, čo máš, ti teraz nechcem nasilu potvrdiť nevhodnú kombináciu.";
   }
   const selected = normalized && Array.isArray(normalized.frozenCandidates) ?
     normalized.frozenCandidates.find((candidate) =>
       candidate.candidateId === decision.selectedCandidateId) : null;
-  if (!selected) {
-    return "Z tvojho šatníka som vybral najsilnejšiu dostupnú kombináciu pre túto situáciu.";
+  if (!selected) return "Vybral som ti najlepšiu dostupnú možnosť z tvojho šatníka.";
+
+  if (normalized.presentationMode === "focused_item") {
+    const focused = selected.presentationItems.find((item) =>
+      normalized.focusSlot && item.slot === normalized.focusSlot) ||
+      selected.presentationItems[0];
+    return focused && focused.name ?
+      `Zvolil by som ${focused.name} — k zvyšku outfitu mi sedia najlepšie.` :
+      "Zvolil by som túto možnosť — k zvyšku outfitu mi sedí najlepšie.";
+  }
+  if (normalized.presentationMode === "concise_full") {
+    return "Jasné — outfit som upravil podľa tvojej požiadavky a zvyšok som zbytočne nemenil.";
   }
 
   const sentences = [];
   const itemList = listUserFacingItems(selected.presentationItems);
   if (itemList) sentences.push(`Vybral som ${itemList}.`);
-  const weather = userFacingWeatherSummary(
-    normalized.resolvedContext && normalized.resolvedContext.weather,
-  );
-  if (weather) sentences.push(`Počítam pritom s ${weather}.`);
-
   const firstCompromise = selected.compromiseDetails && selected.compromiseDetails[0];
   if (firstCompromise) {
     const itemName = cleanText(firstCompromise.itemName, 120) || "jeden kúsok";
     const ideal = cleanText(firstCompromise.idealReplacementDescription, 180);
-    sentences.push(
-      ideal ?
-        `${itemName} je tu kompromis; ideálnejšia náhrada by bola ${ideal}.` :
-        `${itemName} je tu najlepší dostupný kompromis.`,
-    );
-  } else if (selected.compromiseClassification &&
-      selected.compromiseClassification.level !== "none") {
-    sentences.push("Je to najlepšia dostupná možnosť, hoci nie úplne bez kompromisu.");
-  } else {
-    sentences.push("Z toho, čo máš v šatníku, je to pre túto situáciu najsilnejšia dostupná kombinácia.");
+    sentences.push(ideal ?
+      `${itemName} je kompromis; ideálnejšia náhrada by bola ${ideal}.` :
+      `${itemName} je tu najlepší dostupný kompromis.`);
   }
-  return sentences.join(" ");
+  return sentences.slice(0, 2).join(" ") ||
+    "Vybral som ti najlepšiu dostupnú kombináciu z tvojho šatníka.";
 }
 
 function isUserFacingExplanationSafe(value) {
@@ -353,12 +352,15 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
         }
       }
       const useBrain = brainRequested(data);
+      const deterministicFocused = useBrain && normalized.presentationMode === "focused_item";
       const explanationClient = useBrain ? brainExplanationClient : legacyExplanationClient;
-      const explanationResult = await explanationClient.run(explanationPayload(normalized, decision));
-      const explanationValid = explanationResult.ok &&
-        isUserFacingExplanationSafe(explanationResult.value.explanation);
-      const explanation = explanationValid ? explanationResult.value.explanation :
-        deterministicExplanation(decision, normalized);
+      const explanationResult = deterministicFocused ? null :
+        await explanationClient.run(explanationPayload(normalized, decision));
+      const explanationValid = deterministicFocused ||
+        (explanationResult.ok && isUserFacingExplanationSafe(explanationResult.value.explanation));
+      const explanation = deterministicFocused ? deterministicExplanation(decision, normalized) :
+        explanationValid ? explanationResult.value.explanation :
+          deterministicExplanation(decision, normalized);
       return Object.freeze({
         contractVersion: CONTRACT_VERSION,
         action: decision.action,
@@ -369,8 +371,8 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
         explanationFallback: !explanationValid,
         decisionProviderFailure,
         explanationProviderFailure: explanationValid ? null :
-          explanationResult.ok ? "explanation_user_facing_contract_invalid" :
-            explanationResult.failureCode || "explanation_provider_failure",
+          explanationResult && explanationResult.ok ? "explanation_user_facing_contract_invalid" :
+            explanationResult && explanationResult.failureCode || "explanation_provider_failure",
         conversationBrainVersion: useBrain ? CONVERSATION_BRAIN_VERSION : null,
       });
     },

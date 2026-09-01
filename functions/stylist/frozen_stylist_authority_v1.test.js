@@ -61,3 +61,39 @@ test("locked selection request preserves presentation semantics without opening 
   assert.equal(normalized.resolvedContext.userIntentContext, "idem večer do mesta");
   assert.equal(normalized.frozenCandidates[0].presentationItems[1].slot, "bottom");
 });
+
+test("focused Brain follow-up is deterministic, concise and does not spend an explanation call", async () => {
+  const calls = [];
+  const authority = createFrozenStylistAuthority({
+    resolveOpenAISecret: () => "openai-test",
+    resolveAnthropicSecret: () => "anthropic-test",
+    execute: async (call) => { calls.push(call); throw new Error("focused mode should not call provider"); },
+  });
+  const result = await authority.resolve({
+    data: {
+      contractVersion: 1,
+      conversationBrainVersion: "brain_v1",
+      decisionMode: "locked_selection",
+      presentationMode: "focused_item",
+      focusSlot: "bottom",
+      userRequest: "radšej by som si dal kraťasy",
+      resolvedContext: {weather: "21C rain=false"},
+      frozenCandidates: [{
+        candidateId: "locked",
+        itemIds: ["top", "shorts", "shoes"],
+        presentationItems: [
+          {itemId: "top", name: "sivé tričko", canonicalType: "t_shirt", primaryColor: "gray", slot: "top"},
+          {itemId: "shorts", name: "čierne šortky", canonicalType: "casual_shorts", primaryColor: "black", slot: "bottom"},
+          {itemId: "shoes", name: "biele tenisky", canonicalType: "sneakers", primaryColor: "white", slot: "shoes"},
+        ],
+        hardConstraintEvidence: {deterministicPassed: true, violationCodes: []},
+        compromiseClassification: {level: "none", reasonCodes: []},
+      }],
+    },
+    ownedItemIds: new Set(["top", "shorts", "shoes"]),
+  });
+  assert.equal(calls.length, 0);
+  assert.equal(result.action, "select_candidate");
+  assert.match(result.explanation, /čierne šortky/);
+  assert.doesNotMatch(result.explanation, /21|°C|počas/i);
+});
