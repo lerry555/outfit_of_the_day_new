@@ -106,7 +106,7 @@ test("deterministic explanation never invents a compromise for a clean selected 
   }, normalized);
   assert.equal(selected.includes("kompromis"), false);
   assert.equal(selected.includes("18 °C"), true);
-  assert.equal(selected.includes("najsilnejšia dostupná kombinácia"), true);
+  assert.equal(selected.includes("najsilnejšiu dostupnú kombináciu"), true);
 });
 
 test("implementation jargon is rejected from user-facing explanation prose", () => {
