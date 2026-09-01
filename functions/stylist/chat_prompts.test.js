@@ -41,7 +41,7 @@ test("premium prompt keeps event facts grounded before outfit generation", () =>
 });
 
 test("Brain additive layer contract is explicit and hard", () => {
-  const prompt = buildChatSystemPrompt({tier: "brain_v1"});
+  const prompt = buildChatSystemPrompt("brain_v1");
   assert.match(prompt, /required_upper_layer/);
   assert.match(prompt, /preserveCurrentOutfit=true/);
   assert.match(prompt, /layerFamily=hoodie/);
