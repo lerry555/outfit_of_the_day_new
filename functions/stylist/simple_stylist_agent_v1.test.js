@@ -758,6 +758,36 @@ test("non-retryable provider failure exposes sanitized diagnostics without respo
   });
 });
 
+test("exhausted provider credit fails once without a pointless retry", async () => {
+  let calls = 0;
+  const logs = [];
+  const execute = createOpenAiSimpleAgentExecutorV1({
+    resolveOpenAISecret: () => "test-key",
+    logger: {warn: (marker, details) => logs.push({marker, details})},
+    fetchImpl: async () => {
+      calls += 1;
+      return {
+        ok: false,
+        status: 429,
+        headers: {get: () => "req_quota"},
+        json: async () => ({
+          error: {type: "insufficient_quota", code: "credit_balance_exhausted"},
+        }),
+      };
+    },
+  });
+  const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
+    normalizeRequestV1(request("ahoj")),
+  );
+  await assert.rejects(execute(modelInput), (error) => {
+    assert.equal(error.providerStatus, 429);
+    assert.equal(error.providerErrorCode, "credit_balance_exhausted");
+    return true;
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(logs, []);
+});
+
 test("system prompt keeps the personal stylist voice gender-neutral and non-audit", () => {
   const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
     normalizeRequestV1(request("potrebujem outfit")),

@@ -697,9 +697,11 @@ function createOpenAiSimpleAgentExecutorV1({
       }
       if (!response.ok) {
         const details = providerErrorDetailsV1(response, json);
+        const permanentQuotaFailure = details.providerErrorType === "insufficient_quota" ||
+          details.providerErrorCode === "credit_balance_exhausted";
         const retryable = details.providerStatus === 408 ||
           details.providerStatus === 409 ||
-          details.providerStatus === 429 ||
+          (details.providerStatus === 429 && !permanentQuotaFailure) ||
           (details.providerStatus != null && details.providerStatus >= 500);
         if (providerAttempt === 1 && retryable) {
           safeLog(logger, "warn", "SIMPLE_AGENT_PROVIDER_RETRY", {
