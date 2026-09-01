@@ -1,0 +1,94 @@
+name: Simple Stylist comment deploy one-shot
+
+on:
+  push:
+    branches:
+      - stylist-simple-agent
+    paths:
+      - .github/workflows/_tmp-simple-agent-comment-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/stylist-simple-agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout simple agent branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard branch and protected baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment master
+          test "$GITHUB_REF_NAME" = "stylist-simple-agent"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+          git merge-base --is-ancestor 6c686a0 HEAD
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Run simple agent regressions
+        run: node --test functions/stylist/simple_stylist_agent_v1.test.js
+
+      - name: Generate deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          const family = g.generateFamilyRegistry();
+          const structured = g.generateStructuredTaxonomy();
+          console.log(JSON.stringify({ok: true, family, structured}));
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
+
+      - name: Narrow Firebase discovery to simple agent
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp functions/index.js functions/index.full.js
+          cat > functions/index.js <<'NODE'
+          "use strict";
+          const full = require("./index.full");
+          if (!full || !full.stylistSimpleAgentV1) {
+            throw new Error("stylistSimpleAgentV1_export_missing");
+          }
+          exports.stylistSimpleAgentV1 = full.stylistSimpleAgentV1;
+          NODE
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@latest
+
+      - name: Deploy simple agent callable only
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase deploy \
+            --only functions:stylistSimpleAgentV1 \
+            --project outfitoftheday-4d401 \
+            --non-interactive
