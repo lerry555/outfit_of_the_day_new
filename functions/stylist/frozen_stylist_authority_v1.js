@@ -258,7 +258,16 @@ function deterministicExplanation(decision, normalized = null) {
 
   const sentences = [];
   const itemList = listUserFacingItems(selected.presentationItems);
-  if (itemList) sentences.push(`Vybral som ${itemList}.`);
+  const weatherSummary = userFacingWeatherSummary(
+    normalized.resolvedContext && normalized.resolvedContext.weather,
+  );
+  if (itemList) {
+    let summary = `Vybral som ${itemList} ako najsilnejšiu dostupnú kombináciu z tvojho šatníka.`;
+    if (weatherSummary) {
+      summary += ` Pri ${weatherSummary} mi táto voľba dáva najväčší zmysel.`;
+    }
+    sentences.push(summary);
+  }
   const firstCompromise = selected.compromiseDetails && selected.compromiseDetails[0];
   if (firstCompromise) {
     const itemName = cleanText(firstCompromise.itemName, 120) || "jeden kúsok";
@@ -268,7 +277,7 @@ function deterministicExplanation(decision, normalized = null) {
       `${itemName} je tu najlepší dostupný kompromis.`);
   }
   return sentences.slice(0, 2).join(" ") ||
-    "Vybral som ti najlepšiu dostupnú kombináciu z tvojho šatníka.";
+    "Vybral som ti najsilnejšiu dostupnú kombináciu z tvojho šatníka.";
 }
 
 function isUserFacingExplanationSafe(value) {
