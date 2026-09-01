@@ -1,4 +1,4 @@
-name: Simple Stylist comment deploy one-shot
+name: Simple Stylist grounded comment deploy one-shot
 
 on:
   push:
@@ -31,7 +31,7 @@ jobs:
           test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
-          git merge-base --is-ancestor 6c686a0 HEAD
+          git merge-base --is-ancestor 8aa4962 HEAD
 
       - name: Use Node 20
         uses: actions/setup-node@v4
