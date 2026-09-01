@@ -1,4 +1,4 @@
-name: Simple Stylist recorded choice reasons deploy one-shot
+name: Simple Stylist choice reason transport deploy one-shot
 
 on:
   push:
@@ -44,7 +44,7 @@ jobs:
           test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
-          git merge-base --is-ancestor 7b12b0ad0d4d3351d7d9f8cbf547cfb3b4e0211d HEAD
+          git merge-base --is-ancestor b3a3c4607c1fb79ccf69ca774b5232af4472175f HEAD
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -119,7 +119,7 @@ jobs:
         env:
           STYLIST_QA_UID: ZYag22IU3sbQOQEa9kTAbkaeSqb2
           STYLIST_QA_CURRENT_IDS: '["ArmAaE4A1gdAi2LZCIu4","uwgZnR7YOFZAxqk55FlJ","9ajGS1WO9jtRvCXKScLF","GqhLKcWpQAfaGgiGGhAl"]'
-        run: node functions/stylist/simple_stylist_agent_live_smoke_v1.js --live --choice-continuity --allow-temporary-chat
+        run: node functions/stylist/simple_stylist_agent_live_smoke_v1.js --live --choice-continuity
 
       - name: Sanitized callable failure diagnostics
         if: failure()
@@ -127,5 +127,5 @@ jobs:
         run: |
           gcloud logging read 'resource.type="cloud_function" AND resource.labels.function_name="stylistSimpleAgentV1" AND jsonPayload.stage="callable"' \
             --project outfitoftheday-4d401 --freshness=15m --limit=3 \
-            --format='json(jsonPayload.code,jsonPayload.providerStatus,jsonPayload.providerErrorType,jsonPayload.providerErrorCode,jsonPayload.validationErrors)'
+            --format='json(jsonPayload.code,jsonPayload.providerStatus,jsonPayload.providerErrorType,jsonPayload.providerErrorCode,jsonPayload.providerResponseStatus,jsonPayload.providerIncompleteReason,jsonPayload.validationErrors)'
 

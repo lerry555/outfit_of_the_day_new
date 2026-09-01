@@ -142,6 +142,7 @@ class StylistSimpleAgentServiceV1 {
     required String message,
     required List<Map<String, String>> history,
     required List<String> currentOutfitItemIds,
+    List<Map<String, String>> currentSelectionReasons = const [],
     required Map<String, dynamic> weatherContext,
     required Map<String, dynamic> clientContext,
     Map<String, dynamic>? eventContext,
@@ -160,6 +161,8 @@ class StylistSimpleAgentServiceV1 {
         'message': message,
         'history': history,
         'currentOutfitItemIds': currentOutfitItemIds,
+        if (currentSelectionReasons.isNotEmpty)
+          'currentSelectionReasons': currentSelectionReasons,
         'weatherContext': weatherContext,
         'clientContext': clientContext,
         if (eventContext != null && eventContext.isNotEmpty)

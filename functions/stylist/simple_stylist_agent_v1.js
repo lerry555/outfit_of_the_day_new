@@ -744,7 +744,9 @@ function createOpenAiSimpleAgentExecutorV1({
       model: input.model,
       input: input.messages,
       reasoning: {effort: input.reasoningEffort},
-      max_output_tokens: 1600,
+      // Leave room for the structured per-item choice summaries as well as
+      // evidence and the short user-facing reply.
+      max_output_tokens: 2400,
       text: {
         format: {
           type: "json_schema",

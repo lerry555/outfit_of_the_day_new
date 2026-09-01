@@ -837,6 +837,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         message: text,
         history: history,
         currentOutfitItemIds: currentIds,
+        currentSelectionReasons: [
+          for (final item in restoredCurrent)
+            if ((item['stylistSelectionReason'] ?? '').toString().trim().isNotEmpty)
+              {
+                'itemId': (item['id'] ?? '').toString(),
+                'reason': item['stylistSelectionReason'].toString(),
+              },
+        ],
         weatherContext: weatherContext,
         clientContext: clientContext,
         notifyJobId: jobId,

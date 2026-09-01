@@ -2,15 +2,12 @@
 
 // Explicitly invoked against an EXISTING owner-selected account. Reads its
 // wardrobe; never supplies notifyJobId, so the callable cannot send notifications.
-// Choice-memory QA explicitly opts into one temporary chat document; no existing
-// chat is changed, and cleanup runs even on failure. Credentials stay in memory.
+// Choice summaries are passed back as current context, just like the client.
+// No chat documents are created or changed. Credentials stay in memory.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const admin = require("firebase-admin");
-const {randomUUID} = require("node:crypto");
-let temporaryChoiceChat;
-let temporaryChoiceChatCreated = false;
 
 async function main() {
   if (!process.argv.includes("--live")) throw new Error("live_opt_in_required");
@@ -51,13 +48,14 @@ async function main() {
   const clientContext = {
     todayDateKey: "2026-09-01", tomorrowDateKey: "2026-09-02", userGpsLocation: "Martin",
   };
+  let currentSelectionReasons = [];
   const call = async (name, message, current, history, weather = weatherContext) => {
     const response = await fetch(
       `https://us-east1-${projectId}.cloudfunctions.net/stylistSimpleAgentV1`,
       {method: "POST", headers: {"Content-Type": "application/json", Authorization: `Bearer ${auth.idToken}`},
         body: JSON.stringify({data: {message, history, currentOutfitItemIds: current,
           weatherContext: weather, clientContext,
-          ...(temporaryChoiceChatCreated ? {chatId: temporaryChoiceChat.id} : {})}}),
+          currentSelectionReasons}}),
         signal: AbortSignal.timeout(125000)},
     );
     if (!response.ok) throw new Error(`qa_callable_http_${response.status}`);
@@ -72,26 +70,13 @@ async function main() {
       outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
-    if (temporaryChoiceChatCreated) {
-      // Exactly the fields preserved by the existing Flutter chat serializer.
-      await temporaryChoiceChat.update({messages: [{isUser: false,
-        text: result.stylistComment, resultingOutfitItems: result.resultingOutfitItems}]});
-    }
+    currentSelectionReasons = result.selectionReasons || [];
     return result;
   };
   if (process.argv.includes("--choice-continuity")) {
-    if (!process.argv.includes("--allow-temporary-chat")) {
-      throw new Error("qa_temporary_chat_opt_in_required");
-    }
-    temporaryChoiceChat = admin.firestore().collection("users").doc(uid)
-      .collection("stylistChats").doc(`_qa_choice_${randomUUID()}`);
-    // No updatedAt field: the app's ordered chat list excludes this QA record.
-    await temporaryChoiceChat.create({messages: []});
-    temporaryChoiceChatCreated = true;
-    const seedReason = async (itemId, reason) => temporaryChoiceChat.update({messages: [{
-      isUser: false, resultingOutfitItems: initialIds.map((id) => ({id,
-        ...(id === itemId ? {stylistSelectionReason: reason} : {})})),
-    }]});
+    const seedReason = (itemId, reason) => {
+      currentSelectionReasons = [{itemId, reason}];
+    };
     // These lexical checks are fixture-specific QA gates, never production
     // language routing. The paired replies must also be reviewed for meaning.
     const normalized = (reply) => reply.normalize("NFD")
@@ -220,15 +205,4 @@ main().catch((error) => {
     console.error(`qa_error_code:${error.code}`);
   }
   process.exitCode = 1;
-}).finally(async () => {
-  if (temporaryChoiceChatCreated) {
-    try {
-      await temporaryChoiceChat.delete();
-      console.log("QA_TEMPORARY_CHAT_REMOVED");
-    } catch (_) {
-      console.error("qa_temporary_chat_cleanup_failed");
-      process.exitCode = 1;
-    }
-  }
-  await Promise.all(admin.apps.map((app) => app.delete()));
-});
+}).finally(() => Promise.all(admin.apps.map((app) => app.delete())));
