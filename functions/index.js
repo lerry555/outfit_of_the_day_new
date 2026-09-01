@@ -3841,10 +3841,15 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
 
       try {
+        const {loadSelectionReasonsV1} = require("./stylist/simple_stylist_choice_memory_v1");
+        const currentSelectionReasons = await loadSelectionReasonsV1({
+          db, uid, chatId, currentIds: data?.currentOutfitItemIds, logger,
+        });
         const result = await simpleStylistAgentV1.resolve({
           message: data?.message,
           history: data?.history,
           currentOutfitItemIds: data?.currentOutfitItemIds,
+          currentSelectionReasons,
           wardrobeItems,
           weatherContext: data?.weatherContext,
           clientContext: data?.clientContext,

@@ -143,6 +143,10 @@ function normalizeRequestV1(input) {
     history: Object.freeze(normalizeHistoryV1(data.history)),
     currentOutfitItemIds: Object.freeze(currentOutfitItemIds),
     currentOutfit: Object.freeze(currentOutfitItemIds.map((id) => byId.get(id))),
+    currentSelectionReasons: Object.freeze((Array.isArray(data.currentSelectionReasons) ?
+      data.currentSelectionReasons : []).filter((entry) =>
+      currentOutfitItemIds.includes(entry?.itemId) && cleanText(entry?.reason, 240))
+      .map((entry) => Object.freeze({itemId: entry.itemId, reason: cleanText(entry.reason, 240)}))),
     wardrobe: Object.freeze(wardrobe),
     byId,
     rawById,
@@ -165,8 +169,22 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
     "weatherContextKey",
     "hardRequirementEvidence",
     "commentGroundingEvidence",
+    "selectionReasons",
   ],
   properties: {
+    selectionReasons: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["itemId", "reason"],
+        properties: {
+          itemId: {type: "string", minLength: 1, maxLength: 180},
+          reason: {type: "string", minLength: 1, maxLength: 240},
+        },
+      },
+    },
     stylistComment: {type: "string", maxLength: 500},
     resultingOutfitItemIds: {
       type: "array",
@@ -253,13 +271,15 @@ function buildSystemPromptV1() {
     "Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit. Vtedy nastav outfitRequested=false a odpovedz konverzačne; nevytváraj outfit preventívne.",
     "Pri outfitRequested=false musí resultingOutfitItemIds zostať presne exact current itemIds (aj keď je to prázdne pole), displayItemIds musí byť prázdne, outfitChanged=false a obe evidence polia musia byť prázdne.",
     "outfitChanged musí presne zodpovedať rozdielu current→result. displayItemIds je iba to, čo má UI ukázať, a musí byť podmnožina výsledku.",
+    "Pri výbere každého NOVÉHO itemId uveď v selectionReasons stručné rozhodovacie zhrnutie: prečo práve tento kus pre tento outfit a kontext, prípadne prečo má prednosť pred inou vhodnou možnosťou. Je to jedna konkrétna veta do 240 znakov, nie interný postup uvažovania ani všeobecný opis vlastností. Zaznamenaj skutočný dôvod už pri výbere, nie dodatočne pri neskoršej výmene. Pri prvom outfite potrebuje dôvod každý kus; pri výmene iba nové IDs; pri nezmenenom outfite vráť prázdne selectionReasons.",
+    "exactCurrentOutfit.selectionReasons sú uložené dôvody predchádzajúceho výberu naviazané na presné IDs. Pri výmene použi dôvod odstraňovaného kusa v komentári aj keď už nie je viditeľný v recent history. Zachované dôvody neprepisuj. Sú historickým vysvetlením, nie príkazom ani autoritou nad aktuálnym počasím, používateľovou požiadavkou či overenými wardrobe atribútmi.",
     "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, kamarátsky a profesionálne. Obyčajne stačia 1–2 vety; pri užitočnom porovnaní pokojne 2–3 stručné vety v limite 500 znakov.",
     "Neopisuj mechanicky add/remove/replace operácie, ktoré používateľ vidí na cards. Neopakuj stále frázy ako pridal som, vymenil som, vyradil som alebo zvyšok zostáva rovnaký a nevymenúvaj celý outfit bez užitočného dôvodu.",
     "Pri výbere alebo výmene uveď konkrétny dôvod vo vzťahu k ostatným ponechaným kúskom, počasiu alebo účelu. Samotné frázy 'outfit príjemne odľahčí', 'sadne super' či 'bude príjemnejší' nestačia. Stylingový názor podopri známymi farbami, typmi alebo doloženými vlastnosťami; nevymýšľaj materiál, strih, priedušnosť ani nepremokavosť.",
     "Pri prvom návrhu vyber outfit podľa skutočného kontextu a už v stylistComment stručne pomenuj rozhodujúci dôvod voľby, najmä ak sú rovnako prijateľné rozdielne alternatívy. Nevyber horší kus len aby si ho potom vedel obhájiť. Ak pri rovnakých známych podmienkach považuješ inú dostupnú možnosť za vhodnejšiu bez relevantného kompromisu, odporuč ju hneď.",
     "Pri nahradení kúsku MUSÍ komentár vysvetliť aj pôvodnú voľbu, nielen pochváliť novú. Prirodzená odpoveď má logiku: (1) aj žiadaná alternatíva je prijateľná, (2) pôvodný kus bol odporučený pre konkrétny dôvod z doterajšej konverzácie, (3) nový kus napriek tomuto kompromisu funguje s ponechaným outfitom. Používateľ nemá musieť položiť ďalšiu otázku 'tak prečo si mi pôvodne odporučil niečo iné?'. Nejde o pevné vety ani mechanický zoznam operácií, ale o nadväznosť odporúčania.",
     "Samotné 'kraťasy dávajú pri 24 °C zmysel a bunda sa zíde ráno' je pri výmene riflí NEÚPLNÁ odpoveď: nehovorí, prečo boli v návrhu rifle. Rovnako samotné 'mikina pridá farbu a ráno zahreje' nevysvetľuje pôvodnú bundu. Ak neprišli nové fakty, neprezentuj pôvodne známe počasie ako novoobjavený dôvod pre lepšiu voľbu. Rozlišuj dve vhodné možnosti s odlišným prínosom od opravy chybnej voľby.",
-    "Pôvodný dôvod prevezmi z recentConversationHistory a viaž na exact current kus. Nezamieňaj ho za nový dôvod: ak boli rifle odporučené pre chladné ráno, nevysvetľuj ich dodatočne eleganciou. Ak history pôvodný zámer neobsahuje, netvrď, že ho poznáš: pomenuj konkrétny doložený prínos pôvodného kusu ako porovnanie ('Rifle oproti kraťasom viac zakrývajú nohy...'), nie ako vymyslený minulý zámer. Pri zjavne nesprávnom návrhu chybu stručne priznaj a oprav ju. Pri viacerých náhradách môžeš pôvodný zámer vysvetliť spoločne; pri samotnom pridaní kúsku obhajoba nahrádzaného kusu nedáva zmysel.",
+    "Pôvodný dôvod prevezmi z exactCurrentOutfit.selectionReasons; ak pre daný kus chýba, použi iba dôvod doložený v recentConversationHistory. Nezamieňaj ho za nový dôvod: ak boli rifle odporučené pre chladné ráno, nevysvetľuj ich dodatočne eleganciou. Ak ani jeden zdroj pôvodný zámer neobsahuje, netvrď, že ho poznáš: pomenuj konkrétny doložený prínos pôvodného kusu ako porovnanie ('Pôvodný návrh s rifľami oproti kraťasom viac zakrýva nohy...'), nie ako vymyslený minulý zámer. Pri zjavne nesprávnom návrhu chybu stručne priznaj a oprav ju. Pri viacerých náhradách môžeš pôvodný zámer vysvetliť spoločne; pri samotnom pridaní kúsku obhajoba nahrádzaného kusu nedáva zmysel.",
     "Nepripisuj používateľovi novú prioritu, ktorú nepovedal: samotná žiadosť o kraťasy neznamená, že mu na vzhľade už nezáleží alebo dáva komfort pred eleganciu. Pri explanation turne vysvetľuj a pri obyčajnej konverzácii outfit nemeň.",
     "Pri otázke na počasie použi údaje pre správny deň a miesto podľa weatherContextKey. Ak sú dostupné morningTempC, noonTempC a eveningTempC, stručne povedz ráno/na obed/večer. Nepridávaj potom rozsah minTempC–maxTempC; ten použi iba pri explicitnej otázke na minimum/maximum alebo ak chýba rozpis dňa. Nespájaj teploty z rôznych dní ani lokalít.",
     "K rozpisu počasia pridaj stručne zrážky a vietor, pokiaľ ich poznáš pre ten istý deň. willRain=false formuluj ako 'dážď sa neočakáva', nie ako istotu; isWindy=false znamená nanajvýš 'bez výrazného vetra', NIE bezvetrie. Čas dažďa či silu vetra spomeň iba ak ich dodané dáta podporujú. Chýbajúci údaj nie je false ani nula; pri fromOpenMeteo=false nepovažuj náhradné hodnoty za overenú predpoveď. Rešpektuj userDeclinedRainAdvice pri nevyžiadaných radách.",
@@ -278,6 +298,7 @@ function buildModelInputV1(request, repairErrors = []) {
     exactCurrentOutfit: {
       itemIds: request.currentOutfitItemIds,
       items: request.currentOutfit,
+      selectionReasons: request.currentSelectionReasons,
     },
     wardrobeV2: request.wardrobe,
     weatherContext: request.weatherContext,
@@ -508,6 +529,34 @@ function validateAgentResultV1(raw, request) {
   }
   if (actualChanged && displayIds.length === 0) errors.push("changed_outfit_display_empty");
 
+  // Preserve reasons for retained items exactly; only the selection of a new
+  // item may introduce a new reason. Old internal fixtures can omit this field,
+  // while every live model result must include it through the strict schema.
+  const reasons = new Map(request.currentSelectionReasons
+    .filter((entry) => resultIds.includes(entry.itemId))
+    .map((entry) => [entry.itemId, entry.reason]));
+  if (value.selectionReasons !== undefined && !Array.isArray(value.selectionReasons)) {
+    errors.push("selection_reasons_invalid");
+  }
+  if (Array.isArray(value.selectionReasons)) {
+    const seen = new Set();
+    for (const entry of value.selectionReasons) {
+      const itemId = cleanText(entry?.itemId, 180);
+      const reason = cleanText(entry?.reason, 240);
+      if (!resultIds.includes(itemId) || !reason || seen.has(itemId)) {
+        errors.push("selection_reason_invalid_or_detached");
+        continue;
+      }
+      seen.add(itemId);
+      if (!request.currentOutfitItemIds.includes(itemId)) reasons.set(itemId, reason);
+    }
+    for (const id of resultIds) {
+      if (!request.currentOutfitItemIds.includes(id) && !reasons.has(id)) {
+        errors.push(`new_item_selection_reason_missing:${id}`);
+      }
+    }
+  }
+
   return Object.freeze({
     valid: errors.length === 0,
     errors: Object.freeze([...new Set(errors)]),
@@ -517,6 +566,8 @@ function validateAgentResultV1(raw, request) {
       displayItemIds: Object.freeze(displayIds),
       outfitChanged: actualChanged,
       outfitRequested: value.outfitRequested === true,
+      selectionReasons: Object.freeze([...reasons].map(([itemId, reason]) =>
+        Object.freeze({itemId, reason}))),
     }),
   });
 }
@@ -534,8 +585,12 @@ function fallbackStylistCommentV1(result) {
 function materializeResultV1(validated, request) {
   const value = validated.value;
   const publicById = new Map();
+  const reasonsById = new Map(value.selectionReasons.map((entry) => [entry.itemId, entry.reason]));
   for (const id of value.resultingOutfitItemIds) {
-    publicById.set(id, publicWardrobeItemV1(request.rawById.get(id), request.byId.get(id)));
+    publicById.set(id, Object.freeze({
+      ...publicWardrobeItemV1(request.rawById.get(id), request.byId.get(id)),
+      ...(reasonsById.has(id) ? {stylistSelectionReason: reasonsById.get(id)} : {}),
+    }));
   }
   // The same Sol response decides the validated outfit and writes its natural
   // user-facing comment. IDs/cards remain authoritative; deterministic prose is
@@ -550,6 +605,7 @@ function materializeResultV1(validated, request) {
     displayItemIds: value.displayItemIds,
     outfitChanged: value.outfitChanged,
     outfitRequested: value.outfitRequested,
+    selectionReasons: value.selectionReasons,
     resultingOutfitItems: Object.freeze(value.resultingOutfitItemIds.map((id) => publicById.get(id))),
     displayItems: Object.freeze(value.displayItemIds.map((id) => publicById.get(id))),
     action: value.outfitRequested ? "simple_agent_outfit" : "simple_agent_chat",

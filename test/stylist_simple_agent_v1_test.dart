@@ -1,7 +1,9 @@
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';
+import 'package:outfitofTheDay/screens/stylist_chat_screen.dart';
 
 Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
   'id': id,
@@ -16,6 +18,31 @@ Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
 };
 
 void main() {
+  test('selection reason survives callable parsing and persisted chat restoration', () {
+    final piece = _item('jeans', 'Rifle')
+      ..['stylistSelectionReason'] = 'Rifle kvôli chladnejšiemu ránu.';
+    final result = StylistSimpleAgentResultV1.fromCallableData({
+      'simpleAgent': true,
+      'stylistComment': 'Outfit na celý deň.',
+      'resultingOutfitItemIds': ['jeans'],
+      'displayItemIds': ['jeans'],
+      'outfitChanged': true,
+      'resultingOutfitItems': [piece],
+      'displayItems': [piece],
+    });
+    final message = StylistChatMessage(
+      text: result.stylistComment,
+      isUser: false,
+      resultingOutfitItems: result.resultingOutfitItems,
+    );
+    final restored = StylistChatMessage.fromMap(
+      Map<String, dynamic>.from(jsonDecode(jsonEncode(message.toMap())) as Map),
+    );
+    expect(restored.resultingOutfitItems.single['stylistSelectionReason'],
+        'Rifle kvôli chladnejšiemu ránu.');
+    expect(restored.text, 'Outfit na celý deň.');
+  });
+
   test('validated result preserves backend ID order for state and display', () {
     final data = <String, dynamic>{
       'simpleAgent': true,

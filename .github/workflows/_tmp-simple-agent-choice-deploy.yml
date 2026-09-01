@@ -1,4 +1,4 @@
-name: Simple Stylist choice continuity deploy one-shot
+name: Simple Stylist recorded choice reasons deploy one-shot
 
 on:
   push:
@@ -11,7 +11,20 @@ permissions:
   contents: read
 
 jobs:
+  client-state:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter test test/stylist_simple_agent_v1_test.dart
+
   deploy:
+    needs: client-state
     if: github.ref == 'refs/heads/stylist-simple-agent'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -31,7 +44,7 @@ jobs:
           test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
-          git merge-base --is-ancestor 8a5e3f093e3f8191488063f6373434e02e26e0a5 HEAD
+          git merge-base --is-ancestor 7b12b0ad0d4d3351d7d9f8cbf547cfb3b4e0211d HEAD
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -50,7 +63,7 @@ jobs:
         run: npm ci
 
       - name: Run simple agent regressions
-        run: node --test functions/stylist/simple_stylist_agent_v1.test.js
+        run: node --test functions/stylist/simple_stylist_agent_v1.test.js functions/stylist/simple_stylist_choice_memory_v1.test.js
 
       - name: Generate deploy taxonomy artifacts
         shell: bash
@@ -106,7 +119,7 @@ jobs:
         env:
           STYLIST_QA_UID: ZYag22IU3sbQOQEa9kTAbkaeSqb2
           STYLIST_QA_CURRENT_IDS: '["ArmAaE4A1gdAi2LZCIu4","uwgZnR7YOFZAxqk55FlJ","9ajGS1WO9jtRvCXKScLF","GqhLKcWpQAfaGgiGGhAl"]'
-        run: node functions/stylist/simple_stylist_agent_live_smoke_v1.js --live --choice-continuity
+        run: node functions/stylist/simple_stylist_agent_live_smoke_v1.js --live --choice-continuity --allow-temporary-chat
 
       - name: Sanitized callable failure diagnostics
         if: failure()

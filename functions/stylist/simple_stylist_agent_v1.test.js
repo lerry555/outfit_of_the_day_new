@@ -920,3 +920,49 @@ test("callable is isolated from every legacy outfit interpretation authority", (
   assert.equal(implementation.includes("StylistSwapRequest"), false);
   assert.equal(implementation.includes("OutfitEditPlan"), false);
 });
+
+test("new selections record reasons, retained reasons cannot be rewritten, and chat keeps them", async () => {
+  const {selectionReasonsFromChatV1} = require("./simple_stylist_choice_memory_v1");
+  const ids = ["blue-top", "jeans", "white-shoes"];
+  const reasons = ids.map((itemId) => ({itemId, reason: itemId === "jeans" ?
+    "Rifle kvôli chladnému ránu." : `Original choice: ${itemId}`}));
+  const {agent, inputs} = queuedAgent([
+    {stylistComment: "Outfit na celý deň.", resultingOutfitItemIds: ids,
+      displayItemIds: ids, outfitChanged: true, outfitRequested: true,
+      hardRequirementEvidence: [], selectionReasons: reasons},
+    {stylistComment: "Aj kraťasy sú možné; rifle boli na chladnejšie ráno.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: ["shorts"], outfitChanged: true, outfitRequested: true,
+      hardRequirementEvidence: [], selectionReasons: [
+        {itemId: "shorts", reason: "User prefers shorts; coordinate with retained top."},
+        {itemId: "blue-top", reason: "Rewritten explanation must not win."},
+      ]},
+    {stylistComment: "Jasné.", resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: [], outfitChanged: false, outfitRequested: false,
+      hardRequirementEvidence: [], selectionReasons: []},
+  ]);
+  const initial = await agent.resolve(request("outfit prosím"));
+  const restored = selectionReasonsFromChatV1(JSON.parse(JSON.stringify({messages: [
+    {isUser: false, text: initial.stylistComment, resultingOutfitItems: initial.resultingOutfitItems},
+  ]})), ids);
+  assert.deepEqual(restored, reasons);
+  const edited = await agent.resolve({...request("radšej kraťasy", ids), currentSelectionReasons: restored});
+  assert.deepEqual(JSON.parse(inputs[1].messages[1].content).exactCurrentOutfit.selectionReasons, reasons);
+  assert.equal(edited.resultingOutfitItems.find((item) => item.id === "blue-top").stylistSelectionReason,
+    "Original choice: blue-top");
+  assert.equal(edited.selectionReasons.some((entry) => entry.itemId === "jeans"), false);
+  const chat = await agent.resolve({...request("ďakujem", edited.resultingOutfitItemIds),
+    currentSelectionReasons: edited.selectionReasons});
+  assert.deepEqual(chat.selectionReasons, edited.selectionReasons);
+});
+
+test("live-schema choice reasons require new-item coverage and cannot point outside the outfit", () => {
+  const normalized = normalizeRequestV1(request("outfit prosím"));
+  const raw = {stylistComment: "Hotovo.", resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
+    displayItemIds: ["blue-top", "jeans", "white-shoes"], outfitChanged: true, outfitRequested: true,
+    weatherContextKey: "tomorrow", hardRequirementEvidence: [], commentGroundingEvidence: [],
+    selectionReasons: []};
+  assert.ok(validateAgentResultV1(raw, normalized).errors.includes("new_item_selection_reason_missing:jeans"));
+  assert.ok(validateAgentResultV1({...raw, selectionReasons: [{itemId: "hoodie", reason: "Unexpected."}]},
+    normalized).errors.includes("selection_reason_invalid_or_detached"));
+});

@@ -1,12 +1,16 @@
 "use strict";
 
 // Explicitly invoked against an EXISTING owner-selected account. Reads its
-// wardrobe; omits chatId/notifyJobId so the callable cannot persist chat jobs
-// or send notifications. Uses normal Firebase Auth; credentials stay in memory.
+// wardrobe; never supplies notifyJobId, so the callable cannot send notifications.
+// Choice-memory QA explicitly opts into one temporary chat document; no existing
+// chat is changed, and cleanup runs even on failure. Credentials stay in memory.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const admin = require("firebase-admin");
+const {randomUUID} = require("node:crypto");
+let temporaryChoiceChat;
+let temporaryChoiceChatCreated = false;
 
 async function main() {
   if (!process.argv.includes("--live")) throw new Error("live_opt_in_required");
@@ -52,7 +56,8 @@ async function main() {
       `https://us-east1-${projectId}.cloudfunctions.net/stylistSimpleAgentV1`,
       {method: "POST", headers: {"Content-Type": "application/json", Authorization: `Bearer ${auth.idToken}`},
         body: JSON.stringify({data: {message, history, currentOutfitItemIds: current,
-          weatherContext: weather, clientContext}}),
+          weatherContext: weather, clientContext,
+          ...(temporaryChoiceChatCreated ? {chatId: temporaryChoiceChat.id} : {})}}),
         signal: AbortSignal.timeout(125000)},
     );
     if (!response.ok) throw new Error(`qa_callable_http_${response.status}`);
@@ -63,12 +68,30 @@ async function main() {
     assert.ok(result.displayItemIds.every((id) => result.resultingOutfitItemIds.includes(id)));
     console.log(JSON.stringify({scenario: name, message, reply: result.stylistComment,
       items: result.resultingOutfitItems.map((item) => item.name),
+      selectionReasons: result.selectionReasons,
       outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
+    if (temporaryChoiceChatCreated) {
+      // Exactly the fields preserved by the existing Flutter chat serializer.
+      await temporaryChoiceChat.update({messages: [{isUser: false,
+        text: result.stylistComment, resultingOutfitItems: result.resultingOutfitItems}]});
+    }
     return result;
   };
   if (process.argv.includes("--choice-continuity")) {
+    if (!process.argv.includes("--allow-temporary-chat")) {
+      throw new Error("qa_temporary_chat_opt_in_required");
+    }
+    temporaryChoiceChat = admin.firestore().collection("users").doc(uid)
+      .collection("stylistChats").doc(`_qa_choice_${randomUUID()}`);
+    // No updatedAt field: the app's ordered chat list excludes this QA record.
+    await temporaryChoiceChat.create({messages: []});
+    temporaryChoiceChatCreated = true;
+    const seedReason = async (itemId, reason) => temporaryChoiceChat.update({messages: [{
+      isUser: false, resultingOutfitItems: initialIds.map((id) => ({id,
+        ...(id === itemId ? {stylistSelectionReason: reason} : {})})),
+    }]});
     // These lexical checks are fixture-specific QA gates, never production
     // language routing. The paired replies must also be reviewed for meaning.
     const normalized = (reply) => reply.normalize("NFD")
@@ -100,10 +123,12 @@ async function main() {
       wasShorts ? /kratasy|sortk/ : /\brifle\b|rifli|dzins|nohavic/);
 
     const jeansMention = /\brifle\b|rifli|dzins|nohavic/;
+    const originalBottomId = initialIds.find((id) => byId.get(id).bodySlots?.includes("lower_body"));
     const history = [
       {role: "user", content: "Zajtra idem do mesta a chcem outfit."},
       {role: "assistant", content: "Biele tričko, tmavomodré rifle, čierna rifľová bunda a tenisky sa hodia do mesta a zvládnu aj chladnejšie ráno."},
     ];
+    await seedReason(originalBottomId, "Rifle sú zvolené kvôli chladnejšiemu ránu, aby boli zakryté aj nohy.");
     const cold = await call("reported_jeans_swap", "rifle by som vymenil za kratasy", initialIds, history);
     originalBasis(cold.stylistComment, jeansMention, /rann|rano|chlad/);
     assert.doesNotMatch(normalized(cold.stylistComment), /elegan/,
@@ -117,6 +142,7 @@ async function main() {
     }};
     const styledHistory = [history[0], {role: "assistant", content:
       "Tmavomodré rifle sú v návrhu pre upravenejší mestský vzhľad oproti kraťasom. S bielym tričkom a čiernou rifľovou bundou zachovajú ležérny štýl."}];
+    await seedReason(originalBottomId, "Rifle sú zvolené pre upravenejší mestský vzhľad oproti kraťasom.");
     const styled = await call("different_original_reason", "rifle by som vymenil za kratasy",
       initialIds, styledHistory, mildWeather);
     originalBasis(styled.stylistComment, jeansMention, /upraven|elegan|uhladen/);
@@ -125,6 +151,11 @@ async function main() {
 
     const jacketHistory = [history[0], {role: "assistant", content:
       "Čierna rifľová bunda je v návrhu preto, že s tmavomodrými rifľami prepája outfit cez džínsovinu. Biele tričko vytvára medzi nimi svetlý kontrast."}];
+    const originalLayerId = initialIds.find((id) => {
+      const item = byId.get(id);
+      return item.bodySlots?.includes("upper_body") && ["mid", "outer", "shell"].includes(item.layerPosition);
+    });
+    await seedReason(originalLayerId, "Rifľová bunda je zvolená pre prepojenie outfitu cez džínsovinu s rifľami.");
     const jacket = await call("jacket_choice_followup", "Bundou si nie som istý, radšej mi daj mikinu.",
       initialIds, jacketHistory, mildWeather);
     originalBasis(jacket.stylistComment, /bund/, /dzins|denim|riflov|prepaj/);
@@ -189,4 +220,15 @@ main().catch((error) => {
     console.error(`qa_error_code:${error.code}`);
   }
   process.exitCode = 1;
-}).finally(() => Promise.all(admin.apps.map((app) => app.delete())));
+}).finally(async () => {
+  if (temporaryChoiceChatCreated) {
+    try {
+      await temporaryChoiceChat.delete();
+      console.log("QA_TEMPORARY_CHAT_REMOVED");
+    } catch (_) {
+      console.error("qa_temporary_chat_cleanup_failed");
+      process.exitCode = 1;
+    }
+  }
+  await Promise.all(admin.apps.map((app) => app.delete()));
+});
