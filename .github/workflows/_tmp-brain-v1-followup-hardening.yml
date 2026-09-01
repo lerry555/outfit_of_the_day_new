@@ -55,6 +55,15 @@ jobs:
       - name: Apply guarded follow-up architecture patch
         run: python3 tool/_tmp_brain_v1_followup_hardening.py
 
+      - name: Normalize generated test EOF
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('functions/stylist/frozen_stylist_authority_v1.test.js')
+          p.write_text(p.read_text(encoding='utf-8').rstrip() + '\n', encoding='utf-8')
+          PY
+
       - name: Validate patch shape
         shell: bash
         run: |
