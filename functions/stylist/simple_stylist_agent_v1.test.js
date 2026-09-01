@@ -233,6 +233,55 @@ test("only explicit Wardrobe V2 records are exposed to the agent", async () => {
   assert.equal(payload.wardrobeV2.some((entry) => entry.id === "legacy-lookalike"), false);
 });
 
+test("context-only planning turns keep an empty current outfit empty and show no cards", async () => {
+  const messages = [
+    "ahoj večer pôjdem do mesta",
+    "zajtra idem von",
+    "večer budem v meste",
+    "v sobotu idem na oslavu",
+    "po práci idem na kávu",
+    "idem do lesa",
+    "zajtra idem do Michaloviec",
+  ];
+  for (const message of messages) {
+    const logs = [];
+    const {agent, inputs} = queuedAgent([{
+      stylistComment: "Jasné 🙂 Keď budeš chcieť, môžeme potom doladiť aj outfit.",
+      resultingOutfitItemIds: [],
+      displayItemIds: [],
+      outfitChanged: false,
+      outfitRequested: false,
+      weatherContextKey: "current",
+      hardRequirementEvidence: [],
+      commentGroundingEvidence: [],
+    }], logs);
+    const result = await agent.resolve(request(message));
+    assert.equal(inputs.length, 1, message);
+    assert.equal(result.outfitRequested, false, message);
+    assert.equal(result.outfitChanged, false, message);
+    assert.deepEqual(result.resultingOutfitItemIds, [], message);
+    assert.deepEqual(result.displayItemIds, [], message);
+    assert.equal(logs.some((entry) => entry.marker === "SIMPLE_AGENT_REPAIR"), false);
+  }
+});
+
+test("validator rejects an unsolicited outfit and cards on a chat-only turn with empty current", () => {
+  const normalized = normalizeRequestV1(request("večer budem v meste"));
+  const validation = validateAgentResultV1({
+    stylistComment: "Večer môže byť príjemne.",
+    resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
+    displayItemIds: ["blue-top", "jeans", "white-shoes"],
+    outfitChanged: true,
+    outfitRequested: false,
+    weatherContextKey: "current",
+    hardRequirementEvidence: [],
+    commentGroundingEvidence: [],
+  }, normalized);
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes("chat_turn_mutated_current_outfit"));
+  assert.ok(validation.errors.includes("chat_turn_display_not_empty"));
+});
+
 test("invalid ID gets exactly one repair with precise errors and allowed IDs", async () => {
   const logs = [];
   const {agent, inputs} = queuedAgent([
@@ -625,6 +674,90 @@ test("OpenAI transport binds Sol, medium reasoning and strict JSON schema", asyn
   assert.equal(requests[0].body.text.format.schema.additionalProperties, false);
 });
 
+test("OpenAI transport retries one transient failure and logs only safe provider metadata", async () => {
+  const logs = [];
+  let calls = 0;
+  const execute = createOpenAiSimpleAgentExecutorV1({
+    resolveOpenAISecret: () => "test-key",
+    sleepImpl: async () => {},
+    logger: {warn: (marker, details) => logs.push({marker, details})},
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return {
+          ok: false,
+          status: 429,
+          headers: {get: (name) => name === "x-request-id" ? "req_safe_123" : null},
+          json: async () => ({
+            error: {type: "rate_limit_error", code: "rate_limit_exceeded", message: "secret detail"},
+          }),
+        };
+      }
+      return {
+        ok: true,
+        status: 200,
+        headers: {get: () => null},
+        json: async () => ({
+          output_text: JSON.stringify({
+            stylistComment: "Ahoj.",
+            resultingOutfitItemIds: [],
+            displayItemIds: [],
+            outfitChanged: false,
+            outfitRequested: false,
+            weatherContextKey: "none",
+            hardRequirementEvidence: [],
+            commentGroundingEvidence: [],
+          }),
+        }),
+      };
+    },
+  });
+  const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
+    normalizeRequestV1(request("ahoj")),
+  );
+  const output = await execute(modelInput);
+  assert.equal(output.outfitRequested, false);
+  assert.equal(calls, 2);
+  assert.deepEqual(logs, [{
+    marker: "SIMPLE_AGENT_PROVIDER_RETRY",
+    details: {
+      providerAttempt: 1,
+      providerStatus: 429,
+      providerErrorType: "rate_limit_error",
+      providerErrorCode: "rate_limit_exceeded",
+      providerRequestId: "req_safe_123",
+    },
+  }]);
+  assert.equal(JSON.stringify(logs).includes("secret detail"), false);
+  assert.equal(JSON.stringify(logs).includes("test-key"), false);
+});
+
+test("non-retryable provider failure exposes sanitized diagnostics without response prose", async () => {
+  const execute = createOpenAiSimpleAgentExecutorV1({
+    resolveOpenAISecret: () => "test-key",
+    fetchImpl: async () => ({
+      ok: false,
+      status: 400,
+      headers: {get: (name) => name === "x-request-id" ? "req_bad_400" : null},
+      json: async () => ({
+        error: {type: "invalid_request_error", code: "invalid_json_schema", message: "sensitive prose"},
+      }),
+    }),
+  });
+  const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
+    normalizeRequestV1(request("ahoj")),
+  );
+  await assert.rejects(execute(modelInput), (error) => {
+    assert.equal(error.code, "simple_agent_provider_failed");
+    assert.equal(error.providerStatus, 400);
+    assert.equal(error.providerErrorType, "invalid_request_error");
+    assert.equal(error.providerErrorCode, "invalid_json_schema");
+    assert.equal(error.providerRequestId, "req_bad_400");
+    assert.equal(JSON.stringify(error).includes("sensitive prose"), false);
+    return true;
+  });
+});
+
 test("system prompt keeps the personal stylist voice gender-neutral and non-audit", () => {
   const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
     normalizeRequestV1(request("potrebujem outfit")),
@@ -633,6 +766,8 @@ test("system prompt keeps the personal stylist voice gender-neutral and non-audi
   assert.match(prompt, /rodovo neutrálnu stylist personu/);
   assert.match(prompt, /nie systémový log/);
   assert.match(prompt, /Neopisuj mechanicky add\/remove\/replace operácie/);
+  assert.match(prompt, /Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit/);
+  assert.match(prompt, /displayItemIds musí byť prázdne/);
 });
 
 test("callable is isolated from every legacy outfit interpretation authority", () => {

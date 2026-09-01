@@ -126,6 +126,7 @@ const simpleStylistAgentV1 = createSimpleStylistAgentV1({
   executeModel: createOpenAiSimpleAgentExecutorV1({
     fetchImpl: fetch,
     resolveOpenAISecret,
+    logger,
   }),
   logger,
 });
@@ -3860,6 +3861,13 @@ exports.attachCleanImageOnWardrobeWrite = functions
             .slice(0, 120),
           validationErrors: Array.isArray(error?.validationErrors) ?
             error.validationErrors.slice(0, 12) : [],
+          providerStatus: Number.isInteger(error?.providerStatus) ?
+            error.providerStatus : null,
+          providerErrorType: String(error?.providerErrorType || "").slice(0, 100),
+          providerErrorCode: String(error?.providerErrorCode || "").slice(0, 100),
+          providerRequestId: String(error?.providerRequestId || "").slice(0, 160),
+          providerResponseStatus: String(error?.providerResponseStatus || "").slice(0, 60),
+          providerIncompleteReason: String(error?.providerIncompleteReason || "").slice(0, 100),
         });
         return await finalizeStylistResult(uid, notifyJobId, chatId, {
           contractVersion: 1,

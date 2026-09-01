@@ -248,8 +248,9 @@ function buildSystemPromptV1() {
     "Outfit musí mať zmysluplnú štruktúru: core top + bottom + shoes, alebo full_body + shoes; vrstvy a doplnky sú navyše.",
     "Zohľadni hard weather/safety, event a preferences. occasionFit je mäkké metadata, nie dôvod vyradiť inak platný kus.",
     "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",
-    "outfitRequested=true pri každej požiadavke vytvoriť, zmeniť, zobraziť alebo vysvetliť outfit.",
-    "Ak outfitRequested=false a current outfit existuje, resultingOutfitItemIds musí zostať presne current outfit; inak môže byť prázdny.",
+    "outfitRequested=true iba keď používateľ žiada vytvoriť, vybrať, zmeniť, zobraziť alebo vysvetliť outfit či konkrétny kus outfitu.",
+    "Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit. Vtedy nastav outfitRequested=false a odpovedz konverzačne; nevytváraj outfit preventívne.",
+    "Pri outfitRequested=false musí resultingOutfitItemIds zostať presne exact current itemIds (aj keď je to prázdne pole), displayItemIds musí byť prázdne, outfitChanged=false a obe evidence polia musia byť prázdne.",
     "outfitChanged musí presne zodpovedať rozdielu current→result. displayItemIds je iba to, čo má UI ukázať, a musí byť podmnožina výsledku.",
     "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, obyčajne 1–2 krátke vety.",
     "Neopisuj mechanicky add/remove/replace operácie, ktoré používateľ vidí na cards. Neopakuj stále frázy ako pridal som, vymenil som, vyradil som alebo zvyšok zostáva rovnaký a nevymenúvaj celý outfit bez užitočného dôvodu.",
@@ -414,9 +415,12 @@ function validateAgentResultV1(raw, request) {
   if (value.outfitRequested === true && resultIds.length === 0) {
     errors.push("requested_outfit_missing");
   }
-  if (value.outfitRequested !== true && request.currentOutfitItemIds.length &&
+  if (value.outfitRequested !== true &&
       !sameIdSetV1(request.currentOutfitItemIds, resultIds)) {
     errors.push("chat_turn_mutated_current_outfit");
+  }
+  if (value.outfitRequested !== true && displayIds.length) {
+    errors.push("chat_turn_display_not_empty");
   }
   if (resultIds.length) {
     const items = resultIds.map((id) => request.byId.get(id)).filter(Boolean);
@@ -577,8 +581,29 @@ function createSimpleStylistAgentV1({executeModel, logger = console} = {}) {
             raw.resultingOutfitItemIds : [],
           displayItemIds: Array.isArray(raw?.displayItemIds) ? raw.displayItemIds : [],
           outfitChanged: raw?.outfitChanged === true,
+          outfitRequested: raw?.outfitRequested === true,
+          weatherContextKey: cleanText(raw?.weatherContextKey, 20),
+          stylistCommentPresent: Boolean(cleanText(raw?.stylistComment, 500)),
+          stylistCommentLength: cleanText(raw?.stylistComment, 500).length,
+          hardRequirementEvidence: Array.isArray(raw?.hardRequirementEvidence) ?
+            raw.hardRequirementEvidence.slice(0, 16).map((entry) => ({
+              itemId: cleanText(entry?.itemId, 180),
+              field: cleanText(entry?.field, 80),
+              expectedValue: cleanText(entry?.expectedValue, 100),
+            })) : [],
+          commentGroundingEvidence: Array.isArray(raw?.commentGroundingEvidence) ?
+            raw.commentGroundingEvidence.slice(0, 24).map((entry) => ({
+              itemId: cleanText(entry?.itemId, 180),
+              field: cleanText(entry?.field, 80),
+              expectedValue: cleanText(entry?.expectedValue, 160),
+            })) : [],
         });
         validation = validateAgentResultV1(raw, request);
+        safeLog(logger, validation.valid ? "info" : "warn", "SIMPLE_AGENT_VALIDATION", {
+          attempt: attempt + 1,
+          valid: validation.valid,
+          validationErrors: validation.errors,
+        });
         if (validation.valid) {
           const result = materializeResultV1(validation, request);
           safeLog(logger, "info", "SIMPLE_AGENT_VALIDATED", {
@@ -617,46 +642,94 @@ function extractResponsesTextV1(json) {
   return parts.join("").trim();
 }
 
-function createOpenAiSimpleAgentExecutorV1({fetchImpl, resolveOpenAISecret} = {}) {
+function providerErrorDetailsV1(response, body) {
+  const errorBody = safeMap(safeMap(body).error);
+  const headers = response && response.headers;
+  const requestId = headers && typeof headers.get === "function" ?
+    cleanText(headers.get("x-request-id") || headers.get("request-id"), 160) : "";
+  return Object.freeze({
+    providerStatus: Number.isInteger(response?.status) ? response.status : null,
+    providerErrorType: cleanText(errorBody.type, 100),
+    providerErrorCode: cleanText(errorBody.code, 100),
+    providerRequestId: requestId,
+  });
+}
+
+function createOpenAiSimpleAgentExecutorV1({
+  fetchImpl,
+  resolveOpenAISecret,
+  logger = console,
+  sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+} = {}) {
   if (typeof fetchImpl !== "function" || typeof resolveOpenAISecret !== "function") {
     throw new Error("simple_agent_transport_dependencies_missing");
   }
   return async function executeModel(input) {
-    const response = await fetchImpl("https://api.openai.com/v1/responses", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${resolveOpenAISecret()}`,
-      },
-      body: JSON.stringify({
-        model: input.model,
-        input: input.messages,
-        reasoning: {effort: input.reasoningEffort},
-        max_output_tokens: 1600,
-        text: {
-          format: {
-            type: "json_schema",
-            name: "simple_stylist_agent_result_v1",
-            strict: true,
-            schema: input.schema,
-          },
+    const requestBody = JSON.stringify({
+      model: input.model,
+      input: input.messages,
+      reasoning: {effort: input.reasoningEffort},
+      max_output_tokens: 1600,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "simple_stylist_agent_result_v1",
+          strict: true,
+          schema: input.schema,
         },
-        store: false,
-      }),
+      },
+      store: false,
     });
-    if (!response.ok) {
-      const error = new Error(`simple_agent_openai_http_${response.status}`);
-      error.code = "simple_agent_provider_failed";
-      throw error;
+    for (let providerAttempt = 1; providerAttempt <= 2; providerAttempt += 1) {
+      const response = await fetchImpl("https://api.openai.com/v1/responses", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${resolveOpenAISecret()}`,
+        },
+        body: requestBody,
+      });
+      let json = {};
+      try {
+        json = await response.json();
+      } catch (_) {
+        json = {};
+      }
+      if (!response.ok) {
+        const details = providerErrorDetailsV1(response, json);
+        const retryable = details.providerStatus === 408 ||
+          details.providerStatus === 409 ||
+          details.providerStatus === 429 ||
+          (details.providerStatus != null && details.providerStatus >= 500);
+        if (providerAttempt === 1 && retryable) {
+          safeLog(logger, "warn", "SIMPLE_AGENT_PROVIDER_RETRY", {
+            providerAttempt,
+            ...details,
+          });
+          await sleepImpl(750);
+          continue;
+        }
+        const error = new Error(`simple_agent_openai_http_${details.providerStatus || "unknown"}`);
+        error.code = "simple_agent_provider_failed";
+        Object.assign(error, details);
+        throw error;
+      }
+      const text = extractResponsesTextV1(json);
+      if (!text) {
+        const error = new Error("simple_agent_openai_empty_result");
+        error.code = "simple_agent_provider_empty_result";
+        error.providerResponseStatus = cleanText(json?.status, 60);
+        error.providerIncompleteReason = cleanText(json?.incomplete_details?.reason, 100);
+        Object.assign(error, providerErrorDetailsV1(response, json));
+        throw error;
+      }
+      try {
+        return JSON.parse(text);
+      } catch (_) {
+        return {stylistComment: "", resultingOutfitItemIds: null, displayItemIds: null};
+      }
     }
-    const json = await response.json();
-    const text = extractResponsesTextV1(json);
-    if (!text) throw new Error("simple_agent_openai_empty_result");
-    try {
-      return JSON.parse(text);
-    } catch (_) {
-      return {stylistComment: "", resultingOutfitItemIds: null, displayItemIds: null};
-    }
+    throw new Error("simple_agent_provider_retry_exhausted");
   };
 }
 
