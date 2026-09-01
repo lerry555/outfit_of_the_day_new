@@ -101,3 +101,43 @@ test("focused Brain follow-up is deterministic, concise and does not spend an ex
   assert.match(result.explanation, /čierne šortky/);
   assert.doesNotMatch(result.explanation, /21|°C|počas/i);
 });
+
+test("canonical focus slots are preserved and missing focus never names candidate zero", async () => {
+  const authority = createFrozenStylistAuthority({
+    resolveOpenAISecret: () => "openai-test",
+    resolveAnthropicSecret: () => "anthropic-test",
+    execute: async () => { throw new Error("focused mode should not call provider"); },
+  });
+  const data = {
+    contractVersion: 1,
+    conversationBrainVersion: "brain_v1",
+    decisionMode: "locked_selection",
+    presentationMode: "focused_item",
+    focusSlot: "layers",
+    frozenCandidates: [{
+      candidateId: "locked",
+      itemIds: ["top", "hoodie", "bottom", "shoes"],
+      presentationItems: [
+        {itemId: "top", name: "prvé náhodné tričko", canonicalType: "t_shirt", primaryColor: "gray", slot: "top"},
+        {itemId: "hoodie", name: "modrá mikina", canonicalType: "hoodie", primaryColor: "blue", slot: "layers"},
+        {itemId: "bottom", name: "rifle", canonicalType: "jeans", primaryColor: "blue", slot: "bottom"},
+        {itemId: "shoes", name: "tenisky", canonicalType: "sneakers", primaryColor: "white", slot: "shoes"},
+      ],
+      hardConstraintEvidence: {deterministicPassed: true, violationCodes: []},
+      compromiseClassification: {level: "none", reasonCodes: []},
+    }],
+  };
+  const exact = await authority.resolve({
+    data,
+    ownedItemIds: new Set(["top", "hoodie", "bottom", "shoes"]),
+  });
+  assert.match(exact.explanation, /modrá mikina/);
+  assert.doesNotMatch(exact.explanation, /prvé náhodné tričko/);
+
+  const missing = await authority.resolve({
+    data: {...data, focusSlot: "unknown"},
+    ownedItemIds: new Set(["top", "hoodie", "bottom", "shoes"]),
+  });
+  assert.doesNotMatch(missing.explanation, /prvé náhodné tričko/);
+  assert.match(missing.explanation, /Požadovaný kus/);
+});

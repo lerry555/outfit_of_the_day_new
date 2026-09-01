@@ -18,6 +18,9 @@ const {
 const CONTRACT_VERSION = 1;
 const MAX_CANDIDATES = 12;
 const MAX_ITEMS_PER_CANDIDATE = 8;
+const OUTFIT_SLOTS = new Set([
+  "top", "bottom", "shoes", "layers", "outerwear", "full_body", "accessories",
+]);
 
 function cleanText(value, max = 160) {
   const text = typeof value === "string" ? value.trim() : "";
@@ -125,8 +128,7 @@ function normalizePresentationItems(value, itemIds) {
     const canonicalType = cleanText(raw.canonicalType, 80);
     const primaryColor = cleanText(raw.primaryColor, 80);
     if (!itemId || !name || !canonicalType || !primaryColor || byId.has(itemId)) return null;
-    const slot = ["top", "bottom", "shoes", "outerwear"].includes(cleanText(raw.slot, 24)) ?
-      cleanText(raw.slot, 24) : "";
+    const slot = OUTFIT_SLOTS.has(cleanText(raw.slot, 24)) ? cleanText(raw.slot, 24) : "";
     byId.set(itemId, Object.freeze({itemId, name, canonicalType, primaryColor, slot}));
   }
   if (itemIds.some((id) => !byId.has(id))) return null;
@@ -151,9 +153,8 @@ function normalizeRequest(data, ownedItemIds) {
   const presentationMode = ["normal", "focused_item", "concise_full"].includes(
     cleanText(data.presentationMode, 40),
   ) ? cleanText(data.presentationMode, 40) : "normal";
-  const focusSlot = ["top", "bottom", "shoes", "outerwear"].includes(
-    cleanText(data.focusSlot, 24),
-  ) ? cleanText(data.focusSlot, 24) : "";
+  const focusSlot = OUTFIT_SLOTS.has(cleanText(data.focusSlot, 24)) ?
+    cleanText(data.focusSlot, 24) : "";
   const userRequest = cleanText(data.userRequest, 600);
   return Object.freeze({
     resolvedContext: safeContext(data.resolvedContext),
@@ -246,11 +247,10 @@ function deterministicExplanation(decision, normalized = null) {
 
   if (normalized.presentationMode === "focused_item") {
     const focused = selected.presentationItems.find((item) =>
-      normalized.focusSlot && item.slot === normalized.focusSlot) ||
-      selected.presentationItems[0];
+      normalized.focusSlot && item.slot === normalized.focusSlot);
     return focused && focused.name ?
       `Zvolil by som ${focused.name} — k zvyšku outfitu mi sedia najlepšie.` :
-      "Zvolil by som túto možnosť — k zvyšku outfitu mi sedí najlepšie.";
+      "Požadovaný kus som zmenil bez zásahu do zvyšku outfitu.";
   }
   if (normalized.presentationMode === "concise_full") {
     return "Jasné — outfit som upravil podľa tvojej požiadavky a zvyšok som zbytočne nemenil.";

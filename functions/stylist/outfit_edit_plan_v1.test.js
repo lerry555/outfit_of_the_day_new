@@ -63,3 +63,44 @@ test("non-mutating or structurally invalid edits fail closed", () => {
     operations: [{slot: "shoes", action: "replace", constraints: {color: "red shoes"}}],
   }), null);
 });
+
+test("create outfit keeps explicit shorts and dominant red shoes requirements", () => {
+  const plan = sanitizeOutfitEditPlanV1({
+    contractVersion: "outfit_edit_plan_v1",
+    intent: "create_outfit",
+    operations: [
+      {slot: "bottom", action: "add", constraints: {family: "shorts"}},
+      {slot: "shoes", action: "add", constraints: {color: "red"}},
+    ],
+    presentation: "focused_item",
+  });
+  assert.ok(plan);
+  assert.equal(plan.presentation, "normal");
+  assert.equal(plan.operations.length, 2);
+  assert.equal(plan.operations[0].constraints.family, "shorts");
+  assert.equal(plan.operations[1].constraints.color, "red");
+});
+
+test("multiple adds share addable slots while conflicting mutations fail closed", () => {
+  const accessories = sanitizeOutfitEditPlanV1({
+    contractVersion: "outfit_edit_plan_v1",
+    intent: "edit_current_outfit",
+    operations: [
+      {slot: "accessories", action: "add", constraints: {type: "watch"}},
+      {slot: "accessories", action: "add", constraints: {type: "belt"}},
+    ],
+  });
+  assert.ok(accessories);
+  assert.equal(
+    accessories.operations.filter((value) => value.slot === "accessories").length,
+    2,
+  );
+  assert.equal(sanitizeOutfitEditPlanV1({
+    contractVersion: "outfit_edit_plan_v1",
+    intent: "edit_current_outfit",
+    operations: [
+      {slot: "bottom", action: "replace", constraints: {}},
+      {slot: "bottom", action: "remove", constraints: {}},
+    ],
+  }), null);
+});

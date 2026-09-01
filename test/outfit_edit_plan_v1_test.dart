@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/outfit_edit_executor_v1.dart';
+import 'package:outfitofTheDay/domain/wardrobe_v2/outfit_edit_delta_v1.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/outfit_edit_plan_v1.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/wardrobe_item_v2.dart';
 import 'package:outfitofTheDay/domain/wardrobe_v2/wardrobe_v2_resolver.dart';
@@ -13,7 +14,13 @@ WardrobeItemV2 _item({
   required List<String> slots,
   required String layer,
   String color = 'black',
+  String? secondaryColor,
+  double? secondaryProportion,
+  List<SemanticColorV2> accents = const <SemanticColorV2>[],
   int warmth = 4,
+  int formality = 4,
+  List<String> occasionFit = const <String>[],
+  String? accessoryGroup,
 }) => WardrobeItemV2(
   canonicalType: type,
   canonicalFamily: family,
@@ -21,18 +28,26 @@ WardrobeItemV2 _item({
   layerPosition: layer,
   colorProfile: ColorProfileV2(
     primary: SemanticColorV2(family: color),
+    secondary: secondaryColor == null
+        ? null
+        : SemanticColorV2(
+            family: secondaryColor,
+            proportion: secondaryProportion,
+          ),
+    accents: accents,
     metalTone: 'none',
     hardwareTone: 'none',
   ),
-  formality: 4,
+  formality: formality,
   styles: const <String>[],
-  occasionFit: const <String>[],
+  occasionFit: occasionFit,
   seasons: const <String>['all_season'],
   warmth: warmth,
   attributes: const <String, dynamic>{},
   fieldSources: const <String, dynamic>{'canonicalType': 'fixture'},
   fieldConfidence: const <String, dynamic>{'canonicalType': 1.0},
   userOverrideFields: const <String>[],
+  accessoryGroup: accessoryGroup,
 );
 
 ResolvedWardrobeItemV2 _resolved(String id, WardrobeItemV2 item) =>
@@ -120,6 +135,20 @@ final _wardrobe = <ResolvedWardrobeItemV2>[
     ),
   ),
   _resolved(
+    'shoes-white-red-accent',
+    _item(
+      type: 'sneakers',
+      family: 'footwear',
+      slots: const <String>['feet'],
+      layer: 'not_applicable',
+      color: 'white',
+      accents: const <SemanticColorV2>[
+        SemanticColorV2(family: 'red', proportion: 0.08),
+      ],
+      warmth: 3,
+    ),
+  ),
+  _resolved(
     'hoodie-next',
     _item(
       type: 'hoodie',
@@ -128,6 +157,36 @@ final _wardrobe = <ResolvedWardrobeItemV2>[
       layer: 'mid',
       color: 'gray',
       warmth: 5,
+    ),
+  ),
+  _resolved(
+    'thermal-base',
+    _item(
+      type: 'thermal_top',
+      family: 'base_layer',
+      slots: const <String>['upper_body'],
+      layer: 'skin_base',
+      warmth: 7,
+    ),
+  ),
+  _resolved(
+    'watch-next',
+    _item(
+      type: 'watch',
+      family: 'accessory',
+      slots: const <String>['wrist'],
+      layer: 'not_applicable',
+      accessoryGroup: 'watch',
+    ),
+  ),
+  _resolved(
+    'belt-next',
+    _item(
+      type: 'belt',
+      family: 'accessory',
+      slots: const <String>['waist'],
+      layer: 'not_applicable',
+      accessoryGroup: 'belt',
     ),
   ),
 ];
@@ -260,8 +319,12 @@ void main() {
       );
       expect(
         candidates.any(
-          (candidate) =>
-              candidate.outfit.items.any((item) => item.itemId == 'shoes-blue'),
+          (candidate) => candidate.outfit.items.any(
+            (item) => const <String>{
+              'shoes-blue',
+              'shoes-white-red-accent',
+            }.contains(item.itemId),
+          ),
         ),
         isFalse,
       );
@@ -359,7 +422,7 @@ void main() {
         'outfitEditPlan': _plan(const <Map<String, dynamic>>[], intent: 'none'),
       },
       userText: 'preco rifle a nie kratasy?',
-      legacyResolver: (_, __) {
+      legacyResolver: (_, _) {
         legacyCalls++;
         return StylistSwapRequest.parse('daj ine topanky');
       },
@@ -418,7 +481,7 @@ void main() {
         ]),
       },
       userText: 'legacy would choose a bottom',
-      legacyResolver: (_, __) {
+      legacyResolver: (_, _) {
         legacyCalls++;
         return const StylistSwapRequest(slot: StylistSwapSlot.bottom);
       },
@@ -436,6 +499,269 @@ void main() {
     expect(
       routing.canonicalPlan!.operationFor(OutfitEditSlotV1.bottom).action,
       OutfitEditActionV1.preserve,
+    );
+  });
+
+  test(
+    'canonical focused edit exposes real focus and deterministic delta copy',
+    () {
+      final plan = OutfitEditPlanV1.tryParse(<String, dynamic>{
+        ..._plan(<Map<String, dynamic>>[
+          <String, dynamic>{
+            'slot': 'shoes',
+            'action': 'replace',
+            'constraints': <String, dynamic>{'color': 'red'},
+          },
+        ]),
+        'presentation': 'focused_item',
+      })!;
+      final candidate = OutfitEditExecutorV1.generateCandidates(
+        plan: plan,
+        current: current,
+        wardrobe: _wardrobe,
+        context: _context,
+      ).single;
+      final delta = OutfitEditDeltaV1.between(
+        before: current,
+        after: candidate.outfit,
+        plan: plan,
+      );
+
+      expect(plan.focusSlotWireName, 'shoes');
+      expect(delta.actualFocusSlot, 'shoes');
+      expect(delta.changedAfterItemIds, <String>{'shoes-red'});
+      expect(delta.followUpTextSk, contains('shoes-current'));
+      expect(delta.followUpTextSk, contains('shoes-red'));
+      expect(delta.followUpTextSk, isNot(contains('top-current')));
+    },
+  );
+
+  test('multi edit explanation names actual changes and preserved items', () {
+    final plan = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'bottom',
+          'action': 'replace',
+          'constraints': <String, dynamic>{'family': 'shorts'},
+        },
+        <String, dynamic>{
+          'slot': 'layers',
+          'action': 'add',
+          'constraints': <String, dynamic>{'type': 'hoodie'},
+        },
+      ]),
+    )!;
+    final candidate = OutfitEditExecutorV1.generateCandidates(
+      plan: plan,
+      current: current,
+      wardrobe: _wardrobe,
+      context: _context,
+    ).first;
+    final text = OutfitEditDeltaV1.between(
+      before: current,
+      after: candidate.outfit,
+      plan: plan,
+    ).followUpTextSk;
+
+    expect(text, contains('jeans-current'));
+    expect(text, contains('shorts-next'));
+    expect(text, contains('hoodie-next'));
+    expect(text, contains('top-current'));
+    expect(text, contains('shoes-current'));
+  });
+
+  test('create plan hard-enforces shorts and dominant red shoes', () {
+    final plan = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'bottom',
+          'action': 'add',
+          'constraints': <String, dynamic>{'family': 'shorts'},
+        },
+        <String, dynamic>{
+          'slot': 'shoes',
+          'action': 'add',
+          'constraints': <String, dynamic>{'color': 'red'},
+        },
+      ], intent: 'create_outfit'),
+    )!;
+    final eligible = OutfitEditExecutorV1.wardrobeForCreatePlan(
+      plan: plan,
+      wardrobe: _wardrobe,
+    );
+
+    expect(plan.operations, hasLength(2));
+    expect(eligible.map((item) => item.itemId), contains('shorts-next'));
+    expect(eligible.map((item) => item.itemId), contains('shoes-red'));
+    expect(
+      eligible.map((item) => item.itemId),
+      isNot(contains('jeans-current')),
+    );
+    expect(
+      eligible.map((item) => item.itemId),
+      isNot(contains('shoes-white-red-accent')),
+    );
+    expect(
+      OutfitEditExecutorV1.candidateSatisfiesCreatePlan(
+        plan: plan,
+        candidate: current,
+      ),
+      isFalse,
+    );
+    final generated =
+        V2FlexibleCandidateMatrix.generate(
+          wardrobe: eligible,
+          context: _context,
+        ).where(
+          (candidate) => OutfitEditExecutorV1.candidateSatisfiesCreatePlan(
+            plan: plan,
+            candidate: candidate.outfit,
+          ),
+        );
+    expect(generated, isNotEmpty);
+    expect(
+      generated.every(
+        (candidate) => candidate.outfit.items
+            .map((item) => item.itemId)
+            .toSet()
+            .containsAll(<String>{'shorts-next', 'shoes-red'}),
+      ),
+      isTrue,
+    );
+    final equivalentEdit = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'bottom',
+          'action': 'replace',
+          'constraints': <String, dynamic>{'family': 'shorts'},
+        },
+        <String, dynamic>{
+          'slot': 'shoes',
+          'action': 'replace',
+          'constraints': <String, dynamic>{'color': 'red'},
+        },
+      ]),
+    )!;
+    final matchingCandidate = OutfitEditExecutorV1.generateCandidates(
+      plan: equivalentEdit,
+      current: current,
+      wardrobe: _wardrobe,
+      context: _context,
+    ).first.outfit;
+    expect(
+      OutfitEditExecutorV1.candidateSatisfiesCreatePlan(
+        plan: plan,
+        candidate: matchingCandidate,
+      ),
+      isTrue,
+    );
+  });
+
+  test('edit candidate pool does not require occasionFit metadata', () {
+    final plan = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'top',
+          'action': 'replace',
+          'constraints': <String, dynamic>{'type': 'polo'},
+        },
+      ]),
+    )!;
+    final candidates = OutfitEditExecutorV1.generateCandidates(
+      plan: plan,
+      current: current,
+      wardrobe: _wardrobe,
+      context: const V2CandidateMatrixContext(
+        maxCandidates: 8,
+        tempC: 20,
+        requiredOccasions: <String>{'casual'},
+      ),
+    );
+
+    expect(candidates, isNotEmpty);
+    expect(
+      candidates.first.outfit.items.any((item) => item.itemId == 'top-next'),
+      isTrue,
+    );
+  });
+
+  test('generic added layer excludes skin_base thermal underwear', () {
+    final plan = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'layers',
+          'action': 'add',
+          'constraints': <String, dynamic>{},
+        },
+      ]),
+    )!;
+    final candidates = OutfitEditExecutorV1.generateCandidates(
+      plan: plan,
+      current: current,
+      wardrobe: _wardrobe,
+      context: _context,
+    );
+
+    expect(candidates, isNotEmpty);
+    expect(
+      candidates.every(
+        (candidate) => candidate.outfit.items.every(
+          (item) => item.itemId != 'thermal-base',
+        ),
+      ),
+      isTrue,
+    );
+  });
+
+  test('multiple accessory adds are atomic and use distinct owned items', () {
+    final plan = OutfitEditPlanV1.tryParse(
+      _plan(<Map<String, dynamic>>[
+        <String, dynamic>{
+          'slot': 'accessories',
+          'action': 'add',
+          'constraints': <String, dynamic>{'type': 'watch'},
+        },
+        <String, dynamic>{
+          'slot': 'accessories',
+          'action': 'add',
+          'constraints': <String, dynamic>{'type': 'belt'},
+        },
+      ]),
+    )!;
+    final candidates = OutfitEditExecutorV1.generateCandidates(
+      plan: plan,
+      current: current,
+      wardrobe: _wardrobe,
+      context: _context,
+    );
+
+    expect(plan.operationsFor(OutfitEditSlotV1.accessories), hasLength(2));
+    expect(candidates, isNotEmpty);
+    expect(
+      candidates.every(
+        (candidate) => candidate.outfit.items
+            .map((item) => item.itemId)
+            .toSet()
+            .containsAll(<String>{'watch-next', 'belt-next'}),
+      ),
+      isTrue,
+    );
+    expect(
+      OutfitEditPlanV1.tryParse(
+        _plan(<Map<String, dynamic>>[
+          <String, dynamic>{
+            'slot': 'bottom',
+            'action': 'replace',
+            'constraints': <String, dynamic>{},
+          },
+          <String, dynamic>{
+            'slot': 'bottom',
+            'action': 'remove',
+            'constraints': <String, dynamic>{},
+          },
+        ]),
+      ),
+      isNull,
     );
   });
 }

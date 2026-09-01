@@ -62,6 +62,10 @@ test("Brain V1 prompt owns continuity and can repair parser misses only from exp
   assert.match(prompt, /outfit_edit_plan_v1/);
   assert.match(prompt, /všetky zmeny jedného user turnu/i);
   assert.match(prompt, /constraints\.color=red/);
+  assert.match(prompt, /add bottom constraints\.family=shorts/);
+  assert.match(prompt, /add shoes constraints\.color=red/);
+  assert.match(prompt, /Viac add operácií/);
+  assert.match(prompt, /nikdy skin_base\/termoprádlo/);
   assert.match(prompt, /intent=none a NESMIE meniť outfit/);
   assert.match(prompt, /VÝSTUP — VÝHRADNE JSON/);
 });

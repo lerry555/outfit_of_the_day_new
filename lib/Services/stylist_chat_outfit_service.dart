@@ -39,6 +39,7 @@ import '../domain/wardrobe_v2/outfit_composition_v2.dart';
 import '../domain/wardrobe_v2/outfit_suitability_policy_v2.dart';
 import '../domain/wardrobe_v2/functional_suitability_v1.dart';
 import '../domain/wardrobe_v2/outfit_edit_executor_v1.dart';
+import '../domain/wardrobe_v2/outfit_edit_delta_v1.dart';
 import '../domain/wardrobe_v2/outfit_edit_plan_v1.dart';
 import '../domain/style_preferences/style_preferences_runtime.dart';
 import '../Services/hourly_weather_service.dart';
@@ -61,6 +62,7 @@ class StylistChatOutfitResult {
     this.finalExplanation,
     this.rejectAllReasonCodes = const <String>[],
     this.functionalAssessment,
+    this.outfitEditDelta,
   });
 
   final V2FlexibleOutfitResult flexibleOutfit;
@@ -79,6 +81,7 @@ class StylistChatOutfitResult {
   final String? finalExplanation;
   final List<String> rejectAllReasonCodes;
   final CandidateFunctionalAssessmentV1? functionalAssessment;
+  final OutfitEditDeltaV1? outfitEditDelta;
 }
 
 /// Explicit swap requests must either return their validated replacement or
@@ -326,7 +329,7 @@ class StylistChatOutfitService {
     };
     onProgress?.call(StylistChatProgressPhase.buildingOutfit);
     final allResolved = NativeWardrobeV2Runtime.resolveAll(wardrobe);
-    final resolved = allResolved
+    var resolved = allResolved
         .where((item) => !excluded.contains(item.itemId))
         .where((item) {
           if (requestedBottomFamily == null) return true;
@@ -349,12 +352,27 @@ class StylistChatOutfitService {
           );
         })
         .toList(growable: false);
+    if (outfitEditPlan?.intent == OutfitEditIntentV1.createOutfit &&
+        outfitEditPlan!.hasCreateRequirements) {
+      resolved = OutfitEditExecutorV1.wardrobeForCreatePlan(
+        plan: outfitEditPlan,
+        wardrobe: resolved,
+      );
+      if (resolved.isEmpty) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['canonical_create_requirements_unavailable'],
+          explanation:
+              'V šatníku nemám kúsky, ktoré by splnili všetky tvoje požiadavky naraz.',
+        );
+      }
+    }
     if (resolved.isEmpty) return null;
     final context = V2CandidateMatrixContext(
       weatherProtectionRequired:
           weather.isRainy || weather.isWindy || wetGroundMuddy,
       minimumFormality: occasionProfile.isElevated ? 5 : 1,
       requiredOccasions: {occasionProfile.dressCode.id},
+      preferOnePiece: outfitEditPlan?.createPrefersOnePiece ?? false,
       maxCandidates: 6,
       tempC: weather.tempC,
       seasonKey: weather.seasonKey,
@@ -369,7 +387,9 @@ class StylistChatOutfitService {
       activityDurationMinutes: event.durationMinutes,
       terrain: terrain.name,
       wetGroundRisk: wetGroundMuddy,
-      optionalUpperLayerRequested: optionalUpperLayerRequested,
+      optionalUpperLayerRequested:
+          optionalUpperLayerRequested ||
+          (outfitEditPlan?.createRequiresUpperLayer ?? false),
     );
     final frozenResolvedContext = <String, dynamic>{
       'activity': outfitIntent.activityType,
@@ -427,12 +447,30 @@ class StylistChatOutfitService {
               'Všetky požadované zmeny naraz sa mi nepodarilo bezpečne splniť, takže pôvodný outfit nechávam bez zmeny.',
         );
       }
+      final expectedFocusSlot = outfitEditPlan.focusSlotWireName;
+      if (expectedFocusSlot != null &&
+          editCandidates.any(
+            (candidate) =>
+                OutfitEditDeltaV1.between(
+                  before: current,
+                  after: candidate.outfit,
+                  plan: outfitEditPlan,
+                ).actualFocusSlot !=
+                expectedFocusSlot,
+          )) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['canonical_focus_delta_mismatch'],
+          explanation:
+              'Požadovanú výmenu sa nepodarilo izolovať na jeden konkrétny kus, preto outfit nemením.',
+        );
+      }
       onProgress?.call(StylistChatProgressPhase.finalizing);
       final decision = await const StylistFrozenCandidateDecisionServiceV1()
           .resolve(
             candidates: editCandidates,
             resolvedContext: frozenResolvedContext,
             presentationMode: outfitEditPlan.presentation,
+            focusSlot: expectedFocusSlot ?? '',
             userRequest: userRequest,
           );
       final selectedId = decision.selectedCandidateId;
@@ -449,6 +487,11 @@ class StylistChatOutfitService {
           explanation: decision.explanation,
         );
       }
+      final editDelta = OutfitEditDeltaV1.between(
+        before: current,
+        after: accepted.outfit,
+        plan: outfitEditPlan,
+      );
       return StylistChatOutfitResult(
         flexibleOutfit: accepted.outfit,
         wardrobeAnalysis: _wardrobeGapAnalysisV2(
@@ -464,11 +507,12 @@ class StylistChatOutfitService {
           intent: outfitIntent,
           wetGroundMuddy: wetGroundMuddy,
         ),
-        finalExplanation: decision.explanation.trim().isEmpty
-            ? null
-            : decision.explanation.trim(),
+        // The model selects only candidateId. Successful edit copy comes from
+        // the immutable BEFORE→AFTER delta and cannot invent changed items.
+        finalExplanation: editDelta.followUpTextSk,
         rejectAllReasonCodes: decision.reasonCodes,
         functionalAssessment: accepted.functionalAssessment,
+        outfitEditDelta: editDelta,
       );
     }
     var generated = V2FlexibleCandidateMatrix.generate(
@@ -481,6 +525,7 @@ class StylistChatOutfitService {
         context: V2CandidateMatrixContext(
           weatherProtectionRequired: context.weatherProtectionRequired,
           minimumFormality: 1,
+          preferOnePiece: context.preferOnePiece,
           maxCandidates: context.maxCandidates,
           tempC: context.tempC,
           seasonKey: context.seasonKey,
@@ -498,6 +543,24 @@ class StylistChatOutfitService {
       );
     }
     if (generated.isEmpty) return null;
+    if (outfitEditPlan?.intent == OutfitEditIntentV1.createOutfit &&
+        outfitEditPlan!.hasCreateRequirements) {
+      generated = generated
+          .where(
+            (candidate) => OutfitEditExecutorV1.candidateSatisfiesCreatePlan(
+              plan: outfitEditPlan,
+              candidate: candidate.outfit,
+            ),
+          )
+          .toList(growable: false);
+      if (generated.isEmpty) {
+        throw const StylistFrozenDecisionRejectedExceptionV1(
+          <String>['canonical_create_requirements_unavailable'],
+          explanation:
+              'Nenašiel som celý vhodný outfit, ktorý by splnil všetky tvoje požiadavky naraz.',
+        );
+      }
+    }
     final matrix =
         generated
             .map((candidate) {
@@ -507,7 +570,9 @@ class StylistChatOutfitService {
               final warmth = warmthValues.isEmpty
                   ? 0.0
                   : warmthValues.reduce((a, b) => a + b) / warmthValues.length;
-              final targetWarmth = OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC);
+              final targetWarmth = OutfitSuitabilityPolicyV2.targetMeanWarmth(
+                weather.tempC,
+              );
               final comfort = (5 - (warmth - targetWarmth).abs())
                   .clamp(0, 5)
                   .toDouble();

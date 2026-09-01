@@ -109,17 +109,6 @@ abstract final class OutfitEditExecutorV1 {
               context.stylingPresentation,
             ),
           )
-          .where(
-            (candidate) => candidate.item.formality >= context.minimumFormality,
-          )
-          .where(
-            (candidate) =>
-                context.requiredOccasions.isEmpty ||
-                candidate.item.occasionFit
-                    .toSet()
-                    .intersection(context.requiredOccasions)
-                    .isNotEmpty,
-          )
           .take(16)
           .toList(growable: false);
       if (pool.isEmpty) return const <V2FlexibleCandidate>[];
@@ -241,6 +230,91 @@ abstract final class OutfitEditExecutorV1 {
     );
   }
 
+  /// Narrows only slots carrying explicit Brain requirements. Unconstrained
+  /// slots remain available to the normal V2 generator. An empty result means
+  /// at least one hard create requirement has no owned matching item.
+  static List<ResolvedWardrobeItemV2> wardrobeForCreatePlan({
+    required OutfitEditPlanV1 plan,
+    required Iterable<ResolvedWardrobeItemV2> wardrobe,
+  }) {
+    final source = wardrobe.toList(growable: false);
+    if (plan.intent != OutfitEditIntentV1.createOutfit ||
+        !plan.hasCreateRequirements) {
+      return source;
+    }
+    for (final operation in plan.operations) {
+      if (!source.any(
+        (candidate) =>
+            _resolvedMatchesSlot(candidate, operation.slot) &&
+            _matchesConstraints(
+              candidate,
+              operation,
+              const <V2FlexibleOutfitItem>[],
+            ),
+      )) {
+        return const <ResolvedWardrobeItemV2>[];
+      }
+    }
+    final constrainedSlots = plan.operations
+        .map((operation) => operation.slot)
+        .toSet();
+    return source
+        .where((candidate) {
+          final matchingSlots = constrainedSlots.where(
+            (slot) => _resolvedMatchesSlot(candidate, slot),
+          );
+          if (matchingSlots.isEmpty) return true;
+          return plan.operations.any(
+            (operation) =>
+                _resolvedMatchesSlot(candidate, operation.slot) &&
+                _matchesConstraints(
+                  candidate,
+                  operation,
+                  const <V2FlexibleOutfitItem>[],
+                ),
+          );
+        })
+        .toList(growable: false);
+  }
+
+  /// Verifies all create requirements against distinct selected item IDs. This
+  /// is the final hard gate after holistic V2 generation and validation.
+  static bool candidateSatisfiesCreatePlan({
+    required OutfitEditPlanV1 plan,
+    required V2FlexibleOutfitResult candidate,
+  }) {
+    if (plan.intent != OutfitEditIntentV1.createOutfit) return false;
+    if (!plan.hasCreateRequirements) return true;
+    final resolved = candidate.items
+        .map(
+          (item) => ResolvedWardrobeItemV2(
+            itemId: item.itemId,
+            item: item.item,
+            raw: item.display,
+          ),
+        )
+        .toList(growable: false);
+    bool assign(int index, Set<String> usedIds) {
+      if (index >= plan.operations.length) return true;
+      final operation = plan.operations[index];
+      for (final item in resolved) {
+        if (usedIds.contains(item.itemId) ||
+            !_resolvedMatchesSlot(item, operation.slot) ||
+            !_matchesConstraints(
+              item,
+              operation,
+              const <V2FlexibleOutfitItem>[],
+            )) {
+          continue;
+        }
+        if (assign(index + 1, <String>{...usedIds, item.itemId})) return true;
+      }
+      return false;
+    }
+
+    return assign(0, <String>{});
+  }
+
   static OutfitCompositionItemV2 _restoredCompositionItem(
     ResolvedWardrobeItemV2 value,
   ) {
@@ -355,8 +429,7 @@ abstract final class OutfitEditExecutorV1 {
       bodySlots.contains('lower_body') && !bodySlots.contains('full_body'),
     OutfitEditSlotV1.shoes => bodySlots.contains('feet'),
     OutfitEditSlotV1.layers =>
-      bodySlots.contains('upper_body') &&
-          const <String>{'skin_base', 'mid'}.contains(layerPosition),
+      bodySlots.contains('upper_body') && layerPosition == 'mid',
     OutfitEditSlotV1.outerwear =>
       bodySlots.contains('upper_body') &&
           const <String>{'outer', 'shell'}.contains(layerPosition),
@@ -386,17 +459,24 @@ abstract final class OutfitEditExecutorV1 {
         )) {
       return false;
     }
-    final colors = <String>{
+    final dominantColors = <String>{
+      item.colorProfile.primary.family.toLowerCase(),
+      if (item.colorProfile.secondary?.proportion != null &&
+          item.colorProfile.secondary!.proportion! >= 0.4)
+        item.colorProfile.secondary!.family.toLowerCase(),
+    };
+    final allColors = <String>{
       item.colorProfile.primary.family.toLowerCase(),
       if (item.colorProfile.secondary != null)
         item.colorProfile.secondary!.family.toLowerCase(),
       ...item.colorProfile.accents.map((color) => color.family.toLowerCase()),
     };
-    if (constraints.color != null && !colors.contains(constraints.color)) {
+    if (constraints.color != null &&
+        !dominantColors.contains(constraints.color)) {
       return false;
     }
     if (constraints.excludedColor != null &&
-        colors.contains(constraints.excludedColor)) {
+        allColors.contains(constraints.excludedColor)) {
       return false;
     }
     if (constraints.thermal != null && targets.isNotEmpty) {

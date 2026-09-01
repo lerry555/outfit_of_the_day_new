@@ -142,15 +142,6 @@ class OutfitEditOperationV1 {
         !constraints.isEmpty) {
       return null;
     }
-    if (action == OutfitEditActionV1.add &&
-        const <OutfitEditSlotV1>{
-          OutfitEditSlotV1.top,
-          OutfitEditSlotV1.bottom,
-          OutfitEditSlotV1.shoes,
-          OutfitEditSlotV1.fullBody,
-        }.contains(slot)) {
-      return null;
-    }
     return OutfitEditOperationV1(
       slot: slot,
       action: action,
@@ -185,8 +176,41 @@ class OutfitEditPlanV1 {
       intent == OutfitEditIntentV1.editCurrentOutfit &&
       operations.any((operation) => operation.mutates);
 
+  bool get hasCreateRequirements =>
+      intent == OutfitEditIntentV1.createOutfit && operations.isNotEmpty;
+
+  bool get createRequiresUpperLayer =>
+      intent == OutfitEditIntentV1.createOutfit &&
+      operations.any(
+        (operation) =>
+            operation.slot == OutfitEditSlotV1.layers ||
+            operation.slot == OutfitEditSlotV1.outerwear,
+      );
+
+  bool get createPrefersOnePiece =>
+      intent == OutfitEditIntentV1.createOutfit &&
+      operations.any(
+        (operation) => operation.slot == OutfitEditSlotV1.fullBody,
+      );
+
+  List<OutfitEditOperationV1> operationsFor(OutfitEditSlotV1 slot) => operations
+      .where((operation) => operation.slot == slot)
+      .toList(growable: false);
+
   OutfitEditOperationV1 operationFor(OutfitEditSlotV1 slot) =>
       operations.firstWhere((operation) => operation.slot == slot);
+
+  String? get focusSlotWireName {
+    if (presentation != 'focused_item') return null;
+    final mutations = operations
+        .where((operation) => operation.mutates)
+        .toList(growable: false);
+    if (mutations.length != 1 ||
+        mutations.single.action != OutfitEditActionV1.replace) {
+      return null;
+    }
+    return _slotWireName(mutations.single.slot);
+  }
 
   Map<String, dynamic> toMap() => <String, dynamic>{
     'contractVersion': contractVersion,
@@ -234,18 +258,42 @@ class OutfitEditPlanV1 {
     final parsed = <OutfitEditOperationV1>[];
     for (final rawOperation in rawOperations) {
       final operation = OutfitEditOperationV1.tryParse(rawOperation);
-      if (operation == null ||
-          parsed.any((existing) => existing.slot == operation.slot)) {
+      if (operation == null) return null;
+      if (intent == OutfitEditIntentV1.createOutfit &&
+          operation.action != OutfitEditActionV1.add) {
+        return null;
+      }
+      if (intent == OutfitEditIntentV1.editCurrentOutfit &&
+          operation.action == OutfitEditActionV1.add &&
+          !_addableSlots.contains(operation.slot)) {
+        return null;
+      }
+      final sameSlot = parsed
+          .where((existing) => existing.slot == operation.slot)
+          .toList(growable: false);
+      if (sameSlot.isNotEmpty &&
+          (!_addableSlots.contains(operation.slot) ||
+              operation.action != OutfitEditActionV1.add ||
+              sameSlot.any(
+                (existing) => existing.action != OutfitEditActionV1.add,
+              ))) {
         return null;
       }
       parsed.add(operation);
     }
-    if (intent != OutfitEditIntentV1.editCurrentOutfit) {
+    if (intent == OutfitEditIntentV1.none) {
       if (parsed.isNotEmpty) return null;
       return OutfitEditPlanV1._(
         intent: intent,
         operations: const <OutfitEditOperationV1>[],
-        presentation: presentation,
+        presentation: 'normal',
+      );
+    }
+    if (intent == OutfitEditIntentV1.createOutfit) {
+      return OutfitEditPlanV1._(
+        intent: intent,
+        operations: List<OutfitEditOperationV1>.unmodifiable(parsed),
+        presentation: 'normal',
       );
     }
     for (final slot in _defaultPreservedSlots) {
@@ -262,6 +310,12 @@ class OutfitEditPlanV1 {
     );
   }
 }
+
+const _addableSlots = <OutfitEditSlotV1>{
+  OutfitEditSlotV1.layers,
+  OutfitEditSlotV1.outerwear,
+  OutfitEditSlotV1.accessories,
+};
 
 OutfitEditSlotV1? _parseSlot(String raw) => switch (raw.trim().toLowerCase()) {
   'top' => OutfitEditSlotV1.top,

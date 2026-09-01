@@ -79,10 +79,13 @@ class StylistFrozenCandidateDecisionServiceV1 {
             // retain the settled explanation path on the shared callable.
             'conversationBrainVersion': conversationBrainVersion,
             'resolvedContext': resolvedContext,
-            'decisionMode': lockedSelection ? 'locked_selection' : 'select_candidate',
+            'decisionMode': lockedSelection
+                ? 'locked_selection'
+                : 'select_candidate',
             'presentationMode': presentationMode,
             if (focusSlot.trim().isNotEmpty) 'focusSlot': focusSlot.trim(),
-            if (userRequest.trim().isNotEmpty) 'userRequest': userRequest.trim(),
+            if (userRequest.trim().isNotEmpty)
+              'userRequest': userRequest.trim(),
             'frozenCandidates': candidates
                 .map(_candidatePayload)
                 .toList(growable: false),
@@ -186,14 +189,21 @@ class StylistFrozenCandidateDecisionServiceV1 {
 
   static String _presentationSlot(V2FlexibleOutfitItem item) {
     if (item.item.bodySlots.contains('feet')) return 'shoes';
-    if (item.item.layerPosition == 'outer' || item.item.layerPosition == 'shell') {
+    if (item.item.bodySlots.contains('full_body')) return 'full_body';
+    if (item.item.layerPosition == 'outer' ||
+        item.item.layerPosition == 'shell') {
       return 'outerwear';
     }
+    if (item.item.layerPosition == 'mid') return 'layers';
     if (item.item.bodySlots.contains('lower_body') &&
         !item.item.bodySlots.contains('upper_body')) {
       return 'bottom';
     }
-    if (item.item.bodySlots.contains('upper_body')) return 'top';
+    if (item.item.bodySlots.contains('upper_body') &&
+        item.item.layerPosition != 'skin_base') {
+      return 'top';
+    }
+    if (item.item.accessoryGroup != null) return 'accessories';
     return '';
   }
 

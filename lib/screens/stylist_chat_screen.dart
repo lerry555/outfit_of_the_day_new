@@ -2366,6 +2366,50 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       suggestedItems.map((item) => Map<String, dynamic>.from(item)),
     );
 
+    final canonicalDelta = outfitResult.outfitEditDelta;
+    if (outfitEditPlan?.intent == OutfitEditIntentV1.editCurrentOutfit &&
+        canonicalDelta?.actualFocusSlot != null) {
+      final focusedItems = suggestedItems
+          .where(
+            (item) => canonicalDelta!.changedAfterItemIds.contains(
+              (item['id'] ?? '').toString().trim(),
+            ),
+          )
+          .toList(growable: false);
+      if (focusedItems.isEmpty) {
+        setState(() {
+          _messages.add(
+            const StylistChatMessage(
+              text:
+                  'Zmenený kus sa mi nepodarilo jednoznačne zobraziť, preto si výsledok nechcem domýšľať.',
+              isUser: false,
+            ),
+          );
+          _isSending = false;
+        });
+        _scrollToBottom();
+        return;
+      }
+      debugPrint(
+        'STYLIST CHAT reply_source=canonical_outfit_delta '
+        'slot=${canonicalDelta!.actualFocusSlot} '
+        'display_items=${focusedItems.length}',
+      );
+      setState(() {
+        _messages.add(
+          StylistChatMessage(
+            text: canonicalDelta.followUpTextSk,
+            isUser: false,
+            suggestedItems: focusedItems,
+            outfitUpdateSlot: canonicalDelta.actualFocusSlot,
+          ),
+        );
+        _isSending = false;
+      });
+      _scrollToBottom();
+      return;
+    }
+
     // An explicit one-slot request is a true local edit: every other item stays
     // frozen internally, and the UI shows only the item the user asked about.
     if (requestedSwap != null) {

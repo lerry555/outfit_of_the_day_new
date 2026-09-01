@@ -40,10 +40,10 @@ test("premium prompt keeps event facts grounded before outfit generation", () =>
   assert.match(prompt, /outfitTempC/);
 });
 
-test("Brain additive layer contract is explicit and hard", () => {
+test("Brain canonical additive layer contract is explicit and hard", () => {
   const prompt = buildChatSystemPrompt("brain_v1");
-  assert.match(prompt, /required_upper_layer/);
-  assert.match(prompt, /preserveCurrentOutfit=true/);
-  assert.match(prompt, /layerFamily=hoodie/);
-  assert.match(prompt, /Nesmieš ju zrušiť/);
+  assert.match(prompt, /add layers constraints\.type=hoodie/);
+  assert.match(prompt, /top a shoes ostávajú preserve/);
+  assert.match(prompt, /tvrdé a nie sú legacy hinty/);
+  assert.match(prompt, /legacy outfitDirective je iba kompatibilita/);
 });

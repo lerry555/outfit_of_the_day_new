@@ -422,6 +422,10 @@ void main() {
       final executor = _read(
         'lib/domain/wardrobe_v2/outfit_edit_executor_v1.dart',
       );
+      final delta = _read('lib/domain/wardrobe_v2/outfit_edit_delta_v1.dart');
+      final frozenAuthority = _read(
+        'functions/stylist/frozen_stylist_authority_v1.js',
+      );
       final native = _read(
         'lib/domain/wardrobe_v2/native_outfit_engine_v2.dart',
       );
@@ -430,6 +434,8 @@ void main() {
       expect(prompts, contains('outfit_edit_plan_v1'));
       expect(prompts, contains('Všetky zmeny jedného user turnu'));
       expect(prompts, contains('constraints.color=red'));
+      expect(prompts, contains('add bottom constraints.family=shorts'));
+      expect(prompts, contains('nikdy skin_base/termoprádlo'));
       expect(server, contains('sanitizeOutfitEditPlanV1'));
       expect(screen, contains('StylistOutfitEditRoutingV1.resolve'));
       expect(screen, contains('final swapRequest = editRouting.legacySwap'));
@@ -438,8 +444,17 @@ void main() {
       expect(executor, contains('restoreCurrent'));
       expect(executor, contains('_cartesianProduct'));
       expect(executor, contains('V2FlexibleOutfitScorer.score'));
+      expect(executor, contains('candidateSatisfiesCreatePlan'));
+      expect(executor, isNot(contains('candidate.item.occasionFit')));
+      expect(delta, contains('beforeIds'));
+      expect(delta, contains('afterIds'));
+      expect(delta, contains('followUpTextSk'));
       expect(service, contains('atomic_outfit_edit_unavailable'));
       expect(service, contains('candidates: editCandidates'));
+      expect(service, contains("focusSlot: expectedFocusSlot ?? ''"));
+      expect(service, contains('finalExplanation: editDelta.followUpTextSk'));
+      expect(screen, contains('changedAfterItemIds.contains'));
+      expect(frozenAuthority, isNot(contains('selected.presentationItems[0]')));
       expect(screen, contains('brain_locked_swap'));
       expect(screen, contains('outfitUpdateSlot'));
       expect(service, contains('lockedSelection: true'));
@@ -470,10 +485,8 @@ void main() {
         'lib/domain/wardrobe_v2/outfit_suitability_policy_v2.dart',
       );
 
-      expect(
-        service,
-        contains('OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC)'),
-      );
+      expect(service, contains('OutfitSuitabilityPolicyV2.targetMeanWarmth('));
+      expect(service, contains('weather.tempC'));
       expect(service, isNot(contains('weather.tempC <= 14 ? 6.0')));
       expect(policy, contains('static double targetMeanWarmth'));
     },
@@ -522,10 +535,7 @@ void main() {
     expect(repaired['presentation'], 'concise_full');
 
     final replacement = StylistOutfitDirectiveGuard.repair(
-      rawDirective: <String, dynamic>{
-        'scope': 'single_slot',
-        'slot': 'top',
-      },
+      rawDirective: <String, dynamic>{'scope': 'single_slot', 'slot': 'top'},
       userText: 'vymeň tričko za mikinu',
       hasCurrentOutfit: true,
     );
@@ -535,10 +545,15 @@ void main() {
 
   test('single-slot display prefers the actually changed item copy', () {
     final screen = _read('lib/screens/stylist_chat_screen.dart');
-    expect(screen, contains('final focusedReply = fallbackReply ?? brainReply;'));
     expect(
       screen,
-      contains("fallbackReply != null ? 'local_swap_fallback' : 'brain_locked_swap'"),
+      contains('final focusedReply = fallbackReply ?? brainReply;'),
+    );
+    expect(
+      screen,
+      contains(
+        "fallbackReply != null ? 'local_swap_fallback' : 'brain_locked_swap'",
+      ),
     );
   });
 }

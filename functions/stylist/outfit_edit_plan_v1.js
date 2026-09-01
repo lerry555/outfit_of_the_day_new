@@ -56,7 +56,6 @@ function sanitizeOperation(raw) {
   const slot = token(raw.slot);
   const action = token(raw.action);
   if (!SLOTS.includes(slot) || !ACTIONS.has(action)) return null;
-  if (action === "add" && !ADDABLE_SLOTS.has(slot)) return null;
   const constraints = sanitizeConstraints(raw.constraints);
   if (constraints == null) return null;
   if ((action === "preserve" || action === "remove") &&
@@ -74,26 +73,45 @@ function sanitizeOutfitEditPlanV1(raw) {
   const presentationRaw = token(raw.presentation);
   const presentation = PRESENTATIONS.has(presentationRaw) ?
     presentationRaw : intent === "edit_current_outfit" ? "concise_full" : "normal";
-  if (intent !== "edit_current_outfit") {
+  if (intent === "none") {
     if (rawOperations.length > 0) return null;
     return Object.freeze({
       contractVersion: CONTRACT_VERSION,
       intent,
       operations: Object.freeze([]),
-      presentation,
+      presentation: "normal",
     });
   }
   const operations = [];
-  const seenSlots = new Set();
+  const bySlot = new Map();
   for (const rawOperation of rawOperations) {
     const operation = sanitizeOperation(rawOperation);
-    if (!operation || seenSlots.has(operation.slot)) return null;
-    seenSlots.add(operation.slot);
+    if (!operation) return null;
+    if (intent === "create_outfit" && operation.action !== "add") return null;
+    if (intent === "edit_current_outfit" &&
+        operation.action === "add" && !ADDABLE_SLOTS.has(operation.slot)) return null;
+    const existing = bySlot.get(operation.slot) || [];
+    if (existing.length > 0 &&
+        (!ADDABLE_SLOTS.has(operation.slot) ||
+         operation.action !== "add" ||
+         existing.some((value) => value.action !== "add"))) {
+      return null;
+    }
+    existing.push(operation);
+    bySlot.set(operation.slot, existing);
     operations.push(operation);
+  }
+  if (intent === "create_outfit") {
+    return Object.freeze({
+      contractVersion: CONTRACT_VERSION,
+      intent,
+      operations: Object.freeze(operations),
+      presentation: "normal",
+    });
   }
   if (!operations.some((operation) => operation.action !== "preserve")) return null;
   for (const slot of SLOTS) {
-    if (seenSlots.has(slot)) continue;
+    if (bySlot.has(slot)) continue;
     operations.push(Object.freeze({
       slot,
       action: "preserve",
