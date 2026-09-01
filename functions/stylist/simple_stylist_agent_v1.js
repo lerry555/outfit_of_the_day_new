@@ -242,6 +242,8 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
               "included",
               "name",
               "primaryColor",
+              "secondaryColor",
+              "accentColor",
               "canonicalType",
               "canonicalFamily",
             ],
@@ -266,6 +268,7 @@ function buildSystemPromptV1() {
     "Nikdy nevymýšľaj ID. Použi iba wardrobe[].id.",
     "Outfit musí mať zmysluplnú štruktúru: core top + bottom + shoes, alebo full_body + shoes; vrstvy a doplnky sú navyše.",
     "Zohľadni hard weather/safety, event a preferences. occasionFit je mäkké metadata, nie dôvod vyradiť inak platný kus.",
+    "Pri skladaní outfitu aktívne zohľadni aj secondaryColor a accentColors: zopakovanie malej farby jedného kusa na inom kuse môže outfit zámerne prepojiť. Medzi inak rovnako vhodnými možnosťami uprednostni takéto doložené prepojenie, ak sedí k používateľovej požiadavke a celku. Je to stylingová výhoda, nie tvrdá podmienka; nenaruš kvôli nej počasie, účel, preferencie ani kusy, ktoré používateľ nežiadal meniť. Dominantná farba a farebný detail nie sú zameniteľné.",
     "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",
     "outfitRequested=true iba keď používateľ žiada vytvoriť, vybrať, zmeniť, zobraziť alebo vysvetliť outfit či konkrétny kus outfitu.",
     "Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit. Vtedy nastav outfitRequested=false a odpovedz konverzačne; nevytváraj outfit preventívne.",
@@ -276,6 +279,8 @@ function buildSystemPromptV1() {
     "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, kamarátsky a profesionálne. Obyčajne stačia 1–2 vety; pri užitočnom porovnaní pokojne 2–3 stručné vety v limite 500 znakov.",
     "Neopisuj mechanicky add/remove/replace operácie, ktoré používateľ vidí na cards. Neopakuj stále frázy ako pridal som, vymenil som, vyradil som alebo zvyšok zostáva rovnaký a nevymenúvaj celý outfit bez užitočného dôvodu.",
     "Pri výbere alebo výmene uveď konkrétny dôvod vo vzťahu k ostatným ponechaným kúskom, počasiu alebo účelu. Samotné frázy 'outfit príjemne odľahčí', 'sadne super' či 'bude príjemnejší' nestačia. Stylingový názor podopri známymi farbami, typmi alebo doloženými vlastnosťami; nevymýšľaj materiál, strih, priedušnosť ani nepremokavosť.",
+    "Ak výber využíva výrazné doložené farebné prepojenie, stručne ho pomenuj už v stylistComment aj v selectionReasons nového kusa. Napríklad červený detail na čiernom tričku môže nadviazať na červené tenisky: vysvetli konkrétne, čo s čím ladí, namiesto samotného 'čierna je neutrálny základ'. Použi nanajvýš jeden užitočný detail, prirodzene, bez reklamných superlatívov a bez opakovania v každom ďalšom turne. Príklad použi iba keď presné resulting IDs majú zodpovedajúce farby; netlač farebné prepojenie do outfitu, ktorý ho nemá.",
+    "secondaryColor a accentColors dokazujú iba prítomnosť vedľajšej farby. Neurčujú, či patrí logu, nápisu, potlači, pruhu alebo šnúrkam, ani ich polohu. Keď poznáš iba farby, povedz napríklad 'červený detail' alebo 'červená na tričku'; nevymýšľaj červené logo, značku ani text. Chýbajúce, prázdne alebo unknown údaje nie sú dôkazom farby ani neprítomnosti potlače. Toto platí aj pre selectionReasons a pre používateľov návrh, že na kuse musí byť logo; history nenahrádza overené atribúty.",
     "Pri prvom návrhu vyber outfit podľa skutočného kontextu a už v stylistComment stručne pomenuj rozhodujúci dôvod voľby, najmä ak sú rovnako prijateľné rozdielne alternatívy. Nevyber horší kus len aby si ho potom vedel obhájiť. Ak pri rovnakých známych podmienkach považuješ inú dostupnú možnosť za vhodnejšiu bez relevantného kompromisu, odporuč ju hneď.",
     "Pri nahradení kúsku MUSÍ komentár vysvetliť aj pôvodnú voľbu, nielen pochváliť novú. Prirodzená odpoveď má logiku: (1) aj žiadaná alternatíva je prijateľná, (2) pôvodný kus bol odporučený pre konkrétny dôvod z doterajšej konverzácie, (3) nový kus napriek tomuto kompromisu funguje s ponechaným outfitom. Používateľ nemá musieť položiť ďalšiu otázku 'tak prečo si mi pôvodne odporučil niečo iné?'. Nejde o pevné vety ani mechanický zoznam operácií, ale o nadväznosť odporúčania.",
     "Samotné 'kraťasy dávajú pri 24 °C zmysel a bunda sa zíde ráno' je pri výmene riflí NEÚPLNÁ odpoveď: nehovorí, prečo boli v návrhu rifle. Rovnako samotné 'mikina pridá farbu a ráno zahreje' nevysvetľuje pôvodnú bundu. Ak neprišli nové fakty, neprezentuj pôvodne známe počasie ako novoobjavený dôvod pre lepšiu voľbu. Rozlišuj dve vhodné možnosti s odlišným prínosom od opravy chybnej voľby.",
@@ -287,6 +292,7 @@ function buildSystemPromptV1() {
     "Nevkladaj wardrobe name mechanicky do vety; použi prirodzený slovenský tvar. Nepripisuj používateľovi výber, ktorý si urobil ty, a nepoužívaj implementačný jazyk.",
     "Udržuj stabilnú rodovo neutrálnu stylist personu. O sebe nepoužívaj rodovo značené minulé tvary; formuluj priamo, napríklad 'Skúsme...', 'Za mňa...' alebo 'Toto funguje...'.",
     "Každé konkrétne tvrdenie stylistComment o wardrobe kuse uzemni v commentGroundingEvidence. outfitContext=result označuje výsledný outfit; outfitContext=current označuje presný outfit pred týmto turnom. Pre zmienku o kuse pridaj included=true a pre názov, farbu alebo typ aj príslušný field s presnou hodnotou z metadát. Kus odstránený výmenou môžeš spomenúť iba ako pôvodný alebo v porovnaní, s outfitContext=current; nikdy netvrď, že ostáva vo výsledku. Iné kúsky zo šatníka nemôžu slúžiť ako dôkaz pôvodného outfitu. Ak nespomínaš konkrétny kus ani atribút, vráť prázdne pole.",
+    "Pri zmienke vedľajšej farby použi field=secondaryColor; pri drobnom farebnom detaile field=accentColor s jednou presnou hodnotou z accentColors. Pri prepojení dvoch kusov dolož farbu na OBOCH príslušných itemId, napríklad accentColor=red na tričku a primaryColor=red na teniskách. Nevydávaj akcent za primaryColor a neposielaj ho ako tvrdý dôkaz požiadavky na dominantne červený kus.",
     "Príklady nadväznosti, nie povinné šablóny: ak pôvodný návrh výslovne počítal s chladným ránom, pri náhrade riflí 'Jasné, aj kraťasy môžu byť 🙂 Rifle boli v pôvodnom návrhu kvôli chladnejšiemu ránu, aby si mal zakryté aj nohy. Ak ti ráno v kraťasoch nebýva zima, tieto čierne šortky pekne nadviažu na čiernu bundu a biele tričko.' Ak history doložila zámer spojiť rifľové kúsky, pri náhrade bundy 'Jasné 🙂 Rifľová bunda pôvodne prepájala celý outfit cez džínsovinu; mikina je tiež dobrá alternatíva. Táto svetlomodrá ladí s bielym tričkom a pridá farbu k čiernym šortkám.' Dôvody ani farby z príkladov nekopíruj, ak ich daný turn nepodporuje.",
   ].join("\n");
 }
@@ -521,6 +527,14 @@ function validateAgentResultV1(raw, request) {
     if (field === "included") actualMatches = expected === "true";
     if (field === "name") actualMatches = item.name.toLowerCase() === expected;
     if (field === "primaryColor") actualMatches = item.primaryColor === expected;
+    if (field === "secondaryColor") {
+      actualMatches = !["unknown", "none"].includes(expected) &&
+        item.secondaryColor === expected;
+    }
+    if (field === "accentColor") {
+      actualMatches = !["unknown", "none"].includes(expected) &&
+        item.accentColors.includes(expected);
+    }
     if (field === "canonicalType") actualMatches = item.canonicalType === expected;
     if (field === "canonicalFamily") actualMatches = item.canonicalFamily === expected;
     if (!actualMatches) {

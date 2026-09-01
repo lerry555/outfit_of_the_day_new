@@ -800,6 +800,114 @@ test("system prompt keeps the personal stylist voice gender-neutral and non-audi
   assert.match(prompt, /displayItemIds musí byť prázdne/);
 });
 
+test("color detail selection and explanation use the exact secondary and accent palette", async () => {
+  const detailedTop = item({id: "detail-top", name: "čierne tričko", type: "t_shirt",
+    family: "tops", slots: ["upper_body"], color: "black", accents: ["red"]});
+  detailedTop.colorProfile.secondary = {family: "white", proportion: 0.1};
+  const resultIds = ["detail-top", "shorts", "red-shoes"];
+  const reply = "Červený detail na čiernom tričku nadväzuje na červené tenisky a prepája celý outfit.";
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: reply,
+    resultingOutfitItemIds: resultIds,
+    displayItemIds: resultIds,
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [{itemId: "red-shoes", field: "primaryColor", expectedValue: "red"}],
+    commentGroundingEvidence: [
+      {itemId: "detail-top", outfitContext: "result", field: "primaryColor", expectedValue: "black"},
+      {itemId: "detail-top", outfitContext: "result", field: "accentColor", expectedValue: "red"},
+      {itemId: "red-shoes", outfitContext: "result", field: "primaryColor", expectedValue: "red"},
+    ],
+    selectionReasons: resultIds.map((itemId) => ({itemId, reason: itemId === "detail-top" ?
+      "Červený detail nadväzuje na červené tenisky." : "Dopĺňa ležérny outfit do mesta."})),
+  }]);
+  const result = await agent.resolve({...request("Vyber tričko k červeným teniskám."),
+    wardrobeItems: [...wardrobe, detailedTop]});
+  assert.equal(inputs.length, 1);
+  const payload = JSON.parse(inputs[0].messages[1].content);
+  const supplied = payload.wardrobeV2.find((entry) => entry.id === "detail-top");
+  assert.equal(supplied.primaryColor, "black");
+  assert.equal(supplied.secondaryColor, "white");
+  assert.deepEqual(supplied.accentColors, ["red"]);
+  assert.equal(result.reply, reply);
+  const card = result.resultingOutfitItems.find((entry) => entry.id === "detail-top");
+  assert.equal(card.colorProfile.accents[0].family, "red");
+  assert.equal(card.stylistSelectionReason, "Červený detail nadväzuje na červené tenisky.");
+});
+
+test("detail evidence rejects invented colors, missing data and dominant-color substitution", () => {
+  const blackTop = {...wardrobe[1], colorProfile: {
+    primary: {family: "black"}, secondary: {family: "white"},
+    accents: [{family: "red"}, {family: "unknown"}],
+  }};
+  const current = ["black-top", "shorts", "red-shoes"];
+  const normalized = normalizeRequestV1({...request("Prečo tieto farby?", current),
+    wardrobeItems: wardrobe.map((entry) => entry.id === blackTop.id ? blackTop : entry)});
+  const base = {stylistComment: "Farby spolu ladia.", resultingOutfitItemIds: current,
+    displayItemIds: [], outfitChanged: false, outfitRequested: true,
+    weatherContextKey: "none", hardRequirementEvidence: [], commentGroundingEvidence: []};
+  const evidence = (itemId, field, expectedValue, outfitContext = "result") =>
+    ({itemId, field, expectedValue, outfitContext});
+  for (const valid of [evidence("black-top", "accentColor", "red"),
+    evidence("black-top", "secondaryColor", "white")]) {
+    assert.equal(validateAgentResultV1({...base, commentGroundingEvidence: [valid]}, normalized).valid, true);
+  }
+  for (const invalid of [
+    evidence("black-top", "accentColor", "blue"),
+    evidence("black-top", "accentColor", "unknown"),
+    evidence("black-top", "secondaryColor", "red"),
+    evidence("black-top", "primaryColor", "red"),
+    evidence("shorts", "accentColor", "red"),
+    evidence("shorts", "secondaryColor", "white"),
+    evidence("white-shoes", "accentColor", "red"), // Real, but outside this outfit.
+  ]) {
+    assert.equal(validateAgentResultV1({...base, commentGroundingEvidence: [invalid]}, normalized).valid,
+      false, JSON.stringify(invalid));
+  }
+  const hard = validateAgentResultV1({...base, hardRequirementEvidence: [
+    {itemId: "black-top", field: "primaryColor", expectedValue: "red"},
+  ]}, normalized);
+  assert.ok(hard.errors.includes("hard_requirement_not_satisfied:black-top:primaryColor:red"));
+});
+
+test("an unsupported accent gets one repair and the supported explanation reaches the user", async () => {
+  const current = ["blue-top", "shorts", "white-shoes"];
+  const base = {resultingOutfitItemIds: current, displayItemIds: [],
+    outfitChanged: false, outfitRequested: true, hardRequirementEvidence: []};
+  const {agent, inputs} = queuedAgent([
+    {...base, stylistComment: "Červená na tričku ladí s teniskami.", commentGroundingEvidence: [
+      {itemId: "blue-top", outfitContext: "result", field: "accentColor", expectedValue: "red"},
+    ]},
+    {...base, stylistComment: "Biele tenisky vytvárajú svetlý kontrast k modrému tričku.", commentGroundingEvidence: [
+      {itemId: "blue-top", outfitContext: "result", field: "primaryColor", expectedValue: "blue"},
+      {itemId: "white-shoes", outfitContext: "result", field: "primaryColor", expectedValue: "white"},
+    ]},
+  ]);
+  const result = await agent.resolve(request("Ako ladia tieto farby?", current));
+  assert.equal(inputs.length, 2);
+  assert.ok(JSON.parse(inputs[1].messages[1].content).repair.validationErrors
+    .includes("comment_grounding_not_satisfied:blue-top:accentColor:red"));
+  assert.equal(result.reply, "Biele tenisky vytvárajú svetlý kontrast k modrému tričku.");
+  assert.deepEqual(result.resultingOutfitItemIds, current);
+});
+
+test("removed-item detail evidence is allowed only in the exact original outfit", () => {
+  const current = ["blue-top", "shorts", "white-shoes"];
+  const normalized = normalizeRequestV1(request("Radšej červené tenisky.", current));
+  const raw = {stylistComment: "Červený detail pôvodných tenisiek teraz nahradí výraznejšia červená obuv.",
+    resultingOutfitItemIds: ["blue-top", "shorts", "red-shoes"], displayItemIds: ["red-shoes"],
+    outfitChanged: true, outfitRequested: true, weatherContextKey: "none",
+    hardRequirementEvidence: [], commentGroundingEvidence: [
+      {itemId: "white-shoes", outfitContext: "current", field: "accentColor", expectedValue: "red"},
+      {itemId: "red-shoes", outfitContext: "result", field: "primaryColor", expectedValue: "red"},
+    ]};
+  assert.equal(validateAgentResultV1(raw, normalized).valid, true);
+  const invalid = {...raw, commentGroundingEvidence: raw.commentGroundingEvidence.map((entry) =>
+    ({...entry, outfitContext: "result"}))};
+  assert.ok(validateAgentResultV1(invalid, normalized).errors
+    .includes("comment_grounding_item_not_in_result:white-shoes"));
+});
+
 test("a swap can compare the previous garment without restoring it or showing its card", async () => {
   const comment = "Rifle v pôvodnom návrhu počítali s chladnejším ránom. Čierne šortky sú vhodné na teplé popoludnie a nadviažu na modré tričko.";
   const {agent, inputs} = queuedAgent([{

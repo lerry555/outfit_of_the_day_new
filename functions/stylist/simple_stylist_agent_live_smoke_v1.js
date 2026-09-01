@@ -73,6 +73,65 @@ async function main() {
     currentSelectionReasons = result.selectionReasons || [];
     return result;
   };
+  if (process.argv.includes("--color-details")) {
+    const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
+    const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});
+    const current = JSON.parse(process.env.STYLIST_QA_DETAIL_CURRENT_IDS || "[]");
+    const detailId = process.env.STYLIST_QA_DETAIL_ITEM_ID;
+    assert.equal(current.length, 3, "qa_detail_fixture_required");
+    assert.ok(current.every((id) => byId.has(id)) && byId.has(detailId), "qa_detail_items_missing");
+    const detail = compact(detailId);
+    console.log(JSON.stringify({scenario: "detail_metadata", item: detail.name,
+      primaryColor: detail.primaryColor, secondaryColor: detail.secondaryColor,
+      accentColors: detail.accentColors}));
+    const topId = current.find((id) => compact(id).bodySlots.includes("upper_body"));
+    const bottomId = current.find((id) => compact(id).bodySlots.includes("lower_body"));
+    const shoesId = current.find((id) => compact(id).bodySlots.includes("feet"));
+    assert.ok(topId && bottomId && shoesId, "qa_detail_roles_missing");
+    const history = [
+      {role: "user", content: "Zajtra okolo 14:00 idem do mesta. Vyber mi outfit."},
+      {role: "assistant", content: "Biele tričko so sivými šortkami a bielymi teniskami vytvorí svetlý, neutrálny outfit na teplé popoludnie."},
+    ];
+    currentSelectionReasons = [{itemId: topId,
+      reason: "Biele tričko vytvára s bielymi teniskami svetlý, neutrálny základ."}];
+    const message = "Môžeš mi prosím vymeniť tričko? A chcel by som tie červené topánky.";
+    const selected = await call("color_detail_selection", message, current, history);
+    assert.ok(selected.resultingOutfitItemIds.includes(bottomId), "qa_unrequested_bottom_changed");
+    assert.ok(!selected.resultingOutfitItemIds.includes(topId), "qa_top_not_changed");
+    const selectedTop = selected.resultingOutfitItemIds.map(compact)
+      .find((item) => item.bodySlots.includes("upper_body") && item.layerPosition === "base");
+    const selectedShoes = selected.resultingOutfitItemIds.map(compact)
+      .find((item) => item.bodySlots.includes("feet"));
+    assert.equal(selectedShoes.primaryColor, "red", "qa_dominant_red_shoes_missing");
+    const normalized = (text) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const explainsColorLink = (reply) => {
+      assert.match(normalized(reply), /cerven/, "qa_color_not_mentioned");
+      assert.match(normalized(reply), /detail|akcent|nadv|prep|zopak|opaku|lad|spaj|spoj/,
+        "qa_color_link_not_explained");
+    };
+    const hasRedDetail = (item) => item.secondaryColor === "red" || item.accentColors.includes("red");
+    if (hasRedDetail(detail)) {
+      assert.ok(hasRedDetail(selectedTop), "qa_available_detail_not_used");
+      explainsColorLink(selected.stylistComment);
+    }
+    console.log(JSON.stringify({scenario: "selected_top_metadata", item: selectedTop.name,
+      primaryColor: selectedTop.primaryColor, secondaryColor: selectedTop.secondaryColor,
+      accentColors: selectedTop.accentColors}));
+    history.push({role: "user", content: message}, {role: "assistant", content: selected.stylistComment});
+    const explanation = await call("color_detail_explanation", "Prečo si vybral práve toto tričko k tým teniskám?",
+      selected.resultingOutfitItemIds, history);
+    assert.deepEqual(explanation.resultingOutfitItemIds, selected.resultingOutfitItemIds);
+    assert.equal(explanation.outfitChanged, false);
+    if (hasRedDetail(selectedTop)) explainsColorLink(explanation.stylistComment);
+    // Palette data never proves a logo, lettering, placement or a brand.
+    // These regexes are QA checks only; final replies also need semantic review.
+    for (const reply of [selected.stylistComment, explanation.stylistComment]) {
+      assert.doesNotMatch(normalized(reply), /logo|napis|potlac|levis|levi's/,
+        "qa_palette_invented_print_or_brand");
+    }
+    console.log(`LIVE_COLOR_DETAILS_PASS: redDetailAvailable=${hasRedDetail(detail)}; review prose and palette.`);
+    return;
+  }
   if (process.argv.includes("--choice-continuity")) {
     const seedReason = (itemId, reason) => {
       currentSelectionReasons = [{itemId, reason}];
