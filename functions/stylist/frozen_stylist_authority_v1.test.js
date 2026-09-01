@@ -2,7 +2,11 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const {normalizeRequest, validateDecision} = require("./frozen_stylist_authority_v1");
+const {
+  createFrozenStylistAuthority,
+  normalizeRequest,
+  validateDecision,
+} = require("./frozen_stylist_authority_v1");
 
 const owned = new Set(["top", "bottom", "shoes"]);
 const request = () => ({contractVersion: 1, resolvedContext: {activity: "walk"}, frozenCandidates: [{
