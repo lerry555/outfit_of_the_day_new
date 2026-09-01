@@ -214,9 +214,10 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["itemId", "field", "expectedValue"],
+        required: ["itemId", "outfitContext", "field", "expectedValue"],
         properties: {
           itemId: {type: "string", minLength: 1, maxLength: 180},
+          outfitContext: {type: "string", enum: ["current", "result"]},
           field: {
             type: "string",
             enum: [
@@ -252,14 +253,18 @@ function buildSystemPromptV1() {
     "Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit. Vtedy nastav outfitRequested=false a odpovedz konverzačne; nevytváraj outfit preventívne.",
     "Pri outfitRequested=false musí resultingOutfitItemIds zostať presne exact current itemIds (aj keď je to prázdne pole), displayItemIds musí byť prázdne, outfitChanged=false a obe evidence polia musia byť prázdne.",
     "outfitChanged musí presne zodpovedať rozdielu current→result. displayItemIds je iba to, čo má UI ukázať, a musí byť podmnožina výsledku.",
-    "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, obyčajne 1–2 krátke vety.",
+    "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, kamarátsky a profesionálne. Obyčajne stačia 1–2 vety; pri užitočnom porovnaní pokojne 2–3 stručné vety v limite 500 znakov.",
     "Neopisuj mechanicky add/remove/replace operácie, ktoré používateľ vidí na cards. Neopakuj stále frázy ako pridal som, vymenil som, vyradil som alebo zvyšok zostáva rovnaký a nevymenúvaj celý outfit bez užitočného dôvodu.",
-    "Pri jednom novom kuse komentuj hlavne stylingový dojem alebo prečo sa hodí. Pri viacerých zmenách stručne zhodnoť výsledok ako celok. Pri explanation turne normálne vysvetľuj a pri obyčajnej konverzácii odpovedz bez zmeny outfitu.",
+    "Pri výbere alebo výmene uveď konkrétny dôvod vo vzťahu k ostatným ponechaným kúskom, počasiu alebo účelu. Samotné frázy 'outfit príjemne odľahčí', 'sadne super' či 'bude príjemnejší' nestačia. Stylingový názor podopri známymi farbami, typmi alebo doloženými vlastnosťami; nevymýšľaj materiál, strih, priedušnosť ani nepremokavosť.",
+    "Pri výmene prirodzene prijmi želanie používateľa a vysvetli prínos aj relevantný kompromis. Nevyvodzuj zo samotnej žiadosti o kraťasy, že používateľ uprednostňuje komfort pred eleganciou. Neprezentuj novú voľbu ako všeobecne lepšiu než vlastný pôvodný návrh; povedz, v čom a za akých podmienok je vhodnejšia.",
+    "Dôvod pôvodného výberu pripomeň iba ak je doložený v recentConversationHistory. Nevymýšľaj spätne vlastný zámer typu 'rifle boli kvôli elegancii'. Ak dôvod nepoznáš, porovnaj overiteľné rozdiely bez tvrdenia, prečo si pôvodne vyberal. Pôvodnú voľbu neobhajuj nasilu; pri chybe ju stručne uznaj. Pri viacerých zmenách zhodnoť súvislosti výsledku; pri explanation turne vysvetľuj, pri obyčajnej konverzácii outfit nemeň.",
+    "Pri otázke na počasie použi údaje pre správny deň a miesto podľa weatherContextKey. Ak sú dostupné morningTempC, noonTempC a eveningTempC, stručne povedz ráno/na obed/večer. Nepridávaj potom rozsah minTempC–maxTempC; ten použi iba pri explicitnej otázke na minimum/maximum alebo ak chýba rozpis dňa. Nespájaj teploty z rôznych dní ani lokalít.",
+    "K rozpisu počasia pridaj stručne zrážky a vietor, pokiaľ ich poznáš pre ten istý deň. willRain=false formuluj ako 'dážď sa neočakáva', nie ako istotu; isWindy=false znamená nanajvýš 'bez výrazného vetra', NIE bezvetrie. Čas dažďa či silu vetra spomeň iba ak ich dodané dáta podporujú. Chýbajúci údaj nie je false ani nula; pri fromOpenMeteo=false nepovažuj náhradné hodnoty za overenú predpoveď. Rešpektuj userDeclinedRainAdvice pri nevyžiadaných radách.",
+    "Používateľovi uvádzaj skutočné predpovedané teploty, nie interné outfitTempC či teploty upravené pre aktivitu. weatherChatSummarySk a summaryText sú podklady, nie text na povinné pripojenie; neopakuj z nich denný rozsah po rozpise ráno/obed/večer.",
     "Nevkladaj wardrobe name mechanicky do vety; použi prirodzený slovenský tvar. Nepripisuj používateľovi výber, ktorý si urobil ty, a nepoužívaj implementačný jazyk.",
     "Udržuj stabilnú rodovo neutrálnu stylist personu. O sebe nepoužívaj rodovo značené minulé tvary; formuluj priamo, napríklad 'Skúsme...', 'Za mňa...' alebo 'Toto funguje...'.",
-    "Ak spomenieš konkrétny kus, farbu alebo vlastnosť, musí patriť položke v resultingOutfitItemIds. Nikdy netvrď, že výsledok obsahuje kus, ktorý v ňom nie je.",
-    "Každé konkrétne tvrdenie stylistComment o wardrobe kuse uzemni v commentGroundingEvidence. Pre zmienku o kuse pridaj included=true; pre názov, farbu alebo typ pridaj aj príslušný field s presnou hodnotou z wardrobe metadát. Komentár formuluj iba z týchto overiteľných faktov. Ak nespomínaš konkrétny kus ani atribút, vráť prázdne pole.",
-    "Príklady tónu: 'Táto svetlomodrá mikina by k tomu podľa mňa sadla super. 🙂' alebo 'Takto sa mi to páči viac. Červené tenisky tomu dodajú trochu života.'",
+    "Každé konkrétne tvrdenie stylistComment o wardrobe kuse uzemni v commentGroundingEvidence. outfitContext=result označuje výsledný outfit; outfitContext=current označuje presný outfit pred týmto turnom. Pre zmienku o kuse pridaj included=true a pre názov, farbu alebo typ aj príslušný field s presnou hodnotou z metadát. Kus odstránený výmenou môžeš spomenúť iba ako pôvodný alebo v porovnaní, s outfitContext=current; nikdy netvrď, že ostáva vo výsledku. Iné kúsky zo šatníka nemôžu slúžiť ako dôkaz pôvodného outfitu. Ak nespomínaš konkrétny kus ani atribút, vráť prázdne pole.",
+    "Príklady kvality, nie povinné šablóny: pri doloženom chladnom ráne 'Jasné 🙂 Rifle v pôvodnom návrhu počítali s chladnejším ránom; na teplé popoludnie dávajú kraťasy zmysel. Čierne šortky farebne nadviažu na čiernu bundu a zachovajú kontrast s bielym tričkom.' Pri výmene bundy za mikinu 'Jasné 🙂 Svetlomodrá mikina pridá k bielemu tričku a čiernym šortkám jemnú farbu bez výrazného kontrastu medzi vrchnými kúskami. Ráno poslúži ako vrstva navyše.' Použi iba fakty skutočne dostupné v danom turne; odpoveď prispôsob kontextu.",
   ].join("\n");
 }
 
@@ -466,6 +471,10 @@ function validateAgentResultV1(raw, request) {
   for (const rawEvidence of Array.isArray(value.commentGroundingEvidence) ?
     value.commentGroundingEvidence.slice(0, 24) : []) {
     const evidence = safeMap(rawEvidence);
+    // Older internal callers omit the scope; keep their result-only semantics.
+    // The strict model schema always supplies it for new responses.
+    const outfitContext = evidence.outfitContext === undefined ?
+      "result" : evidence.outfitContext;
     const itemId = cleanText(evidence.itemId, 180);
     const field = cleanText(evidence.field, 80);
     const expected = cleanText(evidence.expectedValue, 160).toLowerCase();
@@ -474,8 +483,14 @@ function validateAgentResultV1(raw, request) {
       errors.push("comment_grounding_evidence_invalid");
       continue;
     }
-    if (!resultIds.includes(itemId)) {
-      errors.push(`comment_grounding_item_not_in_result:${itemId}`);
+    if (!["current", "result"].includes(outfitContext)) {
+      errors.push("comment_grounding_outfit_context_invalid");
+      continue;
+    }
+    const contextIds = outfitContext === "current" ?
+      request.currentOutfitItemIds : resultIds;
+    if (!contextIds.includes(itemId)) {
+      errors.push(`comment_grounding_item_not_in_${outfitContext}:${itemId}`);
       continue;
     }
     let actualMatches = false;
@@ -594,6 +609,7 @@ function createSimpleStylistAgentV1({executeModel, logger = console} = {}) {
           commentGroundingEvidence: Array.isArray(raw?.commentGroundingEvidence) ?
             raw.commentGroundingEvidence.slice(0, 24).map((entry) => ({
               itemId: cleanText(entry?.itemId, 180),
+              outfitContext: cleanText(entry?.outfitContext, 20) || "result",
               field: cleanText(entry?.field, 80),
               expectedValue: cleanText(entry?.expectedValue, 160),
             })) : [],

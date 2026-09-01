@@ -800,6 +800,102 @@ test("system prompt keeps the personal stylist voice gender-neutral and non-audi
   assert.match(prompt, /displayItemIds musí byť prázdne/);
 });
 
+test("a swap can compare the previous garment without restoring it or showing its card", async () => {
+  const comment = "Rifle v pôvodnom návrhu počítali s chladnejším ránom. Čierne šortky sú vhodné na teplé popoludnie a nadviažu na modré tričko.";
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: comment,
+    resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+    displayItemIds: ["shorts"],
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [],
+    commentGroundingEvidence: [
+      {itemId: "jeans", outfitContext: "current", field: "included", expectedValue: "true"},
+      {itemId: "jeans", outfitContext: "current", field: "canonicalType", expectedValue: "jeans"},
+      {itemId: "shorts", outfitContext: "result", field: "included", expectedValue: "true"},
+      {itemId: "shorts", outfitContext: "result", field: "primaryColor", expectedValue: "black"},
+      {itemId: "blue-top", outfitContext: "result", field: "included", expectedValue: "true"},
+      {itemId: "blue-top", outfitContext: "result", field: "primaryColor", expectedValue: "blue"},
+    ],
+  }]);
+  const result = await agent.resolve(request(
+    "rifle by som vymenil za kraťasy",
+    ["blue-top", "jeans", "white-shoes"],
+    [{role: "assistant", content: "Rifle sa hodia na chladnejšie ráno."}],
+  ));
+  assert.equal(inputs.length, 1);
+  assert.equal(result.reply, comment);
+  assert.deepEqual(result.resultingOutfitItemIds, ["blue-top", "shorts", "white-shoes"]);
+  assert.deepEqual(result.displayItems.map((entry) => entry.id), ["shorts"]);
+});
+
+test("comparison grounding is restricted to exact current IDs and still verifies attributes", () => {
+  const normalized = normalizeRequestV1(request(
+    "radšej kraťasy", ["blue-top", "jeans", "white-shoes"],
+  ));
+  const raw = {
+    stylistComment: "Skúsme túto kombináciu.",
+    resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+    displayItemIds: ["shorts"],
+    outfitChanged: true,
+    outfitRequested: true,
+    weatherContextKey: "tomorrow",
+    hardRequirementEvidence: [],
+    commentGroundingEvidence: [],
+  };
+  const cases = [
+    [{itemId: "trousers", outfitContext: "current", field: "included", expectedValue: "true"}, "comment_grounding_item_not_in_current:trousers"],
+    [{itemId: "shorts", outfitContext: "current", field: "included", expectedValue: "true"}, "comment_grounding_item_not_in_current:shorts"],
+    [{itemId: "jeans", outfitContext: "result", field: "included", expectedValue: "true"}, "comment_grounding_item_not_in_result:jeans"],
+    [{itemId: "jeans", outfitContext: "current", field: "primaryColor", expectedValue: "red"}, "comment_grounding_not_satisfied:jeans:primaryColor:red"],
+    [{itemId: "jeans", outfitContext: "wardrobe", field: "included", expectedValue: "true"}, "comment_grounding_outfit_context_invalid"],
+    [{itemId: "jeans", outfitContext: null, field: "included", expectedValue: "true"}, "comment_grounding_outfit_context_invalid"],
+  ];
+  for (const [evidence, expectedError] of cases) {
+    const result = validateAgentResultV1({...raw, commentGroundingEvidence: [evidence]}, normalized);
+    assert.equal(result.valid, false);
+    assert.ok(result.errors.includes(expectedError), expectedError);
+  }
+  const hard = validateAgentResultV1({
+    ...raw,
+    hardRequirementEvidence: [{itemId: "jeans", outfitContext: "current", field: "included", expectedValue: "true"}],
+  }, normalized);
+  assert.ok(hard.errors.includes("hard_requirement_item_not_in_result:jeans"));
+  const detached = validateAgentResultV1({...raw, displayItemIds: ["jeans"]}, normalized);
+  assert.ok(detached.errors.includes("display_item_not_in_result:jeans"));
+});
+
+test("weather follow-up transports day-specific facts without changing the outfit or inventing missing data", async () => {
+  const current = ["blue-top", "shorts", "white-shoes", "hoodie"];
+  const weatherContext = {
+    location: "Martin",
+    today: {noonTempC: 31, willRain: true, isWindy: true, fromOpenMeteo: true},
+    tomorrow: {
+      morningTempC: 15, noonTempC: 24, eveningTempC: 22,
+      minTempC: 12, maxTempC: 25, willRain: false, isWindy: false,
+      fromOpenMeteo: true,
+    },
+  };
+  for (const forecast of [weatherContext, {location: "Martin", tomorrow: {}}, {
+    location: "Martin", tomorrow: {morningTempC: 0, fromOpenMeteo: false},
+  }]) {
+    const {agent, inputs} = queuedAgent([{
+      stylistComment: "Predpoveď závisí od vybraného dňa.",
+      resultingOutfitItemIds: current,
+      displayItemIds: [], outfitChanged: false, outfitRequested: false,
+      weatherContextKey: "tomorrow", hardRequirementEvidence: [],
+    }]);
+    const result = await agent.resolve({
+      ...request("koľko bude stupňov?", current, [{role: "user", content: "Zajtra idem do mesta."}]),
+      weatherContext: forecast,
+    });
+    assert.deepEqual(JSON.parse(inputs[0].messages[1].content).weatherContext, forecast);
+    assert.deepEqual(result.resultingOutfitItemIds, current);
+    assert.deepEqual(result.displayItemIds, []);
+    assert.equal(result.outfitChanged, false);
+  }
+});
+
 test("callable is isolated from every legacy outfit interpretation authority", () => {
   const index = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
   const start = index.indexOf("exports.stylistSimpleAgentV1");
