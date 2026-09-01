@@ -66,7 +66,16 @@ jobs:
           write(path, s)
 
           '''
-          p.write_text(s[:start] + section + s[end:], encoding='utf-8')
+          normalized = s[:start] + section + s[end:]
+          normalized = normalized.replace(
+              'Array.isArray(clientContext.currentOutfit)?',
+              'Array.isArray(clientContext.currentOutfit) ?',
+          )
+          normalized = normalized.replace(
+              'Array.isArray(parsed?.excludeItemKeywords)?',
+              'Array.isArray(parsed?.excludeItemKeywords) ?',
+          )
+          p.write_text(normalized, encoding='utf-8')
           PY
 
       - name: Apply guarded architecture patch
