@@ -62,11 +62,75 @@ async function main() {
     assert.ok(result.resultingOutfitItemIds.every((id) => byId.has(id)));
     assert.ok(result.displayItemIds.every((id) => result.resultingOutfitItemIds.includes(id)));
     console.log(JSON.stringify({scenario: name, message, reply: result.stylistComment,
+      items: result.resultingOutfitItems.map((item) => item.name),
       outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
     return result;
   };
+  if (process.argv.includes("--choice-continuity")) {
+    // These lexical checks are fixture-specific QA gates, never production
+    // language routing. The paired replies must also be reviewed for meaning.
+    const normalized = (reply) => reply.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const originalBasis = (reply, previousGarment, reason) => {
+      const text = normalized(reply);
+      assert.match(text, previousGarment, "qa_original_garment_not_explained");
+      assert.match(text, /povod|navrh|odporuc|zvol|vybr|vyber|pocital|pocitali|boli|bola|mal[ai]/,
+        "qa_original_choice_not_accounted_for");
+      if (reason) assert.match(text, reason, "qa_original_reason_not_preserved");
+    };
+    const original = await call("generated_initial_choice",
+      "Zajtra idem do mesta, poradíš mi outfit?", [], []);
+    const priorBottom = original.resultingOutfitItemIds.find((id) =>
+      byId.get(id).bodySlots?.includes("lower_body"));
+    assert.ok(priorBottom, "qa_generated_bottom_missing");
+    const wasShorts = /shorts/.test(byId.get(priorBottom).canonicalType);
+    const editMessage = wasShorts ? "Kraťasy by som vymenil za rifle." :
+      "Nohavice by som vymenil za kraťasy.";
+    const changed = await call("generated_choice_followup", editMessage,
+      original.resultingOutfitItemIds, [
+        {role: "user", content: "Zajtra idem do mesta, poradíš mi outfit?"},
+        {role: "assistant", content: original.stylistComment},
+      ]);
+    assert.ok(!changed.resultingOutfitItemIds.includes(priorBottom));
+    assert.ok(original.resultingOutfitItemIds.filter((id) => id !== priorBottom)
+      .every((id) => changed.resultingOutfitItemIds.includes(id)));
+    originalBasis(changed.stylistComment,
+      wasShorts ? /kratasy|sortk/ : /\brifle\b|rifli|dzins|nohavic/);
+
+    const jeansMention = /\brifle\b|rifli|dzins|nohavic/;
+    const history = [
+      {role: "user", content: "Zajtra idem do mesta a chcem outfit."},
+      {role: "assistant", content: "Biele tričko, tmavomodré rifle, čierna rifľová bunda a tenisky sa hodia do mesta a zvládnu aj chladnejšie ráno."},
+    ];
+    const cold = await call("reported_jeans_swap", "rifle by som vymenil za kratasy", initialIds, history);
+    originalBasis(cold.stylistComment, jeansMention, /rann|rano|chlad/);
+    assert.doesNotMatch(normalized(cold.stylistComment), /elegan/,
+      "qa_invented_original_elegance_reason");
+
+    // Change the ORIGINAL rationale and remove morning cold: the reply must
+    // preserve this different reason instead of copying the cold-morning example.
+    const mildWeather = {location: "Martin", tomorrow: {
+      morningTempC: 24, noonTempC: 24, eveningTempC: 24,
+      minTempC: 24, maxTempC: 24, willRain: false, isWindy: false, fromOpenMeteo: true,
+    }};
+    const styledHistory = [history[0], {role: "assistant", content:
+      "Tmavomodré rifle sú v návrhu pre upravenejší mestský vzhľad oproti kraťasom. S bielym tričkom a čiernou rifľovou bundou zachovajú ležérny štýl."}];
+    const styled = await call("different_original_reason", "rifle by som vymenil za kratasy",
+      initialIds, styledHistory, mildWeather);
+    originalBasis(styled.stylistComment, jeansMention, /upraven|elegan|uhladen/);
+    assert.doesNotMatch(normalized(styled.stylistComment), /chlad|\b15\b/,
+      "qa_copied_unavailable_cold_reason");
+
+    const jacketHistory = [history[0], {role: "assistant", content:
+      "Čierna rifľová bunda je v návrhu preto, že s tmavomodrými rifľami prepája outfit cez džínsovinu. Biele tričko vytvára medzi nimi svetlý kontrast."}];
+    const jacket = await call("jacket_choice_followup", "Bundou si nie som istý, radšej mi daj mikinu.",
+      initialIds, jacketHistory, mildWeather);
+    originalBasis(jacket.stylistComment, /bund/, /dzins|denim|riflov|prepaj/);
+    console.log("LIVE_CHOICE_CONTINUITY_GATES_PASS: generated pair and 3 distinct original-rationale fixtures; review paired prose.");
+    return;
+  }
   const greeting = await call("greeting", "ahoj", [], []);
   assert.deepEqual(greeting.resultingOutfitItemIds, []);
   assert.deepEqual(greeting.displayItemIds, []);
