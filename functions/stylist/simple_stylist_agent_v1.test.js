@@ -85,7 +85,11 @@ function queuedAgent(results, logs = []) {
   const agent = createSimpleStylistAgentV1({
     executeModel: async (input) => {
       inputs.push(input);
-      return {weatherContextKey: "current", ...results.shift()};
+      return {
+        weatherContextKey: "current",
+        commentGroundingEvidence: [],
+        ...results.shift(),
+      };
     },
     logger: {
       info: (marker, details) => logs.push({marker, details}),
@@ -392,6 +396,73 @@ test("missing optional model comment uses a generic non-audit fallback", async (
   assert.doesNotMatch(result.reply, /Pridal som|Vymenil som|vyradil|zostáva/);
 });
 
+test("wrong comment color evidence gets one repair before reaching the user", async () => {
+  const logs = [];
+  const {agent, inputs} = queuedAgent([
+    {
+      stylistComment: "Skúsme sivé džínsové šortky, pôsobia ľahšie.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: ["blue-top", "shorts", "white-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+      commentGroundingEvidence: [
+        {itemId: "shorts", field: "primaryColor", expectedValue: "gray"},
+      ],
+    },
+    {
+      stylistComment: "Čierne šortky udržia outfit čistý a pritom príjemne uvoľnený.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: ["blue-top", "shorts", "white-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+      commentGroundingEvidence: [
+        {itemId: "shorts", field: "included", expectedValue: "true"},
+        {itemId: "shorts", field: "primaryColor", expectedValue: "black"},
+      ],
+    },
+  ], logs);
+
+  const result = await agent.resolve(request(
+    "toto sa mi nepáči, skús niečo iné",
+    ["black-top", "jeans", "red-shoes"],
+  ));
+
+  assert.equal(inputs.length, 2);
+  assert.equal(
+    result.reply,
+    "Čierne šortky udržia outfit čistý a pritom príjemne uvoľnený.",
+  );
+  const repair = JSON.parse(inputs[1].messages[1].content).repair;
+  assert.ok(repair.validationErrors.includes(
+    "comment_grounding_not_satisfied:shorts:primaryColor:gray",
+  ));
+  assert.equal(logs.filter((entry) => entry.marker === "SIMPLE_AGENT_REPAIR").length, 1);
+});
+
+test("comment evidence cannot refer to a wardrobe item outside the result", () => {
+  const normalized = normalizeRequestV1(request(
+    "čo povieš na túto mikinu?",
+    ["blue-top", "jeans", "white-shoes"],
+  ));
+  const validation = validateAgentResultV1({
+    stylistComment: "Sivá mikina by sa sem hodila.",
+    resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
+    displayItemIds: [],
+    outfitChanged: false,
+    outfitRequested: true,
+    weatherContextKey: "current",
+    hardRequirementEvidence: [],
+    commentGroundingEvidence: [
+      {itemId: "hoodie", field: "included", expectedValue: "true"},
+    ],
+  }, normalized);
+
+  assert.equal(validation.valid, false);
+  assert.ok(validation.errors.includes("comment_grounding_item_not_in_result:hoodie"));
+});
+
 test("second invalid result fails closed and never invokes a third call", async () => {
   const logs = [];
   const invalid = {
@@ -466,6 +537,7 @@ test("validator rejects duplicate, detached display, conflicting slots and skin 
     outfitRequested: true,
     weatherContextKey: "current",
     hardRequirementEvidence: [],
+    commentGroundingEvidence: [],
   });
   const errorsFor = (resultIds, displayIds = resultIds) =>
     validateAgentResultV1(raw(resultIds, displayIds), normalized).errors;
@@ -534,6 +606,7 @@ test("OpenAI transport binds Sol, medium reasoning and strict JSON schema", asyn
             outfitRequested: false,
             weatherContextKey: "none",
             hardRequirementEvidence: [],
+            commentGroundingEvidence: [],
           }),
         }),
       };

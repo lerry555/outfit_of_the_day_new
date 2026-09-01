@@ -164,6 +164,7 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
     "outfitRequested",
     "weatherContextKey",
     "hardRequirementEvidence",
+    "commentGroundingEvidence",
   ],
   properties: {
     stylistComment: {type: "string", maxLength: 500},
@@ -207,6 +208,29 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
         },
       },
     },
+    commentGroundingEvidence: {
+      type: "array",
+      maxItems: 24,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["itemId", "field", "expectedValue"],
+        properties: {
+          itemId: {type: "string", minLength: 1, maxLength: 180},
+          field: {
+            type: "string",
+            enum: [
+              "included",
+              "name",
+              "primaryColor",
+              "canonicalType",
+              "canonicalFamily",
+            ],
+          },
+          expectedValue: {type: "string", minLength: 1, maxLength: 160},
+        },
+      },
+    },
   },
 });
 
@@ -232,6 +256,7 @@ function buildSystemPromptV1() {
     "Pri jednom novom kuse komentuj hlavne stylingový dojem alebo prečo sa hodí. Pri viacerých zmenách stručne zhodnoť výsledok ako celok. Pri explanation turne normálne vysvetľuj a pri obyčajnej konverzácii odpovedz bez zmeny outfitu.",
     "Nevkladaj wardrobe name mechanicky do vety; použi prirodzený slovenský tvar. Nepripisuj používateľovi výber, ktorý si urobil ty, a nepoužívaj implementačný jazyk.",
     "Ak spomenieš konkrétny kus, farbu alebo vlastnosť, musí patriť položke v resultingOutfitItemIds. Nikdy netvrď, že výsledok obsahuje kus, ktorý v ňom nie je.",
+    "Každé konkrétne tvrdenie stylistComment o wardrobe kuse uzemni v commentGroundingEvidence. Pre zmienku o kuse pridaj included=true; pre názov, farbu alebo typ pridaj aj príslušný field s presnou hodnotou z wardrobe metadát. Komentár formuluj iba z týchto overiteľných faktov. Ak nespomínaš konkrétny kus ani atribút, vráť prázdne pole.",
     "Príklady tónu: 'Táto svetlomodrá mikina by k tomu podľa mňa sadla super. 🙂' alebo 'Takto sa mi to páči viac. Červené tenisky tomu dodajú trochu života.'",
   ].join("\n");
 }
@@ -361,6 +386,9 @@ function validateAgentResultV1(raw, request) {
   if (!Array.isArray(value.hardRequirementEvidence)) {
     errors.push("hard_requirement_evidence_required");
   }
+  if (!Array.isArray(value.commentGroundingEvidence)) {
+    errors.push("comment_grounding_evidence_required");
+  }
 
   const resultIds = stringList(value.resultingOutfitItemIds, 12, 180);
   const displayIds = stringList(value.displayItemIds, 12, 180);
@@ -428,6 +456,31 @@ function validateAgentResultV1(raw, request) {
     if (field === "layerPosition") actualMatches = item.layerPosition === expected;
     if (!actualMatches) {
       errors.push(`hard_requirement_not_satisfied:${itemId}:${field}:${expected}`);
+    }
+  }
+  for (const rawEvidence of Array.isArray(value.commentGroundingEvidence) ?
+    value.commentGroundingEvidence.slice(0, 24) : []) {
+    const evidence = safeMap(rawEvidence);
+    const itemId = cleanText(evidence.itemId, 180);
+    const field = cleanText(evidence.field, 80);
+    const expected = cleanText(evidence.expectedValue, 160).toLowerCase();
+    const item = request.byId.get(itemId);
+    if (!itemId || !field || !expected || !item) {
+      errors.push("comment_grounding_evidence_invalid");
+      continue;
+    }
+    if (!resultIds.includes(itemId)) {
+      errors.push(`comment_grounding_item_not_in_result:${itemId}`);
+      continue;
+    }
+    let actualMatches = false;
+    if (field === "included") actualMatches = expected === "true";
+    if (field === "name") actualMatches = item.name.toLowerCase() === expected;
+    if (field === "primaryColor") actualMatches = item.primaryColor === expected;
+    if (field === "canonicalType") actualMatches = item.canonicalType === expected;
+    if (field === "canonicalFamily") actualMatches = item.canonicalFamily === expected;
+    if (!actualMatches) {
+      errors.push(`comment_grounding_not_satisfied:${itemId}:${field}:${expected}`);
     }
   }
   if (actualChanged && displayIds.length === 0) errors.push("changed_outfit_display_empty");
