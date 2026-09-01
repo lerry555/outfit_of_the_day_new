@@ -9,6 +9,8 @@ const {
   SIMPLE_AGENT_REASONING_EFFORT,
   createSimpleStylistAgentV1,
   createOpenAiSimpleAgentExecutorV1,
+  normalizeRequestV1,
+  validateAgentResultV1,
 } = require("./simple_stylist_agent_v1");
 
 function item({
@@ -368,6 +370,54 @@ test("hard structure and safety validation reject incomplete and unsafe outfits"
   });
   assert.equal(inputs.length, 2);
   assert.deepEqual(result.resultingOutfitItemIds, ["blue-top", "jeans", "white-shoes"]);
+});
+
+test("validator rejects duplicate, detached display, conflicting slots and skin base", () => {
+  const skinBase = item({
+    id: "skin-base",
+    name: "spodná vrstva",
+    type: "base_layer_top",
+    family: "base_layers",
+    slots: ["upper_body"],
+    layer: "skin_base",
+    color: "black",
+  });
+  const normalized = normalizeRequestV1({
+    ...request("potrebujem outfit"),
+    wardrobeItems: [...wardrobe, skinBase],
+  });
+  const raw = (resultIds, displayIds = resultIds) => ({
+    stylistComment: "Hotovo.",
+    resultingOutfitItemIds: resultIds,
+    displayItemIds: displayIds,
+    outfitChanged: true,
+    outfitRequested: true,
+    weatherContextKey: "current",
+    hardRequirementEvidence: [],
+  });
+  const errorsFor = (resultIds, displayIds = resultIds) =>
+    validateAgentResultV1(raw(resultIds, displayIds), normalized).errors;
+
+  assert.ok(errorsFor(
+    ["blue-top", "jeans", "white-shoes", "white-shoes"],
+  ).includes("resulting_outfit_ids_duplicate_or_invalid"));
+  assert.ok(errorsFor(
+    ["blue-top", "jeans", "white-shoes"],
+    ["blue-top", "hoodie"],
+  ).includes("display_item_not_in_result:hoodie"));
+  assert.ok(errorsFor(
+    ["blue-top", "white-shoes"],
+  ).includes("outfit_structure_requires_top_bottom_shoes_or_full_body_shoes"));
+  for (const ids of [
+    ["blue-top", "black-top", "jeans", "white-shoes"],
+    ["blue-top", "jeans", "shorts", "white-shoes"],
+    ["blue-top", "jeans", "white-shoes", "red-shoes"],
+  ]) {
+    assert.ok(errorsFor(ids).includes("outfit_structure_conflicting_core_items"));
+  }
+  assert.ok(errorsFor(
+    ["blue-top", "jeans", "white-shoes", "skin-base"],
+  ).includes("outfit_structure_skin_base_not_displayable"));
 });
 
 test("hard weather validation uses the day selected from conversation", async () => {
