@@ -202,7 +202,7 @@ function explanationPayload(normalized, decision) {
     // It receives only this presentation-safe description of the immutable set.
     userFacingSelectedOutfit: selected ? selected.presentationItems.map((item) => ({
       name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,
-      slot: item.slot,
+      ...(item.slot ? {slot: item.slot} : {}),
     })) : [],
     userFacingContext: normalized.resolvedContext,
     presentationMode: normalized.presentationMode,

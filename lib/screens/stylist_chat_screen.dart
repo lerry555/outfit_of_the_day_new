@@ -1477,7 +1477,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
               'sneakers' => FootwearFamily.sneakers,
               'boots' => FootwearFamily.boots,
               'sandals' => FootwearFamily.sandals,
-              'formal_shoes' => FootwearFamily.formal,
+              'formal_shoes' => FootwearFamily.formalShoes,
               _ => null,
             }
           : null;
