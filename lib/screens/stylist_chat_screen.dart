@@ -47,6 +47,7 @@ import '../utils/stylist_swap_request.dart';
 import '../utils/stylist_activity_terrain.dart';
 import '../utils/stylist_wardrobe_context_need.dart';
 import '../utils/stylist_conversation_signals.dart';
+import '../utils/stylist_outfit_directive_guard.dart';
 import '../utils/stylist_weather_tip.dart';
 import '../utils/stylist_weather_adjustment.dart';
 import '../utils/stylist_chat_entitlement.dart';
@@ -891,6 +892,25 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       // Ak spadlo spojenie (appka bola na pozadí), funkcia na serveri aj tak
       // dobehla a výsledok zapísala do Firestore – dotiahneme ho odtiaľ.
       response = await _recoverIfOffline(response, jobId);
+      final repairedDirective = StylistOutfitDirectiveGuard.repair(
+        rawDirective: response['outfitDirective'],
+        userText: text,
+        hasCurrentOutfit: _conversationAlreadyHasOutfitCards(),
+      );
+      if (repairedDirective != null) {
+        final previousScope = response['outfitDirective'] is Map
+            ? (response['outfitDirective']['scope'] ?? '').toString()
+            : '';
+        response['outfitDirective'] = repairedDirective;
+        if (previousScope != repairedDirective['scope']) {
+          debugPrint(
+            'STYLIST CHAT directive_guard '
+            'from=${previousScope.isEmpty ? "none" : previousScope} '
+            'to=${repairedDirective['scope']} '
+            'layer=${repairedDirective['layerFamily']}',
+          );
+        }
+      }
       debugPrint('STYLIST CHAT timing apiMs=${timing.elapsedMilliseconds}');
       debugPrint('STYLIST UDR context_source=gpt4o');
       if (!mounted) {
@@ -2277,11 +2297,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         suggestedItems: suggestedItems,
         slot: swapSlot,
       );
-      final focusedReply = brainReply ?? fallbackReply;
+      // A one-slot reply must name the item that was ACTUALLY changed.
+      // The frozen explanation describes the whole candidate and can mention a
+      // different slot, so deterministic changed-item copy has display priority.
+      final focusedReply = fallbackReply ?? brainReply;
       if (focusedReply != null && swapDisplayItems.isNotEmpty) {
         debugPrint(
           'STYLIST CHAT reply_source='
-          '${brainReply != null ? 'brain_locked_swap' : 'local_swap_fallback'} '
+          '${fallbackReply != null ? 'local_swap_fallback' : 'brain_locked_swap'} '
           'slot=${swapSlot.name} display_items=${swapDisplayItems.length}',
         );
         setState(() {

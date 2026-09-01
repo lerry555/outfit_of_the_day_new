@@ -5,6 +5,7 @@ import 'package:outfitofTheDay/utils/bottom_family_guidance.dart';
 import 'package:outfitofTheDay/utils/footwear_family_guidance.dart';
 import 'package:outfitofTheDay/utils/stylist_swap_request.dart';
 import 'package:outfitofTheDay/utils/stylist_semantic_activity.dart';
+import 'package:outfitofTheDay/utils/stylist_outfit_directive_guard.dart';
 import 'package:outfitofTheDay/Services/stylist_chat_service.dart';
 
 String _read(String path) => File(path).readAsStringSync();
@@ -390,6 +391,50 @@ void main() {
     expect(brain, contains('Počasie nie je povinná fráza'));
     expect(brain, contains('focused_item: JEDNA krátka prirodzená veta'));
     expect(authority, contains('deterministicFocused'));
+  });
+
+
+  test('explicit additive layer cannot collapse into a top swap', () {
+    final repaired = StylistOutfitDirectiveGuard.repair(
+      rawDirective: <String, dynamic>{
+        'scope': 'single_slot',
+        'slot': 'top',
+        'family': 'none',
+        'extraLayer': 'none',
+        'layerFamily': 'none',
+        'presentation': 'focused_item',
+      },
+      userText: 'ukáž mi celý outfit a pridaj mi do neho aj mikinu',
+      hasCurrentOutfit: true,
+    );
+
+    expect(repaired, isNotNull);
+    expect(repaired!['scope'], 'full_outfit');
+    expect(repaired['slot'], 'none');
+    expect(repaired['preserveCurrentOutfit'], isTrue);
+    expect(repaired['extraLayer'], 'required_upper_layer');
+    expect(repaired['layerFamily'], 'hoodie');
+    expect(repaired['presentation'], 'concise_full');
+
+    final replacement = StylistOutfitDirectiveGuard.repair(
+      rawDirective: <String, dynamic>{
+        'scope': 'single_slot',
+        'slot': 'top',
+      },
+      userText: 'vymeň tričko za mikinu',
+      hasCurrentOutfit: true,
+    );
+    expect(replacement!['scope'], 'single_slot');
+    expect(replacement['slot'], 'top');
+  });
+
+  test('single-slot display prefers the actually changed item copy', () {
+    final screen = _read('lib/screens/stylist_chat_screen.dart');
+    expect(screen, contains('final focusedReply = fallbackReply ?? brainReply;'));
+    expect(
+      screen,
+      contains("fallbackReply != null ? 'local_swap_fallback' : 'brain_locked_swap'"),
+    );
   });
 
 }
