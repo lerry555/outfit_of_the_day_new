@@ -35,6 +35,7 @@ import '../domain/wardrobe_v2/flexible_outfit_result_v2.dart';
 import '../domain/wardrobe_v2/flexible_candidate_matrix_v2.dart';
 import '../domain/wardrobe_v2/native_outfit_engine_v2.dart';
 import '../domain/wardrobe_v2/outfit_composition_v2.dart';
+import '../domain/wardrobe_v2/outfit_suitability_policy_v2.dart';
 import '../domain/wardrobe_v2/functional_suitability_v1.dart';
 import '../domain/style_preferences/style_preferences_runtime.dart';
 import '../Services/hourly_weather_service.dart';
@@ -225,6 +226,9 @@ class StylistChatOutfitService {
     String? groundedActivityType,
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
+    bool optionalUpperLayerRequested = false,
+    String presentationMode = 'normal',
+    String userRequest = '',
     StylistChatOutfitDebugCollector? debugCollector,
     StylistChatProgressCallback? onProgress,
   }) async {
@@ -342,6 +346,7 @@ class StylistChatOutfitService {
       activityDurationMinutes: event.durationMinutes,
       terrain: terrain.name,
       wetGroundRisk: wetGroundMuddy,
+      optionalUpperLayerRequested: optionalUpperLayerRequested,
     );
     var generated = V2FlexibleCandidateMatrix.generate(
       wardrobe: resolved,
@@ -365,6 +370,7 @@ class StylistChatOutfitService {
           activityDurationMinutes: context.activityDurationMinutes,
           terrain: context.terrain,
           wetGroundRisk: context.wetGroundRisk,
+          optionalUpperLayerRequested: context.optionalUpperLayerRequested,
         ),
       );
     }
@@ -378,13 +384,8 @@ class StylistChatOutfitService {
               final warmth = warmthValues.isEmpty
                   ? 0.0
                   : warmthValues.reduce((a, b) => a + b) / warmthValues.length;
-              final targetWarmth = weather.tempC <= 5
-                  ? 8.0
-                  : weather.tempC <= 14
-                  ? 6.0
-                  : weather.tempC >= 26
-                  ? 2.0
-                  : 4.0;
+              final targetWarmth =
+                  OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC);
               final comfort = (5 - (warmth - targetWarmth).abs())
                   .clamp(0, 5)
                   .toDouble();
@@ -420,6 +421,28 @@ class StylistChatOutfitService {
     V2FlexibleOutfitResult? selected;
     String? finalExplanation;
     List<String> rejectAllReasonCodes = const <String>[];
+    final frozenResolvedContext = <String, dynamic>{
+      'activity': outfitIntent.activityType,
+      'occasion': occasionProfile.label,
+      'environment': event.locationLabel,
+      'weather':
+          '${weather.tempC}C rain=${weather.isRainy} '
+          'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
+          'antecedentRain=$antecedentPrecipitation',
+      'formality': occasionProfile.dressCode.id,
+      'terrain': terrain.name,
+      if ((conversationHint ?? '').trim().isNotEmpty)
+        'userIntentContext': conversationHint!.trim(),
+      'relevantKnownTimingFacts': <String, String>{
+        'eventDate':
+            '${event.date.year.toString().padLeft(4, '0')}-'
+            '${event.date.month.toString().padLeft(2, '0')}-'
+            '${event.date.day.toString().padLeft(2, '0')}',
+        'dayRelation': _dayRelation(event.date),
+        if (event.eventStartHour != null)
+          'eventStartHourLocal': event.eventStartHour.toString(),
+      },
+    };
     if (requestedSwap != null && previousOutfitItemIds.isNotEmpty) {
       final currentDocs = wardrobe.where((raw) {
         final id = OutfitGenerationService.wardrobeItemId(raw);
@@ -435,6 +458,7 @@ class StylistChatOutfitService {
           eveningTempC: context.eveningTempC,
           seasonKey: context.seasonKey,
           activityType: context.activityType,
+          optionalUpperLayerRequested: context.optionalUpperLayerRequested,
         ),
       );
       final target = current == null
@@ -462,31 +486,33 @@ class StylistChatOutfitService {
                 StylistSwapThermalPreference.warmer,
           ),
         );
+        final lockedCandidate = V2FlexibleCandidate(
+          candidateId: 'locked_swap',
+          outfit: selected,
+          score: 0,
+          scoreBreakdown: const <String, double>{},
+        );
+        final lockedExplanation =
+            await const StylistFrozenCandidateDecisionServiceV1().resolve(
+          candidates: <V2FlexibleCandidate>[lockedCandidate],
+          resolvedContext: frozenResolvedContext,
+          lockedSelection: true,
+          presentationMode: 'focused_item',
+          focusSlot: requestedSwap.slot.name,
+          userRequest: userRequest,
+        );
+        if (lockedExplanation.selected &&
+            lockedExplanation.explanation.trim().isNotEmpty) {
+          finalExplanation = lockedExplanation.explanation.trim();
+        }
       }
     } else {
       final decision = await const StylistFrozenCandidateDecisionServiceV1()
           .resolve(
             candidates: matrix,
-            resolvedContext: <String, dynamic>{
-              'activity': outfitIntent.activityType,
-              'occasion': occasionProfile.label,
-              'environment': event.locationLabel,
-              'weather':
-                  '${weather.tempC}C rain=${weather.isRainy} '
-                  'wind=${weather.isWindy} wetGround=$wetGroundMuddy '
-                  'antecedentRain=$antecedentPrecipitation',
-              'formality': occasionProfile.dressCode.id,
-              'terrain': terrain.name,
-              'relevantKnownTimingFacts': <String, String>{
-                'eventDate':
-                    '${event.date.year.toString().padLeft(4, '0')}-'
-                    '${event.date.month.toString().padLeft(2, '0')}-'
-                    '${event.date.day.toString().padLeft(2, '0')}',
-                'dayRelation': _dayRelation(event.date),
-                if (event.eventStartHour != null)
-                  'eventStartHourLocal': event.eventStartHour.toString(),
-              },
-            },
+            resolvedContext: frozenResolvedContext,
+            presentationMode: presentationMode,
+            userRequest: userRequest,
           );
       final selectedId = decision.selectedCandidateId;
       if (!decision.selected || selectedId == null) {

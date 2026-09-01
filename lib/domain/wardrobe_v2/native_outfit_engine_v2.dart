@@ -16,8 +16,9 @@ class NativeOutfitRequestV2 {
     this.requestedItemIds = const {},
     this.formalityFloor,
     this.forbiddenCanonicalTypes = const {},
+    this.optionalUpperLayerRequested = false,
   });
-  final bool weatherProtectionRequired, preferOnePiece;
+  final bool weatherProtectionRequired, preferOnePiece, optionalUpperLayerRequested;
   final int minimumFormality;
   final int? tempC, feelsLikeC, eveningTempC, formalityFloor;
   final String seasonKey;
@@ -271,6 +272,34 @@ abstract final class NativeOutfitEngineV2 {
           'layer_$layer',
           false,
           'weather_or_function',
+        );
+      }
+    }
+
+    // Explicit backup-layer intent is global and slot-based. If ordinary
+    // weather logic did not already add an upper layer, choose one light,
+    // physically suitable mid/outer/shell option and no more.
+    if (request.optionalUpperLayerRequested &&
+        !selected.any(
+          (item) =>
+              const {'mid', 'outer', 'shell'}.contains(item.item.layerPosition) &&
+              item.item.bodySlots.contains('upper_body'),
+        )) {
+      final backupLayer = pick(
+        (x) =>
+            const {'mid', 'outer', 'shell'}.contains(x.item.layerPosition) &&
+            isUpperLayer(x) &&
+            !isSelected(selected, x.itemId),
+        rank: layerWarmthRank,
+        allowUnsafeFallback: false,
+      );
+      if (backupLayer != null) {
+        add(
+          backupLayer,
+          CompositionRoleV2.conditional,
+          'layer_user_backup',
+          false,
+          'user_requested_backup_layer',
         );
       }
     }

@@ -37,6 +37,8 @@ function safeContext(value) {
     const text = cleanText(source[key]);
     if (text) context[key] = text;
   }
+  const userIntentContext = cleanText(source.userIntentContext, 600);
+  if (userIntentContext) context.userIntentContext = userIntentContext;
   if (source.relevantKnownTimingFacts && typeof source.relevantKnownTimingFacts === "object" &&
       !Array.isArray(source.relevantKnownTimingFacts)) {
     const timing = {};
@@ -123,7 +125,9 @@ function normalizePresentationItems(value, itemIds) {
     const canonicalType = cleanText(raw.canonicalType, 80);
     const primaryColor = cleanText(raw.primaryColor, 80);
     if (!itemId || !name || !canonicalType || !primaryColor || byId.has(itemId)) return null;
-    byId.set(itemId, Object.freeze({itemId, name, canonicalType, primaryColor}));
+    const slot = ["top", "bottom", "shoes", "outerwear"].includes(cleanText(raw.slot, 24)) ?
+      cleanText(raw.slot, 24) : "";
+    byId.set(itemId, Object.freeze({itemId, name, canonicalType, primaryColor, slot}));
   }
   if (itemIds.some((id) => !byId.has(id))) return null;
   return Object.freeze(itemIds.map((id) => byId.get(id)));
@@ -142,7 +146,23 @@ function normalizeRequest(data, ownedItemIds) {
       new Set(candidates.map((candidate) => candidate.candidateId)).size !== candidates.length) {
     const error = new Error("invalid_frozen_candidates"); error.code = "invalid-argument"; throw error;
   }
-  return Object.freeze({resolvedContext: safeContext(data.resolvedContext), frozenCandidates: Object.freeze(candidates)});
+  const decisionMode = cleanText(data.decisionMode, 40) === "locked_selection" ?
+    "locked_selection" : "select_candidate";
+  const presentationMode = ["normal", "focused_item", "concise_full"].includes(
+    cleanText(data.presentationMode, 40),
+  ) ? cleanText(data.presentationMode, 40) : "normal";
+  const focusSlot = ["top", "bottom", "shoes", "outerwear"].includes(
+    cleanText(data.focusSlot, 24),
+  ) ? cleanText(data.focusSlot, 24) : "";
+  const userRequest = cleanText(data.userRequest, 600);
+  return Object.freeze({
+    resolvedContext: safeContext(data.resolvedContext),
+    frozenCandidates: Object.freeze(candidates),
+    decisionMode,
+    presentationMode,
+    focusSlot,
+    userRequest,
+  });
 }
 
 function rejectAll(reasonCode, requested = null) {
@@ -182,8 +202,12 @@ function explanationPayload(normalized, decision) {
     // It receives only this presentation-safe description of the immutable set.
     userFacingSelectedOutfit: selected ? selected.presentationItems.map((item) => ({
       name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,
+      slot: item.slot,
     })) : [],
     userFacingContext: normalized.resolvedContext,
+    presentationMode: normalized.presentationMode,
+    focusSlot: normalized.focusSlot,
+    userRequest: normalized.userRequest,
     internalCaveat: selected ? selected.compromiseClassification.level : "reject_all",
     userFacingCompromises: selected ? selected.compromiseDetails : [],
   });
@@ -282,8 +306,25 @@ function createFrozenStylistAuthority({resolveOpenAISecret, resolveAnthropicSecr
     async resolve({data, ownedItemIds}) {
       const normalized = normalizeRequest(data, ownedItemIds);
       const eligible = normalized.frozenCandidates.filter((candidate) => candidate.eligible);
-      let decision = eligible.length ? null : rejectAll("no_valid_frozen_candidates");
+      let decision = null;
       let decisionProviderFailure = null;
+      if (normalized.decisionMode === "locked_selection") {
+        if (normalized.frozenCandidates.length !== 1 || eligible.length !== 1) {
+          decision = rejectAll("locked_selection_invalid");
+        } else {
+          const selected = eligible[0];
+          decision = Object.freeze({
+            action: "select_candidate",
+            selectedCandidateId: selected.candidateId,
+            requestedAction: "select_candidate",
+            requestedSelectedCandidateId: selected.candidateId,
+            requestedDecisionAccepted: true,
+            reasonCodes: Object.freeze([]),
+          });
+        }
+      } else if (!eligible.length) {
+        decision = rejectAll("no_valid_frozen_candidates");
+      }
       if (!decision) {
         const result = await decisionClient.run({
           contractVersion: "FrozenOutfitDecisionRequestV1",

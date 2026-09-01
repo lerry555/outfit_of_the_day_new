@@ -60,6 +60,10 @@ class StylistFrozenCandidateDecisionServiceV1 {
   Future<StylistFrozenCandidateDecisionResultV1> resolve({
     required List<V2FlexibleCandidate> candidates,
     required Map<String, dynamic> resolvedContext,
+    bool lockedSelection = false,
+    String presentationMode = 'normal',
+    String focusSlot = '',
+    String userRequest = '',
   }) async {
     if (candidates.isEmpty) {
       return StylistFrozenCandidateDecisionResultV1.rejectAllFallback;
@@ -75,6 +79,10 @@ class StylistFrozenCandidateDecisionServiceV1 {
             // retain the settled explanation path on the shared callable.
             'conversationBrainVersion': conversationBrainVersion,
             'resolvedContext': resolvedContext,
+            'decisionMode': lockedSelection ? 'locked_selection' : 'select_candidate',
+            'presentationMode': presentationMode,
+            if (focusSlot.trim().isNotEmpty) 'focusSlot': focusSlot.trim(),
+            if (userRequest.trim().isNotEmpty) 'userRequest': userRequest.trim(),
             'frozenCandidates': candidates
                 .map(_candidatePayload)
                 .toList(growable: false),
@@ -138,6 +146,7 @@ class StylistFrozenCandidateDecisionServiceV1 {
               'name': _presentationName(item),
               'canonicalType': item.item.canonicalType,
               'primaryColor': item.item.colorProfile.primary.family,
+              'slot': _presentationSlot(item),
             },
           )
           .toList(growable: false),
@@ -173,6 +182,19 @@ class StylistFrozenCandidateDecisionServiceV1 {
             .toList(growable: false),
       },
     };
+  }
+
+  static String _presentationSlot(V2FlexibleOutfitItem item) {
+    if (item.item.bodySlots.contains('feet')) return 'shoes';
+    if (item.item.layerPosition == 'outer' || item.item.layerPosition == 'shell') {
+      return 'outerwear';
+    }
+    if (item.item.bodySlots.contains('lower_body') &&
+        !item.item.bodySlots.contains('upper_body')) {
+      return 'bottom';
+    }
+    if (item.item.bodySlots.contains('upper_body')) return 'top';
+    return '';
   }
 
   static String _presentationName(V2FlexibleOutfitItem item) {

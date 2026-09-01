@@ -44,3 +44,20 @@ test("unknown ID, non-owned candidate, malformed attempt and empty valid set rej
     action: "select_candidate", selectedCandidateId: "candidate-a",
   }).action, "reject_all");
 });
+
+test("locked selection request preserves presentation semantics without opening candidate choice", () => {
+  const raw = request();
+  raw.decisionMode = "locked_selection";
+  raw.presentationMode = "focused_item";
+  raw.focusSlot = "bottom";
+  raw.userRequest = "ktoré kraťasy si mám dať?";
+  raw.resolvedContext.userIntentContext = "idem večer do mesta";
+  raw.frozenCandidates[0].presentationItems[1].slot = "bottom";
+  const normalized = normalizeRequest(raw, owned);
+  assert.equal(normalized.decisionMode, "locked_selection");
+  assert.equal(normalized.presentationMode, "focused_item");
+  assert.equal(normalized.focusSlot, "bottom");
+  assert.equal(normalized.userRequest, "ktoré kraťasy si mám dať?");
+  assert.equal(normalized.resolvedContext.userIntentContext, "idem večer do mesta");
+  assert.equal(normalized.frozenCandidates[0].presentationItems[1].slot, "bottom");
+});

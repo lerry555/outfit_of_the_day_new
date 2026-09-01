@@ -331,4 +331,50 @@ void main() {
       'nature_walk',
     );
   });
+  test('Brain owns outfit edit scope while engine keeps one-slot and layer invariants', () {
+    final prompts = _read('functions/stylist/chat_prompts.js');
+    final server = _read('functions/index.js');
+    final screen = _read('lib/screens/stylist_chat_screen.dart');
+    final service = _read('lib/Services/stylist_chat_outfit_service.dart');
+    final native = _read('lib/domain/wardrobe_v2/native_outfit_engine_v2.dart');
+
+    expect(prompts, contains('outfitDirective'));
+    expect(prompts, contains('scope=single_slot'));
+    expect(prompts, contains('extraLayer=optional_upper_layer'));
+    expect(server, contains('sanitizeStylistOutfitDirective'));
+    expect(screen, contains('_swapRequestForTurn(response, userText)'));
+    expect(screen, contains('brain_locked_swap'));
+    expect(screen, contains('outfitUpdateSlot'));
+    expect(service, contains('lockedSelection: true'));
+    expect(service, contains("presentationMode: 'focused_item'"));
+    expect(native, contains('optionalUpperLayerRequested'));
+    expect(native, contains('user_requested_backup_layer'));
+  });
+
+  test('Stylist has one shared thermal target instead of a chat-only duplicate', () {
+    final service = _read('lib/Services/stylist_chat_outfit_service.dart');
+    final policy = _read(
+      'lib/domain/wardrobe_v2/outfit_suitability_policy_v2.dart',
+    );
+
+    expect(
+      service,
+      contains('OutfitSuitabilityPolicyV2.targetMeanWarmth(weather.tempC)'),
+    );
+    expect(service, isNot(contains('weather.tempC <= 14 ? 6.0')));
+    expect(policy, contains('static double targetMeanWarmth'));
+  });
+
+  test('frozen explanation receives user intent and presentation mode without changing selection', () {
+    final authority = _read('functions/stylist/frozen_stylist_authority_v1.js');
+    final brain = _read('functions/stylist/conversation_brain_v1.js');
+
+    expect(authority, contains('locked_selection'));
+    expect(authority, contains('presentationMode'));
+    expect(authority, contains('userIntentContext'));
+    expect(brain, contains('focused_item'));
+    expect(brain, contains('concise_full'));
+    expect(brain, contains('Samotné „idem do mesta“ NIE JE prechádzka'));
+  });
+
 }

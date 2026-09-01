@@ -373,6 +373,41 @@ function getOpenWeatherKey() {
   return resolveOpenWeatherSecret();
 }
 
+function sanitizeStylistOutfitDirective(raw) {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const allowedScopes = new Set(["none", "full_outfit", "single_slot"]);
+  const allowedSlots = new Set(["none", "top", "bottom", "shoes", "outerwear"]);
+  const allowedFamilies = new Set([
+    "none", "shorts", "jeans", "pants", "joggers",
+    "sneakers", "boots", "sandals", "formal_shoes",
+  ]);
+  const allowedExtraLayers = new Set(["none", "optional_upper_layer"]);
+  const allowedPresentations = new Set(["normal", "concise_full", "focused_item"]);
+  const pick = (value, allowed, fallback) => {
+    const normalized = String(value || "").trim().toLowerCase();
+    return allowed.has(normalized) ? normalized : fallback;
+  };
+  const scope = pick(raw.scope, allowedScopes, "none");
+  const slot = scope === "single_slot" ?
+    pick(raw.slot, allowedSlots, "none") : "none";
+  const family = scope === "single_slot" ?
+    pick(raw.family, allowedFamilies, "none") : "none";
+  const extraLayer = pick(raw.extraLayer, allowedExtraLayers, "none");
+  const presentation = pick(
+    raw.presentation,
+    allowedPresentations,
+    scope === "single_slot" ? "focused_item" : "normal",
+  );
+  return Object.freeze({
+    scope,
+    slot,
+    family,
+    preserveOtherSlots: scope === "single_slot" ? raw.preserveOtherSlots !== false : false,
+    extraLayer,
+    presentation,
+  });
+}
+
 // An LLM may interpret known context but never becomes a source of new
 // resolved facts. This keeps GPT-4o's Track-U authority limited to
 // ask/proceed/action framing; deterministic app state remains fact authority.
@@ -3652,6 +3687,17 @@ exports.attachCleanImageOnWardrobeWrite = functions
         }
         return Object.keys(item).length ? item : null;
       }).filter(Boolean) : [];
+    const currentOutfitDecision =
+      clientContext.currentOutfitDecision &&
+      typeof clientContext.currentOutfitDecision === "object" &&
+      !Array.isArray(clientContext.currentOutfitDecision) ?
+        {
+          recommendedByStylist: clientContext.currentOutfitDecision.recommendedByStylist === true,
+          usedCompromise: clientContext.currentOutfitDecision.usedCompromise === true,
+          rationale: String(clientContext.currentOutfitDecision.rationale || "")
+            .trim().slice(0, 500),
+        } :
+        null;
     const lat = clientContext.latitude;
     const lon = clientContext.longitude;
     const parts = [];
@@ -3668,6 +3714,9 @@ exports.attachCleanImageOnWardrobeWrite = functions
     if (eventDestination) parts.push(`eventDestination=${eventDestination}`);
     if (currentOutfit.length) {
       parts.push(`currentOutfit=${JSON.stringify(currentOutfit)}`);
+    }
+    if (currentOutfitDecision && currentOutfitDecision.recommendedByStylist) {
+      parts.push(`currentOutfitDecision=${JSON.stringify(currentOutfitDecision)}`);
     }
     if (lat != null && lon != null) parts.push(`coords=${lat},${lon}`);
     return parts.length > 0 ? parts.join(", ") : JSON.stringify(clientContext);
@@ -4212,6 +4261,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
             .map((v) => String(v || "").trim())
             .filter(Boolean) :
           [];
+        const outfitDirective = sanitizeStylistOutfitDirective(parsed?.outfitDirective);
 
         let suggestedIds = [];
         if (action === "show_items") {
@@ -4239,6 +4289,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
           action,
           eventContext,
           excludeItemKeywords,
+          outfitDirective,
           confidence,
           decisionRisk,
           assumptions,

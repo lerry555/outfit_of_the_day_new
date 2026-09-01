@@ -33,6 +33,7 @@ class V2CandidateMatrixContext {
     this.activityDurationMinutes,
     this.terrain = '',
     this.wetGroundRisk = false,
+    this.optionalUpperLayerRequested = false,
   });
   final bool weatherProtectionRequired,
       preferOnePiece,
@@ -46,6 +47,7 @@ class V2CandidateMatrixContext {
   final String activityType, occasionId;
   final String terrain;
   final bool wetGroundRisk;
+  final bool optionalUpperLayerRequested;
   final Set<String> requiredFunctions, requiredOccasions;
   final Set<String> requestedItemIds, forbiddenCanonicalTypes;
   final StylePreferenceTaste styleTaste;
@@ -139,6 +141,7 @@ abstract final class V2FlexibleCandidateMatrix {
             activityType: context.activityType,
             requestedItemIds: context.requestedItemIds,
             forbiddenCanonicalTypes: context.forbiddenCanonicalTypes,
+            optionalUpperLayerRequested: context.optionalUpperLayerRequested,
             formalityFloor: [
               context.decisionFormalityFloor,
               OutfitSuitabilityPolicyV2.formalityFloor(

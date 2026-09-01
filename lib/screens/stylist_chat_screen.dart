@@ -30,6 +30,7 @@ import '../utils/slovak_outfit_instrumental.dart';
 import '../models/stylist_trip_window.dart';
 import '../models/stylist_chat_progress.dart';
 import '../utils/bottom_family_guidance.dart';
+import '../utils/footwear_family_guidance.dart';
 import '../utils/event_clarification.dart';
 import '../utils/stylist_bottom_request.dart';
 import '../utils/stylist_intent_resolver.dart';
@@ -85,6 +86,10 @@ class StylistChatMessage {
   /// Job that produced this assistant turn. Used to dedupe notification hydration.
   final String? sourceJobId;
 
+  /// Structural marker for a one-slot outfit edit. Persisted so reopening a
+  /// chat never has to infer state from user-facing wording.
+  final String? outfitUpdateSlot;
+
   const StylistChatMessage({
     required this.text,
     required this.isUser,
@@ -94,9 +99,10 @@ class StylistChatMessage {
     this.imageUrl,
     this.ephemeral = false,
     this.sourceJobId,
+    this.outfitUpdateSlot,
   });
 
-  StylistChatMessage copyWith({String? sourceJobId}) {
+  StylistChatMessage copyWith({String? sourceJobId, String? outfitUpdateSlot}) {
     return StylistChatMessage(
       text: text,
       isUser: isUser,
@@ -106,6 +112,7 @@ class StylistChatMessage {
       imageUrl: imageUrl,
       ephemeral: ephemeral,
       sourceJobId: sourceJobId ?? this.sourceJobId,
+      outfitUpdateSlot: outfitUpdateSlot ?? this.outfitUpdateSlot,
     );
   }
 
@@ -119,6 +126,8 @@ class StylistChatMessage {
       if (imageUrl != null && imageUrl!.isNotEmpty) 'imageUrl': imageUrl,
       if (sourceJobId != null && sourceJobId!.isNotEmpty)
         'sourceJobId': sourceJobId,
+      if (outfitUpdateSlot != null && outfitUpdateSlot!.isNotEmpty)
+        'outfitUpdateSlot': outfitUpdateSlot,
     };
   }
 
@@ -141,6 +150,9 @@ class StylistChatMessage {
           ? null
           : map['imageUrl'].toString(),
       sourceJobId: sourceJobId.isEmpty ? null : sourceJobId,
+      outfitUpdateSlot: (map['outfitUpdateSlot'] ?? '').toString().trim().isEmpty
+          ? null
+          : (map['outfitUpdateSlot'] ?? '').toString().trim(),
     );
   }
 }
@@ -240,6 +252,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
   Set<String> _lastOutfitItemIds = const {};
   List<Map<String, dynamic>> _currentOutfitItems = const <Map<String, dynamic>>[];
+  bool _currentOutfitUsedCompromise = false;
+  String _currentOutfitDecisionRationale = '';
   Map<String, dynamic>? _cachedWeatherContext;
   DateTime? _weatherCachedAt;
   int? _lastResolvedEventTempC;
@@ -1414,6 +1428,82 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     return no.any(t.contains);
   }
 
+  Map<String, dynamic>? _brainOutfitDirective(
+    Map<String, dynamic> response,
+  ) {
+    final raw = response['outfitDirective'];
+    if (raw is! Map) return null;
+    return Map<String, dynamic>.from(raw);
+  }
+
+  String _brainDirectiveValue(
+    Map<String, dynamic>? directive,
+    String key,
+    String fallback,
+  ) {
+    final value = directive?[key]?.toString().trim().toLowerCase() ?? '';
+    return value.isEmpty ? fallback : value;
+  }
+
+  StylistSwapRequest? _swapRequestForTurn(
+    Map<String, dynamic> response,
+    String userText,
+  ) {
+    final directive = _brainOutfitDirective(response);
+    if (directive != null) {
+      if (_brainDirectiveValue(directive, 'scope', 'none') != 'single_slot') {
+        return null;
+      }
+      final slot = switch (_brainDirectiveValue(directive, 'slot', 'none')) {
+        'top' => StylistSwapSlot.top,
+        'bottom' => StylistSwapSlot.bottom,
+        'shoes' => StylistSwapSlot.shoes,
+        'outerwear' => StylistSwapSlot.outerwear,
+        _ => null,
+      };
+      if (slot == null) return null;
+      final family = _brainDirectiveValue(directive, 'family', 'none');
+      final bottomFamily = slot == StylistSwapSlot.bottom
+          ? switch (family) {
+              'shorts' => BottomFamily.shorts,
+              'jeans' => BottomFamily.jeans,
+              'pants' => BottomFamily.pants,
+              'joggers' => BottomFamily.joggers,
+              _ => null,
+            }
+          : null;
+      final shoeFamily = slot == StylistSwapSlot.shoes
+          ? switch (family) {
+              'sneakers' => FootwearFamily.sneakers,
+              'boots' => FootwearFamily.boots,
+              'sandals' => FootwearFamily.sandals,
+              'formal_shoes' => FootwearFamily.formal,
+              _ => null,
+            }
+          : null;
+      return StylistSwapRequest(
+        slot: slot,
+        bottomFamily: bottomFamily,
+        shoeFamily: shoeFamily,
+      );
+    }
+    return StylistSwapRequest.parse(userText);
+  }
+
+  bool _brainRequestsOptionalUpperLayer(Map<String, dynamic> response) {
+    final directive = _brainOutfitDirective(response);
+    return _brainDirectiveValue(directive, 'extraLayer', 'none') ==
+        'optional_upper_layer';
+  }
+
+  String _brainPresentationMode(Map<String, dynamic> response) {
+    final directive = _brainOutfitDirective(response);
+    final value = _brainDirectiveValue(directive, 'presentation', 'normal');
+    return const {'normal', 'focused_item', 'concise_full'}.contains(value)
+        ? value
+        : 'normal';
+  }
+
   Future<void> _handleAssistantResponse({
     required String userText,
     required Map<String, dynamic> response,
@@ -1575,7 +1665,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     // / obuv / vrstvu), preskladáme HNEĎ len ten kus — bez ohľadu na to, či model
     // vrátil 'chat' alebo 'generate_outfit', a bez zbytočného prehadzovania celého
     // outfitu. Inak by „zmen mi tričko“ spadlo do generate_outfit a zmenilo všetko.
-    final swapRequest = StylistSwapRequest.parse(userText);
+    final swapRequest = _swapRequestForTurn(response, userText);
     if (_conversationAlreadyHasOutfitCards() && swapRequest != null) {
       // A reopened chat may have outfit cards while the ephemeral ID cache is
       // empty. Rebuild the authoritative current outfit before a one-slot swap.
@@ -1620,6 +1710,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         requestedBottomFamily: swapRequest.slot == StylistSwapSlot.bottom
             ? swapRequest.bottomFamily
             : null,
+        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        presentationMode: _brainPresentationMode(response),
       );
       return;
     }
@@ -1652,6 +1744,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : const <String>[],
         forceDifferent: _shouldForceDifferentOutfit(userText),
         requestedBottomFamily: _resolveRequestedBottomFamily(userText),
+        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        presentationMode: _brainPresentationMode(response),
       );
       return;
     }
@@ -1716,6 +1810,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
               : const <String>[],
           forceDifferent: _shouldForceDifferentOutfit(userText),
           requestedBottomFamily: _resolveRequestedBottomFamily(userText),
+          optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+          presentationMode: _brainPresentationMode(response),
         );
         return;
       }
@@ -1751,6 +1847,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : const <String>[],
         forceDifferent: _shouldForceDifferentOutfit(userText),
         requestedBottomFamily: _resolveRequestedBottomFamily(userText),
+        optionalUpperLayerRequested: _brainRequestsOptionalUpperLayer(response),
+        presentationMode: _brainPresentationMode(response),
       );
       return;
     }
@@ -1977,6 +2075,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     bool forceDifferent = false,
     BottomFamily? requestedBottomFamily,
     StylistSwapRequest? requestedSwap,
+    bool optionalUpperLayerRequested = false,
+    String presentationMode = 'normal',
   }) async {
     // Semantic clarification has already been decided by the GPT-4o context
     // callable. Do not re-run the legacy conversation gate here.
@@ -1998,6 +2098,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         groundedActivityType: _outfitContextState.activityHint,
         requestedBottomFamily: requestedBottomFamily,
         requestedSwap: requestedSwap,
+        optionalUpperLayerRequested: optionalUpperLayerRequested,
+        presentationMode: presentationMode,
+        userRequest: userText,
         onProgress: _setSendingProgress,
       );
     } on StylistFrozenDecisionRejectedExceptionV1 catch (error) {
@@ -2029,6 +2132,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
 
     final wardrobeAnalysis = outfitResult.wardrobeAnalysis;
+    _currentOutfitUsedCompromise = wardrobeAnalysis.usedCompromise;
+    _currentOutfitDecisionRationale =
+        (outfitResult.finalExplanation ?? '').trim();
 
     final previousIds = _lastOutfitItemIds;
     final suggestedItems = _sortStylistSuggestedItems(
@@ -2086,21 +2192,28 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       final swapDisplayItems = suggestedItems
           .where((item) => _stylistWearSlotOrder(item) == slotOrderFor[swapSlot])
           .toList(growable: false);
-      final shortReply = _shortSwapReply(
+      final brainReply =
+          StylistUdrClientRoutingV1.frozenExplanationForDisplay(
+            outfitResult.finalExplanation,
+          );
+      final fallbackReply = _shortSwapReply(
         suggestedItems: suggestedItems,
         slot: swapSlot,
       );
-      if (shortReply != null && swapDisplayItems.isNotEmpty) {
+      final focusedReply = brainReply ?? fallbackReply;
+      if (focusedReply != null && swapDisplayItems.isNotEmpty) {
         debugPrint(
-          'STYLIST CHAT reply_source=local_swap_${swapSlot.name} '
-          'display_items=${swapDisplayItems.length}',
+          'STYLIST CHAT reply_source='
+          '${brainReply != null ? 'brain_locked_swap' : 'local_swap_fallback'} '
+          'slot=${swapSlot.name} display_items=${swapDisplayItems.length}',
         );
         setState(() {
           _messages.add(
             StylistChatMessage(
-              text: shortReply,
+              text: focusedReply,
               isUser: false,
               suggestedItems: swapDisplayItems,
+              outfitUpdateSlot: swapSlot.name,
             ),
           );
           _isSending = false;
@@ -2179,56 +2292,21 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     required List<Map<String, dynamic>> suggestedItems,
     required StylistSwapSlot slot,
   }) {
-    String nameForSlot(int slotOrder) {
-      for (final item in suggestedItems) {
-        if (_stylistWearSlotOrder(item) == slotOrder) {
-          return (item['name'] ?? '').toString().trim();
-        }
-      }
-      return '';
-    }
-
-    // Mapovanie slotu na poradové číslo v _stylistWearSlotOrder.
-    const slotOrderFor = {
+    const slotOrderFor = <StylistSwapSlot, int>{
       StylistSwapSlot.top: 0,
       StylistSwapSlot.outerwear: 1,
       StylistSwapSlot.bottom: 2,
       StylistSwapSlot.shoes: 3,
     };
-    final changedName = nameForSlot(slotOrderFor[slot]!);
+    final changed = suggestedItems
+        .where((item) => _stylistWearSlotOrder(item) == slotOrderFor[slot])
+        .firstOrNull;
+    if (changed == null) return null;
+    final changedName = (changed['name'] ?? '').toString().trim();
     if (changedName.isEmpty) return null;
-    // „dal som ti …“ vyžaduje akuzatív (bordové tričko / čierne šortky).
     final changedPhrase = SlovakOutfitInstrumental.accusative(changedName);
-
-    // Ostatné (nezmenené) kúsky, ku ktorým má nový kus ladiť — v inštrumentáli
-    // (ladí s čiernymi šortkami a bielymi teniskami).
-    final pairing = <String>[];
-    for (final entry in slotOrderFor.entries) {
-      if (entry.key == slot) continue;
-      final n = nameForSlot(entry.value);
-      if (n.isNotEmpty) pairing.add(SlovakOutfitInstrumental.phrase(n));
-    }
-
-    final lead = switch (slot) {
-      StylistSwapSlot.top =>
-        'Jasné, prehodil som vrch — dal som ti $changedPhrase',
-      StylistSwapSlot.bottom =>
-        'Jasné, vymenil som spodok — dal som ti $changedPhrase',
-      StylistSwapSlot.shoes =>
-        'Jasné, vymenil som obuv — dal som ti $changedPhrase',
-      StylistSwapSlot.outerwear =>
-        'Jasné, prehodil som vrchnú vrstvu — dal som ti $changedPhrase',
-    };
-
-    final buffer = StringBuffer(lead);
-    if (pairing.isNotEmpty) {
-      final joined = SlovakOutfitInstrumental.joinWithA(pairing);
-      final prep = SlovakOutfitInstrumental.sSo(pairing.first);
-      buffer.write(' — ladí $prep $joined.');
-    } else {
-      buffer.write('.');
-    }
-    return buffer.toString();
+    return 'Zvolil by som $changedPhrase — z dostupných možností mi k '
+        'tomuto outfitu dáva najväčší zmysel.';
   }
 
   /// Krátke vysvetlenie, keď sa kvôli zladeniu muselo zmeniť viac kúskov, nielen
@@ -3130,6 +3208,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       if (current.isEmpty || incoming.length != 1) continue;
       final lower = message.text.toLowerCase();
       final looksLikePartialSwap =
+          (message.outfitUpdateSlot?.isNotEmpty ?? false) ||
           lower.contains('vymenil som') ||
           lower.contains('prehodil som') ||
           lower.contains('dal som ti');
@@ -3232,7 +3311,15 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       },
       if (eventDestination != null && eventDestination.isNotEmpty)
         'eventDestination': eventDestination,
-      if (currentOutfit.isNotEmpty) 'currentOutfit': currentOutfit,
+      if (currentOutfit.isNotEmpty) ...{
+        'currentOutfit': currentOutfit,
+        'currentOutfitDecision': <String, dynamic>{
+          'recommendedByStylist': true,
+          'usedCompromise': _currentOutfitUsedCompromise,
+          if (_currentOutfitDecisionRationale.isNotEmpty)
+            'rationale': _currentOutfitDecisionRationale,
+        },
+      },
       if (lat != null) 'latitude': lat,
       if (lon != null) 'longitude': lon,
     };
