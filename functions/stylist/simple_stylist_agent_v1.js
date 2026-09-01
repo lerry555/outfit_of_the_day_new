@@ -166,7 +166,7 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
     "hardRequirementEvidence",
   ],
   properties: {
-    stylistComment: {type: "string", minLength: 1, maxLength: 500},
+    stylistComment: {type: "string", maxLength: 500},
     resultingOutfitItemIds: {
       type: "array",
       maxItems: 12,
@@ -227,7 +227,12 @@ function buildSystemPromptV1() {
     "outfitRequested=true pri každej požiadavke vytvoriť, zmeniť, zobraziť alebo vysvetliť outfit.",
     "Ak outfitRequested=false a current outfit existuje, resultingOutfitItemIds musí zostať presne current outfit; inak môže byť prázdny.",
     "outfitChanged musí presne zodpovedať rozdielu current→result. displayItemIds je iba to, čo má UI ukázať, a musí byť podmnožina výsledku.",
-    "stylistComment píš prirodzene, stručne a po slovensky. Nevymýšľaj zmenu ani kus, ktorý nie je vo výsledku.",
+    "stylistComment je user-facing odpoveď osobného stylistu, nie systémový log. Píš prirodzene po slovensky, obyčajne 1–2 krátke vety.",
+    "Neopisuj mechanicky add/remove/replace operácie, ktoré používateľ vidí na cards. Neopakuj stále frázy ako pridal som, vymenil som, vyradil som alebo zvyšok zostáva rovnaký a nevymenúvaj celý outfit bez užitočného dôvodu.",
+    "Pri jednom novom kuse komentuj hlavne stylingový dojem alebo prečo sa hodí. Pri viacerých zmenách stručne zhodnoť výsledok ako celok. Pri explanation turne normálne vysvetľuj a pri obyčajnej konverzácii odpovedz bez zmeny outfitu.",
+    "Nevkladaj wardrobe name mechanicky do vety; použi prirodzený slovenský tvar. Nepripisuj používateľovi výber, ktorý si urobil ty, a nepoužívaj implementačný jazyk.",
+    "Ak spomenieš konkrétny kus, farbu alebo vlastnosť, musí patriť položke v resultingOutfitItemIds. Nikdy netvrď, že výsledok obsahuje kus, ktorý v ňom nie je.",
+    "Príklady tónu: 'Táto svetlomodrá mikina by k tomu podľa mňa sadla super. 🙂' alebo 'Takto sa mi to páči viac. Červené tenisky tomu dodajú trochu života.'",
   ].join("\n");
 }
 
@@ -344,7 +349,6 @@ function validateAgentResultV1(raw, request) {
   const value = safeMap(raw);
   const errors = [];
   const stylistComment = cleanText(value.stylistComment || value.reply, 500);
-  if (!stylistComment) errors.push("stylist_comment_required");
   if (!Array.isArray(value.resultingOutfitItemIds)) {
     errors.push("resulting_outfit_ids_required");
   }
@@ -441,30 +445,14 @@ function validateAgentResultV1(raw, request) {
   });
 }
 
-function joinNamesV1(ids, byId) {
-  return ids.map((id) => byId.get(id)?.name || id).join(", ");
-}
-
-function groundedStylistCommentV1(validated, request) {
-  const result = validated.value;
-  if (!result.outfitChanged) return result.stylistComment;
-  const before = new Set(request.currentOutfitItemIds);
-  const after = new Set(result.resultingOutfitItemIds);
-  const added = result.resultingOutfitItemIds.filter((id) => !before.has(id));
-  const removed = request.currentOutfitItemIds.filter((id) => !after.has(id));
-  if (!request.currentOutfitItemIds.length) {
-    return `Vybral som ti celý outfit: ${joinNamesV1(result.resultingOutfitItemIds, request.byId)}.`;
+function fallbackStylistCommentV1(result) {
+  if (result.outfitChanged) {
+    return "Čo povieš na túto verziu? Podľa mňa spolu funguje veľmi dobre.";
   }
-  if (added.length === 1 && removed.length === 1) {
-    return `Vymenil som ${joinNamesV1(removed, request.byId)} za ${joinNamesV1(added, request.byId)}. Ostatné kúsky zostávajú.`;
+  if (result.outfitRequested) {
+    return "Za mňa tento outfit funguje veľmi dobre.";
   }
-  if (added.length && !removed.length) {
-    return `Pridal som ${joinNamesV1(added, request.byId)}. Zvyšok outfitu zostáva rovnaký.`;
-  }
-  const parts = [];
-  if (added.length) parts.push(`pridal ${joinNamesV1(added, request.byId)}`);
-  if (removed.length) parts.push(`vyradil ${joinNamesV1(removed, request.byId)}`);
-  return `Upravil som outfit: ${parts.join(" a ")}.`;
+  return "Jasné — čo by si chcel doladiť?";
 }
 
 function materializeResultV1(validated, request) {
@@ -473,7 +461,10 @@ function materializeResultV1(validated, request) {
   for (const id of value.resultingOutfitItemIds) {
     publicById.set(id, publicWardrobeItemV1(request.rawById.get(id), request.byId.get(id)));
   }
-  const stylistComment = groundedStylistCommentV1(validated, request);
+  // The same Sol response decides the validated outfit and writes its natural
+  // user-facing comment. IDs/cards remain authoritative; deterministic prose is
+  // reserved for the unlikely case that the optional comment is empty.
+  const stylistComment = value.stylistComment || fallbackStylistCommentV1(value);
   return Object.freeze({
     contractVersion: SIMPLE_AGENT_CONTRACT_VERSION,
     simpleAgent: true,

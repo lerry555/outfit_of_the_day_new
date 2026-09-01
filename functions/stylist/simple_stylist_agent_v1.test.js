@@ -107,7 +107,7 @@ test("required conversational flow preserves exact IDs across sequential turns",
       hardRequirementEvidence: [],
     },
     {
-      stylistComment: "Tu je celý outfit.",
+      stylistComment: "Toto je príjemná ležérna kombinácia, ktorá bude zajtra fungovať veľmi dobre.",
       resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
       displayItemIds: ["blue-top", "jeans", "white-shoes"],
       outfitChanged: true,
@@ -115,7 +115,7 @@ test("required conversational flow preserves exact IDs across sequential turns",
       hardRequirementEvidence: [],
     },
     {
-      stylistComment: "Vymenil som iba spodok.",
+      stylistComment: "Skúsil by som tieto čierne šortky — k tričku a teniskám fungujú veľmi dobre.",
       resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
       displayItemIds: ["shorts"],
       outfitChanged: true,
@@ -125,7 +125,7 @@ test("required conversational flow preserves exact IDs across sequential turns",
       ],
     },
     {
-      stylistComment: "Pridal som mikinu a ukazujem celý outfit.",
+      stylistComment: "Táto sivá mikina by k tomu podľa mňa sadla super. 🙂",
       resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
       displayItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
       outfitChanged: true,
@@ -155,8 +155,10 @@ test("required conversational flow preserves exact IDs across sequential turns",
   ));
   assert.deepEqual(shorts.resultingOutfitItemIds, ["blue-top", "shorts", "white-shoes"]);
   assert.deepEqual(shorts.displayItemIds, ["shorts"]);
-  assert.match(shorts.reply, /krátke čierne nohavice/);
-  assert.match(shorts.reply, /modré rifle/);
+  assert.equal(
+    shorts.reply,
+    "Skúsil by som tieto čierne šortky — k tričku a teniskám fungujú veľmi dobre.",
+  );
   history.push({role: "user", content: "radšej by som chcel krátke gate"});
   history.push({role: "assistant", content: shorts.reply});
 
@@ -169,7 +171,7 @@ test("required conversational flow preserves exact IDs across sequential turns",
     "blue-top", "shorts", "white-shoes", "hoodie",
   ]);
   assert.deepEqual(hoodie.displayItemIds, hoodie.resultingOutfitItemIds);
-  assert.match(hoodie.reply, /sivá mikina/);
+  assert.equal(hoodie.reply, "Táto sivá mikina by k tomu podľa mňa sadla super. 🙂");
   assert.deepEqual(inputs[3].model, SIMPLE_AGENT_MODEL);
   assert.equal(inputs[3].reasoningEffort, SIMPLE_AGENT_REASONING_EFFORT);
   const modelPayload = JSON.parse(inputs[3].messages[1].content);
@@ -181,7 +183,7 @@ test("required conversational flow preserves exact IDs across sequential turns",
 
 test("one result changes top bottom and shoes and uses dominant red footwear", async () => {
   const {agent} = queuedAgent([{
-    stylistComment: "Vymenil som všetky tri kúsky.",
+    stylistComment: "Takto sa mi to páči viac. Červené tenisky tomu dodajú trochu života.",
     resultingOutfitItemIds: ["black-top", "trousers", "red-shoes"],
     displayItemIds: ["black-top", "trousers", "red-shoes"],
     outfitChanged: true,
@@ -199,8 +201,10 @@ test("one result changes top bottom and shoes and uses dominant red footwear", a
   assert.deepEqual(result.resultingOutfitItemIds, ["black-top", "trousers", "red-shoes"]);
   assert.equal(result.resultingOutfitItems[2].colorProfile.primary.family, "red");
   assert.notEqual(result.resultingOutfitItemIds[2], "white-shoes");
-  assert.match(result.reply, /červené tenisky/);
-  assert.match(result.reply, /biele tenisky/);
+  assert.equal(
+    result.reply,
+    "Takto sa mi to páči viac. Červené tenisky tomu dodajú trochu života.",
+  );
 });
 
 test("only explicit Wardrobe V2 records are exposed to the agent", async () => {
@@ -297,7 +301,7 @@ test("hard red evidence rejects white footwear with a red accent", async () => {
 test("descriptive included evidence validates an added real wardrobe layer", async () => {
   const logs = [];
   const {agent, inputs} = queuedAgent([{
-    stylistComment: "Pridal som mikinu a ukazujem celý outfit.",
+    stylistComment: "Čo povieš na túto sivú mikinu? K zvyšku mi sedí veľmi dobre.",
     resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
     displayItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
     outfitChanged: true,
@@ -318,6 +322,74 @@ test("descriptive included evidence validates an added real wardrobe layer", asy
   ]);
   assert.deepEqual(result.displayItemIds, result.resultingOutfitItemIds);
   assert.equal(logs.some((entry) => entry.marker === "SIMPLE_AGENT_REPAIR"), false);
+  assert.equal(
+    result.stylistComment,
+    "Čo povieš na túto sivú mikinu? K zvyšku mi sedí veľmi dobre.",
+  );
+});
+
+test("validated Sol comment is the default user-facing reply for every edit shape", async () => {
+  const cases = [
+    {
+      message: "radšej kraťasy",
+      comment: "Tieto čierne šortky tomu dodajú ľahší, uvoľnenejší charakter.",
+      resultIds: ["blue-top", "shorts", "white-shoes"],
+      displayIds: ["shorts"],
+    },
+    {
+      message: "pridaj mikinu",
+      comment: "Sivá mikina to príjemne zjemní a na chladnejší večer je akurát.",
+      resultIds: ["blue-top", "jeans", "white-shoes", "hoodie"],
+      displayIds: ["hoodie"],
+    },
+    {
+      message: "skús niečo úplne iné",
+      comment: "Táto verzia pôsobí čistejšie a o niečo výraznejšie. Za mňa veľmi dobrý smer.",
+      resultIds: ["black-top", "trousers", "red-shoes"],
+      displayIds: ["black-top", "trousers", "red-shoes"],
+    },
+  ];
+
+  for (const scenario of cases) {
+    const {agent} = queuedAgent([{
+      stylistComment: scenario.comment,
+      resultingOutfitItemIds: scenario.resultIds,
+      displayItemIds: scenario.displayIds,
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+    }]);
+    const result = await agent.resolve(request(
+      scenario.message,
+      ["blue-top", "jeans", "white-shoes"],
+    ));
+    assert.equal(result.reply, scenario.comment);
+    assert.equal(result.stylistComment, scenario.comment);
+    assert.doesNotMatch(result.reply, /Upravil som outfit|Zvyšok outfitu zostáva/);
+  }
+});
+
+test("missing optional model comment uses a generic non-audit fallback", async () => {
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: "",
+    resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+    displayItemIds: ["shorts"],
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [],
+  }]);
+
+  const result = await agent.resolve(request(
+    "radšej kraťasy",
+    ["blue-top", "jeans", "white-shoes"],
+  ));
+
+  assert.equal(inputs.length, 1);
+  assert.equal(
+    result.reply,
+    "Čo povieš na túto verziu? Podľa mňa spolu funguje veľmi dobre.",
+  );
+  assert.doesNotMatch(result.reply, /Pridal som|Vymenil som|vyradil|zostáva/);
 });
 
 test("second invalid result fails closed and never invokes a third call", async () => {
