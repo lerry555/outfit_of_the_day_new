@@ -1,0 +1,233 @@
+name: Stylist additive layer guard one-shot
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+    paths:
+      - .github/workflows/_tmp-stylist-additive-layer-guard.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard experiment branch and master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin brain-v1-experiment master
+          test "$GITHUB_REF_NAME" = "brain-v1-experiment"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "4a4a4636a55c2d227a93aaacd63b46d5c9080b53"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+
+      - name: Apply structural follow-up fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one anchor, found {count}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          guard = Path('lib/utils/stylist_outfit_directive_guard.dart')
+          if guard.exists():
+              raise SystemExit('guard file already exists unexpectedly')
+          guard.write_text(r'''abstract final class StylistOutfitDirectiveGuard {
+  const StylistOutfitDirectiveGuard._();
+
+  /// Repairs only a structural contradiction: when an already visible outfit
+  /// exists and the user explicitly asks to ADD an upper layer, that request is
+  /// additive. A model directive that calls it a one-slot top replacement must
+  /// not be allowed to silently change the base outfit.
+  static Map<String, dynamic>? repair({
+    required Object? rawDirective,
+    required String userText,
+    required bool hasCurrentOutfit,
+  }) {
+    final original = rawDirective is Map
+        ? Map<String, dynamic>.from(rawDirective)
+        : <String, dynamic>{};
+    if (!hasCurrentOutfit) {
+      return rawDirective is Map ? original : null;
+    }
+
+    final folded = _fold(userText);
+    final layerFamily = _explicitLayerFamily(folded);
+    if (layerFamily == null || !_isExplicitAdditiveRequest(folded)) {
+      return rawDirective is Map ? original : null;
+    }
+
+    // "Vymeň/zmeň/nahradiť X za mikinu" is a replacement, not an additive
+    // layer request, so leave that meaning to the Brain.
+    if (RegExp(r'\b(vymen\w*|zmen\w*|nahrad\w*)\b').hasMatch(folded)) {
+      return rawDirective is Map ? original : null;
+    }
+
+    return <String, dynamic>{
+      ...original,
+      'scope': 'full_outfit',
+      'slot': 'none',
+      'family': 'none',
+      'preserveOtherSlots': false,
+      'preserveCurrentOutfit': true,
+      'extraLayer': 'required_upper_layer',
+      'layerFamily': layerFamily,
+      'presentation': 'concise_full',
+    };
+  }
+
+  static bool _isExplicitAdditiveRequest(String folded) {
+    if (RegExp(r'\b(pridaj|pridat|pridame|prihod|prihodit|dopln|doplnit)\w*\b')
+        .hasMatch(folded)) {
+      return true;
+    }
+    return RegExp(
+      r'\bdaj\b.{0,50}\b(aj|tam|k tomu|do neho|do toho|do outfitu)\b',
+    ).hasMatch(folded);
+  }
+
+  static String? _explicitLayerFamily(String folded) {
+    if (RegExp(r'\b(mikina|mikinu|mikiny|hoodie)\b').hasMatch(folded)) {
+      return 'hoodie';
+    }
+    if (RegExp(r'\b(sveter|svetra|svetrom|svetre)\b').hasMatch(folded)) {
+      return 'sweater';
+    }
+    if (RegExp(r'\b(bunda|bundu|bundy|vetrovka|vetrovku)\b')
+        .hasMatch(folded)) {
+      return 'jacket';
+    }
+    if (RegExp(r'\b(kabat|kabata|kabatom)\b').hasMatch(folded)) {
+      return 'coat';
+    }
+    if (RegExp(r'\b(sako|saka|sakom)\b').hasMatch(folded)) {
+      return 'blazer';
+    }
+    if (RegExp(r'\b(kardigan|kardiganu|kardiganom)\b').hasMatch(folded)) {
+      return 'cardigan';
+    }
+    return null;
+  }
+
+  static String _fold(String value) {
+    var out = value.toLowerCase();
+    const replacements = <String, String>{
+      'á': 'a', 'ä': 'a', 'č': 'c', 'ď': 'd', 'é': 'e', 'í': 'i',
+      'ľ': 'l', 'ĺ': 'l', 'ň': 'n', 'ó': 'o', 'ô': 'o', 'ŕ': 'r',
+      'š': 's', 'ť': 't', 'ú': 'u', 'ý': 'y', 'ž': 'z',
+    };
+    replacements.forEach((from, to) => out = out.replaceAll(from, to));
+    return out;
+  }
+}
+''', encoding='utf-8')
+
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              "import '../utils/stylist_conversation_signals.dart';\n",
+              "import '../utils/stylist_conversation_signals.dart';\nimport '../utils/stylist_outfit_directive_guard.dart';\n",
+          )
+
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              "      response = await _recoverIfOffline(response, jobId);\n      debugPrint('STYLIST CHAT timing apiMs=${timing.elapsedMilliseconds}');\n",
+              "      response = await _recoverIfOffline(response, jobId);\n      final repairedDirective = StylistOutfitDirectiveGuard.repair(\n        rawDirective: response['outfitDirective'],\n        userText: text,\n        hasCurrentOutfit: _conversationAlreadyHasOutfitCards(),\n      );\n      if (repairedDirective != null) {\n        final previousScope = response['outfitDirective'] is Map\n            ? (response['outfitDirective']['scope'] ?? '').toString()\n            : '';\n        response['outfitDirective'] = repairedDirective;\n        if (previousScope != repairedDirective['scope']) {\n          debugPrint(\n            'STYLIST CHAT directive_guard '
+            'from=${previousScope.isEmpty ? "none" : previousScope} '
+            'to=${repairedDirective['scope']} '
+            'layer=${repairedDirective['layerFamily']}',\n          );\n        }\n      }\n      debugPrint('STYLIST CHAT timing apiMs=${timing.elapsedMilliseconds}');\n",
+          )
+
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              "      final focusedReply = brainReply ?? fallbackReply;\n      if (focusedReply != null && swapDisplayItems.isNotEmpty) {\n        debugPrint(\n          'STYLIST CHAT reply_source='\n          '${brainReply != null ? 'brain_locked_swap' : 'local_swap_fallback'} '\n",
+              "      // A one-slot reply must name the item that was ACTUALLY changed.\n      // The frozen explanation describes the whole candidate and can mention a\n      // different slot, so deterministic changed-item copy has display priority.\n      final focusedReply = fallbackReply ?? brainReply;\n      final focusedReplySource = fallbackReply != null\n          ? 'local_swap_fallback'\n          : 'brain_locked_swap';\n      if (focusedReply != null && swapDisplayItems.isNotEmpty) {\n        debugPrint(\n          'STYLIST CHAT reply_source=$focusedReplySource '\n",
+          )
+
+          replace_once(
+              'test/brain_v1_v2_offline_bundle_test.dart',
+              "import 'package:outfitofTheDay/utils/stylist_semantic_activity.dart';\n",
+              "import 'package:outfitofTheDay/utils/stylist_semantic_activity.dart';\nimport 'package:outfitofTheDay/utils/stylist_outfit_directive_guard.dart';\n",
+          )
+
+          test_path = Path('test/brain_v1_v2_offline_bundle_test.dart')
+          test_text = test_path.read_text(encoding='utf-8')
+          insert = r'''
+
+  test('explicit additive layer cannot collapse into a top swap', () {
+    final repaired = StylistOutfitDirectiveGuard.repair(
+      rawDirective: <String, dynamic>{
+        'scope': 'single_slot',
+        'slot': 'top',
+        'family': 'none',
+        'extraLayer': 'none',
+        'layerFamily': 'none',
+        'presentation': 'focused_item',
+      },
+      userText: 'ukáž mi celý outfit a pridaj mi do neho aj mikinu',
+      hasCurrentOutfit: true,
+    );
+
+    expect(repaired, isNotNull);
+    expect(repaired!['scope'], 'full_outfit');
+    expect(repaired['slot'], 'none');
+    expect(repaired['preserveCurrentOutfit'], isTrue);
+    expect(repaired['extraLayer'], 'required_upper_layer');
+    expect(repaired['layerFamily'], 'hoodie');
+    expect(repaired['presentation'], 'concise_full');
+
+    final replacement = StylistOutfitDirectiveGuard.repair(
+      rawDirective: <String, dynamic>{
+        'scope': 'single_slot',
+        'slot': 'top',
+      },
+      userText: 'vymeň tričko za mikinu',
+      hasCurrentOutfit: true,
+    );
+    expect(replacement!['scope'], 'single_slot');
+    expect(replacement['slot'], 'top');
+  });
+
+  test('single-slot display prefers the actually changed item copy', () {
+    final screen = _read('lib/screens/stylist_chat_screen.dart');
+    expect(screen, contains('final focusedReply = fallbackReply ?? brainReply;'));
+    expect(screen, contains("? 'local_swap_fallback'"));
+  });
+'''
+          final_close = test_text.rfind('\n}')
+          if final_close < 0:
+              raise SystemExit('test main closing brace not found')
+          test_text = test_text[:final_close] + insert + test_text[final_close:]
+          test_path.write_text(test_text, encoding='utf-8')
+          PY
+
+          git diff --check
+
+      - name: Commit product fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add \
+            lib/utils/stylist_outfit_directive_guard.dart \
+            lib/screens/stylist_chat_screen.dart \
+            test/brain_v1_v2_offline_bundle_test.dart
+          git diff --cached --exit-code && { echo 'No patch produced'; exit 1; } || true
+          git commit -m "fix: honor additive Stylist layer requests"
+          git push origin HEAD:brain-v1-experiment
