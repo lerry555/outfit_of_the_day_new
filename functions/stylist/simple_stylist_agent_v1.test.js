@@ -1,0 +1,430 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const {
+  SIMPLE_AGENT_MODEL,
+  SIMPLE_AGENT_REASONING_EFFORT,
+  createSimpleStylistAgentV1,
+  createOpenAiSimpleAgentExecutorV1,
+} = require("./simple_stylist_agent_v1");
+
+function item({
+  id,
+  name,
+  type,
+  family,
+  slots,
+  layer = "base",
+  color,
+  accents = [],
+  warmth = 4,
+  functions = [],
+  occasionFit = [],
+}) {
+  return {
+    id,
+    name,
+    ontologyVersion: "2.0.0",
+    canonicalType: type,
+    canonicalFamily: family,
+    bodySlots: slots,
+    layerPosition: layer,
+    colorProfile: {
+      primary: {family: color, proportion: 0.9},
+      secondary: null,
+      accents: accents.map((accent) => ({family: accent, proportion: 0.05})),
+    },
+    warmth,
+    formality: 4,
+    outfitFunctions: functions,
+    occasionFit,
+    seasons: ["spring", "summer", "autumn"],
+    imageUrl: `https://example.test/${id}.png`,
+  };
+}
+
+const wardrobe = [
+  item({id: "blue-top", name: "modré tričko", type: "t_shirt", family: "tops", slots: ["upper_body"], color: "blue"}),
+  item({id: "black-top", name: "čierna košeľa", type: "shirt", family: "tops", slots: ["upper_body"], color: "black"}),
+  item({id: "jeans", name: "modré rifle", type: "jeans", family: "bottoms", slots: ["lower_body"], color: "blue"}),
+  item({id: "shorts", name: "krátke čierne nohavice", type: "casual_shorts", family: "bottoms", slots: ["lower_body"], color: "black", occasionFit: []}),
+  item({id: "trousers", name: "béžové nohavice", type: "trousers", family: "bottoms", slots: ["lower_body"], color: "beige", occasionFit: ["imperfect_unknown"]}),
+  item({id: "white-shoes", name: "biele tenisky", type: "sneakers", family: "footwear", slots: ["feet"], layer: "outer", color: "white", accents: ["red"]}),
+  item({id: "red-shoes", name: "červené tenisky", type: "sneakers", family: "footwear", slots: ["feet"], layer: "outer", color: "red"}),
+  item({id: "hoodie", name: "sivá mikina", type: "hoodie", family: "layers", slots: ["upper_body"], layer: "mid", color: "gray", warmth: 6}),
+];
+
+function request(message, currentOutfitItemIds = [], history = []) {
+  return {
+    message,
+    history,
+    currentOutfitItemIds,
+    wardrobeItems: wardrobe,
+    weatherContext: {
+      location: "Bratislava",
+      today: {noonTempC: 22, willRain: false},
+      tomorrow: {noonTempC: 20, willRain: false},
+    },
+    clientContext: {
+      todayDateKey: "2026-09-01",
+      tomorrowDateKey: "2026-09-02",
+      userGpsLocation: "Bratislava",
+    },
+    eventContext: {event: "von"},
+    preferences: {preferredStyles: ["casual"]},
+  };
+}
+
+function queuedAgent(results, logs = []) {
+  const inputs = [];
+  const agent = createSimpleStylistAgentV1({
+    executeModel: async (input) => {
+      inputs.push(input);
+      return {weatherContextKey: "current", ...results.shift()};
+    },
+    logger: {
+      info: (marker, details) => logs.push({marker, details}),
+      warn: (marker, details) => logs.push({marker, details}),
+    },
+  });
+  return {agent, inputs};
+}
+
+test("required conversational flow preserves exact IDs across sequential turns", async () => {
+  const history = [];
+  const outputs = [
+    {
+      stylistComment: "Ahoj, jasné — zajtra to spolu doladíme.",
+      resultingOutfitItemIds: [],
+      displayItemIds: [],
+      outfitChanged: false,
+      outfitRequested: false,
+      hardRequirementEvidence: [],
+    },
+    {
+      stylistComment: "Tu je celý outfit.",
+      resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
+      displayItemIds: ["blue-top", "jeans", "white-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+    },
+    {
+      stylistComment: "Vymenil som iba spodok.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: ["shorts"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "shorts", field: "canonicalType", expectedValue: "casual_shorts"},
+      ],
+    },
+    {
+      stylistComment: "Pridal som mikinu a ukazujem celý outfit.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
+      displayItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "hoodie", field: "canonicalType", expectedValue: "hoodie"},
+      ],
+    },
+  ];
+  const {agent, inputs} = queuedAgent(outputs);
+
+  const hello = await agent.resolve(request("ahoj zajtra idem von", [], history));
+  assert.deepEqual(hello.resultingOutfitItemIds, []);
+  history.push({role: "user", content: "ahoj zajtra idem von"});
+  history.push({role: "assistant", content: hello.reply});
+
+  const full = await agent.resolve(request("potrebujem outfit", [], history));
+  assert.deepEqual(full.resultingOutfitItemIds, ["blue-top", "jeans", "white-shoes"]);
+  assert.deepEqual(full.displayItemIds, full.resultingOutfitItemIds);
+  history.push({role: "user", content: "potrebujem outfit"});
+  history.push({role: "assistant", content: full.reply});
+
+  const shorts = await agent.resolve(request(
+    "radšej by som chcel krátke gate",
+    full.resultingOutfitItemIds,
+    history,
+  ));
+  assert.deepEqual(shorts.resultingOutfitItemIds, ["blue-top", "shorts", "white-shoes"]);
+  assert.deepEqual(shorts.displayItemIds, ["shorts"]);
+  assert.match(shorts.reply, /krátke čierne nohavice/);
+  assert.match(shorts.reply, /modré rifle/);
+  history.push({role: "user", content: "radšej by som chcel krátke gate"});
+  history.push({role: "assistant", content: shorts.reply});
+
+  const hoodie = await agent.resolve(request(
+    "ukáž mi celý outfit a pridaj mi tam aj mikinu",
+    shorts.resultingOutfitItemIds,
+    history,
+  ));
+  assert.deepEqual(hoodie.resultingOutfitItemIds, [
+    "blue-top", "shorts", "white-shoes", "hoodie",
+  ]);
+  assert.deepEqual(hoodie.displayItemIds, hoodie.resultingOutfitItemIds);
+  assert.match(hoodie.reply, /sivá mikina/);
+  assert.deepEqual(inputs[3].model, SIMPLE_AGENT_MODEL);
+  assert.equal(inputs[3].reasoningEffort, SIMPLE_AGENT_REASONING_EFFORT);
+  const modelPayload = JSON.parse(inputs[3].messages[1].content);
+  assert.deepEqual(modelPayload.exactCurrentOutfit.itemIds, shorts.resultingOutfitItemIds);
+  assert.equal(modelPayload.wardrobeV2.length, wardrobe.length);
+  assert.deepEqual(modelPayload.weatherContext.tomorrow.noonTempC, 20);
+  assert.deepEqual(modelPayload.relevantPreferences.preferredStyles, ["casual"]);
+});
+
+test("one result changes top bottom and shoes and uses dominant red footwear", async () => {
+  const {agent} = queuedAgent([{
+    stylistComment: "Vymenil som všetky tri kúsky.",
+    resultingOutfitItemIds: ["black-top", "trousers", "red-shoes"],
+    displayItemIds: ["black-top", "trousers", "red-shoes"],
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [
+      {itemId: "black-top", field: "included", expectedValue: "true"},
+      {itemId: "trousers", field: "included", expectedValue: "true"},
+      {itemId: "red-shoes", field: "primaryColor", expectedValue: "red"},
+    ],
+  }]);
+  const result = await agent.resolve(request(
+    "vymeň vrch, spodok a topánky mi daj tie červené",
+    ["blue-top", "jeans", "white-shoes"],
+  ));
+  assert.deepEqual(result.resultingOutfitItemIds, ["black-top", "trousers", "red-shoes"]);
+  assert.equal(result.resultingOutfitItems[2].colorProfile.primary.family, "red");
+  assert.notEqual(result.resultingOutfitItemIds[2], "white-shoes");
+  assert.match(result.reply, /červené tenisky/);
+  assert.match(result.reply, /biele tenisky/);
+});
+
+test("only explicit Wardrobe V2 records are exposed to the agent", async () => {
+  const legacyLookalike = {
+    ...wardrobe[0],
+    id: "legacy-lookalike",
+  };
+  delete legacyLookalike.ontologyVersion;
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: "Ahoj.",
+    resultingOutfitItemIds: [],
+    displayItemIds: [],
+    outfitChanged: false,
+    outfitRequested: false,
+    hardRequirementEvidence: [],
+  }]);
+  await agent.resolve({
+    ...request("ahoj"),
+    wardrobeItems: [...wardrobe, legacyLookalike],
+  });
+  const payload = JSON.parse(inputs[0].messages[1].content);
+  assert.equal(payload.wardrobeV2.some((entry) => entry.id === "legacy-lookalike"), false);
+});
+
+test("invalid ID gets exactly one repair with precise errors and allowed IDs", async () => {
+  const logs = [];
+  const {agent, inputs} = queuedAgent([
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "invented-shoes"],
+      displayItemIds: ["shorts", "invented-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+    },
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes"],
+      displayItemIds: ["shorts"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "shorts", field: "canonicalType", expectedValue: "casual_shorts"},
+      ],
+    },
+  ], logs);
+  const result = await agent.resolve(request(
+    "radšej by som chcel krátke gate",
+    ["blue-top", "jeans", "white-shoes"],
+  ));
+  assert.equal(inputs.length, 2);
+  const repair = JSON.parse(inputs[1].messages[1].content).repair;
+  assert.ok(repair.validationErrors.includes("result_item_not_owned:invented-shoes"));
+  assert.ok(repair.allowedItemIds.includes("white-shoes"));
+  assert.deepEqual(result.displayItemIds, ["shorts"]);
+  assert.equal(logs.filter((entry) => entry.marker === "SIMPLE_AGENT_REPAIR").length, 1);
+});
+
+test("hard red evidence rejects white footwear with a red accent", async () => {
+  const {agent, inputs} = queuedAgent([
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["black-top", "trousers", "white-shoes"],
+      displayItemIds: ["black-top", "trousers", "white-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "white-shoes", field: "primaryColor", expectedValue: "red"},
+      ],
+    },
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["black-top", "trousers", "red-shoes"],
+      displayItemIds: ["black-top", "trousers", "red-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "red-shoes", field: "primaryColor", expectedValue: "red"},
+      ],
+    },
+  ]);
+  const result = await agent.resolve(request(
+    "vymeň vrch, spodok a topánky mi daj tie červené",
+    ["blue-top", "jeans", "white-shoes"],
+  ));
+  assert.equal(inputs.length, 2);
+  const repair = JSON.parse(inputs[1].messages[1].content).repair;
+  assert.ok(repair.validationErrors.includes(
+    "hard_requirement_not_satisfied:white-shoes:primaryColor:red",
+  ));
+  assert.equal(result.resultingOutfitItemIds[2], "red-shoes");
+});
+
+test("second invalid result fails closed and never invokes a third call", async () => {
+  const logs = [];
+  const invalid = {
+    stylistComment: "Hotovo.",
+    resultingOutfitItemIds: ["invented"],
+    displayItemIds: ["invented"],
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [],
+  };
+  const {agent, inputs} = queuedAgent([{...invalid}, {...invalid}], logs);
+  await assert.rejects(
+    agent.resolve(request("potrebujem outfit")),
+    /simple_agent_validation_failed/,
+  );
+  assert.equal(inputs.length, 2);
+  assert.equal(logs.filter((entry) => entry.marker === "SIMPLE_AGENT_FAIL_CLOSED").length, 1);
+});
+
+test("hard structure and safety validation reject incomplete and unsafe outfits", async () => {
+  const unsafeWardrobe = wardrobe.concat([
+    item({id: "slides", name: "šľapky", type: "slides", family: "footwear", slots: ["feet"], layer: "outer", color: "black"}),
+  ]);
+  const {agent, inputs} = queuedAgent([
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["blue-top", "jeans", "slides"],
+      displayItemIds: ["blue-top", "jeans", "slides"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [
+        {itemId: "slides", field: "included", expectedValue: "true"},
+      ],
+    },
+    {
+      stylistComment: "Hotovo.",
+      resultingOutfitItemIds: ["blue-top", "jeans", "white-shoes"],
+      displayItemIds: ["blue-top", "jeans", "white-shoes"],
+      outfitChanged: true,
+      outfitRequested: true,
+      hardRequirementEvidence: [],
+    },
+  ]);
+  const result = await agent.resolve({
+    ...request("potrebujem outfit"),
+    wardrobeItems: unsafeWardrobe,
+    weatherContext: {wetGroundRisk: true},
+  });
+  assert.equal(inputs.length, 2);
+  assert.deepEqual(result.resultingOutfitItemIds, ["blue-top", "jeans", "white-shoes"]);
+});
+
+test("hard weather validation uses the day selected from conversation", async () => {
+  const wardrobeWithSlides = wardrobe.concat([
+    item({id: "slides", name: "šľapky", type: "slides", family: "footwear", slots: ["feet"], layer: "outer", color: "black"}),
+  ]);
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: "Na zajtra je outfit pripravený.",
+    resultingOutfitItemIds: ["blue-top", "shorts", "slides"],
+    displayItemIds: ["blue-top", "shorts", "slides"],
+    outfitChanged: true,
+    outfitRequested: true,
+    weatherContextKey: "tomorrow",
+    hardRequirementEvidence: [],
+  }]);
+  const result = await agent.resolve({
+    ...request("zajtra potrebujem outfit"),
+    wardrobeItems: wardrobeWithSlides,
+    weatherContext: {
+      today: {wetGroundRisk: true},
+      tomorrow: {wetGroundRisk: false, noonTempC: 24},
+    },
+  });
+  assert.equal(inputs.length, 1);
+  assert.deepEqual(result.resultingOutfitItemIds, ["blue-top", "shorts", "slides"]);
+});
+
+test("OpenAI transport binds Sol, medium reasoning and strict JSON schema", async () => {
+  const requests = [];
+  const execute = createOpenAiSimpleAgentExecutorV1({
+    resolveOpenAISecret: () => "test-key",
+    fetchImpl: async (url, init) => {
+      requests.push({url, body: JSON.parse(init.body)});
+      return {
+        ok: true,
+        json: async () => ({
+          output_text: JSON.stringify({
+            stylistComment: "Ahoj.",
+            resultingOutfitItemIds: [],
+            displayItemIds: [],
+            outfitChanged: false,
+            outfitRequested: false,
+            weatherContextKey: "none",
+            hardRequirementEvidence: [],
+          }),
+        }),
+      };
+    },
+  });
+  const {agent} = queuedAgent([]);
+  const modelInput = agent ? require("./simple_stylist_agent_v1")
+    .buildModelInputV1(require("./simple_stylist_agent_v1").normalizeRequestV1(
+      request("ahoj"),
+    )) : null;
+  const output = await execute(modelInput);
+  assert.equal(output.stylistComment, "Ahoj.");
+  assert.equal(requests[0].body.model, "gpt-5.6-sol");
+  assert.equal(requests[0].body.reasoning.effort, "medium");
+  assert.equal(requests[0].body.text.format.strict, true);
+  assert.equal(requests[0].body.text.format.schema.additionalProperties, false);
+});
+
+test("callable is isolated from every legacy outfit interpretation authority", () => {
+  const index = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
+  const start = index.indexOf("exports.stylistSimpleAgentV1");
+  const end = index.indexOf("exports.stylistChat", start);
+  assert.ok(start >= 0 && end > start);
+  const scope = index.slice(start, end);
+  assert.match(scope, /simpleStylistAgentV1\.resolve/);
+  for (const forbidden of [
+    "routeStylistRequest",
+    "sanitizeStylistOutfitDirective",
+    "sanitizeOutfitEditPlanV1",
+    "createFrozenStylistAuthority",
+    "outfitDirective",
+    "explicit_swap",
+  ]) {
+    assert.equal(scope.includes(forbidden), false, forbidden);
+  }
+  const implementation = fs.readFileSync(
+    path.join(__dirname, "simple_stylist_agent_v1.js"),
+    "utf8",
+  );
+  assert.equal(implementation.includes("StylistSwapRequest"), false);
+  assert.equal(implementation.includes("OutfitEditPlan"), false);
+});

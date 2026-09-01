@@ -91,6 +91,10 @@ const {
   createNoRetryFetchExecutor,
 } = require("./stylist/ai_stylist_no_retry_fetch_v1");
 const {
+  createSimpleStylistAgentV1,
+  createOpenAiSimpleAgentExecutorV1,
+} = require("./stylist/simple_stylist_agent_v1");
+const {
   buildConversationBrainResponsesBodyV1,
   extractConversationBrainResponseTextV1,
   extractConversationBrainWebResearchV1,
@@ -118,6 +122,13 @@ const shoppingWishlistEventStore = createFirestoreWishlistEventStore(db);
 // This executor has no retry, repair, fallback or credential serialization
 // path. It is shared with the preflighted benchmark transport.
 const frozenStylistNoRetryExecutor = createNoRetryFetchExecutor();
+const simpleStylistAgentV1 = createSimpleStylistAgentV1({
+  executeModel: createOpenAiSimpleAgentExecutorV1({
+    fetchImpl: fetch,
+    resolveOpenAISecret,
+  }),
+  logger,
+});
 const shoppingWishlistNotificationService = createWishlistNotificationService({
   messaging: admin.messaging(),
   tokenStore: createFirestoreWishlistTokenStore(db),
@@ -3787,6 +3798,83 @@ exports.attachCleanImageOnWardrobeWrite = functions
           uid, code: code.slice(0, 80) || "frozen_stylist_authority_failed",
         });
         throw new functions.https.HttpsError("internal", "frozen_stylist_authority_failed");
+      }
+    });
+
+  // -------------------------------------------------------------------------
+  // stylistSimpleAgentV1 – isolated Brain V1 path. The model directly returns
+  // the final owned wardrobe IDs. No swap/directive/edit-plan/frozen pipeline
+  // is called from this boundary, including on validation failure.
+  // -------------------------------------------------------------------------
+  exports.stylistSimpleAgentV1 = functions
+    .region("us-east1")
+    .runWith({
+      timeoutSeconds: 120,
+      memory: "512MB",
+      secrets: [OPENAI_API_KEY_SECRET],
+    })
+    .https.onCall(async (data, context) => {
+      const uid = context.auth?.uid;
+      if (!uid) {
+        throw new functions.https.HttpsError("unauthenticated", "auth_required");
+      }
+      const notifyJobId = String(data?.notifyJobId || "").trim();
+      const chatId = String(data?.chatId || "").trim();
+      let wardrobeItems;
+      try {
+        const snapshot = await db.collection("users").doc(uid)
+          .collection("wardrobe").limit(200).get();
+        wardrobeItems = snapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...(doc.data() || {}),
+        }));
+      } catch (error) {
+        logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
+          stage: "wardrobe_snapshot",
+          code: String(error?.code || "wardrobe_snapshot_failed").slice(0, 80),
+        });
+        throw new functions.https.HttpsError(
+          "unavailable",
+          "simple_agent_wardrobe_unavailable",
+        );
+      }
+
+      try {
+        const result = await simpleStylistAgentV1.resolve({
+          message: data?.message,
+          history: data?.history,
+          currentOutfitItemIds: data?.currentOutfitItemIds,
+          wardrobeItems,
+          weatherContext: data?.weatherContext,
+          clientContext: data?.clientContext,
+          eventContext: data?.eventContext,
+          userStylePreferences: sanitizeUserStylePreferences(
+            data?.userStylePreferences,
+          ),
+        });
+        return await finalizeStylistResult(uid, notifyJobId, chatId, result);
+      } catch (error) {
+        logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
+          stage: "callable",
+          code: String(error?.code || error?.message || "simple_agent_failed")
+            .slice(0, 120),
+          validationErrors: Array.isArray(error?.validationErrors) ?
+            error.validationErrors.slice(0, 12) : [],
+        });
+        return await finalizeStylistResult(uid, notifyJobId, chatId, {
+          contractVersion: 1,
+          simpleAgent: true,
+          failClosed: true,
+          reply: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
+          stylistComment: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
+          resultingOutfitItemIds: [],
+          displayItemIds: [],
+          resultingOutfitItems: [],
+          displayItems: [],
+          outfitChanged: false,
+          outfitRequested: false,
+          action: "simple_agent_fail_closed",
+        });
       }
     });
 

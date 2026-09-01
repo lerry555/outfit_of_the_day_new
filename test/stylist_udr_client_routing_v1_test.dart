@@ -42,23 +42,33 @@ void main() {
     );
   });
 
-  test('production screen keeps local semantic gates off the UDR route', () {
+  test('Brain V1 ordinary turn uses simple agent before legacy UDR code', () {
     final source = File(
       'lib/screens/stylist_chat_screen.dart',
     ).readAsStringSync().replaceAll('\r\n', '\n');
+    final start = source.indexOf('Future<void> _sendMessage() async');
+    final end = source.indexOf('Future<void> _showImageSourceSheet()', start);
+    expect(start, greaterThanOrEqualTo(0));
+    expect(end, greaterThan(start));
+    final ordinaryTurn = source.substring(start, end);
+    expect(ordinaryTurn, contains('_stylistSimpleAgentService.sendTurn'));
+    expect(ordinaryTurn, contains('_handleSimpleAgentResponse(response)'));
+    expect(
+      ordinaryTurn,
+      isNot(contains('StylistUdrClientRoutingV1.normalizeContextAction')),
+    );
+    expect(
+      ordinaryTurn,
+      isNot(contains('_blockIfConversationNeedsClarification')),
+    );
+    expect(ordinaryTurn, isNot(contains('_runHybridOutfitGeneration(')));
+    expect(ordinaryTurn, isNot(contains('outfitDirective')));
+
+    // Rollback-only legacy implementation remains compiled for non-simple
+    // transports, but cannot be reached from the ordinary Brain V1 turn.
     expect(
       source,
       contains('StylistUdrClientRoutingV1.normalizeContextAction'),
-    );
-    expect(
-      source,
-      contains("if (!_useAiClarifyFlow &&\n          !useShoppingTransport &&"),
-    );
-    expect(
-      source,
-      contains(
-        "if (!_useAiClarifyFlow &&\n        _blockIfConversationNeedsClarification",
-      ),
     );
     expect(source, contains("if (effectiveAction == 'generate_outfit')"));
     expect(source, contains('await _runHybridOutfitGeneration('));

@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 
 import '../domain/style_preferences/style_preferences_runtime.dart';
 import 'stylist_job_consumer.dart';
+import 'stylist_simple_agent_service_v1.dart';
 import 'stylist_travel_request_enricher.dart';
 import 'user_style_preferences_reader.dart';
 
@@ -85,10 +86,7 @@ class StylistChatService {
         : <String, dynamic>{};
 
     if (authoritative.isEmpty && publicContext.isEmpty) return null;
-    return <String, dynamic>{
-      ...publicContext,
-      ...authoritative,
-    };
+    return <String, dynamic>{...publicContext, ...authoritative};
   }
 
   Future<Map<String, dynamic>> sendMessage(
@@ -372,6 +370,9 @@ class StylistChatService {
   /// Prevedie surový `result` z Firestore do rovnakého tvaru, aký vracia
   /// `sendMessage`, aby ho klient vedel spracovať rovnakou cestou.
   static Map<String, dynamic> normalizeJobResult(Map<String, dynamic> data) {
+    if (data['simpleAgent'] == true) {
+      return StylistSimpleAgentServiceV1.normalizeJobResult(data);
+    }
     final reply = data['reply'];
     final suggestedItems = data['suggestedItems'];
     return <String, dynamic>{

@@ -16,11 +16,11 @@ import '../debug/stylist_conversation_qa_runner.dart';
 import '../debug/stylist_location_qa_runner.dart';
 import '../Services/fcm_service.dart';
 import '../Services/hourly_weather_service.dart';
-import '../Services/outfit_generation_service.dart';
 import '../Services/stylist_chat_outfit_service.dart';
 import '../Services/stylist_frozen_candidate_decision_service.dart';
 import '../Services/stylist_udr_client_routing_v1.dart';
 import '../Services/stylist_chat_service.dart';
+import '../Services/stylist_simple_agent_service_v1.dart';
 import '../Services/stylist_chat_store.dart';
 import '../Services/stylist_job_consumer.dart';
 import '../Services/stylist_notification_intent.dart';
@@ -41,7 +41,6 @@ import '../utils/stylist_destination_parser.dart';
 import '../utils/stylist_day_parser.dart';
 import '../utils/stylist_city_suggester.dart';
 import '../utils/stylist_occasion_guidance.dart';
-import '../utils/stylist_semantic_activity.dart';
 import '../utils/stylist_outfit_explain_builder.dart';
 import '../utils/stylist_swap_request.dart';
 import '../utils/stylist_outfit_edit_routing.dart';
@@ -49,7 +48,6 @@ import '../domain/wardrobe_v2/outfit_edit_plan_v1.dart';
 import '../utils/stylist_activity_terrain.dart';
 import '../utils/stylist_wardrobe_context_need.dart';
 import '../utils/stylist_conversation_signals.dart';
-import '../utils/stylist_outfit_directive_guard.dart';
 import '../utils/stylist_weather_tip.dart';
 import '../utils/stylist_weather_adjustment.dart';
 import '../utils/stylist_chat_entitlement.dart';
@@ -93,6 +91,11 @@ class StylistChatMessage {
   /// chat never has to infer state from user-facing wording.
   final String? outfitUpdateSlot;
 
+  /// Authoritative full outfit state returned by SIMPLE AGENT. This is kept
+  /// separately from [suggestedItems], which contains only the IDs the model
+  /// explicitly asked the UI to display on this turn.
+  final List<Map<String, dynamic>> resultingOutfitItems;
+
   const StylistChatMessage({
     required this.text,
     required this.isUser,
@@ -103,6 +106,7 @@ class StylistChatMessage {
     this.ephemeral = false,
     this.sourceJobId,
     this.outfitUpdateSlot,
+    this.resultingOutfitItems = const <Map<String, dynamic>>[],
   });
 
   StylistChatMessage copyWith({String? sourceJobId, String? outfitUpdateSlot}) {
@@ -116,6 +120,7 @@ class StylistChatMessage {
       ephemeral: ephemeral,
       sourceJobId: sourceJobId ?? this.sourceJobId,
       outfitUpdateSlot: outfitUpdateSlot ?? this.outfitUpdateSlot,
+      resultingOutfitItems: resultingOutfitItems,
     );
   }
 
@@ -131,11 +136,14 @@ class StylistChatMessage {
         'sourceJobId': sourceJobId,
       if (outfitUpdateSlot != null && outfitUpdateSlot!.isNotEmpty)
         'outfitUpdateSlot': outfitUpdateSlot,
+      if (resultingOutfitItems.isNotEmpty)
+        'resultingOutfitItems': resultingOutfitItems,
     };
   }
 
   factory StylistChatMessage.fromMap(Map<String, dynamic> map) {
     final rawItems = map['suggestedItems'];
+    final rawResultItems = map['resultingOutfitItems'];
     final sourceJobId = (map['sourceJobId'] ?? '').toString().trim();
     return StylistChatMessage(
       text: (map['text'] ?? '').toString(),
@@ -157,6 +165,12 @@ class StylistChatMessage {
           (map['outfitUpdateSlot'] ?? '').toString().trim().isEmpty
           ? null
           : (map['outfitUpdateSlot'] ?? '').toString().trim(),
+      resultingOutfitItems: rawResultItems is List
+          ? rawResultItems
+                .whereType<Map>()
+                .map((e) => Map<String, dynamic>.from(e))
+                .toList(growable: false)
+          : const <Map<String, dynamic>>[],
     );
   }
 }
@@ -186,6 +200,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   final _storage = FirebaseStorage.instance;
   final _imagePicker = ImagePicker();
   final _stylistChatService = StylistChatService();
+  final _stylistSimpleAgentService = StylistSimpleAgentServiceV1();
   final _shoppingWishlistService = ShoppingWishlistV2Service();
   final _shoppingDetailsService = ShoppingCandidateDetailsService();
   final _stylistChatOutfitService = StylistChatOutfitService();
@@ -475,6 +490,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   Future<void> _applyNormalizedJobResponse(
     Map<String, dynamic> response,
   ) async {
+    if (response['simpleAgent'] == true) {
+      _handleSimpleAgentResponse(response);
+      return;
+    }
     final lastUser = _messages.lastWhere(
       (m) => m.isUser && m.text.trim().isNotEmpty,
       orElse: () => const StylistChatMessage(text: '', isUser: true),
@@ -646,6 +665,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       _pendingImage = null;
       _isSending = false;
       _lastOutfitItemIds = const {};
+      _currentOutfitItems = const <Map<String, dynamic>>[];
       _outfitContextState = const OutfitContextState();
       _lastResolvedEventTempC = null;
       _unresolvableDestinations.clear();
@@ -709,16 +729,17 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             : data!['photoImproveHint'].toString();
         _pendingImage = null;
         _isSending = false;
-        _outfitContextState = OutfitContextState.buildFrom(
-          conversation: _conversationHintText(),
-          gpsCityLabel: UserLocationService.instance.cityLabel,
-          latestUserText: _messages
-              .lastWhere(
-                (message) => message.isUser,
-                orElse: () => const StylistChatMessage(text: '', isUser: true),
-              )
-              .text,
+        _currentOutfitItems = const <Map<String, dynamic>>[];
+        final restoredOutfit = _resolvedCurrentOutfitItems();
+        _currentOutfitItems = List<Map<String, dynamic>>.unmodifiable(
+          restoredOutfit,
         );
+        _lastOutfitItemIds = Set<String>.unmodifiable(
+          restoredOutfit
+              .map((item) => (item['id'] ?? '').toString().trim())
+              .where((id) => id.isNotEmpty),
+        );
+        _outfitContextState = const OutfitContextState();
         _lastResolvedEventTempC = null;
         _unresolvableDestinations.clear();
       });
@@ -795,142 +816,41 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     _scrollToBottom();
 
     try {
-      if (_shoppingState.isActive &&
-          StylistShoppingClientRouting.isNormalOutfitTopic(text)) {
-        _shoppingState = const StylistShoppingSessionState();
+      var history = _buildHistoryForBackend();
+      if (history.isNotEmpty &&
+          history.last['role'] == 'user' &&
+          history.last['content'] == text) {
+        history = history.sublist(0, history.length - 1);
       }
-      final useShoppingTransport =
-          ShoppingUiFeatureFlags.mayExposeCatalog &&
-          StylistShoppingClientRouting.shouldUseShoppingTransport(
-            text,
-            _shoppingState,
-          );
-      debugPrint('STYLIST CHAT conversation_gate_enter');
-      // The production U/D/R context authority (GPT-4o) owns semantic
-      // clarification. Keep this legacy gate available only for a disabled
-      // compatibility flow; it must not preempt the context callable.
-      if (!_useAiClarifyFlow &&
-          !useShoppingTransport &&
-          _blockIfConversationNeedsClarification(
-            sourceText: text,
-            blockWeatherAndAi: true,
-          )) {
-        return;
-      }
-      final history = _buildHistoryForBackend();
-      final sourceChoiceNeedsWardrobe =
-          _shoppingState.activeClarification == 'SHOPPING_SOURCE' &&
-          RegExp(
-            r'šatník|satnik|wardrobe|z mojich',
-          ).hasMatch(text.toLowerCase());
-      final needsWardrobe =
-          _messageNeedsWardrobeContext(text) || sourceChoiceNeedsWardrobe;
-      // GPS is useful for a routine local request, but not evidence that an
-      // ambiguous trip happens in the user's home city.
-      _outfitContextState = OutfitContextState.buildFrom(
-        conversation: _conversationHintText(),
-        gpsCityLabel: UserLocationService.instance.cityLabel,
-        previous: _outfitContextState,
-        latestUserText: text,
-      );
-      debugPrint(
-        'STYLIST CHAT grounding_state '
-        'status=${_outfitContextState.groundingStatus} '
-        'remote=${_outfitContextState.remoteActivityPlanned} '
-        'location=${_outfitContextState.activityLocationLabel ?? '-'} '
-        'activity=${_outfitContextState.activityHint ?? '-'} '
-        'unresolved=${_outfitContextState.unresolvedMaterialFields} '
-        'semantic=${StylistSemanticActivity.runtimeVersion} '
-        'directActivity=${StylistSemanticActivity.resolveExplicit(text) ?? '-'} '
-        'correction=${_outfitContextState.userCorrectionDetected}',
-      );
-      final timing = Stopwatch()..start();
+      final restoredCurrent = _resolvedCurrentOutfitItems();
+      final currentIds = restoredCurrent
+          .map((item) => (item['id'] ?? '').toString().trim())
+          .where((id) => id.isNotEmpty)
+          .toList(growable: false);
       _setSendingProgress(StylistChatProgressPhase.checkingWeather);
-      final weatherContext = await _resolveWeatherContextForRequest(
-        lightweight: !needsWardrobe,
-        allowGpsEventFallback:
-            _outfitContextState.groundingStatus == 'sufficient',
-      );
-      final weatherMs = timing.elapsedMilliseconds;
-      timing.reset();
-      final clientContext = _buildClientContext(
-        cityName: weatherContext['cityName']?.toString(),
-      );
-      debugPrint(
-        'STYLIST CHAT request needsWardrobe=$needsWardrobe weatherMs=$weatherMs',
-      );
-      if (!_useAiClarifyFlow && _shouldClarifyBeforeApiCall(text)) {
-        final clarification = _sanitizeStylistReplyForDisplay(
-          _localClarificationBeforeOutfit(),
-        );
-        setState(() {
-          _messages.add(StylistChatMessage(text: clarification, isUser: false));
-          _isSending = false;
-        });
-        _scrollToBottom();
-        return;
-      }
-      // AI-first: správu posielame backend AI. Lokálne pravidlá sú poistka
+      final weatherContext = await _simpleAgentWeatherContext();
+      final clientContext = _simpleAgentClientContext();
       final jobId = _newJobId();
       _inFlightJobId = jobId;
-      final shoppingRequestContext = useShoppingTransport
-          ? <String, dynamic>{
-              ..._shoppingState.toApiPayload(),
-              // One user turn retains this ID across callable retries, so a
-              // durable backend mutation cannot advance the pool twice.
-              'operationId': jobId,
-            }
-          : null;
       _setSendingProgress(StylistChatProgressPhase.thinkingWithContext);
-      var response = await _stylistChatService.sendMessage(
-        text,
+      var response = await _stylistSimpleAgentService.sendTurn(
+        message: text,
         history: history,
+        currentOutfitItemIds: currentIds,
         weatherContext: weatherContext,
         clientContext: clientContext,
-        outfitContextState: _outfitContextState.toApiPayload(),
-        includeWardrobe: needsWardrobe,
         notifyJobId: jobId,
         chatId: _activeChatId,
-        shoppingContext: shoppingRequestContext,
       );
-      // Ak spadlo spojenie (appka bola na pozadí), funkcia na serveri aj tak
-      // dobehla a výsledok zapísala do Firestore – dotiahneme ho odtiaľ.
       response = await _recoverIfOffline(response, jobId);
-      final repairedDirective = StylistOutfitDirectiveGuard.repair(
-        rawDirective: response['outfitDirective'],
-        userText: text,
-        hasCurrentOutfit: _conversationAlreadyHasOutfitCards(),
-      );
-      if (repairedDirective != null) {
-        final previousScope = response['outfitDirective'] is Map
-            ? (response['outfitDirective']['scope'] ?? '').toString()
-            : '';
-        response['outfitDirective'] = repairedDirective;
-        if (previousScope != repairedDirective['scope']) {
-          debugPrint(
-            'STYLIST CHAT directive_guard '
-            'from=${previousScope.isEmpty ? "none" : previousScope} '
-            'to=${repairedDirective['scope']} '
-            'layer=${repairedDirective['layerFamily']}',
-          );
-        }
-      }
-      debugPrint('STYLIST CHAT timing apiMs=${timing.elapsedMilliseconds}');
-      debugPrint('STYLIST UDR context_source=gpt4o');
       if (!mounted) {
         _inFlightJobId = null;
         return;
       }
       final start = _messages.length;
-      await _handleAssistantResponse(
-        userText: text,
-        response: response,
-        history: history,
-        weatherContext: weatherContext,
-        clientContext: clientContext,
-      );
+      _handleSimpleAgentResponse(response);
       _stampMessagesWithJobId(start, jobId);
-      if (response['ok'] == true) {
+      if (response['simpleAgent'] == true) {
         await _completeSuccessfulJob(jobId);
       }
       _inFlightJobId = null;
@@ -950,6 +870,118 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       });
       _scrollToBottom();
     }
+  }
+
+  Future<Map<String, dynamic>> _simpleAgentWeatherContext() async {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    final city = UserLocationService.instance.cityShortLabel;
+    try {
+      final snapshots = await Future.wait([
+        _hourlyWeatherService.getWeatherForCityAndDate(city: city, date: today),
+        _hourlyWeatherService.getWeatherForCityAndDate(
+          city: city,
+          date: tomorrow,
+        ),
+      ]);
+      return <String, dynamic>{
+        'location': city,
+        'today': _snapshotToWeatherContext(snapshots[0]),
+        'tomorrow': _snapshotToWeatherContext(snapshots[1]),
+      };
+    } catch (_) {
+      await _ensureWeatherContext();
+      return <String, dynamic>{
+        'location': city,
+        'today': _weatherContextForApi(lightweight: false),
+      };
+    }
+  }
+
+  Map<String, dynamic> _simpleAgentClientContext() {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final tomorrow = today.add(const Duration(days: 1));
+    String dateKey(DateTime value) =>
+        '${value.year.toString().padLeft(4, '0')}-'
+        '${value.month.toString().padLeft(2, '0')}-'
+        '${value.day.toString().padLeft(2, '0')}';
+    final location = UserLocationService.instance.cityLabel.trim();
+    final lat = UserLocationService.instance.latitude;
+    final lon = UserLocationService.instance.longitude;
+    return <String, dynamic>{
+      'now': now.toIso8601String(),
+      'todayDateKey': dateKey(today),
+      'tomorrowDateKey': dateKey(tomorrow),
+      'timezoneOffsetMinutes': now.timeZoneOffset.inMinutes,
+      if (location.isNotEmpty) 'userGpsLocation': location,
+      if (lat != null) 'latitude': lat,
+      if (lon != null) 'longitude': lon,
+    };
+  }
+
+  void _handleSimpleAgentResponse(Map<String, dynamic> response) {
+    final reply = (response['stylistComment'] ?? response['reply'] ?? '')
+        .toString()
+        .trim();
+    if (response['ok'] != true || response['failClosed'] == true) {
+      setState(() {
+        _messages.add(
+          StylistChatMessage(
+            text: reply.isEmpty
+                ? 'Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.'
+                : reply,
+            isUser: false,
+          ),
+        );
+        _isSending = false;
+      });
+      _scrollToBottom();
+      return;
+    }
+
+    final resultingRaw = response['resultingOutfitItems'];
+    final displayRaw = response['displayItems'];
+    final resultingItems = resultingRaw is List
+        ? resultingRaw
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final displayItems = displayRaw is List
+        ? displayRaw
+              .whereType<Map>()
+              .map((item) => Map<String, dynamic>.from(item))
+              .toList(growable: false)
+        : const <Map<String, dynamic>>[];
+    final resultingIds = resultingItems
+        .map((item) => (item['id'] ?? '').toString().trim())
+        .where((id) => id.isNotEmpty)
+        .toSet();
+
+    if (resultingItems.isNotEmpty) {
+      _currentOutfitItems = List<Map<String, dynamic>>.unmodifiable(
+        resultingItems,
+      );
+      _lastOutfitItemIds = Set<String>.unmodifiable(resultingIds);
+    }
+    debugPrint(
+      'SIMPLE_AGENT_VALIDATED uiResult=${resultingIds.toList()} '
+      'uiDisplay=${displayItems.map((item) => item['id']).toList()}',
+    );
+    setState(() {
+      _messages.add(
+        StylistChatMessage(
+          text: reply,
+          isUser: false,
+          suggestedItems: displayItems,
+          resultingOutfitItems: resultingItems,
+        ),
+      );
+      _isSending = false;
+    });
+    _scrollToBottom();
   }
 
   Future<void> _showImageSourceSheet() async {
@@ -3430,7 +3462,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 
     var current = <Map<String, dynamic>>[];
     for (final message in _messages) {
-      if (message.isUser || message.suggestedItems.isEmpty) continue;
+      if (message.isUser) continue;
+      if (message.resultingOutfitItems.isNotEmpty) {
+        current = message.resultingOutfitItems
+            .map((item) => Map<String, dynamic>.from(item))
+            .toList(growable: true);
+        continue;
+      }
+      if (message.suggestedItems.isEmpty) continue;
       final incoming = _sortStylistSuggestedItems(
         message.suggestedItems
             .map((item) => Map<String, dynamic>.from(item))

@@ -53,6 +53,12 @@ const STYLIST_MODEL_REGISTRY = {
 // measures the value of a single conversational owner before paying for a
 // stronger model. Changing the brain model later is a one-line registry swap.
 const STYLIST_ROLE_MODELS = Object.freeze({
+  simpleAgent: Object.freeze({
+    provider: "openai",
+    id: "gpt-5.6-sol",
+    maxTokens: 1600,
+    reasoningEffort: "medium",
+  }),
   conversationBrain: Object.freeze({
     // The legacy `id` remains the explanation transport model. Brain chat uses
     // `webModelId` through the Responses API so hosted tools can be optional.
