@@ -1,0 +1,62 @@
+name: Brain V1 architecture CI fix one-shot
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 0
+      - name: Guard branch state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin brain-v1-experiment master
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/brain-v1-experiment)"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+          git merge-base --is-ancestor 32c763013838f777a0d1a5a16232e36701b9e899 HEAD
+      - name: Apply exact CI fixes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              if s.count(old) != 1:
+                  raise SystemExit(f'{path}: expected 1 match, got {s.count(old)}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              "'formal_shoes' => FootwearFamily.formal,",
+              "'formal_shoes' => FootwearFamily.formalShoes,",
+          )
+          replace_once(
+              'functions/stylist/frozen_stylist_authority_v1.js',
+              '      name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,\n      slot: item.slot,',
+              '      name: item.name, canonicalType: item.canonicalType, primaryColor: item.primaryColor,\n      ...(item.slot ? {slot: item.slot} : {}),',
+          )
+          PY
+          git diff --check
+          git diff -- lib/screens/stylist_chat_screen.dart functions/stylist/frozen_stylist_authority_v1.js
+      - name: Commit fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add lib/screens/stylist_chat_screen.dart functions/stylist/frozen_stylist_authority_v1.js
+          git diff --cached --quiet && exit 1 || true
+          git commit -m "fix: preserve Brain architecture compatibility"
+          git push origin HEAD:brain-v1-experiment
