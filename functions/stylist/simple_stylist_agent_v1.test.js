@@ -292,6 +292,32 @@ test("hard red evidence rejects white footwear with a red accent", async () => {
   assert.equal(result.resultingOutfitItemIds[2], "red-shoes");
 });
 
+test("descriptive included evidence validates an added real wardrobe layer", async () => {
+  const logs = [];
+  const {agent, inputs} = queuedAgent([{
+    stylistComment: "Pridal som mikinu a ukazujem celý outfit.",
+    resultingOutfitItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
+    displayItemIds: ["blue-top", "shorts", "white-shoes", "hoodie"],
+    outfitChanged: true,
+    outfitRequested: true,
+    hardRequirementEvidence: [
+      {itemId: "hoodie", field: "included", expectedValue: "mikina"},
+    ],
+  }], logs);
+
+  const result = await agent.resolve(request(
+    "ukáž mi celý outfit a pridaj mi tam aj mikinu",
+    ["blue-top", "shorts", "white-shoes"],
+  ));
+
+  assert.equal(inputs.length, 1);
+  assert.deepEqual(result.resultingOutfitItemIds, [
+    "blue-top", "shorts", "white-shoes", "hoodie",
+  ]);
+  assert.deepEqual(result.displayItemIds, result.resultingOutfitItemIds);
+  assert.equal(logs.some((entry) => entry.marker === "SIMPLE_AGENT_REPAIR"), false);
+});
+
 test("second invalid result fails closed and never invokes a third call", async () => {
   const logs = [];
   const invalid = {

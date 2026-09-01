@@ -219,7 +219,7 @@ function buildSystemPromptV1() {
     "Ak žiada pridať kus, zachovaj current outfit a pridaj vhodné existujúce ID.",
     "Ak chce ukázať celý outfit, displayItemIds musia byť celý resultingOutfitItemIds.",
     "Pri explicitnej farbe používaj dominantnú primaryColor. Accent color nestačí.",
-    "Každú explicitnú požiadavku na farbu, typ, rodinu, slot alebo konkrétne zahrnutie zapíš aj do hardRequirementEvidence a naviaž ju na vybrané itemId. Bez explicitnej požiadavky vráť prázdne pole.",
+    "Každú explicitnú požiadavku na farbu, typ, rodinu, slot alebo konkrétne zahrnutie zapíš aj do hardRequirementEvidence a naviaž ju na vybrané itemId. Pre field=included nastav expectedValue na true; pre ostatné fields použi presnú hodnotu z wardrobe metadát. Bez explicitnej požiadavky vráť prázdne pole.",
     "Nikdy nevymýšľaj ID. Použi iba wardrobe[].id.",
     "Outfit musí mať zmysluplnú štruktúru: core top + bottom + shoes, alebo full_body + shoes; vrstvy a doplnky sú navyše.",
     "Zohľadni hard weather/safety, event a preferences. occasionFit je mäkké metadata, nie dôvod vyradiť inak platný kus.",
@@ -410,7 +410,13 @@ function validateAgentResultV1(raw, request) {
       continue;
     }
     let actualMatches = false;
-    if (field === "included") actualMatches = expected === "true";
+    // The selected itemId already proves inclusion because the validator above
+    // requires every evidence item to be present in resultingOutfitItemIds.
+    // Treat expectedValue as descriptive for this field. In live Slovak turns
+    // models may repeat the requested garment label (for example "mikina")
+    // instead of the literal string "true"; rejecting that valid evidence
+    // caused both the original result and its single repair to fail closed.
+    if (field === "included") actualMatches = true;
     if (field === "primaryColor") actualMatches = item.primaryColor === expected;
     if (field === "canonicalType") actualMatches = item.canonicalType === expected;
     if (field === "canonicalFamily") actualMatches = item.canonicalFamily === expected;
