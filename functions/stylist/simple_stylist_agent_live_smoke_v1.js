@@ -34,7 +34,8 @@ async function main() {
   );
   if (!authResponse.ok) throw new Error("qa_firebase_signin_failed");
   const auth = await authResponse.json();
-  assert.equal(auth.localId, uid, "qa_auth_identity_mismatch");
+  const verifiedIdentity = await admin.auth().verifyIdToken(auth.idToken);
+  assert.equal(verifiedIdentity.uid, uid, "qa_auth_identity_mismatch");
   const weatherContext = {
     location: "Martin",
     today: {morningTempC: 10, noonTempC: 18, eveningTempC: 14, willRain: true, isWindy: true, fromOpenMeteo: true},
@@ -118,7 +119,8 @@ async function main() {
 main().catch((error) => {
   // Never print provider bodies, tokens, request objects or credential errors.
   const code = String(error.message || "qa_failed");
-  console.error(/^(qa_|existing_|live_)[a-z0-9_]+$/.test(code) ? code : "qa_check_failed");
+  const safeLabel = code.match(/^(?:qa_|existing_|live_)[a-z0-9_]+/);
+  console.error(safeLabel ? safeLabel[0] : "qa_check_failed");
   if (/^[a-z0-9_/-]{1,80}$/i.test(String(error.code || ""))) {
     console.error(`qa_error_code:${error.code}`);
   }

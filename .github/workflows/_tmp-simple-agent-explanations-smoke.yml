@@ -1,0 +1,65 @@
+name: Simple Stylist professional explanations live verification
+
+on:
+  push:
+    branches:
+      - stylist-simple-agent
+    paths:
+      - .github/workflows/_tmp-simple-agent-explanations-smoke.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/stylist-simple-agent'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout simple agent branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard branch and protected baselines
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment master
+          test "$GITHUB_REF_NAME" = "stylist-simple-agent"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+          git merge-base --is-ancestor 9caabd88c3760ac073b99ca45fc33e8eabcca956 HEAD
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Live callable smoke with existing owner test wardrobe
+        env:
+          STYLIST_QA_UID: ZYag22IU3sbQOQEa9kTAbkaeSqb2
+          STYLIST_QA_CURRENT_IDS: '["ArmAaE4A1gdAi2LZCIu4","uwgZnR7YOFZAxqk55FlJ","9ajGS1WO9jtRvCXKScLF","GqhLKcWpQAfaGgiGGhAl"]'
+        run: node functions/stylist/simple_stylist_agent_live_smoke_v1.js --live
+
+      - name: Sanitized callable failure diagnostics
+        if: failure()
+        shell: bash
+        run: |
+          gcloud logging read 'resource.type="cloud_function" AND resource.labels.function_name="stylistSimpleAgentV1" AND jsonPayload.stage="callable"' \
+            --project outfitoftheday-4d401 --freshness=15m --limit=3 \
+            --format='json(jsonPayload.code,jsonPayload.providerStatus,jsonPayload.providerErrorType,jsonPayload.providerErrorCode,jsonPayload.validationErrors)'
+
