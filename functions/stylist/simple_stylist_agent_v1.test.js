@@ -625,6 +625,16 @@ test("OpenAI transport binds Sol, medium reasoning and strict JSON schema", asyn
   assert.equal(requests[0].body.text.format.schema.additionalProperties, false);
 });
 
+test("system prompt keeps the personal stylist voice gender-neutral and non-audit", () => {
+  const modelInput = require("./simple_stylist_agent_v1").buildModelInputV1(
+    normalizeRequestV1(request("potrebujem outfit")),
+  );
+  const prompt = modelInput.messages[0].content;
+  assert.match(prompt, /rodovo neutrálnu stylist personu/);
+  assert.match(prompt, /nie systémový log/);
+  assert.match(prompt, /Neopisuj mechanicky add\/remove\/replace operácie/);
+});
+
 test("callable is isolated from every legacy outfit interpretation authority", () => {
   const index = fs.readFileSync(path.join(__dirname, "..", "index.js"), "utf8");
   const start = index.indexOf("exports.stylistSimpleAgentV1");
