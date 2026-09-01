@@ -1,0 +1,47 @@
+name: Restore normal Stylist explanation fallback
+
+on:
+  push:
+    branches:
+      - brain-v1-experiment
+    paths:
+      - .github/workflows/_tmp-restore-normal-explanation.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: brain-v1-experiment
+          fetch-depth: 0
+      - name: Guard branch and master
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin brain-v1-experiment master
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/brain-v1-experiment)"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+          test -f tool/_tmp_restore_normal_explanation_fallback.py
+      - name: Apply fallback patch
+        run: python3 tool/_tmp_restore_normal_explanation_fallback.py
+      - name: Validate targeted regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          node --check functions/stylist/frozen_stylist_authority_v1.js
+          node --test functions/stylist/frozen_stylist_explanation_user_facing_v1.test.js
+      - name: Commit product fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add functions/stylist/frozen_stylist_authority_v1.js
+          git commit -m "fix: preserve concise normal Stylist fallback context"
+          git push origin HEAD:brain-v1-experiment
