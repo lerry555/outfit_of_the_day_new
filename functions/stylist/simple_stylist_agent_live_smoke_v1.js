@@ -124,6 +124,40 @@ async function main() {
     console.log("LIVE_FOOTWEAR_PASS: review purpose, gap wording and weather facts; no wardrobe changes or notifications.");
     return;
   }
+  if (process.argv.includes("--detail-salience")) {
+    const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
+    const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});
+    const base = JSON.parse(process.env.STYLIST_QA_SALIENCE_IDS || "[]");
+    const paleId = process.env.STYLIST_QA_PALE_HOODIE_ID;
+    assert.equal(base.length, 3, "qa_salience_fixture_required");
+    assert.ok(base.every((id) => byId.has(id)) && byId.has(paleId), "qa_salience_items_missing");
+    const history = [{role: "user", content: "Zajtra popoludní idem von, vyber mi outfit."},
+      {role: "assistant", content: "Čierne tričko a šortky tvoria základ, červené tenisky nadviažu na červenú na tričku."}];
+    const preservesBase = (selected) => assert.ok(base.every((id) => selected.resultingOutfitItemIds.includes(id)),
+      "qa_unrequested_base_changed");
+    const metadata = (selected) => selected.resultingOutfitItemIds.filter((id) => !base.includes(id)).map((id) => {
+      const it = compact(id);
+      return {name: it.name, canonicalType: it.canonicalType, primaryColor: it.primaryColor,
+        secondaryColor: it.secondaryColor, accentColors: it.accentColors, colorProportions: it.colorProportions};
+    });
+    const chosen = await call("reserve_hoodie_free_choice", "Zobral by som si aj mikinu, keby mi bola zima.", base, history);
+    preservesBase(chosen);
+    assert.equal(chosen.resultingOutfitItemIds.length, 4);
+    console.log(JSON.stringify({scenario: "chosen_reserve_layer_metadata", items: metadata(chosen)}));
+    currentSelectionReasons = [];
+    const requested = await call("reserve_pale_hoodie", "Pridaj mi tú svetlomodrú mikinu ako rezervu, ostatné nechaj.", base, history);
+    preservesBase(requested);
+    assert.ok(requested.resultingOutfitItemIds.includes(paleId), "qa_requested_pale_hoodie_missing");
+    console.log(JSON.stringify({scenario: "pale_layer_metadata", items: metadata(requested)}));
+    const explained = await call("pale_hoodie_reason", "Hodí sa tá mikina k tomu najmä kvôli maličkému čiernemu logu?",
+      requested.resultingOutfitItemIds, [...history, {role: "assistant", content: requested.stylistComment}]);
+    assert.deepEqual(explained.resultingOutfitItemIds, requested.resultingOutfitItemIds);
+    assert.equal(explained.outfitChanged, false);
+    // Prose must be reviewed for meaning: mentioning a tiny logo in order to
+    // reject it as the main reason is valid and cannot be judged by keyword bans.
+    console.log("LIVE_DETAIL_SALIENCE_STRUCTURAL_PASS: human review of whole-palette reasoning is required.");
+    return;
+  }
   if (process.argv.includes("--color-details")) {
     const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
     const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});
