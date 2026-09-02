@@ -96,7 +96,7 @@ Do not claim live verification before this deployment and live smoke occur.
   transport. Removing the temporary repository files does not undeploy the
   successful callable revision; no second deployment is needed for this cleanup.
 
-## Follow-up conversation correction — prepared, not yet deployed
+## Follow-up conversation correction — approved and deployed 2026-09-02
 
 The owner's next physical-device transcript exposed two gaps missed by the
 rollout acceptance: `outfitRequested` included explanations, so an unsolicited
@@ -118,13 +118,63 @@ the server's `displayItemIds`; this was not an image cache problem.
   capabilities available to this path. Do not offer or claim real store search;
   give useful selection criteria instead. Connecting shopping is separate work,
   not a reason to restore the legacy intent parser.
-- `simple_stylist_conversation_v1.test.js` adds 14 offline contract regressions;
+- `simple_stylist_conversation_v1.test.js` adds 15 offline contract regressions;
   Flutter adds text-only card/state persistence coverage. These use controlled
   outputs and do not prove live language quality. The `--conversation --live`
   acceptance mode checks eight actual turns including jeans, explicit show,
   new wet terrain, purchase refusal, advice agreement and unavailable search.
   Review every reply semantically, including the first gap's useful next step.
 - No additional production AI call, model downgrade or new result field is
-  introduced. One repair remains the maximum. Deployment of only
-  `stylistSimpleAgentV1` and live acceptance require owner approval; neither is
-  claimed by this prepared correction. The mobile runtime does not change.
+  introduced. One repair remains the maximum. The mobile runtime does not change;
+  this follow-up needs no Flutter rebuild or client update.
+
+### Deployment findings and corrective verification
+
+- The owner explicitly approved deployment of only `stylistSimpleAgentV1` and
+  live acceptance. The first deployment run
+  [33627277306](https://github.com/lerry555/outfit_of_the_day_new/actions/runs/33627277306)
+  deployed successfully but failed its first live turn. It is not a passing
+  acceptance run: the initial provider output could not be parsed and used the
+  complete 2,400-token output budget, including 1,779 reasoning tokens. The one
+  repair then failed `footwear_limitation_not_in_comment`. Both provider requests
+  returned HTTP 200; this was not an App Check or authentication failure.
+- The shared output ceiling is now 4,096 tokens, while the user-facing comment
+  stays capped at 500 characters. The ceiling includes reasoning and structured
+  JSON, not just visible prose, as described in the
+  [OpenAI reasoning guide](https://developers.openai.com/api/docs/guides/reasoning).
+  Incomplete responses are rejected even when their partial JSON is parseable;
+  the existing single repair remains metered. Diagnostic logs record only output
+  status, length and token counts, never raw model prose or credentials. A higher
+  ceiling is not a fixed usage target or a claim of guaranteed cost savings.
+- New footwear-disclosure instructions require an exact current-comment excerpt,
+  not a paraphrase or a previous turn's warning. Repair guidance specifically
+  explains this contract without appending a second deterministic warning.
+- Run
+  [33628666985](https://github.com/lerry555/outfit_of_the_day_new/actions/runs/33628666985)
+  passed all ten live structural scenarios, but manual review found no practical
+  next step in the first gap disclosure. The prompt now requires feasible help
+  when a new proposal first names a genuine wardrobe gap, including a conditional
+  compromise. The first live reply now has a corresponding acceptance check;
+  this text matcher exists only in the QA harness, never in runtime intent logic.
+- The final deployment run
+  [33629614866](https://github.com/lerry555/outfit_of_the_day_new/actions/runs/33629614866)
+  passed **169 automated checks**, deployed only the callable in `us-east1` from
+  `b4e945c`, and passed **10 live turns** (eight conversation, two color-detail).
+  Actual Slovak replies were manually reviewed in addition to structural checks.
+  QA used an existing account's real wardrobe and explicitly synthetic weather,
+  without garment writes, notifications or physical-device UI automation.
+- The first forest outfit selected sneakers with a dry/easy-terrain limitation
+  and concrete footwear-selection advice. "A rifle sú v poriadku?" returned no
+  cards and no footwear recap; its answer discussed leg coverage and checking
+  freedom of movement. Explicit jeans/full-outfit requests displayed one/four
+  cards respectively, without changing the outfit.
+- A new wet/steep-terrain question received a fresh limitation while preserving
+  all IDs. Declining a purchase returned practical jeans-mobility advice without
+  another offer. Accepting pending advice delivered footwear criteria. A store
+  search request honestly disclosed that live stores/prices are unavailable and
+  offered search terms rather than invented products. Red-detail/red-sneaker
+  selection still worked, and its explanation remained text-only.
+- Both temporary deployment/diagnostic workflows and the temporary single-export
+  entry are removed after successful acceptance. Permanent regression CI and
+  live QA modes remain. Cleanup does not undeploy the live callable and needs no
+  second deployment. `brain-v1-experiment` and `master` remain unchanged.
