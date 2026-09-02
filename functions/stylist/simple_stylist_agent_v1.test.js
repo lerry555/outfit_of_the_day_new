@@ -670,8 +670,37 @@ test("OpenAI transport binds Sol, medium reasoning and strict JSON schema", asyn
   assert.equal(output.stylistComment, "Ahoj.");
   assert.equal(requests[0].body.model, "gpt-5.6-sol");
   assert.equal(requests[0].body.reasoning.effort, "medium");
+  assert.equal(requests[0].body.max_output_tokens, 4096);
   assert.equal(requests[0].body.text.format.strict, true);
   assert.equal(requests[0].body.text.format.schema.additionalProperties, false);
+});
+
+test("incomplete provider output is metered, sanitized and repaired at most once even if its JSON parses", async () => {
+  for (const completedRepair of [false, true]) {
+    const logs = [], events = [], bodies = [];
+    const valid = {stylistComment: "Ahoj!", resultingOutfitItemIds: [], displayItemIds: [],
+      outfitChanged: false, outfitRequested: false, weatherContextKey: "none",
+      hardRequirementEvidence: [], commentGroundingEvidence: []};
+    const execute = createOpenAiSimpleAgentExecutorV1({resolveOpenAISecret: () => "test-secret",
+      logger: {warn: (marker, details) => logs.push({marker, details})},
+      recordUsage: async (event) => events.push(event), fetchImpl: async (_, init) => {
+        bodies.push(JSON.parse(init.body));
+        const complete = completedRepair && bodies.length === 2;
+        return {ok: true, status: 200, json: async () => ({status: complete ? "completed" : "incomplete",
+          incomplete_details: complete ? null : {reason: "max_output_tokens"},
+          output_text: JSON.stringify(valid), usage: {input_tokens: 10, output_tokens: complete ? 50 : 4096,
+            input_tokens_details: {cached_tokens: 0, cache_write_tokens: 0}}})};
+      }});
+    const agent = createSimpleStylistAgentV1({executeModel: execute, logger: {}});
+    if (completedRepair) assert.equal((await agent.resolve(request("Ahoj"))).stylistComment, "Ahoj!");
+    else await assert.rejects(agent.resolve(request("Ahoj")), /simple_agent_validation_failed/);
+    assert.equal(bodies.length, 2);
+    assert.equal(events.length, 2);
+    assert.ok(bodies.every((body) => body.max_output_tokens === 4096));
+    assert.equal(logs[0].details.providerIncompleteReason, "max_output_tokens");
+    assert.ok(!JSON.stringify(logs).includes("Ahoj!"));
+    assert.ok(!JSON.stringify(logs).includes("test-secret"));
+  }
 });
 
 test("OpenAI transport retries one transient failure and logs only safe provider metadata", async () => {

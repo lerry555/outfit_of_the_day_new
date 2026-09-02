@@ -1,4 +1,4 @@
-name: Stylist conversation approved deployment
+name: Stylist conversation approved deployment (disclosure and output headroom)
 
 on:
   push:

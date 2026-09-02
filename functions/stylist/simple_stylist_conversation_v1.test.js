@@ -167,3 +167,21 @@ test("the single-model prompt distinguishes consultation, requested cards and fe
   assert.ok(prompt.includes("Po súhlase na túto ponuku rovno poraď"));
   assert.ok(!prompt.includes("zobraziť alebo vysvetliť outfit"));
 });
+
+test("new-compromise repair asks for an exact current-reply excerpt, not a repeated historical warning", async () => {
+  const inputs = [];
+  const disclosure = "Tenisky sú iba na ľahký suchý chodník.";
+  const agent = createSimpleStylistAgentV1({logger: {}, executeModel: async (input) => {
+    inputs.push(input);
+    return answer({stylistComment: `Rifle zakryjú nohy. ${disclosure}`,
+      displayItemIds: current, outfitChanged: true, outfitRequested: true,
+      selectionReasons: current.map((itemId) => ({itemId, reason: "Výber na ranný chodník."})),
+      footwearAssessment: {...conditional, message: inputs.length === 1 ? warning : disclosure}});
+  }});
+  const result = await agent.resolve({message: "Vyber outfit na lesný chodník.", wardrobeItems: wardrobe,
+    currentOutfitItemIds: []});
+  assert.equal(inputs.length, 2);
+  assert.ok(JSON.parse(inputs[1].messages[1].content).repair.footwearDisclosure.includes("presne kopírovať"));
+  assert.equal(result.stylistComment.split(disclosure).length - 1, 1);
+  assert.equal(result.footwearAssessment.message, disclosure);
+});

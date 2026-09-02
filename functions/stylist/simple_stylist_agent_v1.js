@@ -301,6 +301,7 @@ function buildSystemPromptV1() {
     "Zimná a výrazne zateplená obuv patrí do doloženého chladu, snehu alebo zimných podmienok. Nevytiahni ju na mierny či teplý deň ako náhradu za turistickú obuv, kvôli dažďu, lesu, farbe ani preto, že kalendár hovorí zima. Pri 16 °C ráno a 24 °C cez deň bez zimných podmienok uprednostni vhodné tenisky. Pri mraze alebo snehu môže byť zimná obuv naopak správna aj mimo zimných mesiacov. Ľahké Chelsea čižmy nie sú automaticky zimné; samy osebe však nie sú turistická obuv.",
     "V lese má prednosť doložená turistická obuv. Ak chýba, pre ľahký suchý terén môžeš navrhnúť dostupné tenisky ako podmienený kompromis, nie ako plnohodnotnú turistickú náhradu. Nastav status=conditional a vysvetli obmedzenie; pri mokrom/strmom náročnom teréne bez vhodnej obuvi radšej status=missing. Nevyhlasuj všetky tenisky za vhodné do lesa. Z typu/color/warmth nemožno vyvodiť priľnavosť podrážky, nepremokavosť ani bezpečnosť na ľade. Zimné podmienky oprávňujú zvažovať zimný pár, nie vymýšľať tieto vlastnosti.",
     "footwearAssessment.status=suitable znamená vhodný pár; conditional vyžaduje jeden pár s obmedzením; missing nulový počet topánok. Pri NOVOM výbere kompromisu alebo vzniku medzery daj do message stručné prirodzené obmedzenie a zahrň ho do stylistComment. Už oznámené upozornenie neopakuj pri otázke o inom kuse, počasí či pridaní vrstvy. Vráť sa k nemu pri otázke na obuv alebo novej podstatnej okolnosti, napríklad zmene suchého chodníka na strmý mokrý terén; vysvetli nový praktický dôsledok, nekopíruj starý odsek. Pri suitable/not_applicable je message prázdna. Zachovaj aj čiastočný outfit bez topánok pri vysvetlení alebo úprave iného kusa; medzeru nezakrývaj nevhodným párom.",
+    "Technický kontrakt iba pre NOVÝ kompromis/medzeru: footwearAssessment.message musí byť DOSLOVNÝ súvislý úsek z tvojho stylistComment obsahujúci obmedzenie obuvi, najviac 300 znakov. Najprv napíš prirodzenú odpoveď a príslušný úsek skopíruj bez parafrázy, zmeny interpunkcie či slov. Nepripájaj ho druhýkrát a nekopíruj starú vetu z history. Pri footwear_limitation_not_in_comment oprav zhodu týchto dvoch polí; ak samotná odpoveď obmedzenie neobsahuje, najprv ho prirodzene vyjadri v nej. Toto pravidlo nevyžaduje upozornenie v nesúvisiacej ďalšej konzultácii.",
     "Pri slovnej otázke na už vybrané topánky ich bez žiadosti o zmenu nevyraď ani nevymieňaj. Ak nové podmienky prekračujú pôvodný kompromis, otvorene to povedz; zachovanie current IDs nie je tvrdením, že sú topánky vhodné do nových podmienok. Pri existing kompromisnom páre môže conditional vysvetliť, kde sa už použiť nehodí. status=missing znamená skutočnú neprítomnosť páru vo výsledku, nie príkaz automaticky ho odstrániť pri konzultácii.",
     "Pri skladaní outfitu aktívne zohľadni aj secondaryColor a accentColors: zopakovanie malej farby jedného kusa na inom kuse môže outfit zámerne prepojiť. Medzi inak rovnako vhodnými možnosťami uprednostni takéto doložené prepojenie, ak sedí k používateľovej požiadavke a celku. Je to stylingová výhoda, nie tvrdá podmienka; nenaruš kvôli nej počasie, účel, preferencie ani kusy, ktoré používateľ nežiadal meniť. Dominantná farba a farebný detail nie sú zameniteľné.",
     "colorProportions sú odhadnuté podiely 0–1; accents sú v rovnakom poradí ako accentColors. null znamená neznámy podiel, nie nulu. Drobné približne 1–5 % akcenty nesmú byť hlavným dôvodom výberu veľkej farebnej plochy mikiny ani rozhodnúť proti vhodnejšiemu kúsku. Čierna bodka na svetlomodrej mikine sama neobháji jej ladenie s čiernym outfitom. Posúď mikinu aj bez tej bodky: účel, celkovú svetlomodrú farbu, štýl a výrazné ostatné kusy. Výrazný červený detail môže zmysluplne prepojiť červené tenisky; drobný čierny detail na inak modrej mikine nemusíš vôbec spomínať. Pri neznámom podiele netvrď veľkosť ani vizuálnu výraznosť detailu.",
@@ -356,6 +357,9 @@ function buildModelInputV1(request, repairErrors = []) {
       validationErrors: repairErrors,
       allowedItemIds: request.wardrobe.map((item) => item.id),
       instruction: "Oprav iba výsledok. Zachovaj význam používateľovej požiadavky a vráť celý strict result znova.",
+      ...(repairErrors.includes("footwear_limitation_not_in_comment") ? {
+        footwearDisclosure: "Pri novom kompromise musí footwearAssessment.message presne kopírovať úsek obmedzenia zo stylistComment (najviac 300 znakov), nie ho parafrázovať. Ak obmedzenie chýba aj v stylistComment, najprv ho prirodzene doplň. Neopakuj tú istú vetu dvakrát.",
+      } : {}),
     };
   }
   return Object.freeze({
@@ -839,9 +843,10 @@ function createOpenAiSimpleAgentExecutorV1({
       model: input.model,
       ...buildCachedSimpleAgentInputV1(input, cacheScope),
       reasoning: {effort: input.reasoningEffort},
-      // Leave room for the structured per-item choice summaries as well as
-      // evidence and the short user-facing reply.
-      max_output_tokens: 2400,
+      // Includes reasoning as well as JSON. Live QA exhausted 2400 (1779
+      // reasoning), truncating the result and paying for a preventable repair.
+      // This is a ceiling, not a requested reply length; comment stays <=500.
+      max_output_tokens: 4096,
       text: {
         format: {
           type: "json_schema",
@@ -915,6 +920,19 @@ function createOpenAiSimpleAgentExecutorV1({
         throw error;
       }
       const text = extractResponsesTextV1(json);
+      const invalidOutput = () => {
+        safeLog(logger, "warn", "SIMPLE_AGENT_PROVIDER_INVALID_OUTPUT", {
+          modelAttempt,
+          providerResponseStatus: cleanText(json?.status, 60),
+          providerIncompleteReason: cleanText(json?.incomplete_details?.reason, 100),
+          outputTokens: Number.isSafeInteger(json?.usage?.output_tokens) ? json.usage.output_tokens : null,
+          textLength: text.length,
+        });
+        return {stylistComment: "", resultingOutfitItemIds: null, displayItemIds: null};
+      };
+      // Even parseable partial JSON is not a completed response. Any repair
+      // stays in the existing two-attempt loop, with no extra provider retry.
+      if (json?.status === "incomplete") return invalidOutput();
       if (!text) {
         const error = new Error("simple_agent_openai_empty_result");
         error.code = "simple_agent_provider_empty_result";
@@ -926,7 +944,7 @@ function createOpenAiSimpleAgentExecutorV1({
       try {
         return JSON.parse(text);
       } catch (_) {
-        return {stylistComment: "", resultingOutfitItemIds: null, displayItemIds: null};
+        return invalidOutput();
       }
     }
     throw new Error("simple_agent_provider_retry_exhausted");
