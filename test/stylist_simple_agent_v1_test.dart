@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';
+import 'package:outfitofTheDay/Services/hourly_weather_service.dart';
 import 'package:outfitofTheDay/screens/stylist_chat_screen.dart';
 
 Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
@@ -18,6 +19,59 @@ Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
 };
 
 void main() {
+  test('partial outfit with honest footwear gap survives parsing and chat persistence', () {
+    final items = [_item('top', 'Tričko'), _item('bottom', 'Nohavice')];
+    const warning = 'Na mokrý terén ti chýba vhodná obuv; doplň turistický pár.';
+    final result = StylistSimpleAgentResultV1.fromCallableData({
+      'simpleAgent': true,
+      'stylistComment': warning,
+      'resultingOutfitItemIds': ['top', 'bottom'],
+      'displayItemIds': ['top', 'bottom'],
+      'outfitChanged': true,
+      'resultingOutfitItems': items,
+      'displayItems': items,
+      'footwearAssessment': {
+        'use': 'terrain', 'weatherWindow': 'morning',
+        'status': 'missing', 'message': warning,
+      },
+    });
+    expect(result.ok, isTrue);
+    expect(result.failClosed, isFalse);
+    final message = StylistChatMessage(text: result.stylistComment,
+      isUser: false, suggestedItems: result.displayItems,
+      resultingOutfitItems: result.resultingOutfitItems);
+    final restored = StylistChatMessage.fromMap(
+      Map<String, dynamic>.from(jsonDecode(jsonEncode(message.toMap())) as Map));
+    expect(restored.text, warning);
+    expect(restored.resultingOutfitItems.map((item) => item['id']), ['top', 'bottom']);
+    expect(restored.suggestedItems.map((item) => item['id']), ['top', 'bottom']);
+  });
+
+  test('weather snapshots retain original hourly codes independently of UI labels', () {
+    final codes = List<int?>.filled(24, null)..[8] = 75;
+    final snapshot = OutfitWeatherDaySnapshot(
+      cityName: 'Martin', date: DateTime(2026, 12, 3),
+      morningTempC: -2, noonTempC: 3, eveningTempC: 0, minTempC: -3, maxTempC: 3,
+      willRain: false, rainTimeText: null, outfitWhyWeatherNote: '',
+      morningRainSegment: false, afternoonRainSegment: false, eveningRainSegment: false,
+      isWindy: false, summaryText: '', fromOpenMeteo: true,
+      mainChipTempC: 3, mainChipBasis: 'fixture', mainChipHour: 14,
+      briefingMorningCondition: 'Oblačno', briefingAfternoonCondition: 'Oblačno',
+      briefingEveningCondition: 'Oblačno', hourlyWeatherCodeByLocalHour: codes,
+    );
+    expect(snapshot.hourlyWeatherCodeByLocalHour?[8], 75);
+    expect(snapshot.hourlyWeatherCodeByLocalHour?[9], isNull);
+    final source = File('lib/screens/stylist_chat_screen.dart').readAsStringSync();
+    final start = source.indexOf('Map<String, dynamic> _snapshotToWeatherContext(');
+    final end = source.indexOf('Future<void> _ensureWeatherContext()', start);
+    final transport = source.substring(start, end);
+    expect(transport, contains("'hourlyWeatherCodeByLocalHour': snapshot.hourlyWeatherCodeByLocalHour"));
+    expect(transport, contains("'hourlyTempCByLocalHour': snapshot.hourlyTempCByLocalHour"));
+    final weatherSource = File('lib/Services/hourly_weather_service.dart').readAsStringSync();
+    expect(weatherSource, contains('hourlyWeatherCodeByLocalHour: _hourlyWeatherCodeMap(weather.points)'));
+    expect(weatherSource, contains('hourlyWeatherCodeByLocalHour: _hourlyWeatherCodeMap(points)'));
+  });
+
   test('selection reason survives callable parsing and persisted chat restoration', () {
     final piece = _item('jeans', 'Rifle')
       ..['stylistSelectionReason'] = 'Rifle kvôli chladnejšiemu ránu.';

@@ -6,6 +6,9 @@ on:
     paths:
       - 'functions/**'
       - 'firestore.rules'
+      - 'lib/Services/hourly_weather_service.dart'
+      - 'lib/screens/stylist_chat_screen.dart'
+      - 'test/stylist_simple_agent_v1_test.dart'
       - '.github/workflows/stylist-cost-controls-ci.yml'
   workflow_dispatch:
   workflow_call:
@@ -30,6 +33,7 @@ jobs:
       - name: Syntax and offline regressions
         run: |
           node --check functions/index.js
+          node --test functions/stylist/simple_stylist_footwear_v1.test.js
           node --test functions/costs/cost_controls_v1.test.js functions/stylist/simple_stylist_agent_v1.test.js functions/stylist/simple_stylist_choice_memory_v1.test.js functions/clothing_vision/clothing_analyzer_v2.test.js functions/clothing_vision/gemini_v2_request_snapshot.test.js functions/clothing_vision/gemini_wardrobe_analyzer_v2_transport.test.js functions/shopping/catalog_search_service.test.js functions/shopping/shopping_orchestration_service.test.js functions/stylist/home_final_review_preferences.test.js
           node functions/stylist/simple_stylist_cost_eval_v1.js
       - uses: actions/setup-java@v4
@@ -49,3 +53,5 @@ jobs:
           node functions/scripts/generate_deploy_taxonomy_artifacts.js
       - name: Existing full clothing vision regression
         run: node --test functions/clothing_vision/clothing_vision.test.js
+      - name: Simple-agent client contract and partial-outfit persistence
+        run: flutter test test/stylist_simple_agent_v1_test.dart

@@ -3,6 +3,7 @@
 const {randomUUID} = require("node:crypto");
 const {openAiUsageV1} = require("../costs/ai_usage_v1");
 const {buildCachedSimpleAgentInputV1} = require("./simple_stylist_prompt_cache_v1");
+const {validateFootwearV1} = require("./simple_stylist_footwear_v1");
 
 const SIMPLE_AGENT_MODEL = "gpt-5.6-sol";
 const SIMPLE_AGENT_REASONING_EFFORT = "medium";
@@ -31,6 +32,8 @@ function safeMap(value) {
 }
 
 function safeNumber(value, fallback = null) {
+  if (value === null || value === undefined || typeof value === "boolean" ||
+      (typeof value === "string" && !value.trim())) return fallback;
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
 }
@@ -55,6 +58,11 @@ function compactWardrobeItemV1(raw) {
   const colorProfile = safeMap(item.colorProfile);
   const secondary = safeMap(colorProfile.secondary);
   const accents = Array.isArray(colorProfile.accents) ? colorProfile.accents : [];
+  const knownAccents = accents.filter((color) => cleanText(safeMap(color).family, 60)).slice(0, 4);
+  const proportion = (color) => {
+    const value = safeMap(color).proportion;
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1 ? value : null;
+  };
   return Object.freeze({
     id,
     name: cleanText(item.name || item.typePretty || item.type || canonicalType, 160),
@@ -64,10 +72,15 @@ function compactWardrobeItemV1(raw) {
     layerPosition,
     primaryColor,
     secondaryColor: cleanText(secondary.family, 60).toLowerCase() || null,
-    accentColors: Object.freeze(accents
+    accentColors: Object.freeze(knownAccents
       .map((color) => cleanText(safeMap(color).family, 60).toLowerCase())
       .filter(Boolean)
       .slice(0, 4)),
+    colorProportions: Object.freeze({
+      primary: proportion(colorProfile.primary),
+      secondary: proportion(secondary),
+      accents: Object.freeze(knownAccents.map(proportion)),
+    }),
     warmth: safeNumber(item.warmth, 0),
     formality: safeNumber(item.formality, 0),
     outfitFunctions: Object.freeze(stringList(item.outfitFunctions, 16, 80)
@@ -174,8 +187,19 @@ const SIMPLE_AGENT_RESULT_SCHEMA = Object.freeze({
     "hardRequirementEvidence",
     "commentGroundingEvidence",
     "selectionReasons",
+    "footwearAssessment",
   ],
   properties: {
+    footwearAssessment: {
+      type: "object", additionalProperties: false,
+      required: ["use", "weatherWindow", "status", "message"],
+      properties: {
+        use: {type: "string", enum: ["everyday", "terrain", "sport", "formal", "other", "none"]},
+        weatherWindow: {type: "string", enum: ["morning", "noon", "evening", "day", "unknown"]},
+        status: {type: "string", enum: ["suitable", "conditional", "missing", "not_applicable"]},
+        message: {type: "string", maxLength: 300},
+      },
+    },
     selectionReasons: {
       type: "array",
       maxItems: 12,
@@ -270,9 +294,15 @@ function buildSystemPromptV1() {
     "Pri explicitnej farbe používaj dominantnú primaryColor. Accent color nestačí.",
     "Každú explicitnú požiadavku na farbu, typ, rodinu, slot alebo konkrétne zahrnutie zapíš aj do hardRequirementEvidence a naviaž ju na vybrané itemId. Pre field=included nastav expectedValue na true; pre ostatné fields použi presnú hodnotu z wardrobe metadát. Bez explicitnej požiadavky vráť prázdne pole.",
     "Nikdy nevymýšľaj ID. Použi iba wardrobe[].id.",
-    "Outfit musí mať zmysluplnú štruktúru: core top + bottom + shoes, alebo full_body + shoes; vrstvy a doplnky sú navyše.",
+    "Outfit má mať core top + bottom + shoes, alebo full_body + shoes; vrstvy a doplnky sú navyše. Ak pre daný účel nemáš vhodné topánky ani poctivo použiteľnú náhradu, nastav footwearAssessment.status=missing, vynechaj shoes a ukáž zvyšok outfitu. Nevkladaj nevhodný pár len kvôli kompletnosti.",
     "Zohľadni hard weather/safety, event a preferences. occasionFit je mäkké metadata, nie dôvod vyradiť inak platný kus.",
+    "Poradie rozhodovania: účel a podmienky použitia, tepelná/praktická vhodnosť, celkový štýl a dominantná paleta, až potom drobné farebné prepojenia. Samotná existencia kúsku v šatníku ani zhodná farba z neho nerobí vhodnú voľbu.",
+    "Vo footwearAssessment urč use podľa významu používateľovej požiadavky: terrain pre nerovný lesný terén, hubárčenie a turistiku; everyday pre bežné mesto alebo výslovne ľahkú spevnenú prechádzku; sport/formal/other podľa účelu. weatherWindow je skutočný čas nosenia podľa celej konverzácie (morning/noon/evening/day/unknown), nie najchladnejšia časť dňa vybraná na obhájenie topánok. Pri čistej konverzácii použi none/not_applicable a prázdnu message.",
+    "Zimná a výrazne zateplená obuv patrí do doloženého chladu, snehu alebo zimných podmienok. Nevytiahni ju na mierny či teplý deň ako náhradu za turistickú obuv, kvôli dažďu, lesu, farbe ani preto, že kalendár hovorí zima. Pri 16 °C ráno a 24 °C cez deň bez zimných podmienok uprednostni vhodné tenisky. Pri mraze alebo snehu môže byť zimná obuv naopak správna aj mimo zimných mesiacov. Ľahké Chelsea čižmy nie sú automaticky zimné; samy osebe však nie sú turistická obuv.",
+    "V lese má prednosť doložená turistická obuv. Ak chýba, pre ľahký suchý terén môžeš navrhnúť dostupné tenisky ako podmienený kompromis, nie ako plnohodnotnú turistickú náhradu. Nastav status=conditional a vysvetli obmedzenie; pri mokrom/strmom náročnom teréne bez vhodnej obuvi radšej status=missing. Nevyhlasuj všetky tenisky za vhodné do lesa. Z typu/color/warmth nemožno vyvodiť priľnavosť podrážky, nepremokavosť ani bezpečnosť na ľade. Zimné podmienky oprávňujú zvažovať zimný pár, nie vymýšľať tieto vlastnosti.",
+    "footwearAssessment.status=suitable znamená zvolený vhodný pár; conditional vyžaduje jeden zvolený pár a stručné otvorené obmedzenie; missing vyžaduje nulový počet topánok a jasné pomenovanie chýbajúcej obuvi. Pri conditional/missing napíš do message prirodzenú vetu o obmedzení alebo odporúčanom doplnení šatníka a tú istú vetu vlož do stylistComment. Neodporúčaj nákup pri každej bežnej prechádzke, ale nepredstieraj vhodnú obuv, keď ju nemáš. Pri suitable/not_applicable je message prázdna. Pri vysvetlení či počasí zachovaj aj existujúci čiastočný outfit; nevymýšľaj nový pár na vyplnenie medzery.",
     "Pri skladaní outfitu aktívne zohľadni aj secondaryColor a accentColors: zopakovanie malej farby jedného kusa na inom kuse môže outfit zámerne prepojiť. Medzi inak rovnako vhodnými možnosťami uprednostni takéto doložené prepojenie, ak sedí k používateľovej požiadavke a celku. Je to stylingová výhoda, nie tvrdá podmienka; nenaruš kvôli nej počasie, účel, preferencie ani kusy, ktoré používateľ nežiadal meniť. Dominantná farba a farebný detail nie sú zameniteľné.",
+    "colorProportions sú odhadnuté podiely 0–1; accents sú v rovnakom poradí ako accentColors. null znamená neznámy podiel, nie nulu. Drobné približne 1–5 % akcenty nesmú byť hlavným dôvodom výberu veľkej farebnej plochy mikiny ani rozhodnúť proti vhodnejšiemu kúsku. Čierna bodka na svetlomodrej mikine sama neobháji jej ladenie s čiernym outfitom. Posúď mikinu aj bez tej bodky: účel, celkovú svetlomodrú farbu, štýl a výrazné ostatné kusy. Výrazný červený detail môže zmysluplne prepojiť červené tenisky; drobný čierny detail na inak modrej mikine nemusíš vôbec spomínať. Pri neznámom podiele netvrď veľkosť ani vizuálnu výraznosť detailu.",
     "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",
     "outfitRequested=true iba keď používateľ žiada vytvoriť, vybrať, zmeniť, zobraziť alebo vysvetliť outfit či konkrétny kus outfitu.",
     "Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit. Vtedy nastav outfitRequested=false a odpovedz konverzačne; nevytváraj outfit preventívne.",
@@ -292,6 +322,7 @@ function buildSystemPromptV1() {
     "Nepripisuj používateľovi novú prioritu, ktorú nepovedal: samotná žiadosť o kraťasy neznamená, že mu na vzhľade už nezáleží alebo dáva komfort pred eleganciu. Pri explanation turne vysvetľuj a pri obyčajnej konverzácii outfit nemeň.",
     "Pri otázke na počasie použi údaje pre správny deň a miesto podľa weatherContextKey. Ak sú dostupné morningTempC, noonTempC a eveningTempC, stručne povedz ráno/na obed/večer. Nepridávaj potom rozsah minTempC–maxTempC; ten použi iba pri explicitnej otázke na minimum/maximum alebo ak chýba rozpis dňa. Nespájaj teploty z rôznych dní ani lokalít.",
     "K rozpisu počasia pridaj stručne zrážky a vietor, pokiaľ ich poznáš pre ten istý deň. willRain=false formuluj ako 'dážď sa neočakáva', nie ako istotu; isWindy=false znamená nanajvýš 'bez výrazného vetra', NIE bezvetrie. Čas dažďa či silu vetra spomeň iba ak ich dodané dáta podporujú. Chýbajúci údaj nie je false ani nula; pri fromOpenMeteo=false nepovažuj náhradné hodnoty za overenú predpoveď. Rešpektuj userDeclinedRainAdvice pri nevyžiadaných radách.",
+    "hourlyWeatherCodeByLocalHour obsahuje WMO kód pre lokálnu hodinu 0–23: 71/73/75/77/85/86 znamenajú sneh, 56/57/66/67 mrznúce zrážky. Používaj iba relevantné hodiny, deň a miesto spolu s hourlyTempCByLocalHour alebo rozpisom teplôt. willRain=false samo osebe nedokazuje neprítomnosť snehu. Bez údajov sa na dôležité zimné podmienky opýtaj, nevymýšľaj ich. Odlišuj predpoveď sneženia od známeho snehu na zemi; nevymýšľaj jeho hĺbku.",
     "Používateľovi uvádzaj skutočné predpovedané teploty, nie interné outfitTempC či teploty upravené pre aktivitu. weatherChatSummarySk a summaryText sú podklady, nie text na povinné pripojenie; neopakuj z nich denný rozsah po rozpise ráno/obed/večer.",
     "Nevkladaj wardrobe name mechanicky do vety; použi prirodzený slovenský tvar. Nepripisuj používateľovi výber, ktorý si urobil ty, a nepoužívaj implementačný jazyk.",
     "Udržuj stabilnú rodovo neutrálnu stylist personu. O sebe nepoužívaj rodovo značené minulé tvary; formuluj priamo, napríklad 'Skúsme...', 'Za mňa...' alebo 'Toto funguje...'.",
@@ -347,14 +378,15 @@ function itemRoleV1(item) {
   return item.accessoryGroup ? "accessory" : "other";
 }
 
-function validateStructureV1(items) {
+function validateStructureV1(items, {allowMissingFootwear = false} = {}) {
   if (!items.length) return ["outfit_structure_empty"];
   const roles = items.map(itemRoleV1);
   const count = (role) => roles.filter((value) => value === role).length;
   const hasDress = count("full_body") === 1;
   const hasSeparates = count("top") === 1 && count("bottom") === 1;
   const errors = [];
-  if ((!hasDress && !hasSeparates) || count("shoes") !== 1) {
+  if ((!hasDress && !hasSeparates) ||
+      (count("shoes") !== 1 && !(allowMissingFootwear && count("shoes") === 0))) {
     errors.push("outfit_structure_requires_top_bottom_shoes_or_full_body_shoes");
   }
   if (count("full_body") > 1 || count("top") > 1 || count("bottom") > 1 ||
@@ -448,6 +480,29 @@ function validateAgentResultV1(raw, request) {
     if (!resultIds.includes(id)) errors.push(`display_item_not_in_result:${id}`);
   }
   const actualChanged = !sameIdSetV1(request.currentOutfitItemIds, resultIds);
+  const items = resultIds.map((id) => request.byId.get(id)).filter(Boolean);
+  const shoes = items.filter((item) => itemRoleV1(item) === "shoes");
+  // Older internal fixtures/job records omit this field. Live strict outputs
+  // must supply it; this compatibility default never permits a new partial outfit.
+  const assessment = value.footwearAssessment === undefined ? {
+    use: "everyday", weatherWindow: "day",
+    status: value.outfitRequested === true ? "suitable" : "not_applicable", message: "",
+  } : safeMap(value.footwearAssessment);
+  if (!["everyday", "terrain", "sport", "formal", "other", "none"].includes(assessment.use) ||
+      !["morning", "noon", "evening", "day", "unknown"].includes(assessment.weatherWindow) ||
+      !["suitable", "conditional", "missing", "not_applicable"].includes(assessment.status) ||
+      typeof assessment.message !== "string" || assessment.message.length > 300) {
+    errors.push("footwear_assessment_invalid");
+  }
+  const gapMessage = cleanText(assessment.message, 300);
+  if (["conditional", "missing"].includes(assessment.status)) {
+    if (!gapMessage || !stylistComment.includes(gapMessage)) errors.push("footwear_limitation_not_in_comment");
+    if (assessment.status === "missing" && shoes.length) errors.push("missing_footwear_has_selected_shoes");
+    if (assessment.status === "conditional" && shoes.length !== 1) errors.push("conditional_footwear_requires_one_pair");
+  } else if (gapMessage) {
+    errors.push("unexpected_footwear_limitation");
+  }
+  if (actualChanged && assessment.status === "not_applicable") errors.push("changed_outfit_requires_footwear_assessment");
   if (typeof value.outfitChanged === "boolean" && value.outfitChanged !== actualChanged) {
     errors.push("outfit_changed_mismatch");
   }
@@ -462,13 +517,17 @@ function validateAgentResultV1(raw, request) {
     errors.push("chat_turn_display_not_empty");
   }
   if (resultIds.length) {
-    const items = resultIds.map((id) => request.byId.get(id)).filter(Boolean);
-    errors.push(...validateStructureV1(items));
+    errors.push(...validateStructureV1(items, {
+      allowMissingFootwear: assessment.status === "missing" || (!actualChanged && shoes.length === 0),
+    }));
     errors.push(...validateHardWeatherV1(
       items,
       request.weatherContext,
       value.weatherContextKey,
     ));
+    errors.push(...validateFootwearV1({items, currentIds: request.currentOutfitItemIds,
+      weather: request.weatherContext, contextKey: value.weatherContextKey,
+      assessment, changed: actualChanged}));
   }
   for (const rawEvidence of Array.isArray(value.hardRequirementEvidence) ?
     value.hardRequirementEvidence.slice(0, 16) : []) {
@@ -586,6 +645,7 @@ function validateAgentResultV1(raw, request) {
       outfitRequested: value.outfitRequested === true,
       selectionReasons: Object.freeze([...reasons].map(([itemId, reason]) =>
         Object.freeze({itemId, reason}))),
+      footwearAssessment: Object.freeze({...assessment, message: gapMessage}),
     }),
   });
 }
@@ -624,6 +684,7 @@ function materializeResultV1(validated, request) {
     outfitChanged: value.outfitChanged,
     outfitRequested: value.outfitRequested,
     selectionReasons: value.selectionReasons,
+    footwearAssessment: value.footwearAssessment,
     resultingOutfitItems: Object.freeze(value.resultingOutfitItemIds.map((id) => publicById.get(id))),
     displayItems: Object.freeze(value.displayItemIds.map((id) => publicById.get(id))),
     action: value.outfitRequested ? "simple_agent_outfit" : "simple_agent_chat",

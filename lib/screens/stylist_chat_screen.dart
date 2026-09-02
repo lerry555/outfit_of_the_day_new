@@ -3999,6 +3999,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       'isWindy': snapshot.isWindy,
       'summaryText': snapshot.summaryText,
       'fromOpenMeteo': snapshot.fromOpenMeteo,
+      if (snapshot.hourlyTempCByLocalHour != null)
+        'hourlyTempCByLocalHour': snapshot.hourlyTempCByLocalHour,
+      if (snapshot.hourlyWeatherCodeByLocalHour != null)
+        'hourlyWeatherCodeByLocalHour': snapshot.hourlyWeatherCodeByLocalHour,
     };
   }
 

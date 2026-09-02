@@ -67,12 +67,63 @@ async function main() {
     console.log(JSON.stringify({scenario: name, message, reply: result.stylistComment,
       items: result.resultingOutfitItems.map((item) => item.name),
       selectionReasons: result.selectionReasons,
+      footwearAssessment: result.footwearAssessment,
       outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
     currentSelectionReasons = result.selectionReasons || [];
     return result;
   };
+  if (process.argv.includes("--footwear")) {
+    const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
+    const {isWinterFootwearV1} = require("./simple_stylist_footwear_v1");
+    const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});
+    const owned = [...byId.keys()].map(compact).filter(Boolean);
+    const terrainTypes = new Set(["hiking_shoes", "hiking_boots", "trail_running_shoes"]);
+    const sneakers = new Set(["sneakers", "running_shoes", "training_shoes", "basketball_shoes"]);
+    console.log(JSON.stringify({scenario: "owned_footwear_metadata", items: owned
+      .filter((item) => item.bodySlots.includes("feet")).map((item) => ({name: item.name,
+        canonicalType: item.canonicalType, warmth: item.warmth, seasons: item.seasons}))}));
+    const mild = {location: "Martin", tomorrow: {...weatherContext.tomorrow, morningTempC: 16,
+      hourlyTempCByLocalHour: Array.from({length: 24}, (_, h) => h < 12 ? 16 : 24),
+      hourlyWeatherCodeByLocalHour: Array(24).fill(0)}};
+    for (const [index, message] of [
+      "Ahoj, zajtra chceme ísť ráno na huby, čo si obliecť?",
+      "Zajtra ráno ideme zbierať hríby do lesa. Navrhni mi oblečenie.",
+      "Na zajtrajšiu rannú prechádzku lesom mimo chodníka mi vyber outfit.",
+    ].entries()) {
+      currentSelectionReasons = [];
+      const selected = await call(`mild_forest_${index}`, message, [], [], mild);
+      assert.equal(selected.footwearAssessment?.use, "terrain", "qa_terrain_purpose_lost");
+      const shoes = selected.resultingOutfitItemIds.map(compact).filter((item) => item.bodySlots.includes("feet"));
+      for (const shoe of shoes) {
+        assert.ok(!isWinterFootwearV1(shoe), "qa_winter_boots_in_mild_forest");
+        assert.ok(terrainTypes.has(shoe.canonicalType) || sneakers.has(shoe.canonicalType), "qa_non_terrain_boots");
+        if (!terrainTypes.has(shoe.canonicalType)) assert.equal(selected.footwearAssessment.status, "conditional");
+      }
+      if (!shoes.length) assert.equal(selected.footwearAssessment.status, "missing");
+    }
+    currentSelectionReasons = [];
+    const wet = await call("wet_steep_forest", "Zajtra ráno pôjdem do strmého blatistého lesa mimo chodníkov. Vyber mi outfit.",
+      [], [], {location: "Martin", tomorrow: {...mild.tomorrow, willRain: true, wetGroundRisk: true}});
+    if (!owned.some((item) => terrainTypes.has(item.canonicalType))) {
+      assert.equal(wet.footwearAssessment?.status, "missing", "qa_difficult_terrain_gap_not_acknowledged");
+      assert.ok(wet.resultingOutfitItemIds.every((id) => !compact(id).bodySlots.includes("feet")));
+      const followup = await call("partial_weather_preserve", "Koľko bude zajtra stupňov?",
+        wet.resultingOutfitItemIds, [], mild);
+      assert.deepEqual(followup.resultingOutfitItemIds, wet.resultingOutfitItemIds);
+    }
+    currentSelectionReasons = [];
+    const snow = {location: "Martin", tomorrow: {...mild.tomorrow,
+      morningTempC: -3, noonTempC: 1, eveningTempC: -2, minTempC: -5, maxTempC: 1,
+      hourlyTempCByLocalHour: Array(24).fill(-3), hourlyWeatherCodeByLocalHour: Array(24).fill(75)}};
+    const winter = await call("snowy_morning", "Zajtra ráno idem pešo von, má snežiť a bude mrznúť. Vyber mi outfit.", [], [], snow);
+    if (owned.some(isWinterFootwearV1)) {
+      assert.ok(winter.resultingOutfitItemIds.map(compact).some(isWinterFootwearV1), "qa_available_winter_pair_not_selected_for_snow");
+    }
+    console.log("LIVE_FOOTWEAR_PASS: review purpose, gap wording and weather facts; no wardrobe changes or notifications.");
+    return;
+  }
   if (process.argv.includes("--color-details")) {
     const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
     const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});

@@ -43,6 +43,8 @@ class OutfitWeatherDaySnapshot {
   final String briefingEveningCondition;
   /// Teploty z Open-Meteo po hodinách (index = lokálna hodina 0–23).
   final List<int?>? hourlyTempCByLocalHour;
+  /// Original WMO codes; presentation labels can hide snow/freezing precipitation.
+  final List<int?>? hourlyWeatherCodeByLocalHour;
 
   const OutfitWeatherDaySnapshot({
     required this.cityName,
@@ -69,6 +71,7 @@ class OutfitWeatherDaySnapshot {
     required this.briefingAfternoonCondition,
     required this.briefingEveningCondition,
     this.hourlyTempCByLocalHour,
+    this.hourlyWeatherCodeByLocalHour,
   });
 
   /// Presná (alebo najbližšia) teplota v danej lokálnej hodine.
@@ -543,6 +546,7 @@ class HourlyWeatherService {
         briefingAfternoonCondition: briefingAfternoonCondition,
         briefingEveningCondition: briefingEveningCondition,
         hourlyTempCByLocalHour: hourlyTempMap,
+        hourlyWeatherCodeByLocalHour: _hourlyWeatherCodeMap(weather.points),
       );
       _storeSnapshotCache(cacheKey, snapshot);
       return snapshot;
@@ -993,6 +997,17 @@ class HourlyWeatherService {
     return out;
   }
 
+  List<int?> _hourlyWeatherCodeMap(List<_HourlyPoint> points) {
+    final out = List<int?>.filled(24, null);
+    for (final point in points) {
+      final hour = point.time?.hour;
+      if (hour != null && hour >= 0 && hour <= 23) {
+        out[hour] = point.weatherCode;
+      }
+    }
+    return out;
+  }
+
   List<_HourlyPoint> _pointsLocalHourBetween(List<_HourlyPoint> hours, int minH, int maxH) {
     return hours.where((p) {
       final h = p.time?.hour;
@@ -1169,6 +1184,7 @@ class HourlyWeatherService {
         ),
       ),
       hourlyTempCByLocalHour: _hourlyTempMap(points),
+      hourlyWeatherCodeByLocalHour: _hourlyWeatherCodeMap(points),
     );
   }
 
