@@ -3840,7 +3840,10 @@ exports.attachCleanImageOnWardrobeWrite = functions
       // Older clients without a job ID still work, but cannot deduplicate a
       // retry. Never use message text as the ID: repeating a request can be a
       // deliberate new turn. The ordinary app already supplies a stable job ID.
-      const requestId = notifyJobId || require("node:crypto").randomUUID();
+      // requestId also supports callers which need retry protection without
+      // requesting a push notification (for example a read-only QA session).
+      const requestId = notifyJobId || String(data?.requestId || "").trim() ||
+        require("node:crypto").randomUUID();
       let task;
       try {
         task = await runAiTaskOnceV1({

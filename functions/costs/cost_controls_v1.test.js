@@ -323,3 +323,15 @@ test("cheaper-model evaluation is opt-in, bounded and cannot change production m
   assert.equal(calls, 1);
   assert.equal(require("../stylist/simple_stylist_agent_v1").SIMPLE_AGENT_MODEL, "gpt-5.6-sol");
 });
+
+test("live cost checks use request IDs without asking for notifications or wardrobe writes", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const smoke = fs.readFileSync(path.join(__dirname, "cost_controls_live_smoke_v1.js"), "utf8");
+  assert.match(smoke, /requestId: `cost-qa-/);
+  assert.doesNotMatch(smoke, /notifyJobId\s*:/);
+  assert.doesNotMatch(smoke, /\.set\(|\.update\(|\.delete\(.*wardrobe/);
+  const index = fs.readFileSync(path.join(__dirname, "../index.js"), "utf8");
+  const scope = index.slice(index.indexOf("exports.stylistSimpleAgentV1"), index.indexOf("exports.stylistChat"));
+  assert.match(scope, /notifyJobId \|\| String\(data\?\.requestId/);
+});
