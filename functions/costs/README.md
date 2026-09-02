@@ -102,3 +102,40 @@ choice continuity, accent grounding, wardrobe changes, duplicate job replay and
 actual provider usage/cache-hit counters. Unit tests alone do not prove savings
 or unchanged model output quality. Model-price/quality comparison still requires
 configured API access and a paid evaluation run.
+
+### Verified rollout — 2026-09-02
+
+The owner-approved rollout of commit `b748d54b42f143a4e668c33aeb57e28a6e3e0f0f`
+deployed exactly the six functions in the table above. Production Sol/medium,
+Firestore rules, `master` and `brain-v1-experiment` were not changed.
+[Deployment and live acceptance](https://github.com/lerry555/outfit_of_the_day_new/actions/runs/33611351357)
+completed successfully after 94 Node regressions, 2 real Firestore emulator
+tests, 3 Flutter artifact tests and 28 existing vision tests passed.
+
+Observed in the live acceptance run (test weather fixtures, existing QA wardrobe):
+
+- Same request ID and payload returned the identical chat result with **zero
+  additional provider calls**. Repeated unchanged wardrobe analysis also made
+  zero additional provider calls.
+- Three chat calls used 10,310 cache-write tokens once and 10,310 cached input
+  tokens twice: **20,620 input tokens actually served from the provider cache**.
+  The recorded per-call AI estimates were $0.053898, $0.028940 and $0.010488
+  (cold and warm calls had different outputs; this is not a controlled total-cost
+  percentage comparison or a monthly forecast).
+- Usage events were observed for all six instrumented features, including Home
+  generation/review/explanation and clothing recognition. This sample had no
+  attempts with unknown usage. Real client-authenticated reads of all three
+  private collection types were denied by the deployed rules as intended.
+- Conversation-only remained outfit-free; weather-only preserved the outfit.
+  The Slovak forecast used morning/noon/evening temperatures and rain/wind,
+  without the redundant daily temperature range.
+- The color-detail regression selected a black T-shirt with a recorded red
+  accent, paired it with red shoes and explained that connection. Follow-up
+  explanation preserved item IDs. It did not invent a logo or brand claim.
+- No wardrobe documents were changed and no notifications were sent by QA.
+  Normal server-side usage, idempotency and result-cache records were retained.
+
+The temporary deployment workflow/entry point were removed after success; the
+permanent regression workflow remains. No further deployment is needed for that
+source-only cleanup. A real Sol/Terra/Luna quality comparison remains pending:
+the evaluation harness is ready, but the live model comparison was not run.
