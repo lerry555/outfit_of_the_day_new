@@ -105,6 +105,11 @@ async function main() {
     };
     const first = await turn("conversation_new_forest_outfit",
       "Zajtra pôjdem ráno na huby po ľahkom suchom lesnom chodníku. Odporuč mi outfit s dlhými rifľami.");
+    if (["conditional", "missing"].includes(first.footwearAssessment?.status)) {
+      assert.match(norm(first.stylistComment),
+        /chces.{0,90}(porad|vyber|hladat|obuv)|(?:mozem|pomozem).{0,90}(porad|vyber|hladat)|hladaj|pri vybere/,
+        "qa_real_gap_has_no_feasible_next_step");
+    }
     const jeans = ids.find((id) => compact(id)?.canonicalType === "jeans");
     assert.ok(jeans, "qa_explicit_jeans_missing");
     const originalIds = [...ids];

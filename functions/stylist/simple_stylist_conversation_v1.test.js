@@ -163,6 +163,8 @@ test("the single-model prompt distinguishes consultation, requested cards and fe
   assert.ok(prompt.includes("commentGroundingEvidence vyplň"));
   assert.ok(prompt.includes("Už oznámené upozornenie neopakuj"));
   assert.ok(prompt.includes("jeden konkrétny uskutočniteľný ďalší krok"));
+  assert.ok(prompt.includes("MUSÍ nasledovať"));
+  assert.ok(prompt.includes("Toto platí aj pri conditional kompromise"));
   assert.ok(prompt.includes("NIE JE pripojený nástroj na prehľadávanie obchodov"));
   assert.ok(prompt.includes("Po súhlase na túto ponuku rovno poraď"));
   assert.ok(!prompt.includes("zobraziť alebo vysvetliť outfit"));

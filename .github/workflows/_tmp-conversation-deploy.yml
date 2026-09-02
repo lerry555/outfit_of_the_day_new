@@ -1,4 +1,4 @@
-name: Stylist conversation approved deployment (disclosure and output headroom)
+name: Stylist conversation approved deployment (proactive gap acceptance)
 
 on:
   push:
