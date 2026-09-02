@@ -24,4 +24,4 @@ jobs:
         run: >-
           gcloud logging read 'timestamp>="2026-09-02T12:01:48Z" AND (resource.labels.function_name="stylistSimpleAgentV1" OR resource.labels.service_name="stylistsimpleagentv1")'
           --project outfitoftheday-4d401 --limit=60
-          --format='json(timestamp,severity,jsonPayload.message,jsonPayload.stage,jsonPayload.code,jsonPayload.attempt,jsonPayload.valid,jsonPayload.validationErrors,jsonPayload.errors,jsonPayload.providerStatus,jsonPayload.providerErrorType,jsonPayload.providerErrorCode,jsonPayload.providerResponseStatus,jsonPayload.providerIncompleteReason)'
+          --format='json(timestamp,severity,jsonPayload.message,jsonPayload.stage,jsonPayload.code,jsonPayload.attempt,jsonPayload.valid,jsonPayload.validationErrors,jsonPayload.errors,jsonPayload.providerStatus,jsonPayload.providerErrorType,jsonPayload.providerErrorCode,jsonPayload.providerResponseStatus,jsonPayload.providerIncompleteReason,jsonPayload.modelAttempt,jsonPayload.outputTokens,jsonPayload.reasoningTokens,jsonPayload.latencyMs)'
