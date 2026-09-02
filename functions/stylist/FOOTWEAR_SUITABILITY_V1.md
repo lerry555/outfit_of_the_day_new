@@ -62,3 +62,33 @@ Activation needs **only `stylistSimpleAgentV1` deployment** plus a rebuilt Flutt
 client for hourly snow-code transport. Older clients still send day temperatures;
 they benefit from server rules but cannot supply the newly retained hourly codes.
 Do not claim live verification before this deployment and live smoke occur.
+
+## Approved rollout — 2026-09-02
+
+- The owner approved deployment and live verification. Run
+  [33622255003](https://github.com/lerry555/outfit_of_the_day_new/actions/runs/33622255003)
+  passed all 152 automated checks and deployed **only**
+  `stylistSimpleAgentV1` in `us-east1` from `d66d2e9`. The runtime fix is `aac02b7`.
+- All 11 live callable turns passed, using the existing QA account's actual
+  wardrobe and explicitly synthetic weather. No garment documents were changed.
+  This is backend acceptance, not a physical-device UI test.
+- The wardrobe contains running shoes, fashion sneakers and actual
+  `winter_boots` (warmth 9), but no canonical hiking footwear. Three independent
+  forest/mushroom phrasings at 16 C morning / 24 C noon selected either sneakers
+  with an explicit easy/dry-terrain limitation or an honest footwear gap, never
+  winter boots. Steep muddy terrain produced a gap; a subsequent weather-only
+  turn preserved that partial outfit. At -3 C with WMO 75, winter boots were
+  selected. Tests do not establish real-world grip or waterproofing.
+- The reserve-layer scenario preserved all original outfit IDs. An explicitly
+  requested pale-blue sweatshirt (98% blue, 2% black) was explained through its
+  main blue color and the blue in the selected shirt. Asked whether its tiny
+  black logo was the main reason, the response said: "Nie — čierny detail je len
+  drobný bonus, nie hlavný dôvod." This prose was manually reviewed, beyond the
+  structural checks. A separate red-shirt-detail/red-sneaker selection and
+  explanation regression also passed, with no outfit mutation on explanation.
+- The temporary deploy workflow and single-export deployment entry are removed
+  after the successful run. Permanent regression CI and the live QA harness
+  remain. The protected `brain-v1-experiment` and `master` refs remain unchanged.
+- Rebuild the Flutter client to activate the newly retained hourly snow-code
+  transport. Removing the temporary repository files does not undeploy the
+  successful callable revision; no second deployment is needed for this cleanup.
