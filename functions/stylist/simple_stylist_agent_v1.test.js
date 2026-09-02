@@ -797,7 +797,7 @@ test("system prompt keeps the personal stylist voice gender-neutral and non-audi
   assert.match(prompt, /nie systémový log/);
   assert.match(prompt, /Neopisuj mechanicky add\/remove\/replace operácie/);
   assert.match(prompt, /Samotné oznámenie plánu, miesta, času, počasia alebo udalosti nie je požiadavka na outfit/);
-  assert.match(prompt, /displayItemIds musí byť prázdne/);
+  assert.match(prompt, /displayItemIds=\[\]/);
 });
 
 test("color detail selection and explanation use the exact secondary and accent palette", async () => {
@@ -844,7 +844,7 @@ test("detail evidence rejects invented colors, missing data and dominant-color s
   const normalized = normalizeRequestV1({...request("Prečo tieto farby?", current),
     wardrobeItems: wardrobe.map((entry) => entry.id === blackTop.id ? blackTop : entry)});
   const base = {stylistComment: "Farby spolu ladia.", resultingOutfitItemIds: current,
-    displayItemIds: [], outfitChanged: false, outfitRequested: true,
+    displayItemIds: [], outfitChanged: false, outfitRequested: false,
     weatherContextKey: "none", hardRequirementEvidence: [], commentGroundingEvidence: []};
   const evidence = (itemId, field, expectedValue, outfitContext = "result") =>
     ({itemId, field, expectedValue, outfitContext});
@@ -873,7 +873,7 @@ test("detail evidence rejects invented colors, missing data and dominant-color s
 test("an unsupported accent gets one repair and the supported explanation reaches the user", async () => {
   const current = ["blue-top", "shorts", "white-shoes"];
   const base = {resultingOutfitItemIds: current, displayItemIds: [],
-    outfitChanged: false, outfitRequested: true, hardRequirementEvidence: []};
+    outfitChanged: false, outfitRequested: false, hardRequirementEvidence: []};
   const {agent, inputs} = queuedAgent([
     {...base, stylistComment: "Červená na tričku ladí s teniskami.", commentGroundingEvidence: [
       {itemId: "blue-top", outfitContext: "result", field: "accentColor", expectedValue: "red"},

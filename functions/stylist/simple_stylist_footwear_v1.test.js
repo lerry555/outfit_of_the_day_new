@@ -186,7 +186,7 @@ test("strict model contract includes functional assessment and prompt balances t
   const input = buildModelInputV1(normalizeRequestV1(request()));
   const prompt = input.messages[0].content;
   assert.ok(prompt.includes("účel a podmienky použitia"));
-  assert.ok(prompt.includes("nie najchladnejšia časť dňa"));
+  assert.ok(prompt.includes("nie najchladnejšia hodina"));
   assert.ok(prompt.includes("Drobné približne 1–5 % akcenty nesmú byť hlavným dôvodom"));
   assert.ok(prompt.includes("nevymýšľaj"));
 });

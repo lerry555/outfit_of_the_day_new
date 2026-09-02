@@ -68,12 +68,85 @@ async function main() {
       items: result.resultingOutfitItems.map((item) => item.name),
       selectionReasons: result.selectionReasons,
       footwearAssessment: result.footwearAssessment,
+      outfitRequested: result.outfitRequested,
       outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
     currentSelectionReasons = result.selectionReasons || [];
     return result;
   };
+  if (process.argv.includes("--conversation")) {
+    // Real acceptance includes the response AFTER a recommendation. Lexical
+    // gates here are QA only; the runtime never parses Slovak intent this way.
+    const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
+    const compact = (id) => compactWardrobeItemV1({id, ...byId.get(id)});
+    const norm = (text) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const preserved = (result, ids, cards = []) => {
+      assert.deepEqual(new Set(result.resultingOutfitItemIds), new Set(ids), "qa_consultation_changed_outfit");
+      assert.equal(result.outfitChanged, false);
+      assert.deepEqual(new Set(result.displayItemIds), new Set(cards), "qa_unrequested_cards");
+      if (!cards.length) assert.equal(result.outfitRequested, false, "qa_explanation_counted_as_outfit_request");
+    };
+    const noFootwearRecap = (result) => assert.doesNotMatch(norm(result.stylistComment),
+      /tenisk|turistick.{0,25}obuv|chyba.{0,25}obuv/, "qa_unrelated_footwear_recap");
+    const noInventedSearch = (result) => assert.doesNotMatch(norm(result.stylistComment),
+      /https?:\/\/|www\.|nasiel som|nasla som|pozrel som obchody|pozrela som obchody|prave som vyhladal/,
+      "qa_unavailable_search_claim");
+    const mild = {location: "Martin", tomorrow: {...weatherContext.tomorrow,
+      morningTempC: 14, hourlyTempCByLocalHour: Array.from({length: 24}, (_, h) => h < 12 ? 14 : 24),
+      hourlyWeatherCodeByLocalHour: Array(24).fill(0)}};
+    const history = [];
+    let ids = [];
+    const turn = async (name, message) => {
+      const result = await call(name, message, ids, history, mild);
+      history.push({role: "user", content: message}, {role: "assistant", content: result.stylistComment});
+      ids = result.resultingOutfitItemIds;
+      return result;
+    };
+    const first = await turn("conversation_new_forest_outfit",
+      "Zajtra pôjdem ráno na huby po ľahkom suchom lesnom chodníku. Odporuč mi outfit s dlhými rifľami.");
+    const jeans = ids.find((id) => compact(id)?.canonicalType === "jeans");
+    assert.ok(jeans, "qa_explicit_jeans_missing");
+    const originalIds = [...ids];
+    const originalReasons = [...currentSelectionReasons];
+    const answer = await turn("conversation_jeans_suitability", "A rifle sú v poriadku?");
+    preserved(answer, originalIds); noFootwearRecap(answer);
+    assert.match(norm(answer.stylistComment), /rifl|nohavic|dzins/, "qa_question_not_answered");
+    const display = await turn("conversation_explicit_jeans_card", "Ukáž mi prosím tie rifle.");
+    preserved(display, originalIds, [jeans]); noFootwearRecap(display);
+    const showAll = await turn("conversation_explicit_full_outfit", "Ukáž mi celý outfit.");
+    preserved(showAll, originalIds, originalIds);
+    const wet = await turn("conversation_new_wet_terrain",
+      "A sú tie topánky dobré aj do strmého mokrého lesa? Zatiaľ nič nemeň.");
+    preserved(wet, originalIds);
+    assert.match(norm(wet.stylistComment), /nevhod|nie|neodpor|nestac|neber|nie su|niesu|kompromis|radsej|nevol|nebral/,
+      "qa_changed_conditions_not_acknowledged");
+    const refusal = await turn("conversation_declined_shopping",
+      "Nič kupovať nechcem. Vysvetli mi iba, či ma tie rifle nebudú obmedzovať pri chôdzi.");
+    preserved(refusal, originalIds); noFootwearRecap(refusal);
+    assert.doesNotMatch(norm(refusal.stylistComment), /chces.{0,60}(kup|obchod|hladat)|mozem.{0,60}(obchod|vyhladat)/,
+      "qa_declined_shopping_reoffered");
+    // A separate, explicit pending offer ensures that 'yes' tests conversational
+    // continuity rather than depending on the wording of a prior random sample.
+    currentSelectionReasons = originalReasons;
+    const advice = await call("conversation_accept_advice", "Áno, poraď mi.", originalIds, [
+      {role: "user", content: "Chodím aj do mokrého strmého lesa a turistickú obuv nemám."},
+      {role: "assistant", content: "Chceš poradiť, aký typ obuvi a vlastnosti hľadať?"},
+    ], mild);
+    preserved(advice, originalIds); noInventedSearch(advice);
+    assert.match(norm(advice.stylistComment), /podrazk|velkost|nepremok|turistick|trakci|pri[lľ]nav|vzorok/,
+      "qa_accepted_advice_not_delivered");
+    assert.doesNotMatch(norm(advice.stylistComment), /chces.{0,50}porad/, "qa_advice_offer_repeated_after_yes");
+    const search = await call("conversation_unavailable_store_search",
+      "Pozri mi obchody a nájdi turistické topánky do 80 eur.", originalIds, [], mild);
+    preserved(search, originalIds); noInventedSearch(search);
+    assert.match(norm(search.stylistComment), /neviem|nemam|nedokaz|nie je|nie su|zatial.{0,30}ne|nie.{0,20}pripoj/,
+      "qa_search_capability_not_disclosed");
+    console.log(JSON.stringify({scenario: "conversation_review_required", firstReply: first.stylistComment,
+      review: "Manually check useful jeans tradeoff, non-repetitive replies, a feasible next step on the real gap, and honest search limits."}));
+    console.log("LIVE_CONVERSATION_STRUCTURAL_PASS: 8 turns; semantic review of all replies is still required.");
+    return;
+  }
   if (process.argv.includes("--footwear")) {
     const {compactWardrobeItemV1} = require("./simple_stylist_agent_v1");
     const {isWinterFootwearV1} = require("./simple_stylist_footwear_v1");
@@ -153,6 +226,7 @@ async function main() {
       requested.resultingOutfitItemIds, [...history, {role: "assistant", content: requested.stylistComment}]);
     assert.deepEqual(explained.resultingOutfitItemIds, requested.resultingOutfitItemIds);
     assert.equal(explained.outfitChanged, false);
+    assert.deepEqual(explained.displayItemIds, [], "qa_explanation_resent_cards");
     // Prose must be reviewed for meaning: mentioning a tiny logo in order to
     // reject it as the main reason is valid and cannot be judged by keyword bans.
     console.log("LIVE_DETAIL_SALIENCE_STRUCTURAL_PASS: human review of whole-palette reasoning is required.");
@@ -207,6 +281,7 @@ async function main() {
       selected.resultingOutfitItemIds, history);
     assert.deepEqual(explanation.resultingOutfitItemIds, selected.resultingOutfitItemIds);
     assert.equal(explanation.outfitChanged, false);
+    assert.deepEqual(explanation.displayItemIds, [], "qa_explanation_resent_cards");
     if (hasRedDetail(selectedTop)) explainsColorLink(explanation.stylistComment);
     // Palette data never proves a logo, lettering, placement or a brand.
     // These regexes are QA checks only; final replies also need semantic review.

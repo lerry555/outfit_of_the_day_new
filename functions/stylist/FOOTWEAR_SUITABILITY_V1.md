@@ -9,7 +9,10 @@ No legacy intent parser, candidate selector or outfit-edit pipeline is used.
   Purpose and practical/weather suitability precede palette and small details.
 - `footwearAssessment` is required in new strict model outputs. Its status is
   `suitable`, `conditional`, `missing` or `not_applicable`. Conditional/missing
-  requires the model's limitation sentence to appear verbatim in its own comment.
+  requires a visible limitation when a new footwear compromise/gap is selected.
+  A retained assessment must not force a repeated warning into an unrelated
+  consultation or layer edit; `not_applicable` means no footwear decision in
+  this turn, not that the previous limitation has ceased to apply.
   A missing pair may produce top+bottom (or full-body) without footwear; it never
   permits missing other core slots, duplicates or invented items.
 - A conservative server check rejects **newly selected** winter footwear when
@@ -92,3 +95,36 @@ Do not claim live verification before this deployment and live smoke occur.
 - Rebuild the Flutter client to activate the newly retained hourly snow-code
   transport. Removing the temporary repository files does not undeploy the
   successful callable revision; no second deployment is needed for this cleanup.
+
+## Follow-up conversation correction — prepared, not yet deployed
+
+The owner's next physical-device transcript exposed two gaps missed by the
+rollout acceptance: `outfitRequested` included explanations, so an unsolicited
+jeans card was allowed, and every `conditional` assessment forced its message
+into the reply even when the user asked about jeans. The UI faithfully rendered
+the server's `displayItemIds`; this was not an image cache problem.
+
+- A suitability/reason/comparison question is text-only: preserve current IDs,
+  `outfitRequested=false`, `displayItemIds=[]`. Grounding still validates claims
+  about that outfit. Explicit show requests can display cards without edits.
+- Warning disclosure is tied to a new footwear decision (changed shoe IDs or a
+  first outfit), not any change anywhere in the outfit. New terrain compromises
+  remain guarded; existing partial outfits can receive unrelated layer edits.
+- The prompt answers the current question, adds a useful tradeoff, and offers
+  feasible next-step advice on a genuine gap. Agreement should deliver that
+  advice; a declined purchase must not be repeatedly offered.
+- The ordinary simple-agent callable has no store-search, URL-reading or price
+  lookup tool. Existing legacy shopping code and fixture UI do not make those
+  capabilities available to this path. Do not offer or claim real store search;
+  give useful selection criteria instead. Connecting shopping is separate work,
+  not a reason to restore the legacy intent parser.
+- `simple_stylist_conversation_v1.test.js` adds 14 offline contract regressions;
+  Flutter adds text-only card/state persistence coverage. These use controlled
+  outputs and do not prove live language quality. The `--conversation --live`
+  acceptance mode checks eight actual turns including jeans, explicit show,
+  new wet terrain, purchase refusal, advice agreement and unavailable search.
+  Review every reply semantically, including the first gap's useful next step.
+- No additional production AI call, model downgrade or new result field is
+  introduced. One repair remains the maximum. Deployment of only
+  `stylistSimpleAgentV1` and live acceptance require owner approval; neither is
+  claimed by this prepared correction. The mobile runtime does not change.

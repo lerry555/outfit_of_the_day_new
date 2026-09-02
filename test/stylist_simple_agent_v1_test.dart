@@ -19,6 +19,25 @@ Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
 };
 
 void main() {
+  test('text-only explanation retains full outfit state without restoring item cards', () {
+    final items = [_item('top', 'Tričko'), _item('jeans', 'Rifle'), _item('shoes', 'Tenisky')];
+    final result = StylistSimpleAgentResultV1.fromCallableData({
+      'simpleAgent': true, 'stylistComment': 'Rifle zakryjú nohy; over si voľnosť pohybu.',
+      'resultingOutfitItemIds': ['top', 'jeans', 'shoes'], 'displayItemIds': [],
+      'outfitChanged': false, 'outfitRequested': false,
+      'resultingOutfitItems': items, 'displayItems': [],
+    });
+    expect(result.ok, isTrue);
+    expect(result.displayItems, isEmpty);
+    final message = StylistChatMessage(text: result.stylistComment, isUser: false,
+      suggestedItems: result.displayItems, resultingOutfitItems: result.resultingOutfitItems);
+    final restored = StylistChatMessage.fromMap(
+      Map<String, dynamic>.from(jsonDecode(jsonEncode(message.toMap())) as Map));
+    expect(restored.suggestedItems, isEmpty);
+    expect(restored.resultingOutfitItems.map((item) => item['id']), ['top', 'jeans', 'shoes']);
+    expect(result.toUiResponse()['displayItems'], isEmpty);
+  });
+
   test('partial outfit with honest footwear gap survives parsing and chat persistence', () {
     final items = [_item('top', 'Tričko'), _item('bottom', 'Nohavice')];
     const warning = 'Na mokrý terén ti chýba vhodná obuv; doplň turistický pár.';
