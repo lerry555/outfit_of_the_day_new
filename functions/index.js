@@ -94,6 +94,10 @@ const {
   createSimpleStylistAgentV1,
   createOpenAiSimpleAgentExecutorV1,
 } = require("./stylist/simple_stylist_agent_v1");
+const {createAiUsageRecorderV1, hashValue} = require("./costs/ai_usage_v1");
+const {createMeteredOpenAiFetchV1} = require("./costs/metered_openai_fetch_v1");
+const {createIdempotentTaskRunnerV1} = require("./costs/idempotent_task_v1");
+const {createExactResultCacheV1} = require("./costs/exact_result_cache_v1");
 const {
   buildConversationBrainResponsesBodyV1,
   extractConversationBrainResponseTextV1,
@@ -122,14 +126,25 @@ const shoppingWishlistEventStore = createFirestoreWishlistEventStore(db);
 // This executor has no retry, repair, fallback or credential serialization
 // path. It is shared with the preflighted benchmark transport.
 const frozenStylistNoRetryExecutor = createNoRetryFetchExecutor();
-const simpleStylistAgentV1 = createSimpleStylistAgentV1({
-  executeModel: createOpenAiSimpleAgentExecutorV1({
-    fetchImpl: fetch,
-    resolveOpenAISecret,
-    logger,
-  }),
-  logger,
+const recordAiUsageV1 = createAiUsageRecorderV1({db, logger});
+const meteredOpenAiFetchV1 = createMeteredOpenAiFetchV1({
+  fetchImpl: fetch, recordUsage: recordAiUsageV1, logger,
 });
+const runAiTaskOnceV1 = createIdempotentTaskRunnerV1({db, logger});
+const cachedAiResultV1 = createExactResultCacheV1({db, logger});
+function simpleStylistAgentForUserV1(uid, requestId) {
+  return createSimpleStylistAgentV1({
+    executeModel: createOpenAiSimpleAgentExecutorV1({
+      fetchImpl: fetch,
+      resolveOpenAISecret,
+      logger,
+      cacheScope: uid,
+      recordUsage: (event) => recordAiUsageV1({...event,
+        userKey: hashValue(uid), requestKey: hashValue([uid, requestId])}),
+    }),
+    logger,
+  });
+}
 const shoppingWishlistNotificationService = createWishlistNotificationService({
   messaging: admin.messaging(),
   tokenStore: createFirestoreWishlistTokenStore(db),
@@ -304,7 +319,7 @@ async function sendStylistPush(uid, {jobId, chatId, body}) {
 // Zapíše výsledok do users/{uid}/stylistJobs/{jobId} (aby ho klient vedel
 // dotiahnuť aj keď spadol pôvodný callable hovor) a pošle push notifikáciu.
 // Je best-effort: chyby nezhodia hlavný výsledok.
-async function finalizeStylistResult(uid, notifyJobId, chatId, result) {
+async function finalizeStylistResult(uid, notifyJobId, chatId, result, {notify = true} = {}) {
   if (uid && notifyJobId) {
     try {
       await db
@@ -323,7 +338,7 @@ async function finalizeStylistResult(uid, notifyJobId, chatId, result) {
     } catch (e) {
       logger.warn("finalizeStylistResult write error:", e);
     }
-    await sendStylistPush(uid, {
+    if (notify) await sendStylistPush(uid, {
       jobId: notifyJobId,
       chatId,
       body:
@@ -1695,6 +1710,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
     .https.onRequest(createAnalyzeClothingImageHandler({
       admin,
       logger,
+      recordUsage: recordAiUsageV1,
       getOpenAiKey,
       getGeminiApiKey: getGeminiKey,
       fetchImpl: fetch,
@@ -1851,7 +1867,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
     return text;
   }
 
-  async function callOpenAiChatMessages(messages) {
+  async function callOpenAiChatMessages(messages, {uid, feature}) {
     const apiKey = getOpenAiKey();
     if (!apiKey) {
       logger.error("Chýba OPENAI_API_KEY v prostredí!");
@@ -1864,14 +1880,14 @@ exports.attachCleanImageOnWardrobeWrite = functions
       temperature: 0.7,
     };
 
-    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    const response = await meteredOpenAiFetchV1("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify(body),
-    });
+    }, {uid, feature, model: body.model});
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -2344,14 +2360,14 @@ exports.attachCleanImageOnWardrobeWrite = functions
           ],
         };
 
-        const response = await fetch("https://api.openai.com/v1/chat/completions", {
+        const response = await meteredOpenAiFetchV1("https://api.openai.com/v1/chat/completions", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             Authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify(body),
-        });
+        }, {uid, feature: "home_outfit", model: body.model});
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => "");
@@ -2588,7 +2604,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
       ];
 
       try {
-        const rawText = await callOpenAiChatMessages(messages);
+        const rawText = await callOpenAiChatMessages(messages, {uid, feature: "home_review"});
         const parsed = extractFirstJsonObject(rawText);
         if (!parsed || typeof parsed !== "object") {
           return {
@@ -2774,7 +2790,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
         const rawText = await callOpenAiChatMessages([
           {role: "system", content: systemPrompt},
           {role: "user", content: userPrompt},
-        ]);
+        ], {uid, feature: "home_explanation"});
         const parsed = extractFirstJsonObject(rawText);
         const explanation = cleanText(parsed?.explanation, 620);
         const warnings = Array.isArray(parsed?.warnings) ?
@@ -3821,76 +3837,98 @@ exports.attachCleanImageOnWardrobeWrite = functions
       }
       const notifyJobId = String(data?.notifyJobId || "").trim();
       const chatId = String(data?.chatId || "").trim();
-      let wardrobeItems;
+      // Older clients without a job ID still work, but cannot deduplicate a
+      // retry. Never use message text as the ID: repeating a request can be a
+      // deliberate new turn. The ordinary app already supplies a stable job ID.
+      const requestId = notifyJobId || require("node:crypto").randomUUID();
+      let task;
       try {
-        const snapshot = await db.collection("users").doc(uid)
-          .collection("wardrobe").limit(200).get();
-        wardrobeItems = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...(doc.data() || {}),
-        }));
-      } catch (error) {
-        logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
-          stage: "wardrobe_snapshot",
-          code: String(error?.code || "wardrobe_snapshot_failed").slice(0, 80),
-        });
-        throw new functions.https.HttpsError(
-          "unavailable",
-          "simple_agent_wardrobe_unavailable",
-        );
-      }
+        task = await runAiTaskOnceV1({
+          uid, requestId, feature: "stylist_simple_agent", payload: data || {},
+          execute: async () => {
+            let wardrobeItems;
+            try {
+              const snapshot = await db.collection("users").doc(uid)
+                .collection("wardrobe").limit(200).get();
+              wardrobeItems = snapshot.docs.map((doc) => ({
+                id: doc.id,
+                ...(doc.data() || {}),
+              }));
+            } catch (error) {
+              logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
+                stage: "wardrobe_snapshot",
+                code: String(error?.code || "wardrobe_snapshot_failed").slice(0, 80),
+              });
+              throw new functions.https.HttpsError(
+                "unavailable",
+                "simple_agent_wardrobe_unavailable",
+              );
+            }
 
-      try {
-        const {loadSelectionReasonsV1} = require("./stylist/simple_stylist_choice_memory_v1");
-        const currentSelectionReasons = Array.isArray(data?.currentSelectionReasons) &&
-          data.currentSelectionReasons.length ? data.currentSelectionReasons :
-          await loadSelectionReasonsV1({
-            db, uid, chatId, currentIds: data?.currentOutfitItemIds, logger,
-          });
-        const result = await simpleStylistAgentV1.resolve({
-          message: data?.message,
-          history: data?.history,
-          currentOutfitItemIds: data?.currentOutfitItemIds,
-          currentSelectionReasons,
-          wardrobeItems,
-          weatherContext: data?.weatherContext,
-          clientContext: data?.clientContext,
-          eventContext: data?.eventContext,
-          userStylePreferences: sanitizeUserStylePreferences(
-            data?.userStylePreferences,
-          ),
+            try {
+              const {loadSelectionReasonsV1} = require("./stylist/simple_stylist_choice_memory_v1");
+              const currentSelectionReasons = Array.isArray(data?.currentSelectionReasons) &&
+                data.currentSelectionReasons.length ? data.currentSelectionReasons :
+                await loadSelectionReasonsV1({
+                  db, uid, chatId, currentIds: data?.currentOutfitItemIds, logger,
+                });
+              const result = await simpleStylistAgentForUserV1(uid, requestId).resolve({
+                message: data?.message,
+                history: data?.history,
+                currentOutfitItemIds: data?.currentOutfitItemIds,
+                currentSelectionReasons,
+                wardrobeItems,
+                weatherContext: data?.weatherContext,
+                clientContext: data?.clientContext,
+                eventContext: data?.eventContext,
+                userStylePreferences: sanitizeUserStylePreferences(
+                  data?.userStylePreferences,
+                ),
+              });
+              return result;
+            } catch (error) {
+              logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
+                stage: "callable",
+                code: String(error?.code || error?.message || "simple_agent_failed")
+                  .slice(0, 120),
+                validationErrors: Array.isArray(error?.validationErrors) ?
+                  error.validationErrors.slice(0, 12) : [],
+                providerStatus: Number.isInteger(error?.providerStatus) ?
+                  error.providerStatus : null,
+                providerErrorType: String(error?.providerErrorType || "").slice(0, 100),
+                providerErrorCode: String(error?.providerErrorCode || "").slice(0, 100),
+                providerRequestId: String(error?.providerRequestId || "").slice(0, 160),
+                providerResponseStatus: String(error?.providerResponseStatus || "").slice(0, 60),
+                providerIncompleteReason: String(error?.providerIncompleteReason || "").slice(0, 100),
+              });
+              return {
+                contractVersion: 1,
+                simpleAgent: true,
+                failClosed: true,
+                reply: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
+                stylistComment: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
+                resultingOutfitItemIds: [],
+                displayItemIds: [],
+                resultingOutfitItems: [],
+                displayItems: [],
+                outfitChanged: false,
+                outfitRequested: false,
+                action: "simple_agent_fail_closed",
+              };
+            }
+          },
         });
-        return await finalizeStylistResult(uid, notifyJobId, chatId, result);
       } catch (error) {
-        logger.warn("SIMPLE_AGENT_FAIL_CLOSED", {
-          stage: "callable",
-          code: String(error?.code || error?.message || "simple_agent_failed")
-            .slice(0, 120),
-          validationErrors: Array.isArray(error?.validationErrors) ?
-            error.validationErrors.slice(0, 12) : [],
-          providerStatus: Number.isInteger(error?.providerStatus) ?
-            error.providerStatus : null,
-          providerErrorType: String(error?.providerErrorType || "").slice(0, 100),
-          providerErrorCode: String(error?.providerErrorCode || "").slice(0, 100),
-          providerRequestId: String(error?.providerRequestId || "").slice(0, 160),
-          providerResponseStatus: String(error?.providerResponseStatus || "").slice(0, 60),
-          providerIncompleteReason: String(error?.providerIncompleteReason || "").slice(0, 100),
-        });
-        return await finalizeStylistResult(uid, notifyJobId, chatId, {
-          contractVersion: 1,
-          simpleAgent: true,
-          failClosed: true,
-          reply: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
-          stylistComment: "Túto požiadavku sa mi nepodarilo bezpečne dokončiť, takže aktuálny outfit nemením.",
-          resultingOutfitItemIds: [],
-          displayItemIds: [],
-          resultingOutfitItems: [],
-          displayItems: [],
-          outfitChanged: false,
-          outfitRequested: false,
-          action: "simple_agent_fail_closed",
-        });
+        if (["invalid_request_id", "request_id_conflict"].includes(error?.code)) {
+          throw new functions.https.HttpsError("invalid-argument", error.code);
+        }
+        // Existing client recovery waits for the original job result. Do not
+        // turn a duplicate in-flight call into a new paid attempt or overwrite
+        // that original job with a fail-closed result.
+        throw new functions.https.HttpsError("unavailable", "simple_agent_job_unavailable");
       }
+      return finalizeStylistResult(uid, notifyJobId, chatId, task.result,
+        {notify: !task.replayed});
     });
 
   exports.stylistChat = functions
@@ -4927,50 +4965,58 @@ exports.analyzeWardrobeSmart = functions
         ],
       };
 
-      const startedAt = Date.now();
-      const response = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
+      const cached = await cachedAiResultV1({
+        uid, feature: "wardrobe_structure_analysis", input: body,
+        // Fallbacks and invalid responses are never cached as successful AI.
+        isCacheable: (value) => value != null && asResultShape(value) != null,
+        execute: async () => {
+          const startedAt = Date.now();
+          const response = await meteredOpenAiFetchV1("https://api.openai.com/v1/chat/completions", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${apiKey}`,
+            },
+            body: JSON.stringify(body),
+          }, {uid, feature: "wardrobe_structure_analysis", model: body.model});
+
+          const elapsedMs = Date.now() - startedAt;
+          if (!response.ok) {
+            const errorText = await response.text().catch(() => "");
+            logger.error("analyzeWardrobeSmart: OpenAI error", {
+              uid,
+              requestId,
+              status: response.status,
+              elapsedMs,
+              errorText: String(errorText || "").slice(0, 800),
+            });
+            return null;
+          }
+
+          const json = await response.json();
+          const text = json?.choices?.[0]?.message?.content || "";
+
+          logger.info("analyzeWardrobeSmart: OpenAI response received", {
+            uid,
+            requestId,
+            elapsedMs,
+            contentLength: String(text).length,
+          });
+
+          const parsed = extractFirstJsonObject(text);
+          const shaped = asResultShape(parsed);
+          if (!shaped) {
+            logger.warn("analyzeWardrobeSmart: invalid AI JSON shape, returning fallback", {
+              uid,
+              requestId,
+            });
+            return null;
+          }
+
+          return shaped;
         },
-        body: JSON.stringify(body),
       });
-
-      const elapsedMs = Date.now() - startedAt;
-      if (!response.ok) {
-        const errorText = await response.text().catch(() => "");
-        logger.error("analyzeWardrobeSmart: OpenAI error", {
-          uid,
-          requestId,
-          status: response.status,
-          elapsedMs,
-          errorText: String(errorText || "").slice(0, 800),
-        });
-        return fallback;
-      }
-
-      const json = await response.json();
-      const text = json?.choices?.[0]?.message?.content || "";
-
-      logger.info("analyzeWardrobeSmart: OpenAI response received", {
-        uid,
-        requestId,
-        elapsedMs,
-        contentLength: String(text).length,
-      });
-
-      const parsed = extractFirstJsonObject(text);
-      const shaped = asResultShape(parsed);
-      if (!shaped) {
-        logger.warn("analyzeWardrobeSmart: invalid AI JSON shape, returning fallback", {
-          uid,
-          requestId,
-        });
-        return fallback;
-      }
-
-      return shaped;
+      return cached || fallback;
     } catch (e) {
       logger.error("analyzeWardrobeSmart: unhandled error, returning fallback", {
         uid,

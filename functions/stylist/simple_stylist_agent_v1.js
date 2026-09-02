@@ -1,5 +1,9 @@
 "use strict";
 
+const {randomUUID} = require("node:crypto");
+const {openAiUsageV1} = require("../costs/ai_usage_v1");
+const {buildCachedSimpleAgentInputV1} = require("./simple_stylist_prompt_cache_v1");
+
 const SIMPLE_AGENT_MODEL = "gpt-5.6-sol";
 const SIMPLE_AGENT_REASONING_EFFORT = "medium";
 const SIMPLE_AGENT_CONTRACT_VERSION = 1;
@@ -662,7 +666,7 @@ function createSimpleStylistAgentV1({executeModel, logger = console} = {}) {
           });
         }
         const modelInput = buildModelInputV1(request, attempt === 1 ? validation.errors : []);
-        const raw = await executeModel(modelInput);
+        const raw = await executeModel(modelInput, {modelAttempt: attempt + 1});
         safeLog(logger, "info", "SIMPLE_AGENT_RESULT", {
           attempt: attempt + 1,
           resultingOutfitItemIds: Array.isArray(raw?.resultingOutfitItemIds) ?
@@ -748,15 +752,17 @@ function createOpenAiSimpleAgentExecutorV1({
   fetchImpl,
   resolveOpenAISecret,
   logger = console,
+  recordUsage = async () => {},
+  cacheScope = "",
   sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof fetchImpl !== "function" || typeof resolveOpenAISecret !== "function") {
     throw new Error("simple_agent_transport_dependencies_missing");
   }
-  return async function executeModel(input) {
+  return async function executeModel(input, {modelAttempt = 1} = {}) {
     const requestBody = JSON.stringify({
       model: input.model,
-      input: input.messages,
+      ...buildCachedSimpleAgentInputV1(input, cacheScope),
       reasoning: {effort: input.reasoningEffort},
       // Leave room for the structured per-item choice summaries as well as
       // evidence and the short user-facing reply.
@@ -772,20 +778,46 @@ function createOpenAiSimpleAgentExecutorV1({
       store: false,
     });
     for (let providerAttempt = 1; providerAttempt <= 2; providerAttempt += 1) {
-      const response = await fetchImpl("https://api.openai.com/v1/responses", {
+      const eventId = randomUUID();
+      const started = Date.now();
+      async function report(response, json) {
+        const model = cleanText(json?.model, 100) || input.model;
+        try {
+          await recordUsage({
+            eventId, provider: "openai", feature: "stylist_simple_agent",
+            model, modelAttempt, providerAttempt,
+            providerResponseId: cleanText(json?.id, 160) || null,
+            providerStatus: response?.status ?? null,
+            latencyMs: Date.now() - started,
+            ...openAiUsageV1({model, usage: json?.usage}),
+          });
+        } catch (_) {
+          safeLog(logger, "warn", "AI_USAGE_RECORD_FAILED", {eventId});
+        }
+      }
+      let response;
+      try {
+        response = await fetchImpl("https://api.openai.com/v1/responses", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${resolveOpenAISecret()}`,
         },
         body: requestBody,
-      });
+        });
+      } catch (error) {
+        await report(null, null);
+        throw error;
+      }
       let json = {};
       try {
         json = await response.json();
       } catch (_) {
         json = {};
       }
+      // Record before parsing/validation/repair: unsuccessful outputs and
+      // truncation still consume tokens. Absent usage is unknown, never zero.
+      await report(response, json);
       if (!response.ok) {
         const details = providerErrorDetailsV1(response, json);
         const permanentQuotaFailure = details.providerErrorType === "insufficient_quota" ||

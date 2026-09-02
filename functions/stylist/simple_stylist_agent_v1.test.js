@@ -1010,7 +1010,7 @@ test("callable is isolated from every legacy outfit interpretation authority", (
   const end = index.indexOf("exports.stylistChat", start);
   assert.ok(start >= 0 && end > start);
   const scope = index.slice(start, end);
-  assert.match(scope, /simpleStylistAgentV1\.resolve/);
+  assert.match(scope, /simpleStylistAgentForUserV1\(uid, requestId\)\.resolve/);
   for (const forbidden of [
     "routeStylistRequest",
     "sanitizeStylistOutfitDirective",

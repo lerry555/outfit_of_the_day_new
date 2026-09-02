@@ -14,16 +14,14 @@ const {
 const {buildProductionGeminiResponseSchema} = require("./production_schema");
 const {getClothingAnalyzerGeminiPromptV2} = require("./prompts/clothing_analyzer_gemini_v2");
 const {resolveGeminiApiKey} = require("./gemini_secret_binding");
+const {randomUUID} = require("node:crypto");
+const {geminiUsageV1, PRICE_VERSION} = require("../costs/ai_usage_v1");
 
 const DEFAULT_ENDPOINT_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const DEFAULT_MAX_OUTPUT_TOKENS = 2000;
 const TRUNCATION_RECOVERY_MAX_OUTPUT_TOKENS = 4000;
 const DEFAULT_TEMPERATURE = 0;
 const DEFAULT_THINKING_BUDGET = 0;
-
-// Rough Flash estimate for telemetry only (not billing source of truth).
-const EST_INPUT_PER_MTOK = 0.30;
-const EST_OUTPUT_PER_MTOK = 2.50;
 
 function fail(code, extra = {}) {
   const err = new Error(code);
@@ -55,14 +53,7 @@ async function sanitizedUpstreamError(response) {
 }
 
 function estimateCostUsd(usage) {
-  if (!usage) return null;
-  const input = Number(usage.promptTokenCount || 0);
-  const output = Number(usage.candidatesTokenCount || 0);
-  if (!Number.isFinite(input) || !Number.isFinite(output)) return null;
-  return Number(
-    ((input / 1e6) * EST_INPUT_PER_MTOK + (output / 1e6) * EST_OUTPUT_PER_MTOK)
-      .toFixed(6),
-  );
+  return geminiUsageV1(usage).estimatedCostUsd;
 }
 
 function extractTextFromGeminiResponse(data) {
@@ -184,6 +175,22 @@ function createGeminiClothingAnalyzerClient(options = {}) {
         `${endpointBase}/models/${encodeURIComponent(MODEL_ID)}:generateContent` +
         `?key=${encodeURIComponent(apiKey)}`;
 
+      const attemptUsage = [];
+      async function recordAttempt(response, data, startedAt) {
+        const counters = geminiUsageV1(data?.usageMetadata);
+        attemptUsage.push(counters);
+        try {
+          await options.recordUsage?.({
+            eventId: randomUUID(), provider: "gemini", feature: "clothing_analysis",
+            model: MODEL_ID, providerAttempt: attemptUsage.length,
+            providerStatus: response?.status ?? null,
+            latencyMs: Date.now() - startedAt, ...counters,
+          });
+        } catch (_) {
+          options.logger?.warn?.("AI_USAGE_RECORD_FAILED", {feature: "clothing_analysis"});
+        }
+      }
+
       async function once(tokens) {
         const body = buildGeminiAnalyzeRequestBody({
           prompt: promptMeta.prompt,
@@ -192,11 +199,28 @@ function createGeminiClothingAnalyzerClient(options = {}) {
           maxOutputTokens: tokens,
           schema: responseSchema,
         });
-        const response = await fetchImpl(url, {
+        const startedAt = Date.now();
+        let response;
+        try {
+          response = await fetchImpl(url, {
           method: "POST",
           headers: {"Content-Type": "application/json"},
           body: JSON.stringify(body),
-        });
+          });
+        } catch (error) {
+          await recordAttempt(null, null, startedAt);
+          throw error;
+        }
+        if (response.ok) {
+          let data;
+          try { data = await response.json(); } catch (error) {
+            await recordAttempt(response, null, startedAt);
+            throw error;
+          }
+          await recordAttempt(response, data, startedAt);
+          return {ok: response.ok, status: response.status, json: async () => data};
+        }
+        await recordAttempt(response, null, startedAt);
         return response;
       }
 
@@ -283,11 +307,9 @@ function createGeminiClothingAnalyzerClient(options = {}) {
         parsed = null;
       }
 
-      const usage = lastData && lastData.usageMetadata ? {
-        promptTokenCount: lastData.usageMetadata.promptTokenCount ?? null,
-        candidatesTokenCount: lastData.usageMetadata.candidatesTokenCount ?? null,
-        totalTokenCount: lastData.usageMetadata.totalTokenCount ?? null,
-      } : null;
+      const allUsageKnown = attemptUsage.every((entry) => entry.usageComplete);
+      const sum = (key) => allUsageKnown ?
+        attemptUsage.reduce((total, entry) => total + entry[key], 0) : null;
 
       const telemetry = {
         provider: "GEMINI",
@@ -295,9 +317,15 @@ function createGeminiClothingAnalyzerClient(options = {}) {
         analyzerVersion: promptMeta.analyzerVersion || ANALYZER_VERSION,
         promptVersion: promptMeta.promptVersion,
         promptHash: promptMeta.promptHash,
-        inputTokens: usage && usage.promptTokenCount,
-        outputTokens: usage && usage.candidatesTokenCount,
-        estimatedCostUsd: estimateCostUsd(usage),
+        inputTokens: sum("inputTokens"),
+        outputTokens: sum("outputTokens"),
+        reasoningTokens: sum("reasoningTokens"),
+        estimatedCostUsd: sum("estimatedCostUsd"),
+        knownAttemptCostUsd: attemptUsage.reduce((total, entry) =>
+          total + (entry.estimatedCostUsd ?? 0), 0),
+        usageComplete: allUsageKnown,
+        providerAttemptCount: attemptUsage.length,
+        priceVersion: PRICE_VERSION,
         latencyMs: Date.now() - started,
         retryCount,
         parserStatus,

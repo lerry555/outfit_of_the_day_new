@@ -1,5 +1,7 @@
 "use strict";
 
+const {hashValue} = require("../costs/ai_usage_v1");
+
 const crypto = require("node:crypto");
 
 /**
@@ -221,6 +223,10 @@ function createAnalyzeClothingImageHandler(deps) {
         getApiKey: deps.getGeminiApiKey,
         fetchImpl: deps.fetchImpl,
         contractVersion: useV2 ? "wardrobe-analyzer-v2" : null,
+        logger,
+        recordUsage: deps.recordUsage ? (event) => deps.recordUsage({
+          ...event, userKey: hashValue(auth.uid),
+        }) : undefined,
       });
 
       let geminiResult;
