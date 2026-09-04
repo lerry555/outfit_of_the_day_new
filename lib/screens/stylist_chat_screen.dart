@@ -29,6 +29,7 @@ import '../utils/slovak_city_locative.dart';
 import '../utils/slovak_outfit_instrumental.dart';
 import '../models/stylist_trip_window.dart';
 import '../models/stylist_chat_progress.dart';
+import '../widgets/stylist_quick_reply_buttons.dart';
 import '../utils/bottom_family_guidance.dart';
 import '../utils/footwear_family_guidance.dart';
 import '../utils/event_clarification.dart';
@@ -96,6 +97,10 @@ class StylistChatMessage {
   /// explicitly asked the UI to display on this turn.
   final List<Map<String, dynamic>> resultingOutfitItems;
 
+  /// Explicit server-owned interaction hint. It is never inferred from Slovak
+  /// wording, so open questions do not accidentally receive Áno/Nie buttons.
+  final String quickReplyMode;
+
   const StylistChatMessage({
     required this.text,
     required this.isUser,
@@ -107,6 +112,7 @@ class StylistChatMessage {
     this.sourceJobId,
     this.outfitUpdateSlot,
     this.resultingOutfitItems = const <Map<String, dynamic>>[],
+    this.quickReplyMode = 'none',
   });
 
   StylistChatMessage copyWith({String? sourceJobId, String? outfitUpdateSlot}) {
@@ -121,6 +127,7 @@ class StylistChatMessage {
       sourceJobId: sourceJobId ?? this.sourceJobId,
       outfitUpdateSlot: outfitUpdateSlot ?? this.outfitUpdateSlot,
       resultingOutfitItems: resultingOutfitItems,
+      quickReplyMode: quickReplyMode,
     );
   }
 
@@ -138,6 +145,7 @@ class StylistChatMessage {
         'outfitUpdateSlot': outfitUpdateSlot,
       if (resultingOutfitItems.isNotEmpty)
         'resultingOutfitItems': resultingOutfitItems,
+      if (quickReplyMode == 'yes_no') 'quickReplyMode': quickReplyMode,
     };
   }
 
@@ -171,6 +179,7 @@ class StylistChatMessage {
                 .map((e) => Map<String, dynamic>.from(e))
                 .toList(growable: false)
           : const <Map<String, dynamic>>[],
+      quickReplyMode: map['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',
     );
   }
 }
@@ -880,6 +889,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     }
   }
 
+  Future<void> _sendQuickReply(String text) async {
+    if (_isSending) return;
+    _controller
+      ..text = text
+      ..selection = TextSelection.collapsed(offset: text.length);
+    await _sendMessage();
+  }
+
   Future<Map<String, dynamic>> _simpleAgentWeatherContext() async {
     final now = DateTime.now();
     final today = DateTime(now.year, now.month, now.day);
@@ -985,6 +1002,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           isUser: false,
           suggestedItems: displayItems,
           resultingOutfitItems: resultingItems,
+          quickReplyMode: response['quickReplyMode'] == 'yes_no'
+              ? 'yes_no'
+              : 'none',
         ),
       );
       _isSending = false;
@@ -5018,6 +5038,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                         final message = _messages[index];
                         return _MessageBubble(
                           message: message,
+                          onQuickReply:
+                              !_isSending && index == _messages.length - 1
+                              ? _sendQuickReply
+                              : null,
                           onShoppingText: _sendShoppingAction,
                           onShowAll: _openShoppingResults,
                           onCandidate: _openShoppingCandidateDetail,
@@ -5152,12 +5176,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
 class _MessageBubble extends StatelessWidget {
   final StylistChatMessage message;
   final ValueChanged<String>? onShoppingText;
+  final ValueChanged<String>? onQuickReply;
   final void Function({bool isComplete, int? exactResultCount})? onShowAll;
   final ValueChanged<ShoppingCandidateData>? onCandidate;
   final ValueChanged<ShoppingCandidateData>? onWishlist;
 
   const _MessageBubble({
     required this.message,
+    this.onQuickReply,
     this.onShoppingText,
     this.onShowAll,
     this.onCandidate,
@@ -5267,6 +5293,12 @@ class _MessageBubble extends StatelessWidget {
                         ),
                       ),
                     ),
+                  ],
+                  if (!isUser &&
+                      message.quickReplyMode == 'yes_no' &&
+                      onQuickReply != null) ...[
+                    const SizedBox(height: 10),
+                    StylistQuickReplyButtons(onSelected: onQuickReply!),
                   ],
                 ],
               ),

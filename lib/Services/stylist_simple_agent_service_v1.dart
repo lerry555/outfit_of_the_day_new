@@ -16,6 +16,7 @@ class StylistSimpleAgentResultV1 {
     required this.resultingOutfitItemIds,
     required this.displayItemIds,
     required this.outfitChanged,
+    required this.quickReplyMode,
     required this.resultingOutfitItems,
     required this.displayItems,
   });
@@ -26,6 +27,7 @@ class StylistSimpleAgentResultV1 {
   final List<String> resultingOutfitItemIds;
   final List<String> displayItemIds;
   final bool outfitChanged;
+  final String quickReplyMode;
   final List<Map<String, dynamic>> resultingOutfitItems;
   final List<Map<String, dynamic>> displayItems;
 
@@ -70,6 +72,7 @@ class StylistSimpleAgentResultV1 {
         resultingOutfitItemIds: const [],
         displayItemIds: const [],
         outfitChanged: false,
+        quickReplyMode: 'none',
         resultingOutfitItems: const [],
         displayItems: const [],
       );
@@ -101,6 +104,7 @@ class StylistSimpleAgentResultV1 {
       resultingOutfitItemIds: List<String>.unmodifiable(resultIds),
       displayItemIds: List<String>.unmodifiable(displayIds),
       outfitChanged: data['outfitChanged'] as bool,
+      quickReplyMode: data['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',
       resultingOutfitItems: List<Map<String, dynamic>>.unmodifiable(
         resultIds.map((id) => Map<String, dynamic>.from(resultById[id]!)),
       ),
@@ -119,6 +123,7 @@ class StylistSimpleAgentResultV1 {
     'resultingOutfitItemIds': resultingOutfitItemIds,
     'displayItemIds': displayItemIds,
     'outfitChanged': outfitChanged,
+    'quickReplyMode': quickReplyMode,
     'resultingOutfitItems': resultingOutfitItems,
     'displayItems': displayItems,
     'action': failClosed ? 'simple_agent_fail_closed' : 'simple_agent_result',
@@ -225,6 +230,7 @@ class StylistSimpleAgentServiceV1 {
         'resultingOutfitItems': const <Map<String, dynamic>>[],
         'displayItems': const <Map<String, dynamic>>[],
         'outfitChanged': false,
+        'quickReplyMode': 'none',
         'action': 'simple_agent_fail_closed',
       };
     }
@@ -247,6 +253,7 @@ class StylistSimpleAgentServiceV1 {
         'resultingOutfitItems': <Map<String, dynamic>>[],
         'displayItems': <Map<String, dynamic>>[],
         'outfitChanged': false,
+        'quickReplyMode': 'none',
         'action': 'simple_agent_fail_closed',
       };
     }

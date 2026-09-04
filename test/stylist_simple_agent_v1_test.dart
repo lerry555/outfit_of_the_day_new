@@ -1,10 +1,12 @@
 import 'dart:io';
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';
 import 'package:outfitofTheDay/Services/hourly_weather_service.dart';
 import 'package:outfitofTheDay/screens/stylist_chat_screen.dart';
+import 'package:outfitofTheDay/widgets/stylist_quick_reply_buttons.dart';
 
 Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
   'id': id,
@@ -19,6 +21,53 @@ Map<String, dynamic> _item(String id, String name) => <String, dynamic>{
 };
 
 void main() {
+  testWidgets('yes and no quick replies emit ordinary chat messages', (
+    tester,
+  ) async {
+    String? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 280,
+            child: StylistQuickReplyButtons(
+              onSelected: (value) => selected = value,
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('stylist-quick-reply-yes')));
+    expect(selected, 'Áno');
+    await tester.tap(find.byKey(const ValueKey('stylist-quick-reply-no')));
+    expect(selected, 'Nie');
+  });
+
+  test('server quick-reply mode survives parsing and chat persistence', () {
+    final result = StylistSimpleAgentResultV1.fromCallableData({
+      'simpleAgent': true,
+      'stylistComment': 'Chceš poradiť, akú obuv hľadať?',
+      'resultingOutfitItemIds': const <String>[],
+      'displayItemIds': const <String>[],
+      'outfitChanged': false,
+      'resultingOutfitItems': const <Map<String, dynamic>>[],
+      'displayItems': const <Map<String, dynamic>>[],
+      'quickReplyMode': 'yes_no',
+    });
+    expect(result.quickReplyMode, 'yes_no');
+    expect(result.toUiResponse()['quickReplyMode'], 'yes_no');
+
+    final restored = StylistChatMessage.fromMap(
+      StylistChatMessage(
+        text: result.stylistComment,
+        isUser: false,
+        quickReplyMode: result.quickReplyMode,
+      ).toMap(),
+    );
+    expect(restored.quickReplyMode, 'yes_no');
+  });
+
   test('text-only explanation retains full outfit state without restoring item cards', () {
     final items = [_item('top', 'Tričko'), _item('jeans', 'Rifle'), _item('shoes', 'Tenisky')];
     final result = StylistSimpleAgentResultV1.fromCallableData({

@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {normalizeRequestV1, validateAgentResultV1, createSimpleStylistAgentV1,
-  buildModelInputV1} = require("./simple_stylist_agent_v1");
+  buildModelInputV1, SIMPLE_AGENT_RESULT_SCHEMA} = require("./simple_stylist_agent_v1");
 
 const wardrobe = [
   ["top", "t_shirt", "tops", "upper_body", "base"],
@@ -167,7 +167,56 @@ test("the single-model prompt distinguishes consultation, requested cards and fe
   assert.ok(prompt.includes("Toto platí aj pri conditional kompromise"));
   assert.ok(prompt.includes("NIE JE pripojený nástroj na prehľadávanie obchodov"));
   assert.ok(prompt.includes("Po súhlase na túto ponuku rovno poraď"));
+  assert.ok(prompt.includes("quickReplyMode"));
+  assert.ok(prompt.includes("otvorenej otázke"));
+  assert.ok(SIMPLE_AGENT_RESULT_SCHEMA.required.includes("quickReplyMode"));
   assert.ok(!prompt.includes("zobraziť alebo vysvetliť outfit"));
+});
+
+test("yes/no quick replies require an explicit answerable question at the end", () => {
+  const accepted = check(answer({
+    stylistComment: "Chceš poradiť, akú obuv hľadať? 🙂",
+    quickReplyMode: "yes_no",
+    commentGroundingEvidence: [],
+  }));
+  assert.equal(accepted.valid, true, accepted.errors.join(","));
+  assert.equal(accepted.value.quickReplyMode, "yes_no");
+
+  const missingQuestion = check(answer({
+    stylistComment: "Môžem ti poradiť s výberom obuvi.",
+    quickReplyMode: "yes_no",
+    commentGroundingEvidence: [],
+  }));
+  assert.ok(missingQuestion.errors.includes("quick_reply_yes_no_question_required"));
+
+  const openQuestion = check(answer({
+    stylistComment: "Akú farbu máš rád?",
+    quickReplyMode: "none",
+    commentGroundingEvidence: [],
+  }));
+  assert.equal(openQuestion.valid, true, openQuestion.errors.join(","));
+});
+
+test("invalid quick-reply metadata is repaired once with focused guidance", async () => {
+  const inputs = [];
+  const agent = createSimpleStylistAgentV1({logger: {}, executeModel: async (input) => {
+    inputs.push(input);
+    return answer({
+      stylistComment: "Môžem ti poradiť s výberom obuvi.",
+      quickReplyMode: inputs.length === 1 ? "yes_no" : "none",
+      commentGroundingEvidence: [],
+    });
+  }});
+
+  const result = await agent.resolve({
+    message: "A rifle sú v poriadku?",
+    wardrobeItems: wardrobe,
+    currentOutfitItemIds: current,
+  });
+  assert.equal(inputs.length, 2);
+  assert.equal(result.quickReplyMode, "none");
+  assert.ok(JSON.parse(inputs[1].messages[1].content)
+    .repair.quickReplyCorrection.includes("končí otázkou"));
 });
 
 test("new-compromise repair asks for an exact current-reply excerpt, not a repeated historical warning", async () => {
