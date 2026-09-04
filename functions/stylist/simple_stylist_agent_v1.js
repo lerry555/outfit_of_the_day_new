@@ -690,12 +690,12 @@ function validateAgentResultV1(raw, request) {
 
 function fallbackStylistCommentV1(result) {
   if (result.outfitChanged) {
-    return "Čo povieš na túto verziu? Podľa mňa spolu funguje veľmi dobre.";
+    return "Táto verzia spolu podľa mňa funguje veľmi dobre.";
   }
   if (result.outfitRequested) {
     return "Za mňa tento outfit funguje veľmi dobre.";
   }
-  return "Jasné — čo by si chcel doladiť?";
+  return "Jasné — môžeme to spolu doladiť.";
 }
 
 function materializeResultV1(validated, request) {

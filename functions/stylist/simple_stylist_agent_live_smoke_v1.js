@@ -62,6 +62,13 @@ async function main() {
     const result = (await response.json()).result;
     if (!result?.simpleAgent || result.failClosed) throw new Error(`qa_fail_closed_${name}`);
     assert.ok(result.stylistComment.length > 0 && result.stylistComment.length <= 500);
+    assert.ok(["none", "yes_no"].includes(result.quickReplyMode),
+      "qa_quick_reply_mode_missing_or_invalid");
+    if (result.quickReplyMode === "yes_no") {
+      assert.match(result.stylistComment,
+        /\?\s*(?:(?:\p{Extended_Pictographic}|\uFE0F|\u200D)\s*)*$/u,
+        "qa_quick_reply_question_not_terminal");
+    }
     assert.ok(result.resultingOutfitItemIds.every((id) => byId.has(id)));
     assert.ok(result.displayItemIds.every((id) => result.resultingOutfitItemIds.includes(id)));
     console.log(JSON.stringify({scenario: name, message, reply: result.stylistComment,
@@ -69,12 +76,63 @@ async function main() {
       selectionReasons: result.selectionReasons,
       footwearAssessment: result.footwearAssessment,
       outfitRequested: result.outfitRequested,
-      outfitChanged: result.outfitChanged, displayedCount: result.displayItemIds.length,
+      outfitChanged: result.outfitChanged, quickReplyMode: result.quickReplyMode,
+      displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
     currentSelectionReasons = result.selectionReasons || [];
     return result;
   };
+  if (process.argv.includes("--quick-replies")) {
+    const preserves = (result, ids) => {
+      assert.deepEqual(new Set(result.resultingOutfitItemIds), new Set(ids),
+        "qa_quick_reply_changed_outfit");
+      assert.equal(result.outfitChanged, false, "qa_quick_reply_changed_flag");
+      assert.equal(result.outfitRequested, false, "qa_quick_reply_requested_outfit");
+      assert.deepEqual(result.displayItemIds, [], "qa_quick_reply_displayed_cards");
+    };
+    const normalize = (text) => text.normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const offerMessage = "Turistickú obuv nemám. Zatiaľ nič nevyberaj; najprv sa ma iba opýtaj, či chcem poradiť, akú obuv hľadať.";
+    currentSelectionReasons = initialIds.map((itemId) => ({
+      itemId, reason: "Existujúci QA outfit; v tomto turne sa nesmie meniť.",
+    }));
+    const offer = await call("quick_reply_yes_no_offer", offerMessage, initialIds, []);
+    preserves(offer, initialIds);
+    assert.equal(offer.quickReplyMode, "yes_no", "qa_yes_no_offer_has_no_buttons");
+
+    const offerHistory = [
+      {role: "user", content: offerMessage},
+      {role: "assistant", content: offer.stylistComment},
+    ];
+    const yes = await call("quick_reply_yes", "Áno", initialIds, offerHistory);
+    preserves(yes, initialIds);
+    assert.equal(yes.quickReplyMode, "none", "qa_yes_started_question_loop");
+    assert.match(normalize(yes.stylistComment),
+      /podrazk|velkost|nepremok|turistick|trakci|prilnav|vzorok/,
+      "qa_yes_did_not_deliver_advice");
+
+    currentSelectionReasons = offer.selectionReasons || [];
+    const no = await call("quick_reply_no", "Nie", initialIds, offerHistory);
+    preserves(no, initialIds);
+    assert.equal(no.quickReplyMode, "none", "qa_no_started_question_loop");
+    assert.doesNotMatch(normalize(no.stylistComment),
+      /chces.{0,60}(porad|hladat|vyber)|mozem.{0,60}(porad|hladat|vyber)/,
+      "qa_declined_offer_repeated");
+
+    currentSelectionReasons = [];
+    const open = await call("quick_reply_open_question",
+      "Neviem ešte kam pôjdem. Zatiaľ nič nevyberaj a polož mi otvorenú otázku, kam idem, nie otázku áno alebo nie.", [], []);
+    preserves(open, []);
+    assert.equal(open.quickReplyMode, "none", "qa_open_question_received_yes_no_buttons");
+    assert.match(open.stylistComment, /\?/, "qa_open_question_missing");
+
+    const statement = await call("quick_reply_statement", "Len mi stručne napíš, že rozumieš.", [], []);
+    preserves(statement, []);
+    assert.equal(statement.quickReplyMode, "none", "qa_statement_received_buttons");
+    console.log("LIVE_QUICK_REPLIES_PASS: yes/no offer, yes, no, open question and statement; review all replies.");
+    return;
+  }
   if (process.argv.includes("--conversation")) {
     // Real acceptance includes the response AFTER a recommendation. Lexical
     // gates here are QA only; the runtime never parses Slovak intent this way.

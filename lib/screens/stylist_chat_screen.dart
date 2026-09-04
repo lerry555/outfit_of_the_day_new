@@ -5039,7 +5039,17 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
                         return _MessageBubble(
                           message: message,
                           onQuickReply:
-                              !_isSending && index == _messages.length - 1
+                              shouldShowStylistQuickReplies(
+                                quickReplyMode: message.quickReplyMode,
+                                isUser: message.isUser,
+                                isLatest: index == _messages.length - 1,
+                                isSending: _isSending,
+                                hasPendingImage: _pendingImage != null,
+                                isPhotoConversationActive:
+                                    _photoStage != _PhotoStage.none,
+                                hasAlternativeActions:
+                                    message.attachments.isNotEmpty,
+                              )
                               ? _sendQuickReply
                               : null,
                           onShoppingText: _sendShoppingAction,

@@ -1,5 +1,23 @@
 import 'package:flutter/material.dart';
 
+bool shouldShowStylistQuickReplies({
+  required String quickReplyMode,
+  required bool isUser,
+  required bool isLatest,
+  required bool isSending,
+  required bool hasPendingImage,
+  required bool isPhotoConversationActive,
+  required bool hasAlternativeActions,
+}) {
+  return quickReplyMode == 'yes_no' &&
+      !isUser &&
+      isLatest &&
+      !isSending &&
+      !hasPendingImage &&
+      !isPhotoConversationActive &&
+      !hasAlternativeActions;
+}
+
 /// Compact replies for a server-confirmed yes/no question. The selected value
 /// goes through the ordinary chat send path, preserving full conversation
 /// context and entitlement handling.

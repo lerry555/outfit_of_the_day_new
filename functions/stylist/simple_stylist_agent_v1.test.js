@@ -440,7 +440,7 @@ test("missing optional model comment uses a generic non-audit fallback", async (
   assert.equal(inputs.length, 1);
   assert.equal(
     result.reply,
-    "Čo povieš na túto verziu? Podľa mňa spolu funguje veľmi dobre.",
+    "Táto verzia spolu podľa mňa funguje veľmi dobre.",
   );
   assert.doesNotMatch(result.reply, /Pridal som|Vymenil som|vyradil|zostáva/);
 });

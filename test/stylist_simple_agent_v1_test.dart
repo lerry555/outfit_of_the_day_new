@@ -44,6 +44,53 @@ void main() {
     expect(selected, 'Nie');
   });
 
+  testWidgets('quick replies fit a narrow phone bubble without overflow', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SizedBox(
+            width: 180,
+            child: StylistQuickReplyButtons(onSelected: (_) {}),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Áno'), findsOneWidget);
+    expect(find.text('Nie'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  test('quick replies are shown only for the latest actionable assistant turn', () {
+    bool visible({
+      String mode = 'yes_no',
+      bool isUser = false,
+      bool isLatest = true,
+      bool isSending = false,
+      bool hasPendingImage = false,
+      bool photoActive = false,
+      bool hasAlternativeActions = false,
+    }) => shouldShowStylistQuickReplies(
+      quickReplyMode: mode,
+      isUser: isUser,
+      isLatest: isLatest,
+      isSending: isSending,
+      hasPendingImage: hasPendingImage,
+      isPhotoConversationActive: photoActive,
+      hasAlternativeActions: hasAlternativeActions,
+    );
+
+    expect(visible(), isTrue);
+    expect(visible(mode: 'none'), isFalse);
+    expect(visible(isUser: true), isFalse);
+    expect(visible(isLatest: false), isFalse);
+    expect(visible(isSending: true), isFalse);
+    expect(visible(hasPendingImage: true), isFalse);
+    expect(visible(photoActive: true), isFalse);
+    expect(visible(hasAlternativeActions: true), isFalse);
+  });
+
   test('server quick-reply mode survives parsing and chat persistence', () {
     final result = StylistSimpleAgentResultV1.fromCallableData({
       'simpleAgent': true,
@@ -66,6 +113,37 @@ void main() {
       ).toMap(),
     );
     expect(restored.quickReplyMode, 'yes_no');
+  });
+
+  test('old, malformed and fail-closed results never invent quick replies', () {
+    Map<String, dynamic> result({Object? mode}) => <String, dynamic>{
+      'simpleAgent': true,
+      'stylistComment': 'Rozumiem 🙂',
+      'resultingOutfitItemIds': const <String>[],
+      'displayItemIds': const <String>[],
+      'outfitChanged': false,
+      'resultingOutfitItems': const <Map<String, dynamic>>[],
+      'displayItems': const <Map<String, dynamic>>[],
+      if (mode != null) 'quickReplyMode': mode,
+    };
+
+    expect(
+      StylistSimpleAgentResultV1.fromCallableData(result()).quickReplyMode,
+      'none',
+    );
+    expect(
+      StylistSimpleAgentResultV1.fromCallableData(
+        result(mode: 'unsupported'),
+      ).quickReplyMode,
+      'none',
+    );
+    final failed = StylistSimpleAgentServiceV1.normalizeJobResult({
+      'simpleAgent': true,
+      'failClosed': true,
+      'stylistComment': 'Aktuálny outfit nemením.',
+      'quickReplyMode': 'yes_no',
+    });
+    expect(failed['quickReplyMode'], 'none');
   });
 
   test('text-only explanation retains full outfit state without restoring item cards', () {
