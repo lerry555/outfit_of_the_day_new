@@ -49,17 +49,31 @@ async function main() {
     todayDateKey: "2026-09-01", tomorrowDateKey: "2026-09-02", userGpsLocation: "Martin",
   };
   let currentSelectionReasons = [];
-  const call = async (name, message, current, history, weather = weatherContext) => {
+  const call = async (name, message, current, history, weather = weatherContext,
+    options = {}) => {
+    const startedAt = Date.now();
     const response = await fetch(
       `https://us-east1-${projectId}.cloudfunctions.net/stylistSimpleAgentV1`,
       {method: "POST", headers: {"Content-Type": "application/json", Authorization: `Bearer ${auth.idToken}`},
         body: JSON.stringify({data: {message, history, currentOutfitItemIds: current,
           weatherContext: weather, clientContext,
-          currentSelectionReasons}}),
+          currentSelectionReasons,
+          ...(options.shoppingEnabled ? {shoppingEnabled: true} : {}),
+          ...(options.shoppingContext ? {shoppingContext: options.shoppingContext} : {})}}),
         signal: AbortSignal.timeout(125000)},
     );
     if (!response.ok) throw new Error(`qa_callable_http_${response.status}`);
     const result = (await response.json()).result;
+    const latencyMs = Date.now() - startedAt;
+    if (options.expectShopping) {
+      assert.equal(result?.action, options.expectShopping,
+        `qa_shopping_action_${name}`);
+      console.log(JSON.stringify({scenario: name, message, reply: result.reply,
+        action: result.action, latencyMs,
+        attachments: result.messageAttachments,
+        shoppingContextPatch: result.shoppingContextPatch}));
+      return {...result, latencyMs};
+    }
     if (!result?.simpleAgent || result.failClosed) throw new Error(`qa_fail_closed_${name}`);
     assert.ok(result.stylistComment.length > 0 && result.stylistComment.length <= 500);
     assert.ok(["none", "yes_no"].includes(result.quickReplyMode),
@@ -77,12 +91,43 @@ async function main() {
       footwearAssessment: result.footwearAssessment,
       outfitRequested: result.outfitRequested,
       outfitChanged: result.outfitChanged, quickReplyMode: result.quickReplyMode,
+      modelPath: result.modelPath, latencyMs,
       displayedCount: result.displayItemIds.length,
       // Synthetic weather fixture, NOT a live forecast for the owner.
       weatherFixture: true}));
     currentSelectionReasons = result.selectionReasons || [];
-    return result;
+    return {...result, latencyMs};
   };
+  if (process.argv.includes("--fast-conversation")) {
+    const greeting = await call("fast_greeting", "ahoj", [], [], weatherContext,
+      {shoppingEnabled: true});
+    assert.equal(greeting.modelPath, "fast_conversation", "qa_greeting_not_fast");
+    assert.deepEqual(greeting.resultingOutfitItemIds, []);
+    assert.deepEqual(greeting.displayItemIds, []);
+
+    const missing = await call("fast_missing_hiking_shoes", "Nemám také topánky.",
+      initialIds, [
+        {role: "user", content: "Zajtra ráno idem na huby do mokrého lesa. Čo si mám obliecť?"},
+        {role: "assistant", content: "Na mokrý les potrebuješ turistickú obuv s pevnou podrážkou."},
+      ], weatherContext, {shoppingEnabled: true,
+        expectShopping: "ASK_PERMISSION_TO_SHOP"});
+    assert.match(missing.reply, /Chceš, aby som pozrel možnosti v obchodoch\?/);
+    assert.deepEqual(missing.messageAttachments?.[0]?.options,
+      ["SHOPPING", "NO_THANKS"], "qa_shopping_buttons_missing");
+
+    const declined = await call("fast_decline_shopping", "nie, ďakujem",
+      initialIds, [], weatherContext, {shoppingEnabled: true,
+        shoppingContext: missing.shoppingContextPatch,
+        expectShopping: "RETURN_TO_WARDROBE_STYLIST"});
+    assert.equal(declined.clearShoppingContext, true,
+      "qa_decline_did_not_clear_shopping_context");
+    console.log(JSON.stringify({scenario: "fast_conversation_summary",
+      greetingLatencyMs: greeting.latencyMs,
+      missingItemLatencyMs: missing.latencyMs,
+      declineLatencyMs: declined.latencyMs}));
+    console.log("LIVE_FAST_CONVERSATION_PASS: fast greeting, Shopping offer buttons and deterministic decline.");
+    return;
+  }
   if (process.argv.includes("--quick-replies")) {
     const preserves = (result, ids) => {
       assert.deepEqual(new Set(result.resultingOutfitItemIds), new Set(ids),
