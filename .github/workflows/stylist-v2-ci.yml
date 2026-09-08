@@ -62,8 +62,12 @@ jobs:
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci --ignore-scripts
-      - name: Firestore session repository and rules emulator tests
+      - name: V2 and existing Firestore rules emulator regressions
         run: >-
           npx --yes firebase-tools emulators:exec --only firestore
           --project demo-ootd-rules-9cr
-          "node --test functions/stylist/v2/stylist_session_firestore_emulator.test.js"
+          "node --test functions/stylist/v2/stylist_session_firestore_emulator.test.js &&
+          node --test functions/wardrobe_firestore_rules_emulator.test.js &&
+          node --test functions/shopping/catalog_firestore_rules_emulator.test.js &&
+          node --test functions/shopping/shopping_session_firestore_emulator.test.js &&
+          node --test functions/shopping/wishlist_v2_firestore_emulator.test.js"
