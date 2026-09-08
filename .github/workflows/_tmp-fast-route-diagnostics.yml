@@ -1,0 +1,35 @@
+name: Stylist fast route sanitized diagnostics
+
+on:
+  push:
+    branches: [stylist-simple-agent]
+    paths: [.github/workflows/_tmp-fast-route-diagnostics.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  diagnostics:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard target and protected branches
+        run: |
+          git fetch origin stylist-simple-agent brain-v1-experiment master
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/master)" = "00bd52fa20f1e5b281d66850758c465dc2b00098"
+      - name: Authenticate with existing diagnostics identity
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Read only sanitized fast-route fields
+        run: >-
+          gcloud logging read 'resource.type="cloud_function" AND resource.labels.function_name="stylistSimpleAgentV1" AND (jsonPayload.message="SIMPLE_AGENT_FAST_ROUTE" OR jsonPayload.message="SIMPLE_AGENT_FAST_ROUTE_FALLBACK")'
+          --project outfitoftheday-4d401 --freshness=45m --limit=20
+          --format='json(timestamp,jsonPayload.message,jsonPayload.valid,jsonPayload.route,jsonPayload.shoppingHandoff,jsonPayload.latencyMs,jsonPayload.validationErrors,jsonPayload.code)'
