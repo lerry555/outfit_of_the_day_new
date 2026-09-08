@@ -191,19 +191,32 @@ service cloud.firestore {
       allow read, create, update, delete: if false;
     }
 
+    // AI Stylist V2 canonical session state is server-written. The owner may
+    // read the sanitized canonical session document, but all mutations happen
+    // through trusted backend code. Immutable turn receipts are server-only.
+    match /users/{userId}/stylistSessionsV2/{chatId} {
+      allow read: if isOwner(userId);
+      allow create, update, delete: if false;
+    }
+
+    match /users/{userId}/stylistSessionsV2/{chatId}/turns/{turnId} {
+      allow read, create, update, delete: if false;
+    }
+
     // ✅ Remaining user subcollections (trips, stylistChats, …)
     // Wardrobe writes are NOT granted here — firstSegment != 'wardrobe' so the
     // OR-match cannot bypass the wardrobe-specific boundary above.
-    // tryon_jobs remains readable via its specific match; client writes stay
-    // denied there (specific allow false). Broad write still excludes wardrobe
-    // only, matching prior catch-all scope for other collections.
+    // Backend-owned V2 state must also be excluded because Firestore allow
+    // expressions across overlapping matches are ORed.
     match /users/{userId}/{firstSegment}/{document=**} {
       allow read: if isOwner(userId)
-        && firstSegment != 'wishlistV2';
+        && firstSegment != 'wishlistV2'
+        && firstSegment != 'stylistSessionsV2';
       allow write: if isOwner(userId)
         && firstSegment != 'wardrobe'
         && firstSegment != 'wishlist'
-        && firstSegment != 'wishlistV2';
+        && firstSegment != 'wishlistV2'
+        && firstSegment != 'stylistSessionsV2';
     }
 
     // ✅ STARŠIA ŠTRUKTÚRA ŠATNÍKA (ak ju ešte používaš)
