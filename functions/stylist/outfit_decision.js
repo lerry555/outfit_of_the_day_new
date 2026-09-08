@@ -63,6 +63,12 @@ function materialFieldAlreadyGrounded(field, state) {
     return travel.scopeNeedsClarification === false &&
       scope !== "" && scope !== "unknown";
   }
+  if (canonical === "terrain") {
+    const text = normalizeEvidenceText(
+      Array.isArray(state.semanticEvidenceTexts) ? state.semanticEvidenceTexts.join(" ") : ""
+    );
+    return /\b(?:chodnik|asfalt|spevnen|lahk|such|rovin|paved|easy|blat|mokr|dazd|mud|wet|strm|skal|kamenis|narocn|steep|rock|technical|sneh|zasnezen|lad|mraz|snow|ice)\b/.test(text);
+  }
   return false;
 }
 

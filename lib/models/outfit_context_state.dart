@@ -485,6 +485,7 @@ class OutfitContextState {
       result.add('activity');
     }
 
+
     if (remote &&
         !dateKnown &&
         (_isMultiDay(conversation) ||
@@ -507,6 +508,16 @@ class OutfitContextState {
       result.addAll(const ['destination', 'activity']);
     }
     return result.toSet().toList(growable: false);
+  }
+
+  static bool _hasTerrainMention(String conversation) {
+    final text = StylistSemanticActivity.normalize(conversation);
+    return RegExp(
+      r'\b(?:chodnik\w*|asfalt\w*|spevnen\w*|lahk\w*|such\w*|rovin\w*|paved\w*|easy\w*|'
+      r'blat\w*|mokr\w*|dazd\w*|mud\w*|wet\w*|'
+      r'strm\w*|skal\w*|kamenis\w*|narocn\w*|steep\w*|rock\w*|technical\w*|'
+      r'sneh\w*|zasnezen\w*|lad\w*|mraz\w*|snow\w*|ice\w*)\b',
+    ).hasMatch(text);
   }
 
   static bool _genericUrbanOutingSufficient(String value) {

@@ -4,6 +4,8 @@ const {randomUUID} = require("node:crypto");
 const {openAiUsageV1} = require("../costs/ai_usage_v1");
 const {buildCachedSimpleAgentInputV1} = require("./simple_stylist_prompt_cache_v1");
 const {validateFootwearV1} = require("./simple_stylist_footwear_v1");
+const {requiresGroundingClarification, groundingFields} = require("./outfit_decision");
+const {groundingClarificationReply} = require("./grounding_reply");
 
 const SIMPLE_AGENT_MODEL = "gpt-5.6-sol";
 const SIMPLE_AGENT_REASONING_EFFORT = "medium";
@@ -169,6 +171,7 @@ function normalizeRequestV1(input) {
     rawById,
     weatherContext: safeMap(data.weatherContext),
     clientContext: safeMap(data.clientContext),
+    outfitContextState: safeMap(data.outfitContextState),
     eventContext: safeMap(data.eventContext),
     preferences: safeMap(data.preferences || data.userStylePreferences),
     shoppingEnabled: data.shoppingEnabled === true,
@@ -754,6 +757,39 @@ function createSimpleStylistAgentV1({executeModel, logger = console} = {}) {
         });
         throw error;
       }
+
+      if (requiresGroundingClarification(request.outfitContextState)) {
+        const fields = groundingFields(request.outfitContextState);
+        const wasCorrection = request.outfitContextState.userCorrectionDetected === true;
+        const clarificationReply = groundingClarificationReply(fields, wasCorrection);
+        safeLog(logger, "info", "SIMPLE_AGENT_GROUNDING_BLOCKED", {
+          fields,
+          wasCorrection,
+          reply: clarificationReply,
+        });
+        return Object.freeze({
+          contractVersion: SIMPLE_AGENT_CONTRACT_VERSION,
+          simpleAgent: true,
+          reply: clarificationReply,
+          stylistComment: clarificationReply,
+          resultingOutfitItemIds: Object.freeze([]),
+          displayItemIds: Object.freeze([]),
+          outfitChanged: false,
+          outfitRequested: false,
+          quickReplyMode: "none",
+          selectionReasons: Object.freeze([]),
+          footwearAssessment: Object.freeze({
+            use: "none",
+            weatherWindow: "unknown",
+            status: "not_applicable",
+            message: "",
+          }),
+          resultingOutfitItems: Object.freeze([]),
+          displayItems: Object.freeze([]),
+          action: "simple_agent_clarify",
+        });
+      }
+
       safeLog(logger, "info", "SIMPLE_AGENT_REQUEST", {
         model: SIMPLE_AGENT_MODEL,
         reasoningEffort: SIMPLE_AGENT_REASONING_EFFORT,

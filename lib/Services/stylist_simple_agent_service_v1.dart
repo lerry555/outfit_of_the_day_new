@@ -150,6 +150,7 @@ class StylistSimpleAgentServiceV1 {
     List<Map<String, String>> currentSelectionReasons = const [],
     required Map<String, dynamic> weatherContext,
     required Map<String, dynamic> clientContext,
+    Map<String, dynamic>? outfitContextState,
     Map<String, dynamic>? eventContext,
     Map<String, dynamic>? shoppingContext,
     bool shoppingEnabled = false,
@@ -173,6 +174,8 @@ class StylistSimpleAgentServiceV1 {
           'currentSelectionReasons': currentSelectionReasons,
         'weatherContext': weatherContext,
         'clientContext': clientContext,
+        if (outfitContextState != null && outfitContextState.isNotEmpty)
+          'outfitContextState': outfitContextState,
         if (eventContext != null && eventContext.isNotEmpty)
           'eventContext': eventContext,
         if (shoppingContext != null && shoppingContext.isNotEmpty)

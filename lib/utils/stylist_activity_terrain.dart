@@ -27,7 +27,7 @@ class StylistActivityTerrainClassifier {
 
     final text = StylistSemanticActivity.normalize(blob);
     if (RegExp(
-      r'\b(?:blat\w*|hlin\w*|trav\w*|luk\w*|trail\w*|les\w*|prirod\w*|hor\w*)\b',
+      r'\b(?:blat\w*|hlin\w*|trav\w*|luk\w*|trail\w*|les\w*|prirod\w*|hor\w*|hub\w*|hrib\w*|turist\w*|tur\w*)\b',
     ).hasMatch(text)) {
       return StylistActivityTerrain.wetGround;
     }

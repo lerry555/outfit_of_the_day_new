@@ -836,6 +836,12 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           .map((item) => (item['id'] ?? '').toString().trim())
           .where((id) => id.isNotEmpty)
           .toList(growable: false);
+      _outfitContextState = OutfitContextState.buildFrom(
+        conversation: _conversationHintText(),
+        latestUserText: text,
+        gpsCityLabel: UserLocationService.instance.cityLabel,
+        previous: _outfitContextState,
+      );
       _setSendingProgress(StylistChatProgressPhase.checkingWeather);
       final weatherContext = await _simpleAgentWeatherContext();
       final clientContext = _simpleAgentClientContext();
@@ -856,6 +862,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         ],
         weatherContext: weatherContext,
         clientContext: clientContext,
+        outfitContextState: _outfitContextState.toApiPayload(),
         shoppingContext: _shoppingState.toApiPayload(),
         shoppingEnabled: ShoppingUiFeatureFlags.mayExposeCatalog,
         notifyJobId: jobId,
