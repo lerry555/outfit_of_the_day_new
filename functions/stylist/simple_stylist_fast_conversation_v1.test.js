@@ -37,6 +37,8 @@ test("fast input uses Luna low and contains no wardrobe inventory", () => {
   assert.deepEqual(payload.wardrobeV2, []);
   assert.equal(payload.hasCurrentOutfit, true);
   assert.ok(!input.messages[1].content.includes("opaque-a"));
+  assert.ok(input.messages[0].content.includes("je to VŽDY fast_reply"));
+  assert.ok(input.messages[0].content.includes("neoveruj znovu proti šatníku"));
 });
 
 test("missing gear can produce a model-routed shopping permission handoff", () => {

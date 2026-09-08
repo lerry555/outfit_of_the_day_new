@@ -66,6 +66,13 @@ async function main() {
     const result = (await response.json()).result;
     const latencyMs = Date.now() - startedAt;
     if (options.expectShopping) {
+      if (result?.action !== options.expectShopping) {
+        console.log(JSON.stringify({scenario: `${name}_unexpected`,
+          expectedAction: options.expectShopping,
+          actualAction: result?.action || null,
+          modelPath: result?.modelPath || null,
+          latencyMs}));
+      }
       assert.equal(result?.action, options.expectShopping,
         `qa_shopping_action_${name}`);
       console.log(JSON.stringify({scenario: name, message, reply: result.reply,

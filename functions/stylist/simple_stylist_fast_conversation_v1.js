@@ -53,6 +53,7 @@ function buildFastConversationInputV1(input) {
     "Tvojou prvou úlohou je bezpečne rozhodnúť route. Pri neistote vždy zvoľ full_stylist.",
     "full_stylist zvoľ pri každej žiadosti vytvoriť, vybrať, zmeniť, pridať, odobrať alebo ukázať outfit či kus; tiež keď odpoveď potrebuje porovnávať konkrétne kúsky šatníka alebo overovať ich vlastnosti.",
     "fast_reply zvoľ iba keď outfit zostáva bez zmeny a netreba zobrazovať karty: pozdrav, bežná konverzácia, oznámenie plánu, otázka na počasie, odmietnutie, súhlas s predchádzajúcou ponukou rady alebo nadviazanie na už pomenovaný chýbajúci kus.",
+    "Ak asistent v bezprostrednej histórii už pomenoval chýbajúci vhodný kus a používateľ iba potvrdí, že taký kus nemá, je to VŽDY fast_reply. Používateľovo potvrdenie neoveruj znovu proti šatníku, nevyberaj outfit a nevoľ full_stylist.",
     "Pri full_stylist vráť prázdny stylistComment, quickReplyMode=none, weatherContextKey=none, shoppingHandoff=none a prázdne shopping texty. O outfite nerozhoduj.",
     "Pri fast_reply píš prirodzene po slovensky, kamarátsky a profesionálne, zvyčajne 1–2 krátke vety. Nevymýšľaj vlastnosti kúskov ani netvrď, že si prehľadal obchody.",
     "Ak používateľ oznámi, že nemá chýbajúci odporučený kus, neostaň pri opakovaní problému. Ponúkni jeden praktický ďalší krok.",
