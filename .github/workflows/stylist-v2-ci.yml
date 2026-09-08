@@ -35,12 +35,14 @@ jobs:
           node --check functions/stylist/v2/stylist_turn_validator_v2.js
           node --check functions/stylist/v2/stylist_turn_coordinator_v2.js
           node --check functions/stylist/v2/stylist_session_repository_v2.js
-      - name: V2 contract and persistence unit tests
+          node --check functions/stylist/v2/stylist_turn_engine_v2.js
+      - name: V2 contract, persistence, and engine unit tests
         run: >-
           node --test
           functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
           functions/stylist/v2/stylist_v2_phase0_contracts.test.js
           functions/stylist/v2/stylist_session_repository_v2.test.js
+          functions/stylist/v2/stylist_turn_engine_v2.test.js
 
   v2-firestore:
     runs-on: ubuntu-latest
