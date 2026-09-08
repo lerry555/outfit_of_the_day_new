@@ -54,6 +54,23 @@ test("missing gear can produce a model-routed shopping permission handoff", () =
   assert.equal(result.valid, true);
 });
 
+test("Shopping handoff normalizes model-owned prose and partial need metadata", () => {
+  const result = validateFastConversationDecisionV1({
+    route: "fast_reply",
+    stylistComment: "Chceš, aby som pozrel obchody?",
+    quickReplyMode: "yes_no",
+    weatherContextKey: "tomorrow",
+    shoppingHandoff: "ask_permission",
+    shoppingNeedText: "turistické topánky",
+    shoppingNeedLabel: "",
+  });
+  assert.equal(result.valid, true, result.errors.join(","));
+  assert.equal(result.value.stylistComment, "");
+  assert.equal(result.value.quickReplyMode, "none");
+  assert.equal(result.value.weatherContextKey, "none");
+  assert.equal(result.value.shoppingNeedLabel, "turistické topánky");
+});
+
 test("agreement to the immediately preceding store offer can start Shopping", () => {
   const input = buildFastConversationInputV1({
     message: "Áno",

@@ -1,4 +1,4 @@
-name: Stylist fast conversation final acceptance deployment
+name: Stylist fast conversation validated handoff deployment
 
 on:
   push:

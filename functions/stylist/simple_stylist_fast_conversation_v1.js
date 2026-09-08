@@ -94,12 +94,12 @@ function hasTerminalYesNoQuestion(text) {
 
 function validateFastConversationDecisionV1(raw) {
   const route = cleanText(raw?.route, 30);
-  const stylistComment = cleanText(raw?.stylistComment, 500);
-  const quickReplyMode = cleanText(raw?.quickReplyMode, 20);
-  const weatherContextKey = cleanText(raw?.weatherContextKey, 20);
+  let stylistComment = cleanText(raw?.stylistComment, 500);
+  let quickReplyMode = cleanText(raw?.quickReplyMode, 20);
+  let weatherContextKey = cleanText(raw?.weatherContextKey, 20);
   const shoppingHandoff = cleanText(raw?.shoppingHandoff, 30);
-  const shoppingNeedText = cleanText(raw?.shoppingNeedText, 160);
-  const shoppingNeedLabel = cleanText(raw?.shoppingNeedLabel, 160);
+  let shoppingNeedText = cleanText(raw?.shoppingNeedText, 160);
+  let shoppingNeedLabel = cleanText(raw?.shoppingNeedLabel, 160);
   const errors = [];
   if (!FAST_CONVERSATION_SCHEMA.properties.route.enum.includes(route)) {
     errors.push("fast_route_invalid");
@@ -115,6 +115,18 @@ function validateFastConversationDecisionV1(raw) {
     .includes(shoppingHandoff)) {
     errors.push("fast_shopping_handoff_invalid");
   }
+  if (route === "fast_reply" &&
+      ["ask_permission", "start_search"].includes(shoppingHandoff)) {
+    // The Shopping runtime owns the visible copy and buttons. Do not let
+    // harmless model prose/quick-reply metadata invalidate a correct semantic
+    // handoff and trigger the expensive full stylist. One grounded need label
+    // is sufficient; mirror it for the runtime's two display/query roles.
+    shoppingNeedText ||= shoppingNeedLabel;
+    shoppingNeedLabel ||= shoppingNeedText;
+    stylistComment = "";
+    quickReplyMode = "none";
+    weatherContextKey = "none";
+  }
   if (route === "full_stylist" && (stylistComment || quickReplyMode !== "none" ||
       weatherContextKey !== "none" || shoppingHandoff !== "none" ||
       shoppingNeedText || shoppingNeedLabel)) {
@@ -127,7 +139,7 @@ function validateFastConversationDecisionV1(raw) {
     errors.push("fast_yes_no_question_required");
   }
   if (["ask_permission", "start_search"].includes(shoppingHandoff) &&
-      (!shoppingNeedText || !shoppingNeedLabel || quickReplyMode !== "none")) {
+      (!shoppingNeedText || !shoppingNeedLabel)) {
     errors.push("fast_shopping_need_invalid");
   }
   return Object.freeze({
