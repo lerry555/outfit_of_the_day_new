@@ -4020,6 +4020,9 @@ exports.attachCleanImageOnWardrobeWrite = functions
                 id: doc.id,
                 ...(doc.data() || {}),
               }));
+              const outfitContextState =
+                data?.outfitContextState && typeof data.outfitContextState === "object" ?
+                  data.outfitContextState : {};
               const result = await simpleStylistAgentForUserV1(uid, requestId).resolve({
                 message: data?.message,
                 history: data?.history,
@@ -4028,6 +4031,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
                 wardrobeItems,
                 weatherContext: data?.weatherContext,
                 clientContext: data?.clientContext,
+                outfitContextState,
                 eventContext: data?.eventContext,
                 shoppingEnabled,
                 userStylePreferences: sanitizeUserStylePreferences(

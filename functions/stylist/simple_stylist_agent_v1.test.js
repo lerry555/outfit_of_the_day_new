@@ -1103,3 +1103,39 @@ test("live-schema choice reasons require new-item coverage and cannot point outs
   assert.ok(validateAgentResultV1({...raw, selectionReasons: [{itemId: "hoodie", reason: "Unexpected."}]},
     normalized).errors.includes("selection_reason_invalid_or_detached"));
 });
+
+test("simpleAgent blocks outfit generation when outfitContextState requires destination grounding", async () => {
+  const agent = createSimpleStylistAgentV1({
+    executeModel: async () => {
+      throw new Error("model should not be executed when grounding is required");
+    },
+  });
+
+  const result = await agent.resolve({
+    message: "Ahoj, zajtra idem na túru, potrebujem outfit.",
+    history: [],
+    currentOutfitItemIds: [],
+    wardrobeItems: [
+      {
+        id: "boots",
+        ontologyVersion: "2.0.0",
+        canonicalType: "hiking_boots",
+        canonicalFamily: "boots",
+        bodySlots: ["feet"],
+        layerPosition: "outer",
+        colorProfile: {primary: {family: "brown"}},
+      },
+    ],
+    outfitContextState: {
+      groundingStatus: "needs_grounding",
+      unresolvedMaterialFields: ["destination"],
+      userCorrectionDetected: false,
+    },
+  });
+
+  assert.equal(result.action, "simple_agent_clarify");
+  assert.deepEqual(result.resultingOutfitItemIds, []);
+  assert.deepEqual(result.displayItemIds, []);
+  assert.equal(result.outfitRequested, false);
+  assert.match(result.reply, /Kam sa chystáš/);
+});
