@@ -12,6 +12,13 @@ function normalizeSemanticTextV2(value) {
     .trim();
 }
 
+function locationQueryIsUserGroundedV2(query, latestUserInput) {
+  const normalizedQuery = normalizeSemanticTextV2(query);
+  const normalizedInput = normalizeSemanticTextV2(latestUserInput);
+  if (!normalizedQuery || !normalizedInput) return false;
+  return ` ${normalizedInput} `.includes(` ${normalizedQuery} `);
+}
+
 const OUTFIT_TERMS = /\b(outfit|outfity|look|styling|oblecenie|oblecenia|obliect|na seba|kombinacia|kombinaciu)\b/;
 const REQUEST_TERMS = /\b(potrebujem|potreboval|potrebovala|chcem|chcel|chcela|vyber|navrhni|daj|sprav|zostav|co si mam|co mam)\b/;
 const OPINION_TERMS = /\b(je to ok|je v poriadku|co povies|co si myslis|ako vyzera|hodnot|paci sa)\b/;
@@ -156,9 +163,45 @@ function clarificationForFieldV2(field) {
   };
 }
 
+function mandatoryLocationFieldV2(policy) {
+  const field = policy?.requirements?.weatherLocationField;
+  return ["destination", "eventLocation"].includes(field) ? field : null;
+}
+
+function finalClarificationEnvelopeV2(out, field) {
+  return {
+    kind: "final",
+    result: clarificationForFieldV2(field),
+    statePatch: clone(out.statePatch || {}),
+  };
+}
+
 function enforceEnvelopeGroundingV2(envelope, input, policy) {
-  if (!policy?.active || !envelope || typeof envelope !== "object") return envelope;
+  if (!envelope || typeof envelope !== "object") return envelope;
   const out = clone(envelope);
+  const latestUserInput = input?.request?.latestUserInput || "";
+
+  if (out.kind === "tool_request" && Array.isArray(out.requests)) {
+    const locationRequests = out.requests.filter((request) => request?.tool === "location");
+    const unsupportedLocation = locationRequests.find((request) =>
+      !locationQueryIsUserGroundedV2(request?.query, latestUserInput));
+    if (unsupportedLocation) {
+      const requiredField = mandatoryLocationFieldV2(policy) ||
+        (["destination", "eventLocation"].includes(unsupportedLocation.targetField) ? unsupportedLocation.targetField : "destination");
+      out.statePatch = out.statePatch && typeof out.statePatch === "object" ? out.statePatch : {};
+      out.statePatch.context = out.statePatch.context && typeof out.statePatch.context === "object" ? out.statePatch.context : {};
+      if (policy?.active) {
+        out.statePatch.context.groundingRequirements = mergeGroundingRequirementsV2(
+          input?.session?.context?.groundingRequirements,
+          out.statePatch.context.groundingRequirements,
+          policy.requirements,
+        );
+      }
+      return finalClarificationEnvelopeV2(out, requiredField);
+    }
+  }
+
+  if (!policy?.active) return out;
   out.statePatch = out.statePatch && typeof out.statePatch === "object" ? out.statePatch : {};
   out.statePatch.context = out.statePatch.context && typeof out.statePatch.context === "object" ? out.statePatch.context : {};
   out.statePatch.context.groundingRequirements = mergeGroundingRequirementsV2(
@@ -167,10 +210,20 @@ function enforceEnvelopeGroundingV2(envelope, input, policy) {
     policy.requirements,
   );
 
-  if (out.kind !== "final") return out;
   const shadow = applyEnvelopeContextPatchV2(input.session, out.statePatch, policy.requirements);
   const missing = missingGroundingFieldV2(shadow);
-  if (!missing || out.result?.action === "stop") return out;
+
+  if (out.kind === "tool_request") {
+    if (["destination", "eventLocation"].includes(missing)) {
+      const hasGroundedResolverRequest = Array.isArray(out.requests) && out.requests.some((request) =>
+        request?.tool === "location" && request.targetField === missing &&
+        locationQueryIsUserGroundedV2(request.query, latestUserInput));
+      if (!hasGroundedResolverRequest) return finalClarificationEnvelopeV2(out, missing);
+    }
+    return out;
+  }
+
+  if (out.kind !== "final" || !missing || out.result?.action === "stop") return out;
   if (input.phase === "plan" || ["generate_outfit", "edit_outfit"].includes(out.result?.action)) {
     out.result = clarificationForFieldV2(missing);
   }
@@ -201,6 +254,7 @@ module.exports = {
   inferMandatoryGroundingV2,
   isConcreteOutfitRequestV2,
   isGreetingV2,
+  locationQueryIsUserGroundedV2,
   mergeGroundingRequirementsV2,
   missingGroundingFieldV2,
   normalizeSemanticTextV2,
