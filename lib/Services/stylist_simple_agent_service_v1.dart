@@ -105,6 +105,48 @@ class StylistSimpleAgentServiceV1 {
   static String _newProvisionalSessionId() =>
       'v2_${DateTime.now().microsecondsSinceEpoch}';
 
+  static const Set<String> _localGreetingTexts = <String>{
+    'ahoj', 'čau', 'cau', 'nazdar', 'dobrý deň', 'dobry den', 'servus', 'hello', 'hi', 'hey',
+  };
+  static const Set<String> _localThanksTexts = <String>{
+    'ďakujem', 'dakujem', 'díky', 'diky', 'vďaka', 'vdaka',
+  };
+
+  static String _normalizeLocalFastText(String value) => value
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9áäčďéíĺľňóôŕšťúýž\s]'), ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+
+  @visibleForTesting
+  static Map<String, dynamic>? localFastReplyForMessage(String message) {
+    final normalized = _normalizeLocalFastText(message);
+    String? reply;
+    if (_localGreetingTexts.contains(normalized) ||
+        (normalized.isEmpty && message.contains('👋'))) {
+      reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';
+    } else if (_localThanksTexts.contains(normalized)) {
+      reply = 'Rado sa stalo 🙂';
+    }
+    if (reply == null) return null;
+    return <String, dynamic>{
+      'ok': true,
+      'simpleAgent': true,
+      'v2': true,
+      'failClosed': false,
+      'modelPath': 'local_fast',
+      'reply': reply,
+      'stylistComment': reply,
+      'resultingOutfitItemIds': const <String>[],
+      'displayItemIds': const <String>[],
+      'resultingOutfitItems': const <Map<String, dynamic>>[],
+      'displayItems': const <Map<String, dynamic>>[],
+      'outfitChanged': false,
+      'quickReplyMode': 'none',
+      'action': 'simple_agent_result',
+    };
+  }
+
   Future<Map<String, dynamic>> sendTurn({
     required String message,
     required List<Map<String, String>> history,
@@ -118,6 +160,15 @@ class StylistSimpleAgentServiceV1 {
     String? notifyJobId,
     String? chatId,
   }) async {
+    final shoppingActive = shoppingContext != null && shoppingContext.isNotEmpty;
+    if (!shoppingActive && history.length <= 1 && currentOutfitItemIds.isEmpty) {
+      final localFast = localFastReplyForMessage(message);
+      if (localFast != null) {
+        debugPrint('SIMPLE_AGENT_LOCAL_FAST history=${history.length}');
+        return localFast;
+      }
+    }
+
     final stopwatch = Stopwatch()..start();
     debugPrint('SIMPLE_AGENT_REQUEST history=${history.length} current=${currentOutfitItemIds.length}');
     try {

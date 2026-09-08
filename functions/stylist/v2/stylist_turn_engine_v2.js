@@ -5,6 +5,11 @@ const {validateTurnRequestV2} = require("./stylist_turn_contract_v2");
 const {StaleSessionRevisionError} = require("./stylist_preflight_v2");
 const {createStylistTurnCoordinatorV2} = require("./stylist_turn_coordinator_v2");
 const {StylistSessionRepositoryV2Error} = require("./stylist_session_repository_v2");
+const {
+  applyMandatoryGroundingV2,
+  createGroundingEnforcedStylistModelV2,
+  inferMandatoryGroundingV2,
+} = require("./stylist_grounding_policy_v2");
 
 function requirePort(value, label) {
   if (!value) throw new TypeError(`${label} is required`);
@@ -85,24 +90,31 @@ function createStylistTurnEngineV2({sessionRepository, wardrobeTool, locationRes
   requirePort(durableRepository.get, "sessionRepository.get");
   requirePort(durableRepository.commitTurn, "sessionRepository.commitTurn");
 
+  const baseStylistModel = requirePort(stylistModel, "stylistModel");
   const sharedPorts = {
     wardrobeTool: requirePort(wardrobeTool, "wardrobeTool"),
     locationResolver: requirePort(locationResolver, "locationResolver"),
     weatherTool: requirePort(weatherTool, "weatherTool"),
     shoppingTool: requirePort(shoppingTool, "shoppingTool"),
-    stylistModel: requirePort(stylistModel, "stylistModel"),
     clock,
   };
 
   return Object.freeze({
     async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null}) {
       const request = validateTurnRequestV2(untrustedRequest);
-      const initialState = await ensureCanonicalSession({
+      let initialState = await ensureCanonicalSession({
         durableRepository,
         uid,
         request,
         bootstrapInput,
       });
+
+      const groundingPolicy = inferMandatoryGroundingV2({
+        latestUserInput: request.latestUserInput,
+        state: initialState,
+      });
+      initialState = validateStylistSessionStateV2(applyMandatoryGroundingV2(initialState, groundingPolicy));
+      const groundedStylistModel = createGroundingEnforcedStylistModelV2(baseStylistModel, groundingPolicy);
 
       const boundRepository = createBoundCoordinatorRepository({
         durableRepository,
@@ -113,6 +125,7 @@ function createStylistTurnEngineV2({sessionRepository, wardrobeTool, locationRes
       const coordinator = createStylistTurnCoordinatorV2({
         sessionRepository: boundRepository,
         ...sharedPorts,
+        stylistModel: groundedStylistModel,
       });
 
       const result = await coordinator.resolveTurn(request);
