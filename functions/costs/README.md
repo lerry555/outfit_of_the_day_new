@@ -10,6 +10,8 @@ No legacy intent parser or outfit authority is reintroduced.
 | --- | --- | --- |
 | Stylist chat | Two explicit provider-cache boundaries: instructions and complete sorted Wardrobe V2. Dynamic turn/history/weather follow them. | `stylistSimpleAgentV1` |
 | Stylist chat | Server-only transactional job admission before wardrobe/model reads. Same job+payload replays its result; conflicts and in-flight duplicates do not launch another AI call. | `stylistSimpleAgentV1` |
+| Stylist chat | A Luna/low semantic fast lane handles only validated no-mutation conversation, weather and missing-item follow-ups. Outfit selection, edits, cards and uncertain turns fall through to Sol/medium. | `stylistSimpleAgentV1` |
+| Stylist chat | Fast turns skip the full wardrobe query; only exact current outfit documents are materialized. A model-produced missing-item handoff can enter the existing stateful Shopping permission flow when the client feature gate is enabled. | `stylistSimpleAgentV1` + updated app |
 | Wardrobe analysis | 24-hour exact-result cache after reading current wardrobe and constructing the complete provider input. Invalid/fallback answers are not cached. | `analyzeWardrobeSmart` |
 | Clothing recognition | Correct Gemini Flash rates; include both truncation attempts and thoughts; record unknown usage honestly. | `analyzeClothingImage` |
 | Home | Meter generation, candidate review and explanation calls without changing existing outfit/cache decisions. | `generateHomeOutfit`, `finalReviewHomeOutfitCandidates`, `generateHomeOutfitExplanation` |
@@ -52,10 +54,11 @@ Sources checked 2026-09-02:
   (including secondary/accent colors) are removed.
 - The provider cache is temporary and cache hits are not guaranteed. It does
   not provide free permanent model memory. GPT-5.6 cache writes also cost money.
-- **Normal new chat turns still read the authoritative Firestore wardrobe.**
-  Skipping those reads requires an atomic per-user wardrobe revision covering
-  every client/backend writer and deletion path. An asynchronous trigger alone
-  can lag a write and is not a correctness guarantee. That migration is deferred.
+- Fast no-mutation turns read only exact current outfit documents. Full outfit
+  decisions still read the authoritative Firestore wardrobe. Skipping that full
+  read safely requires an atomic per-user wardrobe revision covering every
+  client/backend writer and deletion path; an asynchronous trigger alone can lag
+  a write and is not a correctness guarantee. That migration remains deferred.
 - Current wardrobe limits (200 chat / 80 Home) are unchanged.
 - Exact-analysis caching saves AI calls, not its initial wardrobe DB read.
   Same-instance concurrent misses are coalesced; separate cold instances can

@@ -146,6 +146,30 @@ void main() {
     expect(failed['quickReplyMode'], 'none');
   });
 
+  test('shopping handoff survives background job normalization', () {
+    final normalized = StylistSimpleAgentServiceV1.normalizeJobResult({
+      'action': 'ASK_PERMISSION_TO_SHOP',
+      'reply': 'Chceš, aby som pozrel možnosti v obchodoch?',
+      'messageAttachments': <Map<String, dynamic>>[
+        {
+          'kind': 'shopping_clarification',
+          'clarificationType': 'SHOPPING_PERMISSION',
+          'options': <String>['SHOPPING', 'NO_THANKS'],
+        },
+      ],
+      'shoppingContextPatch': <String, dynamic>{
+        'activeClarification': 'SHOPPING_PERMISSION',
+        'pendingNeedText': 'turistické topánky',
+      },
+    });
+    expect(normalized['action'], 'ASK_PERMISSION_TO_SHOP');
+    expect(normalized['messageAttachments'], isNotEmpty);
+    expect(
+      (normalized['shoppingContextPatch'] as Map)['activeClarification'],
+      'SHOPPING_PERMISSION',
+    );
+  });
+
   test('text-only explanation retains full outfit state without restoring item cards', () {
     final items = [_item('top', 'Tričko'), _item('jeans', 'Rifle'), _item('shoes', 'Tenisky')];
     final result = StylistSimpleAgentResultV1.fromCallableData({

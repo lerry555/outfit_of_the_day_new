@@ -1,3 +1,6 @@
+Warning: truncated output (original token count: 50862)
+Total output lines: 5700
+
 import 'dart:async';
 import 'dart:io';
 
@@ -856,6 +859,8 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         ],
         weatherContext: weatherContext,
         clientContext: clientContext,
+        shoppingContext: _shoppingState.toApiPayload(),
+        shoppingEnabled: ShoppingUiFeatureFlags.mayExposeCatalog,
         notifyJobId: jobId,
         chatId: _activeChatId,
       );
@@ -865,9 +870,14 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
         return;
       }
       final start = _messages.length;
-      _handleSimpleAgentResponse(response);
+      if (_isShoppingAction((response['action'] ?? '').toString())) {
+        _handleShoppingResponse(response);
+      } else {
+        _handleSimpleAgentResponse(response);
+      }
       _stampMessagesWithJobId(start, jobId);
-      if (response['simpleAgent'] == true) {
+      if (response['simpleAgent'] == true ||
+          _isShoppingAction((response['action'] ?? '').toString())) {
         await _completeSuccessfulJob(jobId);
       }
       _inFlightJobId = null;
@@ -2833,99 +2843,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   }
 
   StylistChatEventContext _eventFromConversation({
-    Map<String, dynamic>? rawEvent,
-    required String fallbackLocation,
-  }) {
-    final conversation = _conversationHintText();
-    final inferred = _outfitContextState.groundingStatus == 'sufficient'
-        ? _outfitContextState.activityLocationLabel
-        : null;
-    final base = StylistChatEventContext.fromDynamic(
-      rawEvent,
-      now: DateTime.now(),
-    );
-    var location = '';
-    if (inferred != null &&
-        StylistDestinationParser.isPlausibleDestination(inferred)) {
-      location = inferred;
-    }
-    if (location.isEmpty) {
-      location = base.locationLabel.trim();
-      if (location.isNotEmpty &&
-          !StylistDestinationParser.isPlausibleDestination(location)) {
-        location = '';
-      }
-    }
-    final mayUseGpsAsEventLocation =
-        !_outfitContextState.remoteActivityPlanned ||
-        _outfitContextState.routineLocalOutfit;
-    if (location.isEmpty && mayUseGpsAsEventLocation) {
-      location = fallbackLocation.split(',').first.trim();
-    }
-
-    var date = base.date;
-    final tripParsed = StylistTripParser.parseFromConversation(conversation);
-    // Explicitný dátum z user-grounded state má prednosť pred starým
-    // modelovým eventContextom. Oprava "nie zajtra, v sobotu" musí zrušiť
-    // starú predpoveď, aj keď GPT vráti predchádzajúci dateKey.
-    final stateDate = DateTime.tryParse(_outfitContextState.dateKey ?? '');
-    final explicitDate =
-        stateDate ?? StylistDayParser.resolveDate(conversation);
-    if (explicitDate != null) {
-      date = explicitDate;
-    }
-
-    final hour = _resolveEventHour(
-      conversation: conversation,
-      aiHourLocal: base.hourLocal,
-      tripParsed: tripParsed,
-    );
-    final mergedTrip = base.tripWindow
-        .merge(tripParsed)
-        .merge(
-          StylistTripWindow(
-            eventStartHour: hour,
-            tripStartHour: tripParsed.tripStartHour,
-            tripEndHour: tripParsed.tripEndHour,
-            tripEndEstimated: tripParsed.tripEndEstimated,
-          ),
-        );
-    final profile = StylistOccasionGuidance.profileFor(
-      occasion: base.occasion,
-      conversationText: conversation,
-    );
-    return StylistChatEventContext(
-      date: date,
-      hourLocal: hour,
-      locationLabel: location,
-      occasion:
-          base.occasion ?? (profile.label.isNotEmpty ? profile.label : null),
-      performer: base.performer,
-      dressCode: base.dressCode,
-      tripWindow: mergedTrip,
-    );
-  }
-
-  String _groundingClarificationText(
-    Iterable<String> fields, {
-    required bool correction,
-  }) {
-    final normalized = fields
-        .map((value) => value.trim().toLowerCase())
-        .where((value) => value.isNotEmpty)
-        .toSet();
-    final prefix = correction ? 'Máš pravdu, to som si nemal domýšľať. ' : '';
-    if (normalized.contains('destination') && normalized.contains('activity')) {
-      return '${prefix}Kam sa chystáš a čo tam budeš približne robiť?';
-    }
-    if (normalized.contains('activity') && normalized.contains('date')) {
-      final weekend = RegExp(
-        r'\b(?:víkend|vikend|weekend)\b',
-        caseSensitive: false,
-      ).hasMatch(_conversationHintText());
-      return weekend
-          ? '${prefix}Čo budeš po príchode približne robiť a na ktorý deň cez víkend outfit riešime? Počasie sa môže medzi dňami zmeniť.'
-          : '${prefix}Čo budeš počas pobytu približne robiť a kedy cestuješ?';
+…862 tokens truncated…tuješ?';
     }
     if (normalized.contains('destination')) {
       final activity = _outfitContextState.activityHint;

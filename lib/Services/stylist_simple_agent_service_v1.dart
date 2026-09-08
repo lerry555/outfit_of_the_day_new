@@ -151,9 +151,12 @@ class StylistSimpleAgentServiceV1 {
     required Map<String, dynamic> weatherContext,
     required Map<String, dynamic> clientContext,
     Map<String, dynamic>? eventContext,
+    Map<String, dynamic>? shoppingContext,
+    bool shoppingEnabled = false,
     String? notifyJobId,
     String? chatId,
   }) async {
+    final stopwatch = Stopwatch()..start();
     debugPrint(
       'SIMPLE_AGENT_REQUEST history=${history.length} '
       'current=${currentOutfitItemIds.length}',
@@ -172,6 +175,9 @@ class StylistSimpleAgentServiceV1 {
         'clientContext': clientContext,
         if (eventContext != null && eventContext.isNotEmpty)
           'eventContext': eventContext,
+        if (shoppingContext != null && shoppingContext.isNotEmpty)
+          'shoppingContext': shoppingContext,
+        'shoppingEnabled': shoppingEnabled,
         if (notifyJobId != null && notifyJobId.trim().isNotEmpty)
           'notifyJobId': notifyJobId.trim(),
         if (chatId != null && chatId.trim().isNotEmpty) 'chatId': chatId.trim(),
@@ -192,9 +198,21 @@ class StylistSimpleAgentServiceV1 {
       if (response.data is! Map) {
         throw const FormatException('simple_agent_response_not_map');
       }
-      debugPrint('SIMPLE_AGENT_RESULT received=true');
+      final rawData = Map<String, dynamic>.from(response.data as Map);
+      if (_shoppingActions.contains((rawData['action'] ?? '').toString())) {
+        debugPrint(
+          'SIMPLE_AGENT_SHOPPING_HANDOFF action=${rawData['action']} '
+          'latencyMs=${stopwatch.elapsedMilliseconds}',
+        );
+        return rawData;
+      }
+      debugPrint(
+        'SIMPLE_AGENT_RESULT received=true '
+        'path=${rawData['modelPath'] ?? 'unknown'} '
+        'latencyMs=${stopwatch.elapsedMilliseconds}',
+      );
       final result = StylistSimpleAgentResultV1.fromCallableData(
-        response.data as Map,
+        rawData,
       );
       if (result.failClosed) {
         debugPrint('SIMPLE_AGENT_FAIL_CLOSED server=true');
@@ -206,7 +224,10 @@ class StylistSimpleAgentServiceV1 {
       }
       return result.toUiResponse();
     } catch (error, stackTrace) {
-      debugPrint('SIMPLE_AGENT_FAIL_CLOSED client=$error');
+      debugPrint(
+        'SIMPLE_AGENT_FAIL_CLOSED client=$error '
+        'latencyMs=${stopwatch.elapsedMilliseconds}',
+      );
       debugPrint('$stackTrace');
       final offline =
           error is TimeoutException ||
@@ -236,7 +257,26 @@ class StylistSimpleAgentServiceV1 {
     }
   }
 
+  static const Set<String> _shoppingActions = <String>{
+    'SHOPPING_CLARIFY_SOURCE',
+    'ASK_PERMISSION_TO_SHOP',
+    'START_SHOPPING_SEARCH',
+    'REFINE_SHOPPING_SEARCH',
+    'SHOW_MORE_SHOPPING',
+    'SHOW_ALL_SHOPPING',
+    'FOCUS_SHOPPING_PRODUCT',
+    'OFFER_WISHLIST',
+    'WISHLIST_EDITOR',
+    'RETURN_TO_WARDROBE_STYLIST',
+    'ASK_SHOPPING_MAX_PRICE',
+    'SHOPPING_CLARIFY_STYLE',
+    'UNSUPPORTED_STRUCTURED_CONSTRAINT',
+  };
+
   static Map<String, dynamic> normalizeJobResult(Map<String, dynamic> data) {
+    if (_shoppingActions.contains((data['action'] ?? '').toString())) {
+      return Map<String, dynamic>.from(data);
+    }
     try {
       return StylistSimpleAgentResultV1.fromCallableData(data).toUiResponse();
     } catch (_) {

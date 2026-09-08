@@ -856,6 +856,7 @@ function createOpenAiSimpleAgentExecutorV1({
   logger = console,
   recordUsage = async () => {},
   cacheScope = "",
+  feature = "stylist_simple_agent",
   sleepImpl = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
 } = {}) {
   if (typeof fetchImpl !== "function" || typeof resolveOpenAISecret !== "function") {
@@ -869,11 +870,12 @@ function createOpenAiSimpleAgentExecutorV1({
       // Includes reasoning as well as JSON. Live QA exhausted 2400 (1779
       // reasoning), truncating the result and paying for a preventable repair.
       // This is a ceiling, not a requested reply length; comment stays <=500.
-      max_output_tokens: 4096,
+      max_output_tokens: Number.isSafeInteger(input.maxOutputTokens) ?
+        input.maxOutputTokens : 4096,
       text: {
         format: {
           type: "json_schema",
-          name: "simple_stylist_agent_result_v1",
+          name: cleanText(input.schemaName, 100) || "simple_stylist_agent_result_v1",
           strict: true,
           schema: input.schema,
         },
@@ -887,7 +889,7 @@ function createOpenAiSimpleAgentExecutorV1({
         const model = cleanText(json?.model, 100) || input.model;
         try {
           await recordUsage({
-            eventId, provider: "openai", feature: "stylist_simple_agent",
+            eventId, provider: "openai", feature,
             model, modelAttempt, providerAttempt,
             providerResponseId: cleanText(json?.id, 160) || null,
             providerStatus: response?.status ?? null,
@@ -983,6 +985,7 @@ module.exports = {
   normalizeRequestV1,
   buildModelInputV1,
   validateAgentResultV1,
+  materializeResultV1,
   createSimpleStylistAgentV1,
   createOpenAiSimpleAgentExecutorV1,
 };
