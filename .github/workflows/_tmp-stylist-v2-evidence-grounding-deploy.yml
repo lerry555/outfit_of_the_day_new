@@ -1,0 +1,82 @@
+name: AI Stylist V2 evidence-grounding one-shot deploy
+
+on:
+  push:
+    branches:
+      - deploy-stylist-v2-evidence-grounding
+    paths:
+      - .github/workflows/_tmp-stylist-v2-evidence-grounding-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/deploy-stylist-v2-evidence-grounding'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout deployment branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard exact merged evidence-grounding source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin deploy-stylist-v2-evidence-grounding stylist-simple-agent brain-v1-experiment
+          test "$GITHUB_REF_NAME" = "deploy-stylist-v2-evidence-grounding"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/deploy-stylist-v2-evidence-grounding)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "6a0c2715b6ea6f2e17723b193fda16e36190a137"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          changed="$(git diff --name-only origin/stylist-simple-agent HEAD)"
+          test "$changed" = ".github/workflows/_tmp-stylist-v2-evidence-grounding-deploy.yml"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Generate deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          g.generateFamilyRegistry();
+          g.generateStructuredTaxonomy();
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
+
+      - name: Re-run focused evidence-grounding checks
+        working-directory: functions
+        run: |
+          node --check index_v2.js
+          node --check stylist/v2/stylist_grounding_policy_v2.js
+          node --test stylist/v2/stylist_grounding_policy_v2.test.js stylist/v2/stylist_v2_phase3_ports.test.js
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@latest
+
+      - name: Deploy evidence-grounding V2 callable
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase deploy \
+            --only functions:stylistChatV2 \
+            --project outfitoftheday-4d401 \
+            --non-interactive
