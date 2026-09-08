@@ -8,6 +8,7 @@ const {
   inferMandatoryGroundingV2,
   isConcreteOutfitRequestV2,
   isGreetingV2,
+  locationQueryIsUserGroundedV2,
   mergeGroundingRequirementsV2,
 } = require("./stylist_grounding_policy_v2");
 
@@ -82,20 +83,67 @@ test("planner that ignores required destination is converted to clarification", 
   const model = createGroundingEnforcedStylistModelV2({async turn() {
     return {kind: "final", statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "currentLocationObservation", terrainRequiredFields: []}}}, result: {action: "chat", assistantText: "Tu je outfit.", display: {kind: "none", itemIds: []}}};
   }}, policy);
-  const envelope = await model.turn({phase: "plan", session: groundedState});
+  const envelope = await model.turn({phase: "plan", request: {latestUserInput: "zajtra idem na návštevu a potrebujem outfit"}, session: groundedState});
   assert.equal(envelope.result.action, "clarify");
   assert.equal(envelope.result.clarification.field, "destination");
   assert.equal(envelope.statePatch.context.groundingRequirements.weatherLocationField, "destination");
 });
 
 test("event planner cannot silently substitute GPS for event venue", async () => {
-  const policy = inferMandatoryGroundingV2({latestUserInput: "potrebujem outfit na koncert", state: baseState()});
+  const message = "potrebujem outfit na koncert";
+  const policy = inferMandatoryGroundingV2({latestUserInput: message, state: baseState()});
   const groundedState = applyMandatoryGroundingV2(baseState(), policy);
   const model = createGroundingEnforcedStylistModelV2({async turn() {
     return {kind: "tool_request", requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}], statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "currentLocationObservation", terrainRequiredFields: []}}}};
   }}, policy);
-  const envelope = await model.turn({phase: "plan", session: groundedState});
+  const envelope = await model.turn({phase: "plan", request: {latestUserInput: message}, session: groundedState});
+  assert.equal(envelope.kind, "final");
+  assert.equal(envelope.result.action, "clarify");
+  assert.equal(envelope.result.clarification.field, "eventLocation");
   assert.equal(envelope.statePatch.context.groundingRequirements.weatherLocationField, "eventLocation");
+});
+
+test("live regression: planner cannot manufacture Martin from GPS as hike destination", async () => {
+  const message = "dobre, zajtra idem na túru a potreboval by som outfit";
+  const policy = inferMandatoryGroundingV2({latestUserInput: message, state: baseState()});
+  const groundedState = applyMandatoryGroundingV2(baseState(), policy);
+  const model = createGroundingEnforcedStylistModelV2({async turn() {
+    return {
+      kind: "tool_request",
+      requests: [
+        {tool: "location", query: "Martin", targetField: "destination"},
+        {tool: "wardrobe", scope: "full_relevant", category: null, editScope: null},
+      ],
+      statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []}}},
+    };
+  }}, policy);
+  const envelope = await model.turn({phase: "plan", request: {latestUserInput: message}, session: groundedState});
+  assert.equal(envelope.kind, "final");
+  assert.equal(envelope.result.action, "clarify");
+  assert.equal(envelope.result.assistantText, "Kam presne ideš?");
+  assert.equal(envelope.result.clarification.field, "destination");
+});
+
+test("location tool is allowed only when its query is stated in the current user message", async () => {
+  assert.equal(locationQueryIsUserGroundedV2("Martin", "zajtra idem na túru a potrebujem outfit"), false);
+  assert.equal(locationQueryIsUserGroundedV2("Vysoké Tatry", "zajtra idem do Vysokých Tatier a potrebujem outfit"), false);
+  assert.equal(locationQueryIsUserGroundedV2("Vysokých Tatier", "zajtra idem do Vysokých Tatier a potrebujem outfit"), true);
+  assert.equal(locationQueryIsUserGroundedV2("Michalovce", "o tri týždne idem na koncert v Michalovciach"), false);
+  assert.equal(locationQueryIsUserGroundedV2("Michalovciach", "o tri týždne idem na koncert v Michalovciach"), true);
+
+  const message = "zajtra idem na túru do Vysokých Tatier a potrebujem outfit";
+  const policy = inferMandatoryGroundingV2({latestUserInput: message, state: baseState()});
+  const groundedState = applyMandatoryGroundingV2(baseState(), policy);
+  const model = createGroundingEnforcedStylistModelV2({async turn() {
+    return {
+      kind: "tool_request",
+      requests: [{tool: "location", query: "Vysokých Tatier", targetField: "destination"}],
+      statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []}}},
+    };
+  }}, policy);
+  const envelope = await model.turn({phase: "plan", request: {latestUserInput: message}, session: groundedState});
+  assert.equal(envelope.kind, "tool_request");
+  assert.equal(envelope.requests[0].query, "Vysokých Tatier");
 });
 
 test("opinion and emoji greeting are classified without stealing real requests", () => {
