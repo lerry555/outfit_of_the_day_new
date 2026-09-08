@@ -7,8 +7,11 @@ Firebase callable, weather service, Shopping runtime, or the Simple Agent V1 imp
 
 - `stylist_session_state_v2.js`: canonical bounded state and safe existing-chat bootstrap.
 - `stylist_turn_contract_v2.js`: strict request and discriminated authoritative-result contracts.
-- `stylist_preflight_v2.js`: replay, revision, pending referent, and material-grounding rules.
-- `stylist_turn_coordinator_v2.js`: the single Phase-0 acceptance entry point.
+- `stylist_preflight_v2.js`: replay, revision, symmetric Yes/No referents, and
+  requirement-driven material-grounding rules.
+- `stylist_turn_coordinator_v2.js`: the single Phase-0 acceptance entry point and explicit
+  same-model tool protocol. A planning response may request data but cannot mutate an outfit;
+  the final response receives the resolved location/weather and retrieved wardrobe items.
 - `stylist_turn_validator_v2.js`: safety-critical, repairable structural, cosmetic, and
   subjective-quality boundaries.
 - `fake_ports_v2.js`: ledgered in-memory session, wardrobe, location, weather, Shopping,
@@ -41,3 +44,5 @@ exactly one disposition.
 - Location identity and weather snapshots come only from fake fixtures.
 - The isolated Firestore policy is a testable intent contract; production rules remain a Phase-1 task.
 - Repairable structural errors expose a one-correction allowance, but Phase 0 performs no model repair.
+- Material grounding requirements are explicit state supplied by the fake planning protocol;
+  production intent extraction and tool adapters remain future integration work.

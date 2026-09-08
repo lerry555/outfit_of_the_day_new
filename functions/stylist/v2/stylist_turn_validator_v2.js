@@ -1,6 +1,11 @@
 "use strict";
 
+const {isDeepStrictEqual} = require("node:util");
 const {validateTurnResultContractV2} = require("./stylist_turn_contract_v2");
+
+const EDIT_SCOPE_KEYS = new Set([
+  "replaceItemIds", "retainItemIds", "allowedSlots", "allowedCategories", "allowRemovalOnly",
+]);
 
 class SafetyCriticalTurnError extends Error {
   constructor(message, details = {}) {
@@ -27,14 +32,19 @@ function sameMembers(left, right) {
 }
 
 function validateWeatherAuthority(state) {
-  const {activity, destination, date, timeWindow, weather} = state.context;
-  if (activity?.id !== "hiking") return;
-  if (!destination) {
-    throw new SafetyCriticalTurnError("hiking generation requires a destination", {canClarify: true, field: "destination"});
+  const {date, timeWindow, weather, groundingRequirements} = state.context;
+  if (!groundingRequirements.weatherRequired) return;
+  const locationField = groundingRequirements.weatherLocationField;
+  const authoritativeLocation = state.context[locationField];
+  if (!authoritativeLocation) {
+    throw new SafetyCriticalTurnError("generation requires its authoritative event location", {
+      canClarify: true,
+      field: locationField,
+    });
   }
-  if (!weather || weather.locationProviderId !== destination.providerId ||
+  if (!weather || weather.locationProviderId !== authoritativeLocation.providerId ||
       weather.dateKey !== date?.dateKey || weather.timeWindowKey !== timeWindow?.key) {
-    throw new SafetyCriticalTurnError("weather provenance does not match destination/date/time", {
+    throw new SafetyCriticalTurnError("weather provenance does not match authoritative location/date/time", {
       canClarify: true,
       field: "weather",
     });
@@ -56,7 +66,8 @@ function validateSafetyCriticalFootwear(state, resultingIds, wardrobeItems) {
   }
 }
 
-function validateAuthoritativeTurnV2({rawResult, previousState, proposedState, wardrobeItems = []}) {
+function validateAuthoritativeTurnV2({rawResult, previousState, proposedState, wardrobeItems = [],
+  authorizedEditScope = null}) {
   let result;
   try {
     result = validateTurnResultContractV2(rawResult, previousState);
@@ -81,12 +92,9 @@ function validateAuthoritativeTurnV2({rawResult, previousState, proposedState, w
   }
 
   if (["generate_outfit", "edit_outfit"].includes(result.action)) {
-    const knownIds = new Set([
-      ...previousState.currentOutfit.itemIds,
-      ...wardrobeItems.map((item) => item.id),
-    ]);
+    const knownIds = new Set(wardrobeItems.map((item) => item.id));
     if (resultingIds.some((itemId) => !knownIds.has(itemId))) {
-      throw new SafetyCriticalTurnError("outfit references an unknown wardrobe item");
+      throw new SafetyCriticalTurnError("outfit references an item not supplied to the final model call");
     }
     validateWeatherAuthority(proposedState);
     validateSafetyCriticalFootwear(proposedState, resultingIds, wardrobeItems);
@@ -100,10 +108,51 @@ function validateAuthoritativeTurnV2({rawResult, previousState, proposedState, w
   }
 
   if (result.action === "edit_outfit") {
-    const replaceIds = new Set(result.editScope.replaceItemIds);
-    const preserved = previousState.currentOutfit.itemIds.filter((itemId) => !replaceIds.has(itemId));
+    const scope = result.editScope;
+    for (const key of Object.keys(scope)) {
+      if (!EDIT_SCOPE_KEYS.has(key)) {
+        throw new RepairableStructuralTurnError(`edit scope contains unsupported field ${key}`);
+      }
+    }
+    if (!authorizedEditScope || !isDeepStrictEqual(scope, authorizedEditScope)) {
+      throw new SafetyCriticalTurnError("final edit scope differs from the pre-retrieval authorized scope");
+    }
+    const previousIds = previousState.currentOutfit.itemIds;
+    const replaceIds = new Set(scope.replaceItemIds);
+    const retainedReplaceIds = new Set(scope.retainItemIds || []);
+    if (replaceIds.size !== scope.replaceItemIds.length ||
+        [...replaceIds].some((itemId) => !previousIds.includes(itemId)) ||
+        [...retainedReplaceIds].some((itemId) => !replaceIds.has(itemId))) {
+      throw new RepairableStructuralTurnError("edit scope does not identify exact previous items");
+    }
+    const preserved = previousIds.filter((itemId) => !replaceIds.has(itemId));
     if (!preserved.every((itemId) => resultingIds.includes(itemId))) {
       throw new SafetyCriticalTurnError("edit changed an item outside the requested scope");
+    }
+    const requiredRemovedIds = [...replaceIds].filter((itemId) => !retainedReplaceIds.has(itemId));
+    if (requiredRemovedIds.some((itemId) => resultingIds.includes(itemId))) {
+      throw new SafetyCriticalTurnError("a replaced item was retained without explicit permission");
+    }
+    const addedIds = resultingIds.filter((itemId) => !previousIds.includes(itemId));
+    if (scope.allowRemovalOnly === true) {
+      if (addedIds.length > requiredRemovedIds.length) {
+        throw new SafetyCriticalTurnError("edit added more items than its requested replacement scope");
+      }
+    } else if (addedIds.length !== requiredRemovedIds.length) {
+      throw new SafetyCriticalTurnError("edit must replace each removed item exactly once");
+    }
+    const allowedSlots = scope.allowedSlots || [];
+    const allowedCategories = scope.allowedCategories || [];
+    if (addedIds.length && !allowedSlots.length && !allowedCategories.length) {
+      throw new RepairableStructuralTurnError("edit additions require an allowed slot or category");
+    }
+    for (const itemId of addedIds) {
+      const item = wardrobeItems.find((candidate) => candidate.id === itemId);
+      const slotAllowed = allowedSlots.length && item?.bodySlots?.some((slot) => allowedSlots.includes(slot));
+      const categoryAllowed = allowedCategories.length && allowedCategories.includes(item?.category);
+      if (!slotAllowed && !categoryAllowed) {
+        throw new SafetyCriticalTurnError("edit added an item outside the requested slot/category");
+      }
     }
   }
 

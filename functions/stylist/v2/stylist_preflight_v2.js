@@ -12,18 +12,25 @@ class StaleSessionRevisionError extends Error {
 
 class AmbiguousAffirmationError extends Error {
   constructor() {
-    super("affirmation has no single active referent");
+    super("binary reply has no single active referent");
     this.name = "AmbiguousAffirmationError";
-    this.code = "AFFIRMATION_WITHOUT_REFERENT";
+    this.code = "BINARY_REPLY_WITHOUT_REFERENT";
   }
 }
 
 function normalizeUtterance(value) {
-  return String(value || "").trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, "");
+  return String(value || "").trim().toLocaleLowerCase("sk-SK")
+    .replace(/[,.!?]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isAffirmativeText(value) {
   return new Set(["áno", "ano", "hej", "jasné", "jasne"]).has(normalizeUtterance(value));
+}
+
+function isNegativeText(value) {
+  return new Set(["nie", "nie ďakujem", "nie dakujem", "nechcem"]).has(normalizeUtterance(value));
 }
 
 function findReplay(state, turnId) {
@@ -39,11 +46,13 @@ function resolvePendingReferentV2(state, request) {
   if (request.explicitUiActionId) {
     const match = pending.find((entry) => entry.actionId === request.explicitUiActionId);
     if (!match) throw new AmbiguousAffirmationError();
-    return {kind: match.type === "question" ? "question" : "action", pending: match};
+    return {kind: match.type === "question" ? "question" : "action", answer: "yes", pending: match};
   }
-  if (!isAffirmativeText(request.latestUserInput)) return null;
+  const answer = isAffirmativeText(request.latestUserInput) ? "yes" :
+    isNegativeText(request.latestUserInput) ? "no" : null;
+  if (!answer) return null;
   if (pending.length !== 1) throw new AmbiguousAffirmationError();
-  return {kind: pending[0].type === "question" ? "question" : "action", pending: pending[0]};
+  return {kind: pending[0].type === "question" ? "question" : "action", answer, pending: pending[0]};
 }
 
 function runPreflightV2(state, request) {
@@ -54,19 +63,29 @@ function runPreflightV2(state, request) {
   }
   const pendingResolution = resolvePendingReferentV2(state, request);
   if (pendingResolution) {
-    return {kind: "pending", pendingKind: pendingResolution.kind, pending: pendingResolution.pending};
+    return {
+      kind: "pending",
+      pendingKind: pendingResolution.kind,
+      answer: pendingResolution.answer,
+      pending: pendingResolution.pending,
+    };
   }
   return {kind: "continue"};
 }
 
 function highestPriorityMissingGroundingV2(state) {
-  if (state.context.activity?.id === "hiking" && !state.context.destination) return "destination";
-  if (state.context.activity?.id === "hiking") {
+  const grounding = state.context.groundingRequirements;
+  if (grounding.weatherLocationField && !state.context[grounding.weatherLocationField]) {
+    return grounding.weatherLocationField;
+  }
+  if (grounding.weatherRequired) {
     if (!state.context.date) return "date";
     if (!state.context.timeWindow) return "timeWindow";
-    const terrain = state.context.terrain;
-    if (terrain.surface == null || terrain.difficulty == null || terrain.condition == null) return "terrain";
   }
+  const missingTerrainField = grounding.terrainRequiredFields.find(
+    (field) => state.context.terrain[field] == null,
+  );
+  if (missingTerrainField) return `terrain.${missingTerrainField}`;
   return null;
 }
 
@@ -75,6 +94,7 @@ module.exports = {
   StaleSessionRevisionError,
   highestPriorityMissingGroundingV2,
   isAffirmativeText,
+  isNegativeText,
   resolvePendingReferentV2,
   runPreflightV2,
 };

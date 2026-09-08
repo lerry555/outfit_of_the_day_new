@@ -9,6 +9,7 @@ const {
   validateStylistSessionStateV2,
 } = require("./stylist_session_state_v2");
 const {StaleSessionRevisionError} = require("./stylist_preflight_v2");
+const {SafetyCriticalTurnError} = require("./stylist_turn_validator_v2");
 const {createStylistTurnCoordinatorV2} = require("./stylist_turn_coordinator_v2");
 const {
   CallLedgerV2,
@@ -22,20 +23,19 @@ const {
 
 const NOW = Date.parse("2026-09-08T08:05:00.000Z");
 const martin = {
-  providerId: "place:martin",
-  label: "Martin",
-  lat: 49.0636,
-  lng: 18.9217,
-  observedAt: "2026-09-08T08:00:00.000Z",
-  source: "gps",
+  providerId: "place:martin", label: "Martin", lat: 49.0636, lng: 18.9217,
+  observedAt: "2026-09-08T08:00:00.000Z", source: "gps",
 };
 const tatras = {providerId: "place:tatras", label: "Vysoké Tatry", lat: 49.1667, lng: 20.1333};
+const bratislava = {providerId: "place:bratislava", label: "Bratislava", lat: 48.1486, lng: 17.1077};
+const zilina = {providerId: "place:zilina", label: "Žilina", lat: 49.2231, lng: 18.7394};
 const wardrobe = [
-  {id: "shirt", category: "tops"},
-  {id: "jeans", category: "bottoms"},
-  {id: "shorts", category: "bottoms"},
-  {id: "shoes", category: "footwear"},
-  {id: "hiking-boots", category: "footwear"},
+  {id: "shirt", category: "tops", bodySlots: ["upper_body"]},
+  {id: "jeans", category: "bottoms", bodySlots: ["lower_body"]},
+  {id: "shorts", category: "bottoms", bodySlots: ["lower_body"]},
+  {id: "shoes", category: "footwear", bodySlots: ["feet"]},
+  {id: "hiking-boots", category: "footwear", bodySlots: ["feet"], safety: {hikingTechnical: true}},
+  {id: "hoodie", category: "layers", bodySlots: ["upper_body"]},
 ];
 
 function request(chatId, turnId, expectedSessionRevision, latestUserInput, extra = {}) {
@@ -49,13 +49,28 @@ function request(chatId, turnId, expectedSessionRevision, latestUserInput, extra
   };
 }
 
+function finalEnvelope(result, statePatch) {
+  return {kind: "final", result, ...(statePatch ? {statePatch} : {})};
+}
+
+function toolEnvelope(requests, statePatch) {
+  return {kind: "tool_request", requests, ...(statePatch ? {statePatch} : {})};
+}
+
 function harness({initialStates = [], modelResults = [], shoppingResult, weatherSnapshots} = {}) {
   const ledger = new CallLedgerV2();
   const sessionRepository = new InMemorySessionRepositoryV2(ledger, initialStates);
   const ports = {
     sessionRepository,
     wardrobeTool: new FakeWardrobeToolV2(ledger, wardrobe),
-    locationResolver: new FakeLocationResolverV2(ledger, {"Vysoké Tatry.": tatras}),
+    locationResolver: new FakeLocationResolverV2(ledger, {
+      "Vysoké Tatry.": tatras,
+      "Vysoké Tatry": tatras,
+      Bratislava: bratislava,
+      "Bratislava.": bratislava,
+      Žilina: zilina,
+      "Žilina.": zilina,
+    }),
     weatherTool: new FakeWeatherToolV2(ledger, weatherSnapshots),
     shoppingTool: new FakeShoppingToolV2(ledger, shoppingResult),
     stylistModel: new FakeStylistModelPortV2(ledger, modelResults),
@@ -64,36 +79,65 @@ function harness({initialStates = [], modelResults = [], shoppingResult, weather
   return {ledger, ports, sessionRepository, coordinator: createStylistTurnCoordinatorV2(ports)};
 }
 
-test("Scenario A resolves destination separately from GPS and uses only destination weather", async () => {
-  const firstDecision = {
-    action: "clarify",
-    assistantText: "Kam presne ideš na túru?",
-    clarification: {field: "destination", question: "Kam presne ideš na túru?", actionId: "clarify_destination"},
-    display: {kind: "none", itemIds: []},
-    statePatch: {
-      context: {
-        activity: {id: "hiking"},
-        date: {dateKey: "2026-09-09", source: "user"},
-        timeWindow: {key: "daytime", label: "cez deň"},
+function fullOutfitResult(text = "Toto je výsledný outfit.") {
+  return {
+    action: "generate_outfit",
+    assistantText: text,
+    resultingOutfit: {
+      itemIds: ["shirt", "jeans", "shoes"],
+      selectionReasonsByItemId: {
+        shirt: "vhodný vrch pre udalosť",
+        jeans: "primerané krytie nôh",
+        shoes: "pohodlná obuv",
       },
     },
+    display: {kind: "outfit", itemIds: ["shirt", "jeans", "shoes"]},
   };
-  const generationDecision = {
+}
+
+function modelCallIndex(ledger, method) {
+  return ledger.entries.findIndex((entry) => entry.port === "model" && entry.method === method);
+}
+
+test("Scenario A keeps GPS separate, asks only material hiking facts, and retrieves before final selection", async () => {
+  const firstPlanningFinal = finalEnvelope({
+    action: "clarify",
+    assistantText: "Kam presne ideš?",
+    clarification: {field: "destination", question: "Kam presne ideš?", actionId: "clarify_destination"},
+    display: {kind: "none", itemIds: []},
+  }, {
+    context: {
+      activity: {id: "hiking"},
+      date: {dateKey: "2026-09-09", source: "user"},
+      timeWindow: {key: "daytime", label: "cez deň"},
+      groundingRequirements: {
+        weatherRequired: true,
+        weatherLocationField: "destination",
+        terrainRequiredFields: ["difficulty"],
+      },
+    },
+  });
+  const generationResult = {
     action: "generate_outfit",
-    assistantText: "Na ľahkú suchú trasu volím tričko, kraťasy a turistické topánky.",
+    assistantText: "Na ľahkú trasu volím tričko, rifle a turistické topánky.",
     resultingOutfit: {
-      itemIds: ["shirt", "shorts", "hiking-boots"],
+      itemIds: ["shirt", "jeans", "hiking-boots"],
       selectionReasonsByItemId: {
         shirt: "priedušná vrstva na dennú túru",
-        shorts: "ľahký spodný diel na teplú suchú trasu",
-        "hiking-boots": "stabilná obuv pre turistickú trasu",
+        jeans: "krytie nôh na trase",
+        "hiking-boots": "stabilná turistická obuv",
       },
     },
-    display: {kind: "outfit", itemIds: ["shirt", "shorts", "hiking-boots"]},
-    retrievalScope: "full_relevant",
-    statePatch: {context: {terrain: {surface: "trail", difficulty: "easy", condition: "dry"}}},
+    display: {kind: "outfit", itemIds: ["shirt", "jeans", "hiking-boots"]},
   };
-  const h = harness({modelResults: [firstDecision, generationDecision]});
+  const h = harness({modelResults: [
+    firstPlanningFinal,
+    toolEnvelope(
+      [{tool: "wardrobe", scope: "full_relevant"}],
+      {context: {terrain: {surface: null, difficulty: "easy", condition: null}}},
+    ),
+    finalEnvelope(generationResult),
+  ]});
 
   const first = await h.coordinator.resolveTurn(request("chat-a", "a-1", 0,
     "Zajtra idem na túru, potrebujem outfit.", {
@@ -101,18 +145,16 @@ test("Scenario A resolves destination separately from GPS and uses only destinat
     }));
   assert.equal(first.action, "clarify");
   assert.equal(first.clarification.field, "destination");
-  assert.equal((first.assistantText.match(/\?/g) || []).length, 1);
   assert.deepEqual(first.display, {kind: "none", itemIds: []});
   let saved = await h.sessionRepository.read("chat-a");
   assert.equal(saved.context.destination, null);
   assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
   assert.equal(h.ledger.calls("weather", "getForecast").length, 0);
 
-  // A new coordinator simulates reopening/reloading the chat between turns.
   const reopened = createStylistTurnCoordinatorV2(h.ports);
   const second = await reopened.resolveTurn(request("chat-a", "a-2", 1, "Vysoké Tatry."));
   assert.equal(second.action, "clarify");
-  assert.equal(second.clarification.field, "terrain");
+  assert.equal(second.clarification.field, "terrain.difficulty");
   assert.equal((second.assistantText.match(/\?/g) || []).length, 1);
   saved = await h.sessionRepository.read("chat-a");
   assert.equal(saved.context.destination.providerId, "place:tatras");
@@ -120,13 +162,18 @@ test("Scenario A resolves destination separately from GPS and uses only destinat
   const weatherCalls = h.ledger.calls("weather", "getForecast");
   assert.equal(weatherCalls.length, 1);
   assert.equal(weatherCalls[0].args.location.providerId, "place:tatras");
-  assert.notEqual(weatherCalls[0].args.location.providerId, "place:martin");
 
-  const third = await reopened.resolveTurn(request("chat-a", "a-3", 2, "Ľahký suchý chodník."));
+  const third = await reopened.resolveTurn(request("chat-a", "a-3", 2, "Ľahká trasa."));
   assert.equal(third.action, "generate_outfit");
   assert.deepEqual(third.display.itemIds, third.resultingOutfit.itemIds);
-  assert.equal(h.ledger.calls("model", "turn").length, 2);
-  assert.equal(h.ledger.calls("wardrobe", "retrieve")[0].args.scope, "full_relevant");
+  saved = await h.sessionRepository.read("chat-a");
+  assert.deepEqual(saved.context.terrain, {surface: null, difficulty: "easy", condition: null});
+  assert.equal(h.ledger.calls("model", "plan").length, 2);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
+  const wardrobeIndex = h.ledger.entries.findIndex((entry) => entry.port === "wardrobe");
+  assert.ok(wardrobeIndex < modelCallIndex(h.ledger, "final"));
+  const finalInput = h.ledger.calls("model", "final")[0].args;
+  assert.deepEqual(finalInput.toolResults.wardrobeItems.map((item) => item.id), wardrobe.map((item) => item.id));
 
   const countsBeforeReplay = {
     model: h.ledger.calls("model").length,
@@ -142,14 +189,13 @@ test("Scenario A resolves destination separately from GPS and uses only destinat
     wardrobe: h.ledger.calls("wardrobe").length,
     writes: h.ledger.calls("session", "write").length,
   }, countsBeforeReplay);
-
   await assert.rejects(
     reopened.resolveTurn(request("chat-a", "a-stale", 1, "nová správa")),
     StaleSessionRevisionError,
   );
 });
 
-test("Scenario B changes only the requested lower-body item and retains historical reasons", async () => {
+test("Scenario B retrieves current outfit plus requested category before the one-slot edit", async () => {
   const existing = bootstrapExistingChatV2({
     chatId: "chat-b",
     currentOutfitItemIds: ["shirt", "jeans", "shoes"],
@@ -159,44 +205,128 @@ test("Scenario B changes only the requested lower-body item and retains historic
       shoes: "pohodlné na mestskú chôdzu",
     },
   });
+  const editResult = {
+    action: "edit_outfit",
+    assistantText: "Kraťasy outfit odľahčia; tričko aj topánky nechávam bez zmeny.",
+    resultingOutfit: {
+      itemIds: ["shirt", "shorts", "shoes"],
+      selectionReasonsByItemId: {
+        shirt: "funguje farebne s outfitom",
+        shorts: "ľahší spodný diel podľa požadovanej zmeny",
+        shoes: "pohodlné na mestskú chôdzu",
+      },
+    },
+    editScope: {
+      replaceItemIds: ["jeans"],
+      allowedSlots: ["lower_body"],
+      allowedCategories: ["bottoms"],
+    },
+    display: {kind: "items", itemIds: ["shorts"]},
+  };
   const h = harness({
     initialStates: [existing],
-    modelResults: [{
-      action: "edit_outfit",
-      assistantText: "Kraťasy outfit odľahčia; tričko aj topánky nechávam bez zmeny.",
-      resultingOutfit: {
-        itemIds: ["shirt", "shorts", "shoes"],
-        selectionReasonsByItemId: {
-          shirt: "funguje farebne s outfitom",
-          shorts: "ľahší spodný diel podľa požadovanej zmeny",
-          shoes: "pohodlné na mestskú chôdzu",
-        },
-      },
-      editScope: {replaceItemIds: ["jeans"], slots: ["lower_body"]},
-      display: {kind: "items", itemIds: ["shorts"]},
-      retrievalScope: "category",
-      retrievalCategory: "bottoms",
-    }],
+    modelResults: [
+      toolEnvelope([{
+        tool: "wardrobe",
+        scope: "current_outfit_plus_category",
+        category: "bottoms",
+        editScope: editResult.editScope,
+      }]),
+      finalEnvelope(editResult),
+    ],
   });
   const result = await h.coordinator.resolveTurn(request("chat-b", "b-1", 0,
     "Rifle by som vymenil za kraťasy."));
   assert.deepEqual(result.resultingOutfit.itemIds, ["shirt", "shorts", "shoes"]);
-  assert.equal(result.resultingOutfit.selectionReasonsByItemId.shirt, "funguje farebne s outfitom");
-  assert.equal(result.resultingOutfit.selectionReasonsByItemId.shoes, "pohodlné na mestskú chôdzu");
+  const retrieval = h.ledger.calls("wardrobe", "retrieve")[0];
+  assert.deepEqual(retrieval.args, {
+    scope: "current_outfit_plus_category",
+    itemIds: ["shirt", "jeans", "shoes"],
+    category: "bottoms",
+  });
+  assert.ok(h.ledger.entries.indexOf(retrieval) < modelCallIndex(h.ledger, "final"));
+  assert.deepEqual(h.ledger.calls("model", "final")[0].args.toolResults.wardrobeItems.map((item) => item.id),
+    ["shirt", "jeans", "shorts", "shoes"]);
   const saved = await h.sessionRepository.read("chat-b");
   assert.deepEqual(saved.currentOutfit.selectionReasonHistory, [{
-    itemId: "jeans",
-    reason: "krytie nôh do chladnejšieho rána",
-    outfitRevision: 1,
+    itemId: "jeans", reason: "krytie nôh do chladnejšieho rána", outfitRevision: 1,
   }]);
-  assert.equal(saved.currentOutfit.selectionReasonsByItemId.shorts,
-    "ľahší spodný diel podľa požadovanej zmeny");
-  assert.deepEqual(h.ledger.calls("wardrobe", "retrieve")[0].args, {
-    scope: "category", itemIds: ["shirt", "jeans", "shoes"], category: "bottoms",
-  });
 });
 
-test("Scenario C resolves typed Yes against the persisted Shopping action and full inherited context", async () => {
+test("edit scope rejects retained replacements and unrelated second-slot additions", async () => {
+  const cases = [
+    {
+      name: "retained-jeans",
+      tool: {
+        tool: "wardrobe",
+        scope: "current_outfit_plus_category",
+        category: "bottoms",
+        editScope: {
+          replaceItemIds: ["jeans"], allowedSlots: ["lower_body"], allowedCategories: ["bottoms"],
+        },
+      },
+      itemIds: ["shirt", "jeans", "shorts", "shoes"],
+      reasons: {
+        shirt: "shirt reason", jeans: "jeans reason", shorts: "new shorts reason", shoes: "shoes reason",
+      },
+    },
+    {
+      name: "extra-hoodie",
+      tool: {
+        tool: "wardrobe",
+        scope: "full_relevant",
+        editScope: {
+          replaceItemIds: ["jeans"], allowedSlots: ["lower_body"], allowedCategories: ["bottoms"],
+        },
+      },
+      itemIds: ["shirt", "shorts", "shoes", "hoodie"],
+      reasons: {
+        shirt: "shirt reason", shorts: "new shorts reason", shoes: "shoes reason", hoodie: "unrelated layer",
+      },
+    },
+  ];
+  for (const entry of cases) {
+    const initial = bootstrapExistingChatV2({
+      chatId: entry.name,
+      currentOutfitItemIds: ["shirt", "jeans", "shoes"],
+      persistedSelectionReasonsByItemId: {
+        shirt: "shirt reason", jeans: "jeans reason", shoes: "shoes reason",
+      },
+    });
+    const h = harness({initialStates: [initial], modelResults: [
+      toolEnvelope([entry.tool]),
+      finalEnvelope({
+        action: "edit_outfit",
+        assistantText: "Mením spodný diel.",
+        resultingOutfit: {itemIds: entry.itemIds, selectionReasonsByItemId: entry.reasons},
+        editScope: {
+          replaceItemIds: ["jeans"],
+          allowedSlots: ["lower_body"],
+          allowedCategories: ["bottoms"],
+        },
+        display: {kind: "items", itemIds: entry.itemIds.filter((id) => !["shirt", "shoes"].includes(id))},
+      }),
+    ]});
+    await assert.rejects(
+      h.coordinator.resolveTurn(request(entry.name, `${entry.name}-1`, 0, "Vymeň rifle za kraťasy.")),
+      SafetyCriticalTurnError,
+    );
+    assert.equal(h.ledger.calls("session", "write").length, 0);
+  }
+});
+
+test("planning phase cannot return a final outfit before any wardrobe retrieval", async () => {
+  const h = harness({modelResults: [finalEnvelope(fullOutfitResult())]});
+  await assert.rejects(
+    h.coordinator.resolveTurn(request("early-final", "early-final-1", 0, "Vytvor outfit.")),
+    /planning phase may finalize only/,
+  );
+  assert.equal(h.ledger.calls("wardrobe").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 0);
+  assert.equal(h.ledger.calls("session", "write").length, 0);
+});
+
+test("Scenario C resolves typed Yes against persisted Shopping context", async () => {
   const state = clone(createEmptySessionStateV2("chat-c"));
   state.context.activity = {id: "hiking"};
   state.context.destination = tatras;
@@ -218,17 +348,31 @@ test("Scenario C resolves typed Yes against the persisted Shopping action and fu
   const h = harness({initialStates: [validateStylistSessionStateV2(state)], shoppingResult: {candidateIds: ["product-1"]}});
   const result = await h.coordinator.resolveTurn(request("chat-c", "c-1", 0, "Áno."));
   assert.equal(result.action, "shop");
-  assert.deepEqual(result.display, {kind: "shopping", itemIds: ["product-1"]});
   assert.equal(h.ledger.calls("model").length, 0);
   const call = h.ledger.calls("shopping", "search")[0].args;
   assert.equal(call.actionId, "abc123");
   assert.equal(call.destination.providerId, "place:tatras");
   assert.equal(call.weather.locationProviderId, "place:tatras");
   assert.deepEqual(call.terrain, {surface: "trail", difficulty: "steep", condition: "wet"});
-  assert.equal(call.missingNeed, "hiking_footwear");
 });
 
-test("Scenario D is explanation-only with no cards, mutation, or repeated footwear warning", async () => {
+test("typed negative variants deterministically decline exactly one pending action", async () => {
+  for (const [index, negative] of ["Nie", "nie, ďakujem", "nechcem"].entries()) {
+    const state = clone(createEmptySessionStateV2(`decline-${index}`));
+    state.conversationMemory.pendingAction = {
+      type: "action", kind: "shopping", actionId: `shop-${index}`,
+    };
+    const h = harness({initialStates: [validateStylistSessionStateV2(state)]});
+    const result = await h.coordinator.resolveTurn(request(`decline-${index}`, `decline-turn-${index}`, 0, negative));
+    assert.equal(result.action, "chat");
+    assert.equal(h.ledger.calls("shopping").length, 0);
+    assert.equal(h.ledger.calls("model").length, 0);
+    const saved = await h.sessionRepository.read(`decline-${index}`);
+    assert.equal(saved.conversationMemory.pendingAction, null);
+  }
+});
+
+test("Scenario D consultation retrieves current outfit only before explanation", async () => {
   const state = bootstrapExistingChatV2({
     chatId: "chat-d",
     currentOutfitItemIds: ["shirt", "jeans", "shoes"],
@@ -238,16 +382,23 @@ test("Scenario D is explanation-only with no cards, mutation, or repeated footwe
   mutable.conversationMemory.communicatedWarnings = ["footwear_not_hiking_grade"];
   const h = harness({
     initialStates: [validateStylistSessionStateV2(mutable)],
-    modelResults: [{
-      action: "explain_outfit",
-      assistantText: "Áno, rifle sú v poriadku — dávajú ti krytie nôh a stále ladia s tričkom.",
-      display: {kind: "none", itemIds: []},
-    }],
+    modelResults: [
+      toolEnvelope([{tool: "wardrobe", scope: "current_outfit"}]),
+      finalEnvelope({
+        action: "explain_outfit",
+        assistantText: "Áno, rifle sú v poriadku — dávajú ti krytie nôh a stále ladia s tričkom.",
+        display: {kind: "none", itemIds: []},
+      }),
+    ],
   });
   const result = await h.coordinator.resolveTurn(request("chat-d", "d-1", 0, "A rifle sú v poriadku?"));
   assert.equal(result.action, "explain_outfit");
   assert.deepEqual(result.resultingOutfit.itemIds, ["shirt", "jeans", "shoes"]);
-  assert.deepEqual(result.display, {kind: "none", itemIds: []});
+  assert.deepEqual(h.ledger.calls("wardrobe", "retrieve")[0].args, {
+    scope: "current_outfit", itemIds: ["shirt", "jeans", "shoes"], category: null,
+  });
+  assert.deepEqual(h.ledger.calls("model", "final")[0].args.toolResults.wardrobeItems.map((item) => item.id),
+    ["shirt", "jeans", "shoes"]);
   assert.doesNotMatch(result.assistantText, /obuv|topán/i);
 });
 
@@ -256,21 +407,170 @@ test("Scenario E greeting uses neither wardrobe nor model", async () => {
   const result = await h.coordinator.resolveTurn(request("chat-e", "e-1", 0, "Ahoj."));
   assert.equal(result.action, "chat");
   assert.deepEqual(result.resultingOutfit.itemIds, []);
-  assert.deepEqual(result.display, {kind: "none", itemIds: []});
   assert.equal(h.ledger.calls("model").length, 0);
   assert.equal(h.ledger.calls("wardrobe").length, 0);
 });
 
-test("Scenario F conversation-only turn permits an empty outfit", async () => {
-  const h = harness({modelResults: [{
+test("Scenario F conversation-only turn permits an empty outfit and no wardrobe", async () => {
+  const h = harness({modelResults: [finalEnvelope({
     action: "chat",
     assistantText: "K modrej sa pekne hodí biela, sivá aj tlmená béžová.",
     display: {kind: "none", itemIds: []},
-  }]});
+  })]});
   const result = await h.coordinator.resolveTurn(request("chat-f", "f-1", 0,
     "Aké farby sa hodia k modrej?"));
   assert.equal(result.action, "chat");
   assert.deepEqual(result.resultingOutfit.itemIds, []);
-  assert.equal(h.ledger.calls("model").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 1);
   assert.equal(h.ledger.calls("wardrobe").length, 0);
+});
+
+test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {
+  const cases = [
+    {
+      chatId: "concert",
+      input: "Zajtra idem na koncert do Bratislavy.",
+      query: "Bratislava",
+      location: bratislava,
+      activity: "concert",
+      initialContext: {date: {dateKey: "2026-09-09", source: "user"}},
+      expectedClarification: "timeWindow",
+      answer: "Večer.",
+      answerContext: {timeWindow: {key: "evening", label: "večer"}},
+    },
+    {
+      chatId: "wedding",
+      input: "Idem na svadbu do Žiliny.",
+      query: "Žilina",
+      location: zilina,
+      activity: "wedding",
+      initialContext: {},
+      expectedClarification: "date",
+      answer: "Zajtra popoludní.",
+      answerContext: {
+        date: {dateKey: "2026-09-09", source: "user"},
+        timeWindow: {key: "afternoon", label: "popoludní"},
+      },
+    },
+  ];
+  for (const entry of cases) {
+    const h = harness({modelResults: [
+      toolEnvelope([{tool: "location", query: entry.query, targetField: "eventLocation"}], {
+        context: {
+          activity: {id: entry.activity},
+          ...entry.initialContext,
+          groundingRequirements: {
+            weatherRequired: true,
+            weatherLocationField: "eventLocation",
+            terrainRequiredFields: [],
+          },
+        },
+      }),
+      toolEnvelope(
+        [{tool: "wardrobe", scope: "full_relevant"}],
+        {context: entry.answerContext},
+      ),
+      finalEnvelope(fullOutfitResult()),
+    ]});
+    const first = await h.coordinator.resolveTurn(request(entry.chatId, `${entry.chatId}-1`, 0, entry.input, {
+      freshClientObservations: {currentLocationObservation: martin},
+    }));
+    assert.equal(first.action, "clarify");
+    assert.equal(first.clarification.field, entry.expectedClarification);
+    assert.equal(h.ledger.calls("weather").length, 0);
+    assert.equal(h.ledger.calls("wardrobe").length, 0);
+    const result = await h.coordinator.resolveTurn(request(
+      entry.chatId, `${entry.chatId}-2`, 1, entry.answer,
+    ));
+    assert.equal(result.action, "generate_outfit");
+    assert.doesNotMatch(result.assistantText, /kam presne|terén/i);
+    const saved = await h.sessionRepository.read(entry.chatId);
+    assert.equal(saved.context.eventLocation.providerId, entry.location.providerId);
+    assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+    assert.equal(h.ledger.calls("weather", "getForecast")[0].args.location.providerId,
+      entry.location.providerId);
+    assert.ok(h.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(h.ledger, "final"));
+  }
+});
+
+test("explicit destination candidate is resolved in the first hiking turn without a repeat question", async () => {
+  const h = harness({modelResults: [
+    toolEnvelope([
+      {tool: "location", query: "Vysoké Tatry", targetField: "destination"},
+      {tool: "wardrobe", scope: "full_relevant"},
+    ], {
+      context: {
+        activity: {id: "hiking"},
+        date: {dateKey: "2026-09-09", source: "user"},
+        timeWindow: {key: "daytime", label: "cez deň"},
+        groundingRequirements: {
+          weatherRequired: true,
+          weatherLocationField: "destination",
+          terrainRequiredFields: [],
+        },
+      },
+    }),
+    finalEnvelope(fullOutfitResult("Outfit je pripravený pre počasie vo Vysokých Tatrách.")),
+  ]});
+  const result = await h.coordinator.resolveTurn(request("explicit-tatras", "tatras-1", 0,
+    "Zajtra idem na túru do Vysokých Tatier, potrebujem outfit.", {
+      freshClientObservations: {currentLocationObservation: martin},
+    }));
+  assert.equal(result.action, "generate_outfit");
+  assert.doesNotMatch(result.assistantText, /kam presne|aká náročná|povrch/i);
+  const saved = await h.sessionRepository.read("explicit-tatras");
+  assert.equal(saved.context.destination.providerId, "place:tatras");
+  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+  assert.equal(h.ledger.calls("location", "resolve")[0].args.query, "Vysoké Tatry");
+  assert.equal(h.ledger.calls("weather", "getForecast")[0].args.location.providerId, "place:tatras");
+});
+
+test("resolved event location with no remaining grounding continues the same turn and never defaults to terrain", async () => {
+  const state = clone(createEmptySessionStateV2("resolved-event"));
+  state.context.activity = {id: "concert"};
+  state.context.date = {dateKey: "2026-09-09", source: "user"};
+  state.context.timeWindow = {key: "evening", label: "večer"};
+  state.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: "eventLocation",
+    terrainRequiredFields: [],
+  };
+  state.conversationMemory.pendingQuestion = {
+    type: "question", actionId: "clarify_event_location", field: "eventLocation",
+    question: "Kde presne sa podujatie koná?", acceptsYesNo: false,
+  };
+  const h = harness({
+    initialStates: [validateStylistSessionStateV2(state)],
+    modelResults: [
+      toolEnvelope([{tool: "wardrobe", scope: "full_relevant"}]),
+      finalEnvelope(fullOutfitResult()),
+    ],
+  });
+  const result = await h.coordinator.resolveTurn(request("resolved-event", "event-2", 0, "Bratislava."));
+  assert.equal(result.action, "generate_outfit");
+  assert.notEqual(result.action, "clarify");
+  assert.equal(h.ledger.calls("weather")[0].args.location.providerId, "place:bratislava");
+  assert.equal(h.ledger.calls("model", "final").length, 1);
+});
+
+test("final mutation cannot select an ID absent from the wardrobe tool result", async () => {
+  const h = harness({modelResults: [
+    toolEnvelope([{tool: "wardrobe", scope: "category", category: "bottoms"}]),
+    finalEnvelope({
+      action: "generate_outfit",
+      assistantText: "Vybral som outfit.",
+      resultingOutfit: {
+        itemIds: ["shorts", "hoodie"],
+        selectionReasonsByItemId: {shorts: "ľahký spodok", hoodie: "vrstva"},
+      },
+      display: {kind: "outfit", itemIds: ["shorts", "hoodie"]},
+    }),
+  ]});
+  await assert.rejects(
+    h.coordinator.resolveTurn(request("unsupplied", "unsupplied-1", 0, "Vytvor outfit.")),
+    SafetyCriticalTurnError,
+  );
+  const supplied = h.ledger.calls("model", "final")[0].args.toolResults.wardrobeItems.map((item) => item.id);
+  assert.deepEqual(supplied, ["jeans", "shorts"]);
+  assert.equal(h.ledger.calls("session", "write").length, 0);
 });

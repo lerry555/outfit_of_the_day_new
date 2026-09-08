@@ -41,6 +41,11 @@ function createEmptySessionStateV2(chatId) {
       activity: null,
       terrain: emptyTerrain(),
       weather: null,
+      groundingRequirements: {
+        weatherRequired: false,
+        weatherLocationField: null,
+        terrainRequiredFields: [],
+      },
     },
     currentOutfit: {
       itemIds: [],
@@ -107,6 +112,17 @@ function validateStylistSessionStateV2(state) {
   if (weather != null && (!weather.locationProviderId || !weather.dateKey ||
       !weather.timeWindowKey || !weather.fetchedAt || !weather.source)) {
     throw new TypeError("weather requires location/date/time provenance");
+  }
+  const grounding = state.context.groundingRequirements;
+  if (!grounding || typeof grounding.weatherRequired !== "boolean" ||
+      ![null, "destination", "eventLocation"].includes(grounding.weatherLocationField) ||
+      !Array.isArray(grounding.terrainRequiredFields) ||
+      grounding.terrainRequiredFields.some((field) => !["surface", "difficulty", "condition"].includes(field)) ||
+      new Set(grounding.terrainRequiredFields).size !== grounding.terrainRequiredFields.length) {
+    throw new TypeError("invalid material grounding requirements");
+  }
+  if (grounding.weatherRequired && grounding.weatherLocationField == null) {
+    throw new TypeError("weather grounding requires an authoritative location field");
   }
   const outfit = state.currentOutfit;
   if (!Array.isArray(outfit.itemIds) || new Set(outfit.itemIds).size !== outfit.itemIds.length) {
@@ -186,6 +202,11 @@ function bootstrapExistingChatV2(input) {
   state.context.destination = null;
   state.context.terrain = emptyTerrain();
   state.context.weather = null;
+  state.context.groundingRequirements = {
+    weatherRequired: false,
+    weatherLocationField: null,
+    terrainRequiredFields: [],
+  };
   state.conversationMemory.pendingAction = null;
   state.conversationMemory.pendingQuestion = null;
   return validateStylistSessionStateV2(state);

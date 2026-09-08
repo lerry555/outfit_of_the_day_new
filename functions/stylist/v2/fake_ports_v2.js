@@ -44,6 +44,9 @@ class FakeWardrobeToolV2 {
   async retrieve({scope, itemIds = [], category = null}) {
     this.ledger.record("wardrobe", "retrieve", {scope, itemIds, category});
     if (scope === "current_outfit") return clone(this.items.filter((item) => itemIds.includes(item.id)));
+    if (scope === "current_outfit_plus_category") {
+      return clone(this.items.filter((item) => itemIds.includes(item.id) || item.category === category));
+    }
     if (scope === "category") return clone(this.items.filter((item) => item.category === category));
     if (scope === "none") return [];
     return clone(this.items);
@@ -102,7 +105,7 @@ class FakeStylistModelPortV2 {
   }
 
   async turn(input) {
-    this.ledger.record("model", "turn", input);
+    this.ledger.record("model", input.phase || "turn", input);
     if (!this.scriptedResults.length) throw new Error("no fake stylist result scripted");
     return clone(this.scriptedResults.shift());
   }

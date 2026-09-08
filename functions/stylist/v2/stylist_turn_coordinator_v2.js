@@ -8,10 +8,20 @@ const {
 } = require("./stylist_session_state_v2");
 const {validateTurnRequestV2} = require("./stylist_turn_contract_v2");
 const {highestPriorityMissingGroundingV2, runPreflightV2} = require("./stylist_preflight_v2");
-const {validateAuthoritativeTurnV2} = require("./stylist_turn_validator_v2");
+const {
+  RepairableStructuralTurnError,
+  validateAuthoritativeTurnV2,
+} = require("./stylist_turn_validator_v2");
 
 const GREETINGS = new Set(["ahoj", "čau", "cau", "dobrý deň", "dobry den"]);
 const LOCATION_FRESHNESS_MS = 30 * 60 * 1000;
+const TOOL_REQUEST_KEYS = new Set(["kind", "requests", "statePatch"]);
+const FINAL_ENVELOPE_KEYS = new Set(["kind", "result", "statePatch"]);
+const TOOL_REQUEST_SCOPES = new Set([
+  "current_outfit", "current_outfit_plus_category", "category", "full_relevant",
+]);
+const WARDROBE_REQUEST_KEYS = new Set(["tool", "scope", "category", "editScope"]);
+const LOCATION_REQUEST_KEYS = new Set(["tool", "query", "targetField"]);
 
 function isFreshLocationObservation(observation, nowMs) {
   if (!observation?.observedAt) return false;
@@ -26,11 +36,9 @@ function unchangedOutfit(state) {
   };
 }
 
-function normalizeDecision(decision, state, resultingRevision) {
+function normalizeDecision(decision, state, resultingRevision, turnId) {
   const raw = clone(decision);
-  delete raw.statePatch;
-  delete raw.retrievalScope;
-  delete raw.retrievalCategory;
+  raw.turnId = turnId;
   raw.resultingSessionRevision = resultingRevision;
   raw.resultingOutfit = raw.resultingOutfit || unchangedOutfit(state);
   raw.quickReplies = raw.quickReplies || [];
@@ -43,10 +51,10 @@ function normalizeDecision(decision, state, resultingRevision) {
 function applySafeStatePatch(state, statePatch = {}) {
   const next = clone(state);
   const context = statePatch.context || {};
-  for (const key of ["activity", "date", "timeWindow", "terrain", "eventLocation"]) {
+  for (const key of ["activity", "date", "timeWindow", "terrain", "groundingRequirements"]) {
     if (Object.prototype.hasOwnProperty.call(context, key)) next.context[key] = clone(context[key]);
   }
-  // Destination and weather are intentionally excluded: only their tools may author them.
+  // GPS, destination/event location, and weather can only be authored by their ports.
   const memory = statePatch.conversationMemory || {};
   for (const key of ["communicatedWarnings", "rejectedWardrobeItemIds", "rejectedShoppingOptionIds",
     "userCorrections", "acceptedCompromises"]) {
@@ -97,34 +105,20 @@ function applyAcceptedResult(state, result) {
 }
 
 function clarificationDecision(field) {
-  if (field === "destination") {
-    return {
-      action: "clarify",
-      assistantText: "Kam presne ideš na túru?",
-      clarification: {field, question: "Kam presne ideš na túru?", actionId: "clarify_destination"},
-      display: {kind: "none", itemIds: []},
-    };
-  }
-  if (field === "date") {
-    return {
-      action: "clarify",
-      assistantText: "Na ktorý deň outfit potrebuješ?",
-      clarification: {field, question: "Na ktorý deň outfit potrebuješ?", actionId: "clarify_date"},
-      display: {kind: "none", itemIds: []},
-    };
-  }
-  if (field === "timeWindow") {
-    return {
-      action: "clarify",
-      assistantText: "V ktorej časti dňa budeš na túre?",
-      clarification: {field, question: "V ktorej časti dňa budeš na túre?", actionId: "clarify_time_window"},
-      display: {kind: "none", itemIds: []},
-    };
-  }
+  const definitions = {
+    destination: ["Kam presne ideš?", "clarify_destination"],
+    eventLocation: ["Kde presne sa podujatie koná?", "clarify_event_location"],
+    date: ["Na ktorý deň outfit potrebuješ?", "clarify_date"],
+    timeWindow: ["V ktorej časti dňa ho budeš potrebovať?", "clarify_time_window"],
+    "terrain.surface": ["Po akom povrchu pôjdeš?", "clarify_terrain_surface"],
+    "terrain.difficulty": ["Aká náročná bude trasa?", "clarify_terrain_difficulty"],
+    "terrain.condition": ["Bude trasa suchá, mokrá, blatistá alebo zasnežená?", "clarify_terrain_condition"],
+  };
+  const [question, actionId] = definitions[field] || ["Čo ešte potrebuješ upresniť?", "clarify_context"];
   return {
     action: "clarify",
-    assistantText: "Aký bude povrch, náročnosť a stav trasy?",
-    clarification: {field, question: "Aký bude povrch, náročnosť a stav trasy?", actionId: "clarify_terrain"},
+    assistantText: question,
+    clarification: {field, question, actionId},
     display: {kind: "none", itemIds: []},
   };
 }
@@ -137,13 +131,23 @@ function greetingDecision() {
   };
 }
 
+function declinedPendingDecision() {
+  return {
+    action: "chat",
+    assistantText: "Dobre, nechám to tak.",
+    display: {kind: "none", itemIds: []},
+  };
+}
+
 async function refreshWeatherIfGrounded(state, weatherTool) {
   const next = clone(state);
-  const {destination, date, timeWindow, weather} = next.context;
-  if (!destination || !date || !timeWindow) return next;
-  if (weather?.locationProviderId === destination.providerId && weather.dateKey === date.dateKey &&
+  const {date, timeWindow, weather, groundingRequirements} = next.context;
+  if (!groundingRequirements.weatherRequired) return next;
+  const location = next.context[groundingRequirements.weatherLocationField];
+  if (!location || !date || !timeWindow) return next;
+  if (weather?.locationProviderId === location.providerId && weather.dateKey === date.dateKey &&
       weather.timeWindowKey === timeWindow.key) return next;
-  next.context.weather = await weatherTool.getForecast({location: destination, date, timeWindow});
+  next.context.weather = await weatherTool.getForecast({location, date, timeWindow});
   return next;
 }
 
@@ -152,6 +156,7 @@ function shoppingContext(state, pending) {
     actionId: pending.actionId,
     activity: clone(state.context.activity),
     destination: clone(state.context.destination),
+    eventLocation: clone(state.context.eventLocation),
     weather: clone(state.context.weather),
     terrain: clone(state.context.terrain),
     missingNeed: clone(state.shopping.missingNeed || state.currentOutfit.missingWardrobeNeeds[0] || null),
@@ -163,6 +168,86 @@ function shoppingContext(state, pending) {
     rejectedCandidateIds: clone(state.shopping.rejectedCandidateIds),
     openedReason: state.shopping.openedReason,
     currentOutfit: unchangedOutfit(state),
+  };
+}
+
+function assertExactKeys(value, allowed, label) {
+  if (!value || typeof value !== "object") throw new RepairableStructuralTurnError(`${label} is required`);
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) throw new RepairableStructuralTurnError(`${label} contains unsupported field ${key}`);
+  }
+}
+
+function validatePlanningEnvelope(envelope, state) {
+  if (envelope?.kind === "final") {
+    assertExactKeys(envelope, FINAL_ENVELOPE_KEYS, "planning final envelope");
+    if (!["chat", "clarify", "stop"].includes(envelope.result?.action)) {
+      throw new RepairableStructuralTurnError(
+        "planning phase may finalize only a no-wardrobe chat, clarification, or stop",
+      );
+    }
+    return;
+  }
+  if (envelope?.kind !== "tool_request") {
+    throw new RepairableStructuralTurnError("planning phase must return final or tool_request");
+  }
+  assertExactKeys(envelope, TOOL_REQUEST_KEYS, "tool request envelope");
+  if (!Array.isArray(envelope.requests) || envelope.requests.length === 0) {
+    throw new RepairableStructuralTurnError("tool request envelope requires at least one request");
+  }
+  const wardrobeRequests = envelope.requests.filter((request) => request.tool === "wardrobe");
+  const locationRequests = envelope.requests.filter((request) => request.tool === "location");
+  if (wardrobeRequests.length > 1 || locationRequests.length > 1 ||
+      envelope.requests.length !== wardrobeRequests.length + locationRequests.length) {
+    throw new RepairableStructuralTurnError("only one wardrobe and one location request are allowed");
+  }
+  if (wardrobeRequests.some((request) => !TOOL_REQUEST_SCOPES.has(request.scope) ||
+      request.scope === "current_outfit_plus_category" && !request.category)) {
+    throw new RepairableStructuralTurnError("invalid wardrobe retrieval request");
+  }
+  if (locationRequests.some((request) => !request.query ||
+      !["destination", "eventLocation"].includes(request.targetField))) {
+    throw new RepairableStructuralTurnError("invalid location resolution request");
+  }
+  for (const request of wardrobeRequests) {
+    assertExactKeys(request, WARDROBE_REQUEST_KEYS, "wardrobe tool request");
+  }
+  for (const request of locationRequests) {
+    assertExactKeys(request, LOCATION_REQUEST_KEYS, "location tool request");
+  }
+  if (state.currentOutfit.itemIds.length && wardrobeRequests.some((request) =>
+    request.scope === "category")) {
+    throw new RepairableStructuralTurnError("category-only retrieval omits the current outfit");
+  }
+}
+
+function validateFinalEnvelope(envelope) {
+  if (envelope?.kind !== "final") {
+    throw new RepairableStructuralTurnError("final model phase must return one authoritative result");
+  }
+  assertExactKeys(envelope, FINAL_ENVELOPE_KEYS, "final envelope");
+  if (!envelope.result || typeof envelope.result !== "object") {
+    throw new RepairableStructuralTurnError("final envelope requires a result");
+  }
+}
+
+function modelInput(request, state, preflight, phase, toolResults = null) {
+  return {
+    phase,
+    request: {
+      chatId: request.chatId,
+      turnId: request.turnId,
+      latestUserInput: request.latestUserInput,
+      explicitUiActionId: request.explicitUiActionId,
+      clientCapabilities: request.clientCapabilities,
+    },
+    session: clone(state),
+    preflightResolution: preflight.kind === "pending" ? {
+      kind: preflight.pendingKind,
+      answer: preflight.answer,
+      actionId: preflight.pending.actionId,
+    } : null,
+    toolResults: clone(toolResults),
   };
 }
 
@@ -185,10 +270,20 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
         workingState.context.currentLocationObservation = clone(observation);
       }
 
-      let decision;
+      let decision = null;
       let wardrobeItems = [];
+      const toolResults = {
+        wardrobeItems: [],
+        resolvedLocations: [],
+        weather: null,
+        authorizedEditScope: null,
+      };
 
-      if (preflight.kind === "pending" && preflight.pendingKind !== "question" &&
+      if (preflight.kind === "pending" && preflight.answer === "no") {
+        if (preflight.pendingKind === "question") workingState.conversationMemory.pendingQuestion = null;
+        else workingState.conversationMemory.pendingAction = null;
+        decision = declinedPendingDecision();
+      } else if (preflight.kind === "pending" && preflight.pendingKind !== "question" &&
           preflight.pending.kind === "shopping") {
         const context = shoppingContext(workingState, preflight.pending);
         const shoppingResult = await shoppingTool.search(context);
@@ -198,60 +293,84 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           display: {kind: "shopping", itemIds: shoppingResult.candidateIds || []},
           shoppingResult,
         };
-      } else if (workingState.conversationMemory.pendingQuestion?.field === "destination") {
-        const destination = await locationResolver.resolve(request.latestUserInput.trim());
-        if (!destination) {
-          decision = clarificationDecision("destination");
+      }
+
+      const pendingField = workingState.conversationMemory.pendingQuestion?.field;
+      if (!decision && ["destination", "eventLocation"].includes(pendingField)) {
+        const resolved = await locationResolver.resolve(request.latestUserInput.trim());
+        if (!resolved) {
+          decision = clarificationDecision(pendingField);
         } else {
-          workingState.context.destination = destination;
-          workingState.conversationMemory.answeredClarificationFields.destination = clone(destination);
+          workingState.context[pendingField] = resolved;
+          workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolved);
           workingState.conversationMemory.pendingQuestion = null;
           workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
-          decision = clarificationDecision(highestPriorityMissingGroundingV2(workingState) || "terrain");
+          const missing = highestPriorityMissingGroundingV2(workingState);
+          if (missing) decision = clarificationDecision(missing);
         }
-      } else if (GREETINGS.has(request.latestUserInput.trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, ""))) {
+      }
+
+      const normalizedInput = request.latestUserInput.trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, "");
+      if (!decision && preflight.kind === "continue" && GREETINGS.has(normalizedInput)) {
         decision = greetingDecision();
-      } else {
-        const modelDecision = await stylistModel.turn({
-          request: {
-            chatId: request.chatId,
-            turnId: request.turnId,
-            latestUserInput: request.latestUserInput,
-            explicitUiActionId: request.explicitUiActionId,
-            clientCapabilities: request.clientCapabilities,
-          },
-          session: clone(workingState),
-          preflightResolution: preflight.kind === "pending" ? {
-            kind: preflight.pendingKind,
-            actionId: preflight.pending.actionId,
-          } : null,
-        });
-        workingState = applySafeStatePatch(workingState, modelDecision.statePatch);
-        workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
-        const missing = highestPriorityMissingGroundingV2(workingState);
-        if (["generate_outfit", "edit_outfit"].includes(modelDecision.action) && missing) {
-          decision = clarificationDecision(missing);
+      }
+
+      if (!decision) {
+        const planningEnvelope = await stylistModel.turn(
+          modelInput(request, workingState, preflight, "plan"),
+        );
+        validatePlanningEnvelope(planningEnvelope, workingState);
+        workingState = applySafeStatePatch(workingState, planningEnvelope.statePatch);
+
+        if (planningEnvelope.kind === "final") {
+          decision = planningEnvelope.result;
         } else {
-          decision = modelDecision;
-          const scope = modelDecision.retrievalScope || "none";
-          if (scope !== "none") {
+          const locationRequest = planningEnvelope.requests.find((entry) => entry.tool === "location");
+          if (locationRequest) {
+            const resolved = await locationResolver.resolve(locationRequest.query);
+            if (!resolved) {
+              decision = clarificationDecision(locationRequest.targetField);
+            } else {
+              workingState.context[locationRequest.targetField] = resolved;
+              workingState.conversationMemory.answeredClarificationFields[locationRequest.targetField] = clone(resolved);
+              toolResults.resolvedLocations.push({targetField: locationRequest.targetField, location: clone(resolved)});
+            }
+          }
+
+          workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
+          toolResults.weather = clone(workingState.context.weather);
+          const missing = highestPriorityMissingGroundingV2(workingState);
+          if (!decision && missing) decision = clarificationDecision(missing);
+
+          const wardrobeRequest = planningEnvelope.requests.find((entry) => entry.tool === "wardrobe");
+          if (!decision && wardrobeRequest) {
             wardrobeItems = await wardrobeTool.retrieve({
-              scope,
+              scope: wardrobeRequest.scope,
               itemIds: workingState.currentOutfit.itemIds,
-              category: modelDecision.retrievalCategory || null,
+              category: wardrobeRequest.category || null,
             });
+            toolResults.wardrobeItems = clone(wardrobeItems);
+            toolResults.authorizedEditScope = clone(wardrobeRequest.editScope || null);
+          }
+
+          if (!decision) {
+            const finalEnvelope = await stylistModel.turn(
+              modelInput(request, workingState, preflight, "final", toolResults),
+            );
+            validateFinalEnvelope(finalEnvelope);
+            workingState = applySafeStatePatch(workingState, finalEnvelope.statePatch);
+            decision = finalEnvelope.result;
           }
         }
       }
 
-      const resultingRevision = originalState.revision + 1;
-      const rawResult = normalizeDecision(decision, workingState, resultingRevision);
-      rawResult.turnId = request.turnId;
+      const rawResult = normalizeDecision(decision, workingState, originalState.revision + 1, request.turnId);
       const validatedResult = validateAuthoritativeTurnV2({
         rawResult,
         previousState: originalState,
         proposedState: workingState,
         wardrobeItems,
+        authorizedEditScope: toolResults.authorizedEditScope,
       });
       const nextState = applyAcceptedResult(workingState, validatedResult);
       await sessionRepository.write(nextState);
@@ -264,4 +383,6 @@ module.exports = {
   LOCATION_FRESHNESS_MS,
   createStylistTurnCoordinatorV2,
   isFreshLocationObservation,
+  validateFinalEnvelope,
+  validatePlanningEnvelope,
 };

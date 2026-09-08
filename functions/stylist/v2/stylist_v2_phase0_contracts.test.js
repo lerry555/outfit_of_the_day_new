@@ -43,6 +43,11 @@ function completeHikingState(chatId = "chat-validator") {
   state.context.date = {dateKey: "2026-09-09", source: "user"};
   state.context.timeWindow = {key: "daytime", label: "cez deň"};
   state.context.terrain = {surface: "trail", difficulty: "easy", condition: "dry"};
+  state.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: "destination",
+    terrainRequiredFields: [],
+  };
   state.context.weather = {
     locationProviderId: "tatras",
     dateKey: "2026-09-09",
@@ -138,6 +143,14 @@ test("isolated affirmative text is rejected without exactly one active referent"
     AmbiguousAffirmationError);
 });
 
+test("isolated negative text is rejected without exactly one active referent", () => {
+  for (const latestUserInput of ["Nie", "nie, ďakujem", "nechcem"]) {
+    const negativeRequest = validateTurnRequestV2(baseRequest({latestUserInput}));
+    assert.throws(() => runPreflightV2(createEmptySessionStateV2("chat-contract"), negativeRequest),
+      AmbiguousAffirmationError);
+  }
+});
+
 test("explicit UI action ID resolves only its exact persisted referent", () => {
   const state = clone(createEmptySessionStateV2("chat-contract"));
   state.conversationMemory.pendingAction = {type: "action", kind: "shopping", actionId: "shop-1"};
@@ -182,8 +195,22 @@ test("stale GPS observation is not accepted as current authority and can never b
   assert.equal(saved.context.destination, null);
 });
 
-test("mismatched weather provenance is safety-critical and blocks generation", () => {
-  const previousState = completeHikingState();
+test("mismatched remote-event weather provenance is safety-critical outside hiking too", () => {
+  const eventState = clone(createEmptySessionStateV2("generic-event-weather"));
+  eventState.context.activity = {id: "concert"};
+  eventState.context.eventLocation = {providerId: "bratislava", label: "Bratislava"};
+  eventState.context.date = {dateKey: "2026-09-09", source: "user"};
+  eventState.context.timeWindow = {key: "evening", label: "večer"};
+  eventState.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: "eventLocation",
+    terrainRequiredFields: [],
+  };
+  eventState.context.weather = {
+    locationProviderId: "bratislava", dateKey: "2026-09-09", timeWindowKey: "evening",
+    fetchedAt: "2026-09-08T08:00:00Z", source: "fake", snapshot: {},
+  };
+  const previousState = validateStylistSessionStateV2(eventState);
   const proposed = clone(previousState);
   proposed.context.weather.locationProviderId = "martin";
   assert.throws(() => validateAuthoritativeTurnV2({
@@ -269,6 +296,7 @@ test("retained reasons cannot be rewritten and Shopping hard constraints cannot 
   base.currentOutfit.selectionReasonsByItemId = {shirt: "original shirt reason", boots: "original boot reason"};
   base.currentOutfit.revision = 1;
   const state = validateStylistSessionStateV2(base);
+  const immutableEditScope = {replaceItemIds: ["boots"], allowedSlots: ["feet"]};
   assert.throws(() => validateAuthoritativeTurnV2({
     rawResult: generatedResult({
       action: "edit_outfit",
@@ -276,12 +304,16 @@ test("retained reasons cannot be rewritten and Shopping hard constraints cannot 
         itemIds: ["shirt", "boots"],
         selectionReasonsByItemId: {shirt: "rewritten reason", boots: "original boot reason"},
       },
-      editScope: {replaceItemIds: ["boots"], slots: ["feet"]},
+      editScope: immutableEditScope,
       display: {kind: "items", itemIds: ["boots"]},
     }),
     previousState: state,
     proposedState: state,
-    wardrobeItems: [{id: "boots", category: "footwear"}],
+    wardrobeItems: [
+      {id: "shirt", category: "tops", bodySlots: ["upper_body"]},
+      {id: "boots", category: "footwear", bodySlots: ["feet"]},
+    ],
+    authorizedEditScope: immutableEditScope,
   }), /cannot be rewritten/);
 
   const shoppingState = clone(createEmptySessionStateV2("hard-shopping"));
