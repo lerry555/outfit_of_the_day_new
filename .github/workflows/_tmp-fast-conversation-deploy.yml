@@ -1,4 +1,4 @@
-name: Stylist fast conversation approved deployment
+name: Stylist fast conversation and Shopping handoff deployment
 
 on:
   push:

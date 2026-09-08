@@ -52,6 +52,26 @@ test("missing gear can produce a model-routed shopping permission handoff", () =
   assert.equal(result.valid, true);
 });
 
+test("agreement to the immediately preceding store offer can start Shopping", () => {
+  const input = buildFastConversationInputV1({
+    message: "Áno",
+    history: [{role: "assistant",
+      content: "Chýba vhodná turistická obuv. Chceš, aby som pozrel možnosti v obchodoch?"}],
+    shoppingEnabled: true,
+  });
+  assert.ok(input.messages[0].content.includes("shoppingHandoff=start_search"));
+  const result = validateFastConversationDecisionV1({
+    route: "fast_reply",
+    stylistComment: "",
+    quickReplyMode: "none",
+    weatherContextKey: "none",
+    shoppingHandoff: "start_search",
+    shoppingNeedText: "turistické topánky",
+    shoppingNeedLabel: "vhodná turistická obuv",
+  });
+  assert.equal(result.valid, true);
+});
+
 test("disabled shopping uses a real yes-no question rather than a fake store claim", () => {
   const result = validateFastConversationDecisionV1({
     route: "fast_reply",
@@ -121,6 +141,8 @@ test("callable routes before the full wardrobe query and preserves the Sol fallb
   assert.ok(route >= 0 && fullWardrobe > route && fullStylist > fullWardrobe);
   assert.ok(scope.includes("loadCurrentOutfitDocsForFastPathV1"));
   assert.ok(scope.includes("handleStylistShoppingTurn"));
+  assert.ok(scope.includes('activeClarification: "SHOPPING_PERMISSION"'));
+  assert.ok(scope.includes('fastDecision.shoppingHandoff === "start_search"'));
 });
 
 test("mobile sends shopping state through the ordinary simple-agent call", () => {

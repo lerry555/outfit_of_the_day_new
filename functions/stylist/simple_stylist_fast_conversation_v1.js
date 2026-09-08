@@ -23,7 +23,10 @@ const FAST_CONVERSATION_SCHEMA = Object.freeze({
       type: "string",
       enum: ["current", "today", "tomorrow", "none"],
     },
-    shoppingHandoff: {type: "string", enum: ["none", "ask_permission"]},
+    shoppingHandoff: {
+      type: "string",
+      enum: ["none", "ask_permission", "start_search"],
+    },
     shoppingNeedText: {type: "string", maxLength: 160},
     shoppingNeedLabel: {type: "string", maxLength: 160},
   },
@@ -54,7 +57,7 @@ function buildFastConversationInputV1(input) {
     "Pri fast_reply píš prirodzene po slovensky, kamarátsky a profesionálne, zvyčajne 1–2 krátke vety. Nevymýšľaj vlastnosti kúskov ani netvrď, že si prehľadal obchody.",
     "Ak používateľ oznámi, že nemá chýbajúci odporučený kus, neostaň pri opakovaní problému. Ponúkni jeden praktický ďalší krok.",
     shoppingEnabled ?
-      "Ak ide o reálne chýbajúci kúpiteľný kus a používateľ ešte nákup neodmietol, nastav shoppingHandoff=ask_permission, stručne vyplň shoppingNeedText (napr. turistické topánky) a shoppingNeedLabel. Text odpovede môže byť prázdny; server vytvorí pravdivú ponuku obchodu." :
+      "Ak ide o reálne chýbajúci kúpiteľný kus a používateľ ešte nákup neodmietol, nastav shoppingHandoff=ask_permission, stručne vyplň shoppingNeedText (napr. turistické topánky) a shoppingNeedLabel. Ak posledná správa je súhlas s bezprostredne predchádzajúcou ponukou pozrieť možnosti v obchodoch, nastav namiesto toho shoppingHandoff=start_search a z histórie vyplň ten istý chýbajúci kus. Text odpovede môže byť prázdny; server vytvorí pravdivý Shopping krok." :
       "Vyhľadávanie obchodov nie je dostupné. Pri chýbajúcom kuse sa opýtaj, či chce poradiť, aký kus hľadať; nastav quickReplyMode=yes_no. Po Áno rovno daj konkrétne kritériá, po Nie tému ukonči.",
     "quickReplyMode=yes_no použi iba ak posledná veta stylistComment je skutočná otázka zodpovedateľná áno alebo nie. Inak none.",
     "Pri počasí použi iba dodané údaje pre správny deň. Ak poznáš ráno/obed/večer, nepridávaj ešte denný rozsah; stručne spomeň aj dážď a vietor, ak sú známe.",
@@ -122,7 +125,7 @@ function validateFastConversationDecisionV1(raw) {
   if (quickReplyMode === "yes_no" && !hasTerminalYesNoQuestion(stylistComment)) {
     errors.push("fast_yes_no_question_required");
   }
-  if (shoppingHandoff === "ask_permission" &&
+  if (["ask_permission", "start_search"].includes(shoppingHandoff) &&
       (!shoppingNeedText || !shoppingNeedLabel || quickReplyMode !== "none")) {
     errors.push("fast_shopping_need_invalid");
   }

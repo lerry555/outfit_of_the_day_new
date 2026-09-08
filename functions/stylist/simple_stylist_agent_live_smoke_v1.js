@@ -105,6 +105,23 @@ async function main() {
     assert.deepEqual(greeting.resultingOutfitItemIds, []);
     assert.deepEqual(greeting.displayItemIds, []);
 
+    currentSelectionReasons = [];
+    const wetForest = {location: "Martin", tomorrow: {...weatherContext.tomorrow,
+      morningTempC: 16, noonTempC: 24, eveningTempC: 20,
+      willRain: true, wetGroundRisk: true,
+      hourlyTempCByLocalHour: Array.from({length: 24}, (_, h) => h < 12 ? 16 : 24),
+      hourlyWeatherCodeByLocalHour: Array(24).fill(61)}};
+    const initialGap = await call("full_gap_offers_store_search",
+      "Zajtra ráno idem na huby do strmého mokrého lesa. Vyber mi outfit.",
+      [], [], wetForest, {shoppingEnabled: true});
+    assert.equal(initialGap.modelPath, "full_stylist", "qa_outfit_request_not_full");
+    assert.ok(["conditional", "missing"].includes(initialGap.footwearAssessment?.status),
+      "qa_expected_terrain_gap_missing");
+    assert.equal(initialGap.quickReplyMode, "yes_no", "qa_gap_has_no_buttons");
+    assert.match(initialGap.stylistComment,
+      /Chceš, aby som pozrel možnosti v obchodoch\?\s*(?:(?:\p{Extended_Pictographic}|\uFE0F|\u200D)\s*)*$/u,
+      "qa_gap_has_no_store_offer");
+
     const missing = await call("fast_missing_hiking_shoes", "Nemám také topánky.",
       initialIds, [
         {role: "user", content: "Zajtra ráno idem na huby do mokrého lesa. Čo si mám obliecť?"},
@@ -123,6 +140,7 @@ async function main() {
       "qa_decline_did_not_clear_shopping_context");
     console.log(JSON.stringify({scenario: "fast_conversation_summary",
       greetingLatencyMs: greeting.latencyMs,
+      fullGapLatencyMs: initialGap.latencyMs,
       missingItemLatencyMs: missing.latencyMs,
       declineLatencyMs: declined.latencyMs}));
     console.log("LIVE_FAST_CONVERSATION_PASS: fast greeting, Shopping offer buttons and deterministic decline.");

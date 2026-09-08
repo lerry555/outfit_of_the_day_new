@@ -173,6 +173,17 @@ test("the single-model prompt distinguishes consultation, requested cards and fe
   assert.ok(!prompt.includes("zobraziť alebo vysvetliť outfit"));
 });
 
+test("shopping-enabled full outfit gaps offer the connected Shopping step", () => {
+  const enabled = normalizeRequestV1({message: "Vyber mi outfit do mokrého lesa.",
+    history: [], currentOutfitItemIds: [], wardrobeItems: wardrobe,
+    shoppingEnabled: true});
+  const prompt = buildModelInputV1(enabled).messages[0].content;
+  assert.ok(prompt.includes("Chceš, aby som pozrel možnosti v obchodoch?"));
+  assert.ok(prompt.includes("quickReplyMode=yes_no"));
+  assert.ok(prompt.includes("Shopping runtime"));
+  assert.ok(!prompt.includes("NIE JE pripojený nástroj na prehľadávanie obchodov"));
+});
+
 test("yes/no quick replies require an explicit answerable question at the end", () => {
   const accepted = check(answer({
     stylistComment: "Chceš poradiť, akú obuv hľadať? 🙂",

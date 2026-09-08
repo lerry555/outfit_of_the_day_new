@@ -3963,14 +3963,20 @@ exports.attachCleanImageOnWardrobeWrite = functions
               });
 
               if (fastDecision.route === "fast_reply" &&
-                  fastDecision.shoppingHandoff === "ask_permission" &&
+                  ["ask_permission", "start_search"].includes(
+                    fastDecision.shoppingHandoff,
+                  ) &&
                   shoppingEnabled) {
+                const startApproved = fastDecision.shoppingHandoff === "start_search";
                 const shoppingTurn = await handleStylistShoppingTurn({
                   auth: {uid},
                   message: data?.message,
-                  shoppingContext: {},
+                  shoppingContext: startApproved ? {
+                    activeClarification: "SHOPPING_PERMISSION",
+                    pendingNeedText: `Chcem si kúpiť ${fastDecision.shoppingNeedText}`,
+                  } : {},
                   orchestrator: stylistShoppingOrchestrator,
-                  wardrobeSignal: {
+                  wardrobeSignal: startApproved ? null : {
                     gapDetected: true,
                     suitableOwnedItemExists: false,
                     bestOwnedCompromiseExists: false,
@@ -4023,6 +4029,7 @@ exports.attachCleanImageOnWardrobeWrite = functions
                 weatherContext: data?.weatherContext,
                 clientContext: data?.clientContext,
                 eventContext: data?.eventContext,
+                shoppingEnabled,
                 userStylePreferences: sanitizeUserStylePreferences(
                   data?.userStylePreferences,
                 ),
