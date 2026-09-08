@@ -15,8 +15,12 @@ const {
 const {
   createStylistChatV2Handler,
 } = require("./stylist/v2/stylist_production_bridge_v2");
+const {
+  createServerOnlyFirestoreStylistSessionRepositoryV2,
+} = require("./stylist/v2/server_only_stylist_session_repository_v2");
 
 if (!admin.apps.length) admin.initializeApp();
+const db = admin.firestore();
 
 module.exports.stylistChatV2 = functions
   .region("us-east1")
@@ -26,9 +30,14 @@ module.exports.stylistChatV2 = functions
     secrets: [OPENAI_API_KEY_SECRET],
   })
   .https.onCall(createStylistChatV2Handler({
-    db: admin.firestore(),
+    db,
     admin,
     logger,
     fetchImpl: fetch,
     resolveOpenAISecret,
+    // Production canonical memory lives outside /users/**. The currently
+    // deployed legacy Firestore rules allow owner writes to most user
+    // subcollections, so this top-level Admin-only path is fail-closed even
+    // before a rules deployment is available.
+    sessionRepository: createServerOnlyFirestoreStylistSessionRepositoryV2(db),
   }));

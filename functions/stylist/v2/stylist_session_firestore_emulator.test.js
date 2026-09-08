@@ -8,15 +8,17 @@ const {initializeApp, deleteApp} = require("firebase-admin/app");
 const {getFirestore} = require("firebase-admin/firestore");
 const {
   assertFails,
-  assertSucceeds,
   initializeTestEnvironment,
 } = require("@firebase/rules-unit-testing");
 const {deleteDoc, doc, getDoc, setDoc} = require("firebase/firestore");
 const {clone, createEmptySessionStateV2} = require("./stylist_session_state_v2");
 const {
   StylistSessionRepositoryV2Error,
-  createFirestoreStylistSessionRepositoryV2,
 } = require("./stylist_session_repository_v2");
+const {
+  createServerOnlyFirestoreStylistSessionRepositoryV2,
+  serverOnlySessionPathV2,
+} = require("./server_only_stylist_session_repository_v2");
 
 const PROJECT_ID = "demo-ootd-rules-9cr";
 const RULES_PATH = path.resolve(__dirname, "../../../firestore.rules");
@@ -25,7 +27,10 @@ let appSerial = 0;
 
 function adminRepository() {
   const app = initializeApp({projectId: PROJECT_ID}, `stylist-v2-${appSerial++}`);
-  return {app, repository: createFirestoreStylistSessionRepositoryV2(getFirestore(app))};
+  return {
+    app,
+    repository: createServerOnlyFirestoreStylistSessionRepositoryV2(getFirestore(app)),
+  };
 }
 
 function acceptedTurn(state, turnId, assistantText = "ok") {
@@ -51,7 +56,7 @@ test.before(async () => {
 test.after(async () => { await environment?.cleanup(); });
 test.beforeEach(async () => { await environment.clearFirestore(); });
 
-test("owner can read canonical session but cannot mutate it; turn receipts are server-only", async () => {
+test("canonical V2 sessions and receipts are server-only under the existing rules baseline", async () => {
   const fixture = adminRepository();
   await fixture.repository.ensure({uid: "owner", chatId: "chat-1"});
   const stored = await fixture.repository.get({uid: "owner", chatId: "chat-1"});
@@ -61,19 +66,25 @@ test("owner can read canonical session but cannot mutate it; turn receipts are s
     nextState: turn.nextState, result: turn.result,
   });
 
+  assert.equal(serverOnlySessionPathV2("owner", "chat-1"),
+    "stylistSessionsV2Server/owner/sessions/chat-1");
+
   const owner = environment.authenticatedContext("owner").firestore();
   const other = environment.authenticatedContext("other").firestore();
-  const sessionRef = doc(owner, "users/owner/stylistSessionsV2/chat-1");
-  const turnRef = doc(owner, "users/owner/stylistSessionsV2/chat-1/turns/turn-1");
+  const sessionPath = "stylistSessionsV2Server/owner/sessions/chat-1";
+  const turnPath = `${sessionPath}/turns/turn-1`;
+  const sessionRef = doc(owner, sessionPath);
+  const turnRef = doc(owner, turnPath);
 
-  const ownerRead = await assertSucceeds(getDoc(sessionRef));
-  assert.equal(ownerRead.exists(), true);
-  await assertFails(getDoc(doc(other, "users/owner/stylistSessionsV2/chat-1")));
+  await assertFails(getDoc(sessionRef));
+  await assertFails(getDoc(doc(other, sessionPath)));
   await assertFails(setDoc(sessionRef, {revision: 999}, {merge: true}));
   await assertFails(deleteDoc(sessionRef));
   await assertFails(getDoc(turnRef));
   await assertFails(setDoc(turnRef, {forged: true}));
 
+  const adminRead = await fixture.repository.get({uid: "owner", chatId: "chat-1"});
+  assert.equal(adminRead.state.revision, 1);
   await deleteApp(fixture.app);
 });
 
