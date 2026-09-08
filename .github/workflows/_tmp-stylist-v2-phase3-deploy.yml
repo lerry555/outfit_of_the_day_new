@@ -71,11 +71,11 @@ jobs:
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@latest
 
-      - name: Deploy V2 callable and canonical session rules
+      - name: Deploy V2 callable
         shell: bash
         run: |
           set -euo pipefail
           firebase deploy \
-            --only firestore:rules,functions:stylistChatV2 \
+            --only functions:stylistChatV2 \
             --project outfitoftheday-4d401 \
             --non-interactive
