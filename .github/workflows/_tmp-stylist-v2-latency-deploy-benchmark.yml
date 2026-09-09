@@ -48,7 +48,16 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Generate deploy taxonomy artifacts
-        run: node functions/scripts/generate_deploy_taxonomy_artifacts.js
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          g.generateFamilyRegistry();
+          g.generateStructuredTaxonomy();
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
 
       - name: Recheck latency-sensitive contracts
         shell: bash
