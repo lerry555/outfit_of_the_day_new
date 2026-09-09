@@ -159,13 +159,18 @@ test("Scenario A keeps GPS separate, asks only material hiking facts, and retrie
   saved = await h.sessionRepository.read("chat-a");
   assert.equal(saved.context.destination.providerId, "place:tatras");
   assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-  const weatherCalls = h.ledger.calls("weather", "getForecast");
-  assert.equal(weatherCalls.length, 1);
-  assert.equal(weatherCalls[0].args.location.providerId, "place:tatras");
+  let weatherCalls = h.ledger.calls("weather", "getForecast");
+  // Do not spend a weather call while another material clarification is
+  // still pending. The forecast is fetched only on the turn that can
+  // actually proceed to final outfit selection.
+  assert.equal(weatherCalls.length, 0);
 
   const third = await reopened.resolveTurn(request("chat-a", "a-3", 2, "Ľahká trasa."));
   assert.equal(third.action, "generate_outfit");
   assert.deepEqual(third.display.itemIds, third.resultingOutfit.itemIds);
+  weatherCalls = h.ledger.calls("weather", "getForecast");
+  assert.equal(weatherCalls.length, 1);
+  assert.equal(weatherCalls[0].args.location.providerId, "place:tatras");
   saved = await h.sessionRepository.read("chat-a");
   assert.deepEqual(saved.context.terrain, {surface: null, difficulty: "easy", condition: null});
   assert.equal(h.ledger.calls("model", "plan").length, 2);
