@@ -73,3 +73,59 @@ test("first production V2 turn bootstraps persisted selection reasons without fa
     jeans: "vhodný spodný diel",
   });
 });
+
+test("production bridge routes generic fashion advice through fast chat before expensive tools", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const calls = {fast: 0, model: 0, wardrobe: 0, info: []};
+  const handler = createStylistChatV2Handler({
+    db: {},
+    admin: {},
+    logger: {
+      warn() {},
+      info(message, data) { calls.info.push({message, data}); },
+    },
+    resolveOpenAISecret: async () => "unused",
+    clock: () => NOW,
+    sessionRepository: repository,
+    fastChatFactory: () => ({
+      async turn({message}) {
+        calls.fast += 1;
+        assert.equal(message, "Aké farby sa hodia k modrej?");
+        return {reply: "K modrej funguje biela, sivá aj béžová. Pre výraznejší kontrast môžeš pridať oranžový detail."};
+      },
+    }),
+    modelFactory: () => {
+      calls.model += 1;
+      throw new Error("full_model_must_not_run");
+    },
+    wardrobeToolFactory: () => {
+      calls.wardrobe += 1;
+      throw new Error("wardrobe_must_not_run");
+    },
+    locationResolver: {async resolve() { throw new Error("location_must_not_run"); }},
+    weatherTool: {async getForecast() { throw new Error("weather_must_not_run"); }},
+    shoppingToolFactory: () => ({async search() { throw new Error("shopping_must_not_run"); }}),
+  });
+
+  const response = await handler({
+    v2SessionId: "fast_chat",
+    turnId: "fast_1",
+    message: "Aké farby sa hodia k modrej?",
+    history: [],
+    currentOutfitItemIds: [],
+    currentSelectionReasons: [],
+    shoppingEnabled: false,
+    clientContext: {},
+  }, {auth: {uid: "user-fast"}});
+
+  assert.equal(response.ok, true);
+  assert.equal(response.failClosed, false);
+  assert.equal(response.action, "chat");
+  assert.equal(response.modelPath, "stylist_v2_fast_chat");
+  assert.equal(response.quickReplyMode, "none");
+  assert.deepEqual(response.resultingOutfitItemIds, []);
+  assert.equal(calls.fast, 1);
+  assert.equal(calls.model, 0);
+  assert.equal(calls.wardrobe, 0);
+  assert.ok(calls.info.some((entry) => entry.message === "STYLIST_V2_TURN_LATENCY" && entry.data?.path === "fast_chat"));
+});

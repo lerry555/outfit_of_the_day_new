@@ -5,7 +5,7 @@ const PLAN_REASONING = "low";
 // Ordinary styling is latency-sensitive. Safety/formal turns automatically
 // escalate to Terra medium.
 const FINAL_MODEL = "gpt-5.6-luna";
-const FINAL_REASONING = "medium";
+const FINAL_REASONING = "low";
 const FINAL_ESCALATED_MODEL = "gpt-5.6-terra";
 const FINAL_REASONING_ESCALATED = "medium";
 // Backward-compatible exports for diagnostics that previously expected one model.
@@ -443,7 +443,7 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
           reasoningEffort,
           schema: phase === "plan" ? PLAN_SCHEMA : FINAL_SCHEMA,
           schemaName: phase === "plan" ? "stylist_v2_plan" : "stylist_v2_final",
-          maxOutputTokens: phase === "plan" ? 1200 : 1800,
+          maxOutputTokens: phase === "plan" ? 1200 : 1400,
           messages: [
             {role: "system", content: phase === "plan" ? plannerPrompt() : finalPrompt()},
             {role: "user", content: JSON.stringify(payload)},
