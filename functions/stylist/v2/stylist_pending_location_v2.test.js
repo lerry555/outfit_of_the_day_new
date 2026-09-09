@@ -32,8 +32,8 @@ const martinGps = {
   source: "device_gps",
 };
 
-function place(providerId, label, lat, lng) {
-  return {providerId, label, lat, lng, source: "fake-location"};
+function place(providerId, label, lat, lng, granularity = "locality") {
+  return {providerId, label, lat, lng, source: "fake-location", granularity};
 }
 
 function pendingLocationState({chatId, field = "destination", activityId = "hiking", attempts = [], currentLocation = null}) {
@@ -51,7 +51,7 @@ function pendingLocationState({chatId, field = "destination", activityId = "hiki
     type: "question",
     actionId: field === "eventLocation" ? "clarify_event_location" : "clarify_destination",
     field,
-    question: field === "eventLocation" ? "Kde presne sa podujatie koná?" : "Kam presne ideš?",
+    question: field === "eventLocation" ? "Kde približne sa podujatie koná?" : "Kam približne ideš?",
     acceptsYesNo: false,
   };
   if (attempts.length) state.conversationMemory.pendingQuestion.attemptedAnswers = [...attempts];
@@ -70,7 +70,11 @@ function request(chatId, turnId, expectedSessionRevision, latestUserInput) {
   };
 }
 
-function harness(initialState, resolutions = {}) {
+function continueChatEnvelope() {
+  return {kind: "final", result: {action: "chat", assistantText: "Rozumiem, pokračujem s týmto miestom.", display: {kind: "none", itemIds: []}}, statePatch: {}};
+}
+
+function harness(initialState, resolutions = {}, modelResults = [continueChatEnvelope()]) {
   const ledger = new CallLedgerV2();
   const sessionRepository = new InMemorySessionRepositoryV2(ledger, [initialState]);
   const coordinator = createStylistTurnCoordinatorV2({
@@ -79,7 +83,7 @@ function harness(initialState, resolutions = {}) {
     locationResolver: new FakeLocationResolverV2(ledger, resolutions),
     weatherTool: new FakeWeatherToolV2(ledger, {}),
     shoppingTool: new FakeShoppingToolV2(ledger),
-    stylistModel: new FakeStylistModelPortV2(ledger, []),
+    stylistModel: new FakeStylistModelPortV2(ledger, modelResults),
     clock: () => NOW,
   });
   return {coordinator, ledger, sessionRepository};
@@ -105,49 +109,54 @@ test("pending destination keeps an unresolved user answer instead of repeating t
   assert.equal(h.ledger.calls("model").length, 0);
 });
 
-test("a more specific follow-up is combined with the previous broad answer and advances grounding", async () => {
+test("a more specific follow-up is combined with the previous broad answer and advances without a time-of-day interrogation", async () => {
   const state = pendingLocationState({chatId: "pending-poi", attempts: ["do Tatier"]});
-  const teryho = place("place:teryho", "Téryho chata, Vysoké Tatry", 49.1902, 20.1990);
+  const teryho = place("place:teryho", "Téryho chata, Vysoké Tatry", 49.1902, 20.1990, "poi");
   const h = harness(state, {"Téryho chata, Tatier": teryho});
 
   const result = await h.coordinator.resolveTurn(request("pending-poi", "turn-1", 0, "Téryho chata"));
-  assert.equal(result.action, "clarify");
-  assert.equal(result.clarification.field, "timeWindow");
+  assert.equal(result.action, "chat");
+  assert.notEqual(result.assistantText, "Kam presne ideš?");
 
   const saved = await h.sessionRepository.read("pending-poi");
   assert.equal(saved.context.destination.providerId, "place:teryho");
-  assert.equal(saved.conversationMemory.pendingQuestion.field, "timeWindow");
+  assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(saved.conversationMemory.pendingQuestion, null);
   assert.deepEqual(h.ledger.calls("location", "resolve")[0].args, {query: "Téryho chata, Tatier"});
+  assert.equal(h.ledger.calls("weather", "getForecast").length, 1);
 });
 
-test("remote event location wins over current GPS and is stored as eventLocation", async () => {
+test("remote event location wins over current GPS and broad day default avoids redundant time question", async () => {
   const state = pendingLocationState({
     chatId: "remote-concert",
     field: "eventLocation",
     activityId: "concert",
     currentLocation: martinGps,
   });
-  const arena = place("place:o2-praha", "O2 arena, Praha", 50.1044, 14.4936);
+  const arena = place("place:o2-praha", "O2 arena, Praha", 50.1044, 14.4936, "poi");
   const h = harness(state, {"O2 arena Praha": arena});
 
   const result = await h.coordinator.resolveTurn(request("remote-concert", "turn-1", 0, "O2 arena Praha"));
-  assert.equal(result.clarification.field, "timeWindow");
+  assert.equal(result.action, "chat");
 
   const saved = await h.sessionRepository.read("remote-concert");
   assert.equal(saved.context.eventLocation.providerId, "place:o2-praha");
   assert.equal(saved.context.currentLocationObservation.providerId, martinGps.providerId);
   assert.equal(saved.context.destination, null);
+  assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(h.ledger.calls("weather", "getForecast")[0].args.location.providerId, "place:o2-praha");
 });
 
-test("wedding location fragment is accepted as the pending event location", async () => {
+test("wedding location fragment is accepted without forcing a time-of-day question", async () => {
   const state = pendingLocationState({chatId: "wedding", field: "eventLocation", activityId: "wedding"});
   const zilina = place("place:zilina", "Žilina", 49.2231, 18.7394);
   const h = harness(state, {Žilina: zilina});
 
   const result = await h.coordinator.resolveTurn(request("wedding", "turn-1", 0, "Žilina"));
-  assert.equal(result.clarification.field, "timeWindow");
+  assert.equal(result.action, "chat");
   const saved = await h.sessionRepository.read("wedding");
   assert.equal(saved.context.eventLocation.providerId, "place:zilina");
+  assert.equal(saved.context.timeWindow.key, "day");
 });
 
 test("natural fragment answers are resolved in the context of the pending destination question", async () => {
@@ -166,9 +175,10 @@ test("natural fragment answers are resolved in the context of the pending destin
     const h = harness(state, {[resolverQuery]: resolved});
 
     const result = await h.coordinator.resolveTurn(request(chatId, "turn-1", 0, input));
-    assert.equal(result.clarification.field, "timeWindow", input);
+    assert.equal(result.action, "chat", input);
     const saved = await h.sessionRepository.read(chatId);
     assert.equal(saved.context.destination.providerId, `place:${index}`, input);
+    assert.equal(saved.context.timeWindow.key, "day", input);
   }
 });
 
@@ -202,24 +212,27 @@ test("pending query helpers keep the latest answer and combine it with retained 
 test("location resolver falls back from Open-Meteo to Nominatim for a POI", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
-    const text = String(url);
-    calls.push(text);
-    if (text.includes("geocoding-api.open-meteo.com")) return jsonResponse({results: []});
-    if (text.includes("nominatim.openstreetmap.org")) {
+    const value = String(url);
+    calls.push(value);
+    if (value.includes("geocoding-api.open-meteo.com")) return jsonResponse({results: []});
+    if (value.includes("nominatim.openstreetmap.org")) {
       return jsonResponse([{
         osm_type: "node",
         osm_id: 123456,
+        class: "tourism",
+        type: "alpine_hut",
         display_name: "Téryho chata, Vysoké Tatry, Slovensko",
         lat: "49.1902",
         lon: "20.1990",
       }]);
     }
-    throw new Error(`unexpected URL ${text}`);
+    throw new Error(`unexpected URL ${value}`);
   };
 
   const resolved = await createOpenMeteoLocationResolverV2({fetchImpl}).resolve("Téryho chata");
   assert.equal(resolved.providerId, "nominatim:node:123456");
   assert.equal(resolved.source, "openstreetmap-nominatim");
+  assert.equal(resolved.granularity, "poi");
   assert.equal(resolved.lat, 49.1902);
   assert.equal(calls.length, 2);
 });
@@ -243,5 +256,6 @@ test("location resolver retries a cleaned conversational fragment before giving 
   const resolved = await createOpenMeteoLocationResolverV2({fetchImpl}).resolve("na Donovaly");
   assert.equal(resolved.providerId, "openmeteo:77");
   assert.equal(resolved.label, "Donovaly, Žilinský kraj, Slovensko");
+  assert.equal(resolved.granularity, "locality");
   assert.equal(calls.length, 3);
 });

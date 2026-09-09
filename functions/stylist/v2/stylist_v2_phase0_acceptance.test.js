@@ -426,71 +426,81 @@ test("Scenario F conversation-only turn permits an empty outfit and no wardrobe"
 });
 
 test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {
-  const cases = [
-    {
-      chatId: "concert",
-      input: "Zajtra idem na koncert do Bratislavy.",
-      query: "Bratislava",
-      location: bratislava,
-      activity: "concert",
-      initialContext: {date: {dateKey: "2026-09-09", source: "user"}},
-      expectedClarification: "timeWindow",
-      answer: "Večer.",
-      answerContext: {timeWindow: {key: "evening", label: "večer"}},
-    },
-    {
-      chatId: "wedding",
-      input: "Idem na svadbu do Žiliny.",
-      query: "Žilina",
-      location: zilina,
-      activity: "wedding",
-      initialContext: {},
-      expectedClarification: "date",
-      answer: "Zajtra popoludní.",
-      answerContext: {
+  const concert = harness({modelResults: [
+    toolEnvelope([
+      {tool: "location", query: "Bratislava", targetField: "eventLocation"},
+      {tool: "wardrobe", scope: "full_relevant"},
+    ], {
+      context: {
+        activity: {id: "concert"},
         date: {dateKey: "2026-09-09", source: "user"},
-        timeWindow: {key: "afternoon", label: "popoludní"},
-      },
-    },
-  ];
-  for (const entry of cases) {
-    const h = harness({modelResults: [
-      toolEnvelope([{tool: "location", query: entry.query, targetField: "eventLocation"}], {
-        context: {
-          activity: {id: entry.activity},
-          ...entry.initialContext,
-          groundingRequirements: {
-            weatherRequired: true,
-            weatherLocationField: "eventLocation",
-            terrainRequiredFields: [],
-          },
+        groundingRequirements: {
+          weatherRequired: true,
+          weatherLocationField: "eventLocation",
+          terrainRequiredFields: [],
         },
-      }),
-      toolEnvelope(
-        [{tool: "wardrobe", scope: "full_relevant"}],
-        {context: entry.answerContext},
-      ),
-      finalEnvelope(fullOutfitResult()),
-    ]});
-    const first = await h.coordinator.resolveTurn(request(entry.chatId, `${entry.chatId}-1`, 0, entry.input, {
+      },
+    }),
+    finalEnvelope(fullOutfitResult()),
+  ]});
+  const concertResult = await concert.coordinator.resolveTurn(request("concert", "concert-1", 0,
+    "Zajtra idem na koncert do Bratislavy.", {
       freshClientObservations: {currentLocationObservation: martin},
     }));
-    assert.equal(first.action, "clarify");
-    assert.equal(first.clarification.field, entry.expectedClarification);
-    assert.equal(h.ledger.calls("weather").length, 0);
-    assert.equal(h.ledger.calls("wardrobe").length, 0);
-    const result = await h.coordinator.resolveTurn(request(
-      entry.chatId, `${entry.chatId}-2`, 1, entry.answer,
-    ));
-    assert.equal(result.action, "generate_outfit");
-    assert.doesNotMatch(result.assistantText, /kam presne|terén/i);
-    const saved = await h.sessionRepository.read(entry.chatId);
-    assert.equal(saved.context.eventLocation.providerId, entry.location.providerId);
-    assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-    assert.equal(h.ledger.calls("weather", "getForecast")[0].args.location.providerId,
-      entry.location.providerId);
-    assert.ok(h.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(h.ledger, "final"));
-  }
+  assert.equal(concertResult.action, "generate_outfit");
+  assert.doesNotMatch(concertResult.assistantText, /ktorej časti dňa|kam presne|terén/i);
+  let saved = await concert.sessionRepository.read("concert");
+  assert.equal(saved.context.eventLocation.providerId, bratislava.providerId);
+  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+  assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(concert.ledger.calls("weather", "getForecast")[0].args.location.providerId,
+    bratislava.providerId);
+  assert.equal(concert.ledger.calls("wardrobe", "retrieve").length, 1);
+  assert.ok(concert.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(concert.ledger, "final"));
+
+  const wedding = harness({modelResults: [
+    toolEnvelope([
+      {tool: "location", query: "Žilina", targetField: "eventLocation"},
+      {tool: "wardrobe", scope: "full_relevant"},
+    ], {
+      context: {
+        activity: {id: "wedding"},
+        groundingRequirements: {
+          weatherRequired: true,
+          weatherLocationField: "eventLocation",
+          terrainRequiredFields: [],
+        },
+      },
+    }),
+    toolEnvelope(
+      [{tool: "wardrobe", scope: "full_relevant"}],
+      {context: {
+        date: {dateKey: "2026-09-09", source: "user"},
+        timeWindow: {key: "afternoon", label: "popoludní"},
+      }},
+    ),
+    finalEnvelope(fullOutfitResult()),
+  ]});
+  const weddingFirst = await wedding.coordinator.resolveTurn(request("wedding", "wedding-1", 0,
+    "Idem na svadbu do Žiliny.", {
+      freshClientObservations: {currentLocationObservation: martin},
+    }));
+  assert.equal(weddingFirst.action, "clarify");
+  assert.equal(weddingFirst.clarification.field, "date");
+  assert.equal(wedding.ledger.calls("weather").length, 0);
+  assert.equal(wedding.ledger.calls("wardrobe").length, 0);
+
+  const weddingResult = await wedding.coordinator.resolveTurn(request(
+    "wedding", "wedding-2", 1, "Zajtra popoludní.",
+  ));
+  assert.equal(weddingResult.action, "generate_outfit");
+  assert.doesNotMatch(weddingResult.assistantText, /kam presne|terén/i);
+  saved = await wedding.sessionRepository.read("wedding");
+  assert.equal(saved.context.eventLocation.providerId, zilina.providerId);
+  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+  assert.equal(wedding.ledger.calls("weather", "getForecast")[0].args.location.providerId,
+    zilina.providerId);
+  assert.ok(wedding.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(wedding.ledger, "final"));
 });
 
 test("explicit destination candidate is resolved in the first hiking turn without a repeat question", async () => {

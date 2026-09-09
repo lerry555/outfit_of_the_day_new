@@ -51,7 +51,7 @@ jobs:
           node --check functions/stylist/v2/firestore_wardrobe_tool_v2.js
           node --check functions/stylist/v2/openai_stylist_model_port_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
-      - name: V2 contract, persistence, engine, grounding, and production-port tests
+      - name: V2 contract, persistence, engine, grounding, help-first, cache, and production-port tests
         run: >-
           node --test
           functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
@@ -63,6 +63,9 @@ jobs:
           functions/stylist/v2/stylist_production_bridge_v2.test.js
           functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
           functions/stylist/v2/stylist_pending_location_v2.test.js
+          functions/stylist/v2/stylist_help_first_contract_v2.test.js
+          functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
+          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 

@@ -120,7 +120,7 @@ test("live regression: planner cannot manufacture Martin from GPS as hike destin
   const envelope = await model.turn({phase: "plan", request: {latestUserInput: message}, session: groundedState});
   assert.equal(envelope.kind, "final");
   assert.equal(envelope.result.action, "clarify");
-  assert.equal(envelope.result.assistantText, "Kam presne ideš?");
+  assert.equal(envelope.result.assistantText, "Kam približne ideš?");
   assert.equal(envelope.result.clarification.field, "destination");
 });
 

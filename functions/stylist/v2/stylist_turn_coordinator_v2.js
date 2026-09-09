@@ -4,6 +4,7 @@ const {MAX_HISTORY, bounded, clone, validateStylistSessionStateV2} = require("./
 const {validateTurnRequestV2} = require("./stylist_turn_contract_v2");
 const {highestPriorityMissingGroundingV2, runPreflightV2} = require("./stylist_preflight_v2");
 const {RepairableStructuralTurnError, validateAuthoritativeTurnV2} = require("./stylist_turn_validator_v2");
+const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
 
 const GREETINGS = new Set(["ahoj", "čau", "cau", "dobrý deň", "dobry den"]);
 const LOCATION_FRESHNESS_MS = 30 * 60 * 1000;
@@ -18,6 +19,31 @@ function isFreshLocationObservation(observation, nowMs) {
   if (!observation?.observedAt) return false;
   const observedMs = Date.parse(observation.observedAt);
   return Number.isFinite(observedMs) && observedMs <= nowMs && nowMs - observedMs <= LOCATION_FRESHNESS_MS;
+}
+
+function normalizeConversationTextV2(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLocaleLowerCase("sk-SK")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isFriendlyGreetingV2(value) {
+  const normalized = normalizeConversationTextV2(value);
+  if (GREETINGS.has(String(value || "").trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, ""))) return true;
+  return /^(ahoj|cau|nazdar|servus|hello|hi|hey)(?:\s+(divocak|kamo|kamarat|stylista))?$/.test(normalized);
+}
+
+function pendingLocationReplyDispositionV2(value) {
+  const normalized = normalizeConversationTextV2(value);
+  if (!normalized) return "conversation";
+  if (/^(naco|preco|aky je dovod|na co|a naco|a preco)\b/.test(normalized) ||
+      /\b(naco ti to je|preco to potrebujes|na co ti to je)\b/.test(normalized)) return "why";
+  if (/\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/.test(normalized)) return "skip";
+  return "location";
 }
 
 function cleanLocationAnswerFragmentV2(value) {
@@ -65,6 +91,46 @@ function unresolvedLocationClarificationDecision(field, latestUserInput, attempt
     `Rozumiem: „${candidate}“. Toto miesto som nevedel jednoznačne nájsť. Vieš uviesť presnejší názov, najbližšie mesto/obec alebo konkrétny bod?`;
   const actionId = field === "eventLocation" ? "clarify_event_location" : "clarify_destination";
   return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
+}
+
+function whyLocationClarificationDecision(field) {
+  const event = field === "eventLocation";
+  const question = event ?
+    "Pomôže mi to zohľadniť počasie priamo na mieste podujatia, nie tvoju aktuálnu polohu. Kde približne sa podujatie koná?" :
+    "Pomôže mi to zohľadniť počasie tam, kam ideš, namiesto tvojej aktuálnej polohy. Kam približne ideš?";
+  const actionId = event ? "clarify_event_location" : "clarify_destination";
+  return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
+}
+
+function broadLocationClarificationDecision(field, latestUserInput) {
+  const candidate = cleanLocationAnswerFragmentV2(latestUserInput).slice(0, 120) || "toto miesto";
+  const event = field === "eventLocation";
+  const question = event ?
+    `„${candidate}“ je na spoľahlivé miestne počasie príliš široké. V ktorom meste, štáte alebo regióne sa podujatie koná?` :
+    `„${candidate}“ je na spoľahlivé miestne počasie príliš široké. Do ktorého mesta, štátu alebo regiónu ideš?`;
+  const actionId = event ? "clarify_event_location" : "clarify_destination";
+  return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
+}
+
+function applyHelpFirstDefaultsV2(state) {
+  const next = clone(state);
+  const grounding = next.context.groundingRequirements || {};
+  if (grounding.weatherRequired && next.context.date && !next.context.timeWindow) {
+    next.context.timeWindow = {key: "day", label: "cez deň", source: "help_first_default"};
+  }
+  return next;
+}
+
+function disableOptionalWeatherGroundingV2(state) {
+  const next = clone(state);
+  next.context.weather = null;
+  next.context.groundingRequirements = {
+    ...next.context.groundingRequirements,
+    weatherRequired: false,
+    weatherLocationField: null,
+  };
+  next.conversationMemory.pendingQuestion = null;
+  return next;
 }
 
 function unchangedOutfit(state) {
@@ -136,8 +202,8 @@ function applyAcceptedResult(state, result) {
 function clarificationDecision(field) {
   const definitions = {
     currentLocationObservation: ["Kde sa budeš nachádzať, keď budeš outfit nosiť?", "clarify_current_location"],
-    destination: ["Kam presne ideš?", "clarify_destination"],
-    eventLocation: ["Kde presne sa podujatie koná?", "clarify_event_location"],
+    destination: ["Kam približne ideš?", "clarify_destination"],
+    eventLocation: ["Kde približne sa podujatie koná?", "clarify_event_location"],
     date: ["Na ktorý deň outfit potrebuješ?", "clarify_date"],
     timeWindow: ["V ktorej časti dňa ho budeš potrebovať?", "clarify_time_window"],
     "terrain.surface": ["Po akom povrchu pôjdeš?", "clarify_terrain_surface"],
@@ -152,15 +218,15 @@ function greetingDecision() {
   return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť s outfitom?", display: {kind: "none", itemIds: []}};
 }
 function declinedPendingDecision() {
-  return {action: "chat", assistantText: "Dobre, nechám to tak.", display: {kind: "none", itemIds: []}};
+  return {action: "chat", assistantText: "Jasné, zostaneme pri tom, čo už máme.", display: {kind: "none", itemIds: []}};
 }
 
 async function refreshWeatherIfGrounded(state, weatherTool) {
-  const next = clone(state);
+  const next = applyHelpFirstDefaultsV2(state);
   const {date, timeWindow, weather, groundingRequirements} = next.context;
   if (!groundingRequirements.weatherRequired) return next;
   const location = next.context[groundingRequirements.weatherLocationField];
-  if (!location || !date || !timeWindow) return next;
+  if (!location || !date || !timeWindow || locationIsTooBroadForWeatherV2(location)) return next;
   if (weather?.locationProviderId === location.providerId && weather.dateKey === date.dateKey && weather.timeWindowKey === timeWindow.key) return next;
   next.context.weather = await weatherTool.getForecast({location, date, timeWindow});
   return next;
@@ -241,6 +307,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
       let workingState = clone(originalState);
       const observation = request.freshClientObservations.currentLocationObservation;
       if (observation && isFreshLocationObservation(observation, clock())) workingState.context.currentLocationObservation = clone(observation);
+      workingState = applyHelpFirstDefaultsV2(workingState);
 
       let decision = null;
       let wardrobeItems = [];
@@ -257,35 +324,52 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           display: {kind: "shopping", itemIds: shoppingResult.candidateIds || []}, shoppingResult};
       }
 
+      if (!decision && preflight.kind === "continue" && isFriendlyGreetingV2(request.latestUserInput)) {
+        decision = greetingDecision();
+      }
+
       const pendingQuestion = workingState.conversationMemory.pendingQuestion;
       const pendingField = pendingQuestion?.field;
       if (!decision && ["destination", "eventLocation"].includes(pendingField)) {
-        const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
-        if (!resolution.resolved) {
-          const attemptedAnswers = rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
-          decision = unresolvedLocationClarificationDecision(pendingField, request.latestUserInput, attemptedAnswers);
-        } else {
-          workingState.context[pendingField] = resolution.resolved;
-          workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
-          workingState.conversationMemory.pendingQuestion = null;
-          workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
-          const missing = highestPriorityMissingGroundingV2(workingState);
-          if (missing) decision = clarificationDecision(missing);
+        const disposition = pendingLocationReplyDispositionV2(request.latestUserInput);
+        if (disposition === "why") {
+          decision = whyLocationClarificationDecision(pendingField);
+        } else if (disposition === "skip") {
+          workingState = disableOptionalWeatherGroundingV2(workingState);
+        } else if (disposition === "location") {
+          const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
+          if (!resolution.resolved) {
+            const attemptedAnswers = rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
+            decision = unresolvedLocationClarificationDecision(pendingField, request.latestUserInput, attemptedAnswers);
+          } else if (locationIsTooBroadForWeatherV2(resolution.resolved)) {
+            rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
+            decision = broadLocationClarificationDecision(pendingField, request.latestUserInput);
+          } else {
+            workingState.context[pendingField] = resolution.resolved;
+            workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
+            workingState.conversationMemory.pendingQuestion = null;
+            workingState = applyHelpFirstDefaultsV2(workingState);
+            workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
+            const missing = highestPriorityMissingGroundingV2(workingState);
+            if (missing) decision = clarificationDecision(missing);
+          }
         }
       }
 
-      const normalizedInput = request.latestUserInput.trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, "");
-      if (!decision && preflight.kind === "continue" && GREETINGS.has(normalizedInput)) decision = greetingDecision();
-
       if (!decision) {
         let planningToolResults = null;
-        if (stylistModel.planningNeedsCurrentOutfit === true && workingState.currentOutfit.itemIds.length) {
+        const preloadRequested = stylistModel.planningNeedsCurrentOutfit === true ||
+          (typeof stylistModel.shouldPreloadCurrentOutfit === "function" && stylistModel.shouldPreloadCurrentOutfit({
+            request: {latestUserInput: request.latestUserInput}, session: clone(workingState),
+          }) === true);
+        if (preloadRequested && workingState.currentOutfit.itemIds.length) {
           const currentFacts = await wardrobeTool.retrieve({scope: "current_outfit", itemIds: workingState.currentOutfit.itemIds, category: null});
           planningToolResults = {wardrobeItems: clone(currentFacts), resolvedLocations: [], weather: clone(workingState.context.weather), authorizedEditScope: null};
         }
         const planningEnvelope = await stylistModel.turn(modelInput(request, workingState, preflight, "plan", planningToolResults));
         validatePlanningEnvelope(planningEnvelope, workingState);
         workingState = applySafeStatePatch(workingState, planningEnvelope.statePatch);
+        workingState = applyHelpFirstDefaultsV2(workingState);
 
         if (planningEnvelope.kind === "final") decision = planningEnvelope.result;
         else {
@@ -293,13 +377,24 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           if (locationRequest) {
             const resolved = await locationResolver.resolve(locationRequest.query);
             if (!resolved) decision = clarificationDecision(locationRequest.targetField);
-            else {
+            else if (locationIsTooBroadForWeatherV2(resolved)) {
+              workingState.conversationMemory.pendingQuestion = {
+                type: "question",
+                actionId: locationRequest.targetField === "eventLocation" ? "clarify_event_location" : "clarify_destination",
+                field: locationRequest.targetField,
+                question: broadLocationClarificationDecision(locationRequest.targetField, locationRequest.query).clarification.question,
+                acceptsYesNo: false,
+                attemptedAnswers: [locationRequest.query],
+              };
+              decision = broadLocationClarificationDecision(locationRequest.targetField, locationRequest.query);
+            } else {
               workingState.context[locationRequest.targetField] = resolved;
               workingState.conversationMemory.answeredClarificationFields[locationRequest.targetField] = clone(resolved);
               toolResults.resolvedLocations.push({targetField: locationRequest.targetField, location: clone(resolved)});
             }
           }
 
+          workingState = applyHelpFirstDefaultsV2(workingState);
           workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
           toolResults.weather = clone(workingState.context.weather);
           const missing = highestPriorityMissingGroundingV2(workingState);
@@ -320,6 +415,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
             const finalEnvelope = await stylistModel.turn(modelInput(request, workingState, preflight, "final", toolResults));
             validateFinalEnvelope(finalEnvelope);
             workingState = applySafeStatePatch(workingState, finalEnvelope.statePatch);
+            workingState = applyHelpFirstDefaultsV2(workingState);
             decision = finalEnvelope.result;
           }
         }
@@ -338,9 +434,13 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
 module.exports = {
   LOCATION_FRESHNESS_MS,
   MAX_PENDING_LOCATION_ATTEMPTS,
+  applyHelpFirstDefaultsV2,
   cleanLocationAnswerFragmentV2,
   createStylistTurnCoordinatorV2,
+  disableOptionalWeatherGroundingV2,
+  isFriendlyGreetingV2,
   isFreshLocationObservation,
+  pendingLocationReplyDispositionV2,
   pendingLocationResolutionQueriesV2,
   resolvePendingLocationAnswerV2,
   unresolvedLocationClarificationDecision,

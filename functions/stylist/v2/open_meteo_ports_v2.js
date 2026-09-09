@@ -43,7 +43,7 @@ function windowHours(key) {
   if (key === "afternoon") return [12, 13, 14, 15, 16, 17, 18];
   if (key === "evening") return [17, 18, 19, 20, 21, 22];
   if (key === "night") return [0, 1, 2, 3, 4, 5, 20, 21, 22, 23];
-  return Array.from({length: 17}, (_, i) => i + 6); // coarse daytime window 06-22
+  return Array.from({length: 17}, (_, i) => i + 6); // broad daytime window 06-22
 }
 
 function buildSnapshot(json, timeWindowKey = "day") {
@@ -88,6 +88,29 @@ function locationQueryCandidatesV2(query) {
   return [...new Set([raw, stripped].filter(Boolean))];
 }
 
+function openMeteoGranularityV2(result) {
+  const featureCode = String(result?.feature_code || result?.featureCode || "").trim().toUpperCase();
+  if (/^PCL/.test(featureCode)) return "country";
+  if (/^ADM1/.test(featureCode)) return "region";
+  if (/^ADM[2-5]/.test(featureCode)) return "locality";
+  return "locality";
+}
+
+function nominatimGranularityV2(result) {
+  const type = String(result?.addresstype || result?.type || "").trim().toLowerCase();
+  if (["country"].includes(type)) return "country";
+  if (["state", "region", "province"].includes(type)) return "region";
+  if (["city", "town", "village", "municipality", "borough", "suburb", "quarter", "neighbourhood"].includes(type)) return "locality";
+  if (["house", "building", "amenity", "attraction", "tourism", "hut", "hotel", "station", "peak", "trailhead"].includes(type)) return "poi";
+  const category = String(result?.class || "").trim().toLowerCase();
+  if (["tourism", "amenity", "building", "leisure", "natural"].includes(category)) return "poi";
+  return "locality";
+}
+
+function locationIsTooBroadForWeatherV2(location) {
+  return String(location?.granularity || "").trim().toLowerCase() === "country";
+}
+
 function openMeteoLocationFromJsonV2(json) {
   const result = Array.isArray(json?.results) ? json.results[0] : null;
   const lat = Number(result?.latitude);
@@ -102,6 +125,8 @@ function openMeteoLocationFromJsonV2(json) {
     lat,
     lng,
     source: "open-meteo-geocoding",
+    granularity: openMeteoGranularityV2(result),
+    countryCode: String(result.country_code || "").trim().toUpperCase() || null,
   };
 }
 
@@ -120,6 +145,8 @@ function nominatimLocationFromJsonV2(json, query) {
     lat,
     lng,
     source: "openstreetmap-nominatim",
+    granularity: nominatimGranularityV2(result),
+    countryCode: String(result?.address?.country_code || "").trim().toUpperCase() || null,
   };
 }
 
@@ -185,13 +212,14 @@ function createOpenMeteoWeatherToolV2({fetchImpl = fetch, clock = () => Date.now
       const response = await fetchImpl(url, {headers: {Accept: "application/json"}});
       if (!response.ok) throw new Error(`open_meteo_weather_http_${response.status}`);
       const json = await response.json();
+      const timeWindowKey = String(timeWindow?.key || "day");
       return {
         locationProviderId: location.providerId,
         dateKey,
-        timeWindowKey: String(timeWindow?.key || "day"),
+        timeWindowKey,
         fetchedAt: new Date(clock()).toISOString(),
         source: "open-meteo",
-        snapshot: buildSnapshot(json, String(timeWindow?.key || "day")),
+        snapshot: buildSnapshot(json, timeWindowKey),
       };
     },
   });
@@ -201,9 +229,12 @@ module.exports = {
   buildSnapshot,
   createOpenMeteoLocationResolverV2,
   createOpenMeteoWeatherToolV2,
+  locationIsTooBroadForWeatherV2,
   locationQueryCandidatesV2,
+  nominatimGranularityV2,
   nominatimLocationFromJsonV2,
   normalizeLocationQueryTextV2,
+  openMeteoGranularityV2,
   openMeteoLocationFromJsonV2,
   resolveNominatimLocationCandidateV2,
   resolveOpenMeteoLocationCandidateV2,
