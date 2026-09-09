@@ -3,6 +3,24 @@
 const RAIN_CODES = new Set([51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82, 95, 96, 99]);
 const SNOW_CODES = new Set([71, 73, 75, 77, 85, 86]);
 
+const LOCATION_ALIASES_V2 = new Map(Object.entries({
+  "tatier": "Tatry",
+  "vysokych tatier": "Vysoké Tatry",
+  "nizkych tatier": "Nízke Tatry",
+  "kosic": "Košice",
+  "ziliny": "Žilina",
+  "martina": "Martin",
+  "prahy": "Praha",
+  "viedne": "Viedeň",
+  "budapesti": "Budapešť",
+  "brna": "Brno",
+  "londyna": "London",
+  "pariza": "Paríž",
+  "rima": "Rím",
+  "milana": "Miláno",
+  "mnichova": "Mníchov",
+}));
+
 function finiteNumbers(values) {
   return Array.isArray(values) ? values.map(Number).filter(Number.isFinite) : [];
 }
@@ -43,7 +61,7 @@ function windowHours(key) {
   if (key === "afternoon") return [12, 13, 14, 15, 16, 17, 18];
   if (key === "evening") return [17, 18, 19, 20, 21, 22];
   if (key === "night") return [0, 1, 2, 3, 4, 5, 20, 21, 22, 23];
-  return Array.from({length: 17}, (_, i) => i + 6); // broad daytime window 06-22
+  return Array.from({length: 17}, (_, i) => i + 6);
 }
 
 function buildSnapshot(json, timeWindowKey = "day") {
@@ -81,11 +99,29 @@ function normalizeLocationQueryTextV2(value) {
   return String(value || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ");
 }
 
+function foldLocationAliasKeyV2(value) {
+  return normalizeLocationQueryTextV2(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function canonicalLocationQueryV2(value) {
+  const normalized = normalizeLocationQueryTextV2(value);
+  if (!normalized) return "";
+  return LOCATION_ALIASES_V2.get(foldLocationAliasKeyV2(normalized)) || normalized;
+}
+
 function locationQueryCandidatesV2(query) {
   const raw = normalizeLocationQueryTextV2(query);
   if (!raw) return [];
   const stripped = raw.replace(/^(?:(?:ja\s+)?(?:idem|ideme|pojdem|pojdeme|chystam\s+sa|chystáme\s+sa|chystame\s+sa)\s+)?(?:do|na|v|vo|k|ku|to|in|at)\s+/iu, "").trim();
-  return [...new Set([raw, stripped].filter(Boolean))];
+  const canonical = canonicalLocationQueryV2(stripped || raw);
+  // Search the best semantic candidate first. Raw conversational text stays as
+  // a fallback for POIs/phrases where the preposition is genuinely useful.
+  return [...new Set([canonical, stripped, raw].filter(Boolean))];
 }
 
 function openMeteoGranularityV2(result) {
@@ -227,8 +263,10 @@ function createOpenMeteoWeatherToolV2({fetchImpl = fetch, clock = () => Date.now
 
 module.exports = {
   buildSnapshot,
+  canonicalLocationQueryV2,
   createOpenMeteoLocationResolverV2,
   createOpenMeteoWeatherToolV2,
+  foldLocationAliasKeyV2,
   locationIsTooBroadForWeatherV2,
   locationQueryCandidatesV2,
   nominatimGranularityV2,
