@@ -99,6 +99,9 @@ class StylistSimpleAgentServiceV1 {
   String? _lastV2SessionId;
   String? _boundRealChatId;
   int _turnCounter = 0;
+  Map<String, dynamic>? _cachedStylePreferencesPayload;
+  DateTime? _stylePreferencesLoadedAt;
+  Future<void>? _stylePreferencesLoad;
 
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
@@ -106,7 +109,7 @@ class StylistSimpleAgentServiceV1 {
       'v2_${DateTime.now().microsecondsSinceEpoch}';
 
   static const Set<String> _localGreetingTexts = <String>{
-    'ahoj', 'čau', 'cau', 'nazdar', 'dobrý deň', 'dobry den', 'servus', 'hello', 'hi', 'hey',
+    'ahoj', 'čau', 'cau', 'čauko', 'cauko', 'nazdar', 'dobrý deň', 'dobry den', 'servus', 'hello', 'hi', 'hey',
   };
   static const Set<String> _localThanksTexts = <String>{
     'ďakujem', 'dakujem', 'díky', 'diky', 'vďaka', 'vdaka',
@@ -118,11 +121,18 @@ class StylistSimpleAgentServiceV1 {
       .replaceAll(RegExp(r'\s+'), ' ')
       .trim();
 
+  static bool _isFriendlyLocalGreeting(String normalized) {
+    if (_localGreetingTexts.contains(normalized)) return true;
+    return RegExp(
+      r'^(ahoj|čau|cau|čauko|cauko|nazdar|servus|hello|hi|hey)\s+(divočák|divocak|kamo|kamarát|kamarat|stylista)$',
+    ).hasMatch(normalized);
+  }
+
   @visibleForTesting
   static Map<String, dynamic>? localFastReplyForMessage(String message) {
     final normalized = _normalizeLocalFastText(message);
     String? reply;
-    if (_localGreetingTexts.contains(normalized) ||
+    if (_isFriendlyLocalGreeting(normalized) ||
         (normalized.isEmpty && message.contains('👋'))) {
       reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';
     } else if (_localThanksTexts.contains(normalized)) {
@@ -145,6 +155,66 @@ class StylistSimpleAgentServiceV1 {
       'quickReplyMode': 'none',
       'action': 'simple_agent_result',
     };
+  }
+
+  void _resetV2Binding() {
+    _provisionalV2SessionId = _newProvisionalSessionId();
+    _boundRealChatId = null;
+    _lastV2SessionId = null;
+  }
+
+  String _stableV2SessionIdForTurn(String realChatId) {
+    // A newly opened blank chat is signalled by the UI dropping the previously
+    // bound real chat id. Start a fresh private V2 session in that case.
+    if (realChatId.isEmpty) {
+      if (_boundRealChatId != null) _resetV2Binding();
+      return _lastV2SessionId ?? _provisionalV2SessionId;
+    }
+
+    // Switching from one already-persisted chat to another must not leak the
+    // private session across threads. Existing threads use their durable chat id.
+    if (_boundRealChatId != null && _boundRealChatId != realChatId) {
+      _lastV2SessionId = realChatId;
+      _boundRealChatId = realChatId;
+      return realChatId;
+    }
+
+    // If this is the first server turn and the chat already has a durable id,
+    // use that id so a reopened conversation can recover its server state.
+    if (_lastV2SessionId == null) {
+      _lastV2SessionId = realChatId;
+      _boundRealChatId = realChatId;
+      return realChatId;
+    }
+
+    // Critical new-chat race guard: Firestore can assign the real UI chat id
+    // while the first callable is still in flight. Keep the V2 session id that
+    // actually handled the first turn instead of silently switching ids between
+    // consecutive messages and losing pending clarification state.
+    _boundRealChatId = realChatId;
+    return _lastV2SessionId!;
+  }
+
+  void _refreshStylePreferencesInBackground() {
+    final loadedAt = _stylePreferencesLoadedAt;
+    if (_stylePreferencesLoad != null) return;
+    if (loadedAt != null && DateTime.now().difference(loadedAt) < const Duration(minutes: 5)) return;
+    final future = _loadStylePreferences();
+    _stylePreferencesLoad = future;
+    unawaited(future.whenComplete(() => _stylePreferencesLoad = null));
+  }
+
+  Future<void> _loadStylePreferences() async {
+    try {
+      final prefs = await _stylePreferences.loadForUid(_auth.currentUser?.uid)
+          .timeout(const Duration(seconds: 3));
+      _cachedStylePreferencesPayload = StylePreferencesRuntime.stylistPayload(prefs);
+    } catch (_) {
+      // Style preferences are optional personalization. Never hold the chat
+      // response hostage to Firestore/App Check/network retries.
+    } finally {
+      _stylePreferencesLoadedAt = DateTime.now();
+    }
   }
 
   Future<Map<String, dynamic>> sendTurn({
@@ -174,17 +244,7 @@ class StylistSimpleAgentServiceV1 {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'us-east1').httpsCallable('stylistChatV2');
       final realChatId = chatId?.trim() ?? '';
-      if (realChatId.isEmpty && _boundRealChatId != null) {
-        _provisionalV2SessionId = _newProvisionalSessionId();
-        _boundRealChatId = null;
-        _lastV2SessionId = null;
-      }
-      final targetSessionId = realChatId.isNotEmpty ? realChatId : _provisionalV2SessionId;
-      final previousSessionId = realChatId.isNotEmpty &&
-              _lastV2SessionId == _provisionalV2SessionId &&
-              _lastV2SessionId != targetSessionId
-          ? _lastV2SessionId
-          : null;
+      final targetSessionId = _stableV2SessionIdForTurn(realChatId);
       final stableTurnId = notifyJobId != null && notifyJobId.trim().isNotEmpty
           ? notifyJobId.trim()
           : 'turn_${DateTime.now().microsecondsSinceEpoch}_${_turnCounter++}';
@@ -200,15 +260,12 @@ class StylistSimpleAgentServiceV1 {
         'shoppingEnabled': shoppingEnabled,
         'v2SessionId': targetSessionId,
         'turnId': stableTurnId,
-        if (previousSessionId != null) 'previousV2SessionId': previousSessionId,
-        if (notifyJobId != null && notifyJobId.trim().isNotEmpty) 'notifyJobId': notifyJobId.trim(),
         if (realChatId.isNotEmpty) 'chatId': realChatId,
       };
-      try {
-        final prefs = await _stylePreferences.loadForUid(_auth.currentUser?.uid);
-        final stylePayload = StylePreferencesRuntime.stylistPayload(prefs);
-        if (stylePayload != null) payload['userStylePreferences'] = stylePayload;
-      } catch (_) {}
+
+      _refreshStylePreferencesInBackground();
+      final stylePayload = _cachedStylePreferencesPayload;
+      if (stylePayload != null) payload['userStylePreferences'] = Map<String, dynamic>.from(stylePayload);
 
       final response = await callable.call(_jsonSafeMap(payload)).timeout(const Duration(seconds: 90));
       if (response.data is! Map) throw const FormatException('simple_agent_response_not_map');
