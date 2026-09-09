@@ -61,8 +61,8 @@ function unresolvedLocationClarificationDecision(field, latestUserInput, attempt
   const candidate = String(latestUserInput || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").slice(0, 180);
   const attempts = Array.isArray(attemptedAnswers) ? attemptedAnswers : [];
   const question = attempts.length > 1 ?
-    `Rozumiem, teraz myslíš „${candidate}“. Stále to neviem jednoznačne priradiť k miestu; skús prosím presnejší názov alebo najbližšie mesto/obec.` :
-    `Rozumiem: „${candidate}“. Toto miesto som nevedel jednoznačne nájsť. Skús prosím presnejší názov, najbližšie mesto/obec alebo konkrétny bod.`;
+    `Rozumiem, teraz myslíš „${candidate}“. Stále to neviem jednoznačne priradiť k miestu. Vieš uviesť presnejší názov alebo najbližšie mesto/obec?` :
+    `Rozumiem: „${candidate}“. Toto miesto som nevedel jednoznačne nájsť. Vieš uviesť presnejší názov, najbližšie mesto/obec alebo konkrétny bod?`;
   const actionId = field === "eventLocation" ? "clarify_event_location" : "clarify_destination";
   return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
 }
