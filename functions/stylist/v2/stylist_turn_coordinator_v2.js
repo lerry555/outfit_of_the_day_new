@@ -121,6 +121,43 @@ function applyHelpFirstDefaultsV2(state) {
   return next;
 }
 
+function deterministicRemoteOutfitClarificationV2(request, state) {
+  if (state.conversationMemory.pendingQuestion || state.conversationMemory.pendingAction) return null;
+  const text = normalizeConversationTextV2(request.latestUserInput);
+  const asksOutfit = /\b(outfit|oblecenie|obliect|co si mam dat|co mam na seba|vyber mi|navrhni mi|zostav mi)\b/.test(text);
+  const hiking = /\b(tura|turu|turistika|hiking|hike|trek|treking)\b/.test(text);
+  if (!asksOutfit || !hiking) return null;
+
+  // Keep this deliberately narrow: if the same message already looks like it
+  // contains a destination, let the model/tool path resolve it instead of
+  // asking a redundant question.
+  const hasDestinationCandidate = /\bdo\s+[a-z0-9]/.test(text) ||
+    /\b(?:v|vo)\s+[a-z0-9]/.test(text) ||
+    /\bna\s+(?!turu\b|turistiku\b)[a-z0-9]/.test(text);
+  if (hasDestinationCandidate) return null;
+
+  let dateKey = null;
+  if (/\b(zajtra|tomorrow)\b/.test(text)) dateKey = request.clientCapabilities?.tomorrowDateKey || null;
+  else if (/\b(dnes|today)\b/.test(text)) dateKey = request.clientCapabilities?.todayDateKey || null;
+  if (!dateKey) return null;
+
+  const next = clone(state);
+  next.context.activity = {id: "hiking", label: "túra", source: "user"};
+  next.context.date = {dateKey, source: "user"};
+  next.context.destination = null;
+  next.context.eventLocation = null;
+  next.context.weather = null;
+  next.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: "destination",
+    terrainRequiredFields: [],
+  };
+  return {
+    state: applyHelpFirstDefaultsV2(next),
+    decision: clarificationDecision("destination"),
+  };
+}
+
 function disableOptionalWeatherGroundingV2(state) {
   const next = clone(state);
   next.context.weather = null;
@@ -329,6 +366,14 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
         decision = greetingDecision();
       }
 
+      if (!decision && preflight.kind === "continue") {
+        const fastClarification = deterministicRemoteOutfitClarificationV2(request, workingState);
+        if (fastClarification) {
+          workingState = fastClarification.state;
+          decision = fastClarification.decision;
+        }
+      }
+
       const pendingQuestion = workingState.conversationMemory.pendingQuestion;
       const pendingField = pendingQuestion?.field;
       if (!decision && ["destination", "eventLocation"].includes(pendingField)) {
@@ -355,9 +400,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
             workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
             workingState.conversationMemory.pendingQuestion = null;
             workingState = applyHelpFirstDefaultsV2(workingState);
-            workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
             toolResults.resolvedLocations.push({targetField: pendingField, location: clone(resolution.resolved)});
-            toolResults.weather = clone(workingState.context.weather);
             const missing = highestPriorityMissingGroundingV2(workingState);
             if (missing) decision = clarificationDecision(missing);
             else pendingLocationContinuation = true;
@@ -366,11 +409,16 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
       }
 
       // The common flow after answering the one location question is a new
-      // outfit request. We already know the intent/context from the persisted
-      // session, so another planner model call adds latency but no information.
-      // Retrieve the wardrobe and go straight to the final stylist once.
+      // outfit request. Weather and wardrobe do not depend on one another once
+      // the destination/date are grounded, so load them in parallel and then
+      // go straight to one final stylist call.
       if (!decision && pendingLocationContinuation && workingState.currentOutfit.itemIds.length === 0) {
-        wardrobeItems = await wardrobeTool.retrieve({scope: "full_relevant", itemIds: [], category: null});
+        const [weatherState, retrievedWardrobe] = await Promise.all([
+          refreshWeatherIfGrounded(workingState, weatherTool),
+          wardrobeTool.retrieve({scope: "full_relevant", itemIds: [], category: null}),
+        ]);
+        workingState = weatherState;
+        wardrobeItems = retrievedWardrobe;
         toolResults.wardrobeItems = clone(wardrobeItems);
         toolResults.weather = clone(workingState.context.weather);
         const finalEnvelope = await stylistModel.turn(modelInput(request, workingState, preflight, "final", toolResults));
@@ -461,6 +509,7 @@ module.exports = {
   applyHelpFirstDefaultsV2,
   cleanLocationAnswerFragmentV2,
   createStylistTurnCoordinatorV2,
+  deterministicRemoteOutfitClarificationV2,
   disableOptionalWeatherGroundingV2,
   isFriendlyGreetingV2,
   isFreshLocationObservation,
