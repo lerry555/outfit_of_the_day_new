@@ -1,0 +1,41 @@
+name: AI Stylist V2 prod fail-closed diagnostics
+
+on:
+  push:
+    branches:
+      - ai-stylist-v2-prod-failclosed-diagnose
+    paths:
+      - .github/workflows/_tmp-stylist-v2-prod-failclosed-diagnose.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Read recent Stylist V2 fail-closed logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STYLIST_V2_FAIL_CLOSED ==='
+          gcloud logging read 'timestamp>="2026-09-09T05:50:00Z" AND (jsonPayload.message="STYLIST_V2_FAIL_CLOSED" OR textPayload:"STYLIST_V2_FAIL_CLOSED")' \
+            --project outfitoftheday-4d401 \
+            --limit 50 \
+            --order desc \
+            --format='table(timestamp,resource.labels.service_name,jsonPayload.message,jsonPayload.error,jsonPayload.errorCode,textPayload)'
+          echo '=== stylistchatv2 errors ==='
+          gcloud logging read 'timestamp>="2026-09-09T05:50:00Z" AND resource.type="cloud_run_revision" AND resource.labels.service_name="stylistchatv2" AND severity>=ERROR' \
+            --project outfitoftheday-4d401 \
+            --limit 50 \
+            --order desc \
+            --format='table(timestamp,severity,jsonPayload.message,jsonPayload.error,jsonPayload.errorCode,textPayload)'
