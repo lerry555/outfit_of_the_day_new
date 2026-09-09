@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   clearWardrobeCacheV2,
   loadRevisionAwareWardrobeV2,
+  readCachedWardrobeSubsetIfFreshV2,
   readWardrobeRevisionTokenV2,
 } = require("./firestore_wardrobe_tool_v2");
 
@@ -50,6 +51,40 @@ test("wardrobe cache returns defensive clones so one request cannot mutate anoth
 
   assert.equal(loads, 1);
   assert.deepEqual(second, [{id: "item-a", colors: ["black"]}]);
+});
+
+test("exact cached reads revalidate revision and reject a stale wardrobe snapshot", async () => {
+  let revision = "2:1000:item-b:1";
+  await loadRevisionAwareWardrobeV2({
+    cacheKey: "user-exact",
+    loadRevision: async () => revision,
+    loadItems: async () => [
+      {id: "item-a", colors: ["black"]},
+      {id: "item-b", colors: ["blue"]},
+    ],
+  });
+
+  const fresh = await readCachedWardrobeSubsetIfFreshV2({
+    cacheKey: "user-exact",
+    ids: ["item-a"],
+    loadRevision: async () => revision,
+  });
+  assert.deepEqual(fresh, [{id: "item-a", colors: ["black"]}]);
+
+  revision = "2:2000:item-a:2";
+  const stale = await readCachedWardrobeSubsetIfFreshV2({
+    cacheKey: "user-exact",
+    ids: ["item-a"],
+    loadRevision: async () => revision,
+  });
+  assert.equal(stale, null);
+
+  const afterInvalidation = await readCachedWardrobeSubsetIfFreshV2({
+    cacheKey: "user-exact",
+    ids: ["item-b"],
+    loadRevision: async () => revision,
+  });
+  assert.equal(afterInvalidation, null);
 });
 
 test("unknown revision deliberately bypasses cache instead of risking stale advice", async () => {
