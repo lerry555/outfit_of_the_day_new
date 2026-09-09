@@ -45,7 +45,20 @@ jobs:
 
       - name: Install Function dependencies
         working-directory: functions
-        run: npm ci --ignore-scripts
+        run: npm ci
+
+      - name: Generate deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          g.generateFamilyRegistry();
+          g.generateStructuredTaxonomy();
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
 
       - name: Run AI Stylist V2 backend regressions
         shell: bash
@@ -73,20 +86,6 @@ jobs:
           node --check functions/stylist/v2/open_meteo_ports_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
           node --check functions/stylist/v2/openai_stylist_model_port_v2.js
-
-      - name: Narrow Firebase discovery to stylistChatV2
-        shell: bash
-        run: |
-          set -euo pipefail
-          cp functions/index.js functions/index.full.js
-          cat > functions/index.js <<'NODE'
-          "use strict";
-          const full = require("./index.full");
-          if (!full || !full.stylistChatV2) {
-            throw new Error("stylistChatV2_export_missing");
-          }
-          exports.stylistChatV2 = full.stylistChatV2;
-          NODE
 
       - name: Install Firebase CLI
         run: npm install --global firebase-tools@latest
