@@ -57,9 +57,8 @@ function projectWardrobeItemV2(id, raw = {}) {
     productImageUrl: text(item.productImageUrl, 2000),
     cutoutImageUrl: text(item.cutoutImageUrl, 2000),
     cleanImageUrl: text(item.cleanImageUrl, 2000),
-    // Preserve the durable/original UI URL instead of overwriting it with the
-    // preferred derivative. If a clean/cutout token later expires, chat cards
-    // still have a different source to fall back to.
+    // Preserve both the current UI URL and the original source so materialized
+    // chat cards can recover when a derivative object/token is broken.
     imageUrl: text(item.imageUrl || item.originalImageUrl, 2000),
     originalImageUrl: text(item.originalImageUrl, 2000),
     safety: {
@@ -72,13 +71,12 @@ function projectWardrobeItemV2(id, raw = {}) {
 }
 
 function materializeStylistCardItemV2(item, reason = "") {
-  const stableCardUrl = text(item?.imageUrl || item?.originalImageUrl, 2000);
+  // Chat cards currently do not retry after a network-image HTTP failure. The
+  // original upload is the safest display fallback because it is independent
+  // of later clean/cutout processing. Use imageUrl only when no original exists.
+  const stableCardUrl = text(item?.originalImageUrl || item?.imageUrl, 2000);
   return {
     ...item,
-    // The legacy Stylist card currently renders cutout -> clean -> imageUrl
-    // without a retry after an HTTP failure. For materialized chat cards only,
-    // prefer the durable source when one exists. Retrieval facts used by the
-    // model remain untouched.
     ...(stableCardUrl ? {
       cutoutImageUrl: stableCardUrl,
       cleanImageUrl: stableCardUrl,
