@@ -28,6 +28,7 @@ const OUTDOOR_TERMS = /\b(tura|turu|turistika|hiking|hike|trek|treking|hory|hora
 const TRAVEL_TERMS = /\b(idem|ideme|pojdem|pojdeme|chystam sa|chystame sa|cestujem|cestujeme|letim|letime|vyrazam|vyrazime|budem na|budeme na|going to|travel|travelling|trip)\b/;
 const LOCAL_ROUTINE_TERMS = /\b(do prace|v praci|do skoly|v skole|do fitka|vo fitku|do posilnovne|v posilnovni|gym|work|school|na nakup|na nakupy|doma|home office)\b/;
 const VIRTUAL_TERMS = /\b(online|zoom|teams|videohovor|video call|remote|z domu|home office)\b/;
+const PENDING_META_OR_SKIP_TERMS = /\b(naco ti to je|preco to potrebujes|na co ti to je|neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
 
 function isConcreteOutfitRequestV2(value) {
   const text = normalizeSemanticTextV2(value);
@@ -39,6 +40,13 @@ function isConcreteOutfitRequestV2(value) {
 
 function inferMandatoryGroundingV2({latestUserInput, state}) {
   const text = normalizeSemanticTextV2(latestUserInput);
+  // A reply to an existing question is not automatically a brand-new outfit
+  // request just because it contains the word "outfit". In particular, meta
+  // replies and explicit "just give me something" skips must keep the pending
+  // conversation intact so the coordinator can handle them naturally.
+  if (state?.conversationMemory?.pendingQuestion && PENDING_META_OR_SKIP_TERMS.test(text)) {
+    return {active: false, scope: "pending_followup", resetContext: false, requirements: null};
+  }
   if (!isConcreteOutfitRequestV2(text)) {
     return {active: false, scope: "none", resetContext: false, requirements: null};
   }
@@ -146,8 +154,8 @@ function missingGroundingFieldV2(state) {
 function clarificationForFieldV2(field) {
   const definitions = {
     currentLocationObservation: ["Kde sa budeš nachádzať, keď budeš outfit nosiť?", "clarify_current_location"],
-    destination: ["Kam presne ideš?", "clarify_destination"],
-    eventLocation: ["Kde presne sa podujatie koná?", "clarify_event_location"],
+    destination: ["Kam približne ideš?", "clarify_destination"],
+    eventLocation: ["Kde približne sa podujatie koná?", "clarify_event_location"],
     date: ["Na ktorý deň outfit potrebuješ?", "clarify_date"],
     timeWindow: ["V ktorej časti dňa ho budeš potrebovať?", "clarify_time_window"],
     "terrain.surface": ["Po akom povrchu pôjdeš?", "clarify_terrain_surface"],
@@ -234,6 +242,8 @@ function createGroundingEnforcedStylistModelV2(stylistModel, policy) {
   if (!stylistModel || typeof stylistModel.turn !== "function") throw new TypeError("stylistModel.turn is required");
   return Object.freeze({
     planningNeedsCurrentOutfit: stylistModel.planningNeedsCurrentOutfit === true,
+    shouldPreloadCurrentOutfit: typeof stylistModel.shouldPreloadCurrentOutfit === "function" ?
+      (input) => stylistModel.shouldPreloadCurrentOutfit(input) : undefined,
     async turn(input) {
       const envelope = await stylistModel.turn(input);
       return enforceEnvelopeGroundingV2(envelope, input, policy);
