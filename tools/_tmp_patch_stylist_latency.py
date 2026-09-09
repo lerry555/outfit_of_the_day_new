@@ -131,9 +131,32 @@ model = replace_once(model, 'const FINAL_REASONING = "medium";', 'const FINAL_RE
 model = replace_once(model, '          maxOutputTokens: phase === "plan" ? 1200 : 1800,', '          maxOutputTokens: phase === "plan" ? 1200 : 1400,', "final token ceiling")
 model_path.write_text(model, encoding="utf-8")
 
-test_path = Path("functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js")
-test_text = test_path.read_text(encoding="utf-8")
-test_text = replace_once(test_text, '  assert.equal(call.reasoningEffort, "medium");', '  assert.equal(call.reasoningEffort, "low");', "reasoning expectation")
-test_path.write_text(test_text, encoding="utf-8")
+payload_test_path = Path("functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js")
+payload_test = payload_test_path.read_text(encoding="utf-8")
+payload_test = replace_once(payload_test, '  assert.equal(call.reasoningEffort, "medium");', '  assert.equal(call.reasoningEffort, "low");', "payload reasoning expectation")
+payload_test_path.write_text(payload_test, encoding="utf-8")
+
+help_test_path = Path("functions/stylist/v2/stylist_help_first_contract_v2.test.js")
+help_test = help_test_path.read_text(encoding="utf-8")
+help_test = replace_once(
+    help_test,
+    'test("golden: model routing uses Luna medium for ordinary styling and keeps a cheap planner", () => {',
+    'test("golden: model routing uses Luna low for ordinary styling and keeps a cheap planner", () => {',
+    "routing test title",
+)
+help_test = replace_once(help_test, '  assert.equal(FINAL_REASONING, "medium");', '  assert.equal(FINAL_REASONING, "low");', "final reasoning constant expectation")
+help_test = replace_once(
+    help_test,
+    '  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "medium"});',
+    '  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "low"});',
+    "ordinary route expectation",
+)
+help_test = replace_once(
+    help_test,
+    '  assert.equal(finalReasoningForInputV2(input), "medium");\n});\n\ntest("golden: current outfit is preloaded',
+    '  assert.equal(finalReasoningForInputV2(input), "low");\n});\n\ntest("golden: current outfit is preloaded',
+    "ordinary final reasoning expectation",
+)
+help_test_path.write_text(help_test, encoding="utf-8")
 
 print("stylist latency patch applied")
