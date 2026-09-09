@@ -1,0 +1,85 @@
+name: AI Stylist V2 latency patch
+
+on:
+  push:
+    branches:
+      - perf/stylist-v2-latency-20260909
+    paths:
+      - .github/workflows/_tmp-stylist-v2-latency-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard exact refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment perf/stylist-v2-latency-20260909
+          test "$(git rev-parse origin/stylist-simple-agent)" = "35a64f19ced603841e6eaeadb7f1a04e3a62b2ee"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/perf/stylist-v2-latency-20260909)" = "$GITHUB_SHA"
+          test "$(git merge-base origin/stylist-simple-agent HEAD)" = "35a64f19ced603841e6eaeadb7f1a04e3a62b2ee"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Apply guarded patch
+        run: python tools/_tmp_patch_stylist_latency.py
+
+      - name: Syntax and focused regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check functions/stylist/v2/stylist_fast_chat_v2.js
+          node --check functions/stylist/v2/stylist_production_bridge_v2.js
+          node --check functions/stylist/v2/openai_stylist_model_port_v2.js
+          node --test \
+            functions/stylist/v2/stylist_fast_chat_v2.test.js \
+            functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js \
+            functions/stylist/v2/stylist_release_gate_v2.test.js \
+            functions/stylist/v2/stylist_adversarial_conversation_v2.test.js \
+            functions/stylist/v2/stylist_help_first_contract_v2.test.js \
+            functions/stylist/v2/stylist_pending_location_v2.test.js \
+            functions/stylist/v2/stylist_grounding_policy_v2.test.js
+
+      - name: Verify patch scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          CHANGED="$(git diff --name-only | sort)"
+          printf '%s\n' "$CHANGED"
+          EXPECTED="$(printf '%s\n' \
+            functions/stylist/v2/openai_stylist_model_port_v2.js \
+            functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js \
+            functions/stylist/v2/stylist_production_bridge_v2.js | sort)"
+          test "$CHANGED" = "$EXPECTED"
+
+      - name: Commit production patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            functions/stylist/v2/openai_stylist_model_port_v2.js \
+            functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js \
+            functions/stylist/v2/stylist_production_bridge_v2.js
+          git commit -m "perf: route simple stylist chat around the full agent"
+          git push origin HEAD:perf/stylist-v2-latency-20260909
