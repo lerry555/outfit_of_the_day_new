@@ -281,7 +281,7 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
         request,
         bootstrapInput: existing ? null : {
           currentOutfitItemIds: currentIds,
-          persistedSelectionReasonsByItemId,
+          persistedSelectionReasonsByItemId: persistedReasonsByItemId,
           knownExplicitDurableChoices: {},
         },
       });
