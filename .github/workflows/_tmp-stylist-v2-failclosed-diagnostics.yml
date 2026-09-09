@@ -1,0 +1,35 @@
+name: Stylist V2 fail-closed diagnostics
+
+on:
+  push:
+    branches:
+      - diag-stylist-v2-failclosed-20260909
+    paths:
+      - .github/workflows/_tmp-stylist-v2-failclosed-diagnostics.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+      - name: Read recent Stylist V2 logs
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== STYLIST_V2_FAIL_CLOSED ==='
+          gcloud logging read \
+            'resource.type="cloud_function" AND resource.labels.function_name="stylistChatV2" AND timestamp>="2026-09-09T05:45:00Z"' \
+            --project outfitoftheday-4d401 \
+            --limit 100 \
+            --order desc \
+            --format='table(timestamp,severity,textPayload,jsonPayload.message,jsonPayload.code,jsonPayload.error,labels.execution_id)'
