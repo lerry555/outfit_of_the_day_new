@@ -65,6 +65,7 @@ jobs:
           functions/stylist/v2/stylist_pending_location_v2.test.js
           functions/stylist/v2/stylist_help_first_contract_v2.test.js
           functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
+          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 
