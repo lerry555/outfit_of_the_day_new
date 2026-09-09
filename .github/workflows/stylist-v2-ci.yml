@@ -13,14 +13,17 @@ on:
       - 'functions/package.json'
       - 'lib/Services/stylist_simple_agent_service_v1.dart'
       - 'lib/screens/stylist_chat_screen.dart'
+      - 'lib/models/stylist_chat_progress.dart'
       - 'lib/widgets/stylist_quick_reply_buttons.dart'
       - 'lib/widgets/stylist_suggested_item_card.dart'
       - 'lib/utils/stylist_card_image_priority.dart'
       - 'test/stylist_simple_agent_fast_path_test.dart'
       - 'test/stylist_quick_reply_contract_test.dart'
       - 'test/stylist_card_image_priority_test.dart'
+      - 'test/stylist_chat_progress_test.dart'
       - 'firestore.rules'
       - '.github/workflows/stylist-v2-ci.yml'
+      - '.github/workflows/stylist-v2-live-smoke.yml'
   workflow_dispatch:
 
 permissions:
@@ -42,7 +45,7 @@ jobs:
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci --ignore-scripts
-      - name: Syntax check V2 production modules
+      - name: Syntax check V2 production modules and smoke harnesses
         run: |
           node --check functions/index_v2.js
           node --check functions/stylist/v2/stylist_session_state_v2.js
@@ -57,7 +60,9 @@ jobs:
           node --check functions/stylist/v2/firestore_wardrobe_tool_v2.js
           node --check functions/stylist/v2/openai_stylist_model_port_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
-      - name: V2 contract, persistence, engine, grounding, help-first, cache, and production-port tests
+          node --check functions/stylist/v2/stylist_live_smoke_v2.js
+          node --check functions/stylist/v2/stylist_production_smoke_v2.js
+      - name: V2 contract, persistence, engine, grounding, release-gate, cache, and production-port tests
         run: >-
           node --test
           functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
@@ -73,6 +78,7 @@ jobs:
           functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
           functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
           functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
+          functions/stylist/v2/stylist_release_gate_v2.test.js
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 
@@ -94,6 +100,7 @@ jobs:
           flutter analyze --no-fatal-warnings --no-fatal-infos
           lib/Services/stylist_simple_agent_service_v1.dart
           lib/screens/stylist_chat_screen.dart
+          lib/models/stylist_chat_progress.dart
           lib/widgets/stylist_quick_reply_buttons.dart
           lib/widgets/stylist_suggested_item_card.dart
           lib/utils/stylist_card_image_priority.dart
@@ -104,7 +111,7 @@ jobs:
           flutter test
           test/stylist_quick_reply_contract_test.dart
           test/stylist_card_image_priority_test.dart
-      - name: Existing Stylist progress regression
+      - name: Stylist progress polish regression
         run: flutter test test/stylist_chat_progress_test.dart
 
   v2-firestore:

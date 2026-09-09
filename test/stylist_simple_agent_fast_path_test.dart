@@ -20,6 +20,24 @@ void main() {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Díky 🙌')?['modelPath'], 'local_fast');
   });
 
+  test('sendTurn itself keeps the reproduced first-turn greeting local', () async {
+    final service = StylistSimpleAgentServiceV1();
+    final result = await service.sendTurn(
+      message: 'čauko divočák',
+      history: const <Map<String, String>>[
+        <String, String>{'role': 'assistant', 'content': 'Ahoj :)'},
+      ],
+      currentOutfitItemIds: const <String>[],
+      weatherContext: const <String, dynamic>{},
+      clientContext: const <String, dynamic>{},
+    );
+
+    expect(result['ok'], isTrue);
+    expect(result['failClosed'], isFalse);
+    expect(result['modelPath'], 'local_fast');
+    expect(result['displayItemIds'], isEmpty);
+  });
+
   test('real stylist requests never get swallowed by local fast path', () {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj, zajtra idem na koncert a potrebujem outfit'), isNull);
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('čauko, potrebujem outfit na túru'), isNull);

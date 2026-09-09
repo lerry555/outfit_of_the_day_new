@@ -1,9 +1,8 @@
-/// User-visible phases for the AI Stylist pipeline.
+/// Internal phases of the AI Stylist pipeline.
 ///
-/// This is deliberately phase/progress streaming rather than token streaming:
-/// every phase must correspond to real work that has actually started. The
-/// frozen candidate selector and deterministic validator remain authoritative;
-/// progress updates never carry outfit choices or mutable facts.
+/// The pipeline can still report detailed phases for diagnostics, but the UI
+/// deliberately shows one calm status. Rapidly changing technical labels such
+/// as context/weather/wardrobe make a slow response feel like a debug console.
 enum StylistChatProgressPhase {
   resolvingContext,
   checkingWeather,
@@ -14,14 +13,8 @@ enum StylistChatProgressPhase {
 }
 
 extension StylistChatProgressPhaseUi on StylistChatProgressPhase {
-  String get labelSk => switch (this) {
-    StylistChatProgressPhase.resolvingContext => 'Rozumiem zadaniu…',
-    StylistChatProgressPhase.checkingWeather => 'Kontrolujem počasie…',
-    StylistChatProgressPhase.thinkingWithContext => 'Vyhodnocujem kontext…',
-    StylistChatProgressPhase.analyzingWardrobe => 'Prechádzam tvoj šatník…',
-    StylistChatProgressPhase.buildingOutfit => 'Skladám vhodné kombinácie…',
-    StylistChatProgressPhase.finalizing => 'Kontrolujem finálny výber…',
-  };
+  /// Stable, user-facing copy. Phase detail stays internal/observable only.
+  String get labelSk => 'Pripravujem odpoveď…';
 }
 
 typedef StylistChatProgressCallback =
