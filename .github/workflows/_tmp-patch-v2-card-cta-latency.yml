@@ -29,6 +29,20 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           git merge-base --is-ancestor 006c5aaca169d559b70ec7044de6c7b474c829e1 HEAD
 
+      - name: Align temporary patch with current CI file
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tool/patch_v2_card_cta_latency_temp.py')
+          s = p.read_text(encoding='utf-8')
+          old = "      - 'firestore.rules' ''',"
+          new = "      - 'firestore.rules'\n''',"
+          if old not in s:
+              raise SystemExit('temporary CI match guard not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply patch
         run: python tool/patch_v2_card_cta_latency_temp.py
 
@@ -42,6 +56,7 @@ jobs:
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
           node --test functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
           node --test functions/stylist/v2/stylist_help_first_contract_v2.test.js
+          node --test functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
 
       - name: Commit patch and clean temporary files
         shell: bash
