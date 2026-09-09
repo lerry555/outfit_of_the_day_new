@@ -85,7 +85,8 @@ async function main() {
     db: {}, admin: {}, logger: {info() {}, warn() {}}, resolveOpenAISecret: () => apiKey, clock: () => NOW,
     sessionRepository: repository,
     locationResolver: {async resolve(query) {
-      return String(query || "").toLowerCase().includes("tatr") ?
+      const normalized = String(query || "").toLowerCase();
+      return (normalized.includes("tatr") || normalized.includes("tatier")) ?
         {providerId: "live:tatry", label: "Vysoké Tatry", lat: 49.1667, lng: 20.1333,
           source: "live_smoke_fixture", granularity: "locality"} : null;
     }},
