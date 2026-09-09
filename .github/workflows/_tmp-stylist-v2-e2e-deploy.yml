@@ -13,7 +13,7 @@ permissions:
 jobs:
   deploy-and-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
     steps:
       - name: Checkout exact deploy ref
         uses: actions/checkout@v4
@@ -42,14 +42,34 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
 
+      - name: Use Flutter stable for deterministic KB export
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
-      - name: Install Function dependencies
-        working-directory: functions
-        run: npm ci --ignore-scripts
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get
+          cd functions
+          npm ci --ignore-scripts
+
+      - name: Export authoritative clothing KB fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter test \
+            --dart-define=UPDATE_CLOTHING_KB_PRIOR_ARTIFACT=true \
+            test/backend_clothing_kb_prior_artifact_export_test.dart
+          test -s test/fixtures/backend_qualification/artifacts/clothing_knowledge_base_prior_v1.json
+          test -s test/fixtures/backend_qualification/backend_clothing_kb_prior_artifact_manifest.json
 
       - name: Generate deploy taxonomy artifacts
         shell: bash
