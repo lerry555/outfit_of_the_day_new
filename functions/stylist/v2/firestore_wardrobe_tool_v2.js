@@ -140,6 +140,19 @@ async function loadRevisionAwareWardrobeV2({cacheKey, loadRevision, loadItems}) 
   return cloneItems(items);
 }
 
+async function readCachedWardrobeSubsetIfFreshV2({cacheKey, ids, loadRevision}) {
+  const key = String(cacheKey || "");
+  const unique = [...new Set((ids || []).map((id) => text(id, 180)).filter(Boolean))];
+  const cached = key ? wardrobeCacheByUid.get(key) : null;
+  if (!cached?.byId || !(cached.byId instanceof Map) || !unique.every((id) => cached.byId.has(id))) return null;
+  const revision = await loadRevision();
+  if (revision == null || revision !== cached.revision) {
+    if (key) wardrobeCacheByUid.delete(key);
+    return null;
+  }
+  return unique.map((id) => cloneItems([cached.byId.get(id)])[0]);
+}
+
 function createFirestoreWardrobeToolV2({db, uid}) {
   if (!db || !uid) throw new TypeError("wardrobe_v2_firestore_dependencies_required");
   const root = db.collection("users").doc(uid).collection("wardrobe");
@@ -148,10 +161,12 @@ function createFirestoreWardrobeToolV2({db, uid}) {
   async function loadExact(ids) {
     const unique = [...new Set((ids || []).map((id) => text(id, 180)).filter(Boolean))].slice(0, 20);
     if (!unique.length) return [];
-    const cached = wardrobeCacheByUid.get(cacheKey);
-    if (cached?.byId instanceof Map && unique.every((id) => cached.byId.has(id))) {
-      return unique.map((id) => cloneItems([cached.byId.get(id)])[0]);
-    }
+    const cached = await readCachedWardrobeSubsetIfFreshV2({
+      cacheKey,
+      ids: unique,
+      loadRevision: () => readWardrobeRevisionTokenV2(root),
+    });
+    if (cached != null) return cached;
     const snapshots = typeof db.getAll === "function" ?
       await db.getAll(...unique.map((id) => root.doc(id))) :
       await Promise.all(unique.map((id) => root.doc(id).get()));
@@ -177,10 +192,8 @@ function createFirestoreWardrobeToolV2({db, uid}) {
       if (scope === "none") return [];
       if (scope === "current_outfit") return loadExact(itemIds);
       if (scope === "current_outfit_plus_category") {
-        const [current, all] = await Promise.all([loadExact(itemIds), loadAll()]);
-        const byId = new Map(current.map((item) => [item.id, item]));
-        for (const item of all) if (categoryMatches(item, category)) byId.set(item.id, item);
-        return [...byId.values()];
+        const all = await loadAll();
+        return all.filter((item) => itemIds.includes(item.id) || categoryMatches(item, category));
       }
       if (scope === "category") {
         const all = await loadAll();
@@ -207,5 +220,6 @@ module.exports = {
   createFirestoreWardrobeToolV2,
   loadRevisionAwareWardrobeV2,
   projectWardrobeItemV2,
+  readCachedWardrobeSubsetIfFreshV2,
   readWardrobeRevisionTokenV2,
 };
