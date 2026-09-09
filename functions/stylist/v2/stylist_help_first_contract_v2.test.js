@@ -168,7 +168,7 @@ test("golden: a useful destination defaults weather to the broad day instead of 
   });
   const result = await h.coordinator.resolveTurn(request("tatry-trip", "t-1", 0, "Tatry"));
   assert.equal(result.action, "generate_outfit");
-  assert.notMatch(result.assistantText, /ktorej časti dňa|ktorej casti dna/i);
+  assert.doesNotMatch(result.assistantText, /ktorej časti dňa|ktorej casti dna/i);
   const saved = await h.sessionRepository.read("tatry-trip");
   assert.equal(saved.context.destination.providerId, "place:tatras");
   assert.equal(saved.context.timeWindow.key, "day");
