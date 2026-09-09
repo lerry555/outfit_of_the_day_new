@@ -199,7 +199,7 @@ function validatePlanningEnvelope(envelope, state) {
   if (wardrobeRequests.length > 1 || locationRequests.length > 1 || envelope.requests.length !== wardrobeRequests.length + locationRequests.length) {
     throw new RepairableStructuralTurnError("only one wardrobe and one location request are allowed");
   }
-  if (wardrobeRequests.some((request) => !TOOL_REQUEST_SCOPES.has(request.scope) || wardrobeRequests.some((candidate) => candidate === request && request.scope === "current_outfit_plus_category" && !request.category))) {
+  if (wardrobeRequests.some((request) => !TOOL_REQUEST_SCOPES.has(request.scope) || request.scope === "current_outfit_plus_category" && !request.category)) {
     throw new RepairableStructuralTurnError("invalid wardrobe retrieval request");
   }
   if (locationRequests.some((request) => !request.query || !["destination", "eventLocation"].includes(request.targetField))) {
