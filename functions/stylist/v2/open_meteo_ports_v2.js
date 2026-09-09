@@ -77,34 +77,92 @@ function buildSnapshot(json, timeWindowKey = "day") {
   };
 }
 
+function normalizeLocationQueryTextV2(value) {
+  return String(value || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ");
+}
+
+function locationQueryCandidatesV2(query) {
+  const raw = normalizeLocationQueryTextV2(query);
+  if (!raw) return [];
+  const stripped = raw.replace(/^(?:(?:ja\s+)?(?:idem|ideme|pojdem|pojdeme|chystam\s+sa|chystáme\s+sa|chystame\s+sa)\s+)?(?:do|na|v|vo|k|ku|to|in|at)\s+/iu, "").trim();
+  return [...new Set([raw, stripped].filter(Boolean))];
+}
+
+function openMeteoLocationFromJsonV2(json) {
+  const result = Array.isArray(json?.results) ? json.results[0] : null;
+  const lat = Number(result?.latitude);
+  const lng = Number(result?.longitude);
+  if (!result || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const labelParts = [result.name, result.admin1, result.country]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean);
+  return {
+    providerId: `openmeteo:${String(result.id || `${lat},${lng}`)}`,
+    label: labelParts.join(", "),
+    lat,
+    lng,
+    source: "open-meteo-geocoding",
+  };
+}
+
+function nominatimLocationFromJsonV2(json, query) {
+  const result = Array.isArray(json) ? json[0] : null;
+  const lat = Number(result?.lat);
+  const lng = Number(result?.lon);
+  if (!result || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  const osmType = String(result.osm_type || "place").trim().toLowerCase() || "place";
+  const osmId = String(result.osm_id || `${lat},${lng}`).trim();
+  const label = String(result.display_name || result.name || query || "").trim().slice(0, 500);
+  if (!label) return null;
+  return {
+    providerId: `nominatim:${osmType}:${osmId}`,
+    label,
+    lat,
+    lng,
+    source: "openstreetmap-nominatim",
+  };
+}
+
+async function resolveOpenMeteoLocationCandidateV2(fetchImpl, query) {
+  const url = "https://geocoding-api.open-meteo.com/v1/search?" + new URLSearchParams({
+    name: query,
+    count: "5",
+    language: "sk",
+    format: "json",
+  }).toString();
+  const response = await fetchImpl(url, {headers: {Accept: "application/json"}});
+  if (!response.ok) throw new Error(`open_meteo_geocoding_http_${response.status}`);
+  return openMeteoLocationFromJsonV2(await response.json());
+}
+
+async function resolveNominatimLocationCandidateV2(fetchImpl, query) {
+  const url = "https://nominatim.openstreetmap.org/search?" + new URLSearchParams({
+    q: query,
+    format: "jsonv2",
+    addressdetails: "1",
+    limit: "5",
+    "accept-language": "sk,en",
+  }).toString();
+  const response = await fetchImpl(url, {headers: {
+    Accept: "application/json",
+    "Accept-Language": "sk,en;q=0.8",
+    "User-Agent": "OOTD-AI-Stylist-V2/1.0",
+  }});
+  if (!response.ok) return null;
+  return nominatimLocationFromJsonV2(await response.json(), query);
+}
+
 function createOpenMeteoLocationResolverV2({fetchImpl = fetch} = {}) {
   return Object.freeze({
     async resolve(query) {
-      const text = String(query || "").trim().replace(/[.!?]+$/g, "");
-      if (!text) return null;
-      const url = "https://geocoding-api.open-meteo.com/v1/search?" + new URLSearchParams({
-        name: text,
-        count: "5",
-        language: "sk",
-        format: "json",
-      }).toString();
-      const response = await fetchImpl(url, {headers: {Accept: "application/json"}});
-      if (!response.ok) throw new Error(`open_meteo_geocoding_http_${response.status}`);
-      const json = await response.json();
-      const result = Array.isArray(json?.results) ? json.results[0] : null;
-      const lat = Number(result?.latitude);
-      const lng = Number(result?.longitude);
-      if (!result || !Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-      const labelParts = [result.name, result.admin1, result.country]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean);
-      return {
-        providerId: `openmeteo:${String(result.id || `${lat},${lng}`)}`,
-        label: labelParts.join(", "),
-        lat,
-        lng,
-        source: "open-meteo-geocoding",
-      };
+      const candidates = locationQueryCandidatesV2(query);
+      for (const candidate of candidates) {
+        const openMeteo = await resolveOpenMeteoLocationCandidateV2(fetchImpl, candidate);
+        if (openMeteo) return openMeteo;
+        const nominatim = await resolveNominatimLocationCandidateV2(fetchImpl, candidate);
+        if (nominatim) return nominatim;
+      }
+      return null;
     },
   });
 }
@@ -141,7 +199,13 @@ function createOpenMeteoWeatherToolV2({fetchImpl = fetch, clock = () => Date.now
 
 module.exports = {
   buildSnapshot,
-  windowHours,
   createOpenMeteoLocationResolverV2,
   createOpenMeteoWeatherToolV2,
+  locationQueryCandidatesV2,
+  nominatimLocationFromJsonV2,
+  normalizeLocationQueryTextV2,
+  openMeteoLocationFromJsonV2,
+  resolveNominatimLocationCandidateV2,
+  resolveOpenMeteoLocationCandidateV2,
+  windowHours,
 };
