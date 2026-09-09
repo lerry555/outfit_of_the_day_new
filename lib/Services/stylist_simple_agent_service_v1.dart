@@ -195,6 +195,21 @@ class StylistSimpleAgentServiceV1 {
     return _lastV2SessionId!;
   }
 
+  @visibleForTesting
+  String debugStableV2SessionIdForTurn(String? chatId) =>
+      _stableV2SessionIdForTurn(chatId?.trim() ?? '');
+
+  @visibleForTesting
+  void debugMarkV2TurnAccepted(String sessionId, {String? chatId}) {
+    final stableSessionId = sessionId.trim();
+    if (stableSessionId.isEmpty) {
+      throw ArgumentError.value(sessionId, 'sessionId');
+    }
+    _lastV2SessionId = stableSessionId;
+    final realChatId = chatId?.trim() ?? '';
+    if (realChatId.isNotEmpty) _boundRealChatId = realChatId;
+  }
+
   void _refreshStylePreferencesInBackground() {
     final loadedAt = _stylePreferencesLoadedAt;
     if (_stylePreferencesLoad != null) return;
