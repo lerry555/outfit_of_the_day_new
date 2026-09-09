@@ -2,6 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const {buildCachedSimpleAgentInputV1} = require("../simple_stylist_prompt_cache_v1");
 const {
   createOpenAiStylistModelPortV2,
   finalEnvelope,
@@ -29,19 +30,23 @@ function baseInput() {
   };
 }
 
+function validChatRaw() {
+  return {
+    action: "chat", assistantText: "Jasné.", resultingOutfitItemIds: [], selectionReasons: [],
+    displayKind: "none", displayItemIds: [], editReplaceItemIds: [], editRetainItemIds: [],
+    editAllowedSlots: [], editAllowedCategories: [], editAllowRemovalOnly: false,
+    clarificationField: null, clarificationQuestion: null, offerShopping: false,
+    shoppingNeedLabel: null, shoppingNeedCanonicalType: null,
+    shoppingHardConstraints: [], shoppingSoftPreferences: [],
+  };
+}
+
 test("final model payload sends semantic wardrobe once and strips image transport fields", async () => {
   let call;
   const port = createOpenAiStylistModelPortV2({
     executeStructured: async (input) => {
       call = input;
-      return {
-        action: "chat", assistantText: "Jasné.", resultingOutfitItemIds: [], selectionReasons: [],
-        displayKind: "none", displayItemIds: [], editReplaceItemIds: [], editRetainItemIds: [],
-        editAllowedSlots: [], editAllowedCategories: [], editAllowRemovalOnly: false,
-        clarificationField: null, clarificationQuestion: null, offerShopping: false,
-        shoppingNeedLabel: null, shoppingNeedCanonicalType: null,
-        shoppingHardConstraints: [], shoppingSoftPreferences: [],
-      };
+      return validChatRaw();
     },
   });
   await port.turn(baseInput());
@@ -56,6 +61,47 @@ test("final model payload sends semantic wardrobe once and strips image transpor
     assert.equal(Object.hasOwn(item, key), false, key);
   }
   assert.deepEqual(payload.toolResults.weatherSnapshot, {summary: "mild"});
+});
+
+test("production prompt cache accepts the V2 nested wardrobe contract without duplicating inventory", async () => {
+  let cached;
+  const port = createOpenAiStylistModelPortV2({
+    executeStructured: async (input) => {
+      // This is the real adapter used by createOpenAiSimpleAgentExecutorV1.
+      // Before this regression fix it threw: `wardrobeV2 is not iterable`.
+      cached = buildCachedSimpleAgentInputV1(input, "test-scope");
+      return validChatRaw();
+    },
+  });
+
+  await port.turn(baseInput());
+
+  const cachedInventory = JSON.parse(cached.input[1].content[0].text);
+  assert.deepEqual(cachedInventory.toolResults.wardrobeItems.map((item) => item.id), ["shirt"]);
+  assert.equal(Object.hasOwn(cachedInventory, "wardrobeV2"), false);
+
+  const turn = JSON.parse(cached.input[2].content);
+  assert.equal(Object.hasOwn(turn, "wardrobeV2"), false);
+  assert.equal(Object.hasOwn(turn.toolResults, "wardrobeItems"), false);
+  assert.deepEqual(turn.toolResults.weatherSnapshot, {summary: "mild"});
+});
+
+test("prompt cache keeps the legacy top-level wardrobeV2 contract compatible", () => {
+  const cached = buildCachedSimpleAgentInputV1({
+    messages: [
+      {role: "system", content: "legacy"},
+      {role: "user", content: JSON.stringify({
+        wardrobeV2: [{id: "b"}, {id: "a"}],
+        weatherContext: {summary: "mild"},
+      })},
+    ],
+  }, "legacy-scope");
+
+  const cachedInventory = JSON.parse(cached.input[1].content[0].text);
+  assert.deepEqual(cachedInventory.wardrobeV2.map((item) => item.id), ["a", "b"]);
+  const turn = JSON.parse(cached.input[2].content);
+  assert.equal(Object.hasOwn(turn, "wardrobeV2"), false);
+  assert.deepEqual(turn.weatherContext, {summary: "mild"});
 });
 
 test("shopping CTA is footwear-specific instead of anonymous yes/no buttons", () => {
