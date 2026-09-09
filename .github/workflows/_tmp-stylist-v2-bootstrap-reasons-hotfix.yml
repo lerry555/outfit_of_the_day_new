@@ -28,11 +28,13 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
       - name: Apply production typo fix and regression test
         shell: bash
+        env:
+          TEST_B64: InVzZSBzdHJpY3QiOwoKY29uc3QgdGVzdCA9IHJlcXVpcmUoIm5vZGU6dGVzdCIpOwpjb25zdCBhc3NlcnQgPSByZXF1aXJlKCJub2RlOmFzc2VydC9zdHJpY3QiKTsKY29uc3Qge2NyZWF0ZVN0eWxpc3RDaGF0VjJIYW5kbGVyfSA9IHJlcXVpcmUoIi4vc3R5bGlzdF9wcm9kdWN0aW9uX2JyaWRnZV92MiIpOwpjb25zdCB7Y3JlYXRlTWVtb3J5U3R5bGlzdFNlc3Npb25SZXBvc2l0b3J5VjJ9ID0gcmVxdWlyZSgiLi9zdHlsaXN0X3Nlc3Npb25fcmVwb3NpdG9yeV92MiIpOwoKY29uc3QgTk9XID0gRGF0ZS5wYXJzZSgiMjAyNi0wOS0wOVQwNjowMDowMC4wMDBaIik7Cgp0ZXN0KCJmaXJzdCBwcm9kdWN0aW9uIFYyIHR1cm4gYm9vdHN0cmFwcyBwZXJzaXN0ZWQgc2VsZWN0aW9uIHJlYXNvbnMgd2l0aG91dCBmYWlsLWNsb3NlZCIsIGFzeW5jICgpID0+IHsKICBjb25zdCByZXBvc2l0b3J5ID0gY3JlYXRlTWVtb3J5U3R5bGlzdFNlc3Npb25SZXBvc2l0b3J5VjIoe25vdzogKCkgPT4gTk9XfSk7CiAgY29uc3Qgd2FyZHJvYmVUb29sID0gewogICAgYXN5bmMgcmV0cmlldmUocmVxdWVzdCkgewogICAgICBjb25zdCBpZHMgPSBBcnJheS5pc0FycmF5KHJlcXVlc3Q/Lml0ZW1JZHMpID8gcmVxdWVzdC5pdGVtSWRzIDogW107CiAgICAgIHJldHVybiBpZHMubWFwKChpZCkgPT4gKHtpZCwgY2F0ZWdvcnk6ICJ0b3BzIiwgYm9keVNsb3RzOiBbInVwcGVyX2JvZHkiXX0pKTsKICAgIH0sCiAgICBhc3luYyBtYXRlcmlhbGl6ZShpdGVtSWRzLCByZWFzb25zQnlJdGVtSWQpIHsKICAgICAgcmV0dXJuIGl0ZW1JZHMubWFwKChpZCkgPT4gKHtpZCwgbmFtZTogaWQsIHNlbGVjdGlvblJlYXNvbjogcmVhc29uc0J5SXRlbUlkW2lkXSB8fCBudWxsfSkpOwogICAgfSwKICB9OwogIGNvbnN0IHN0eWxpc3RNb2RlbCA9IHsKICAgIHBsYW5uaW5nTmVlZHNDdXJyZW50T3V0Zml0OiBmYWxzZSwKICAgIGFzeW5jIHR1cm4oKSB7CiAgICAgIHJldHVybiB7CiAgICAgICAga2luZDogImZpbmFsIiwKICAgICAgICBzdGF0ZVBhdGNoOiB7fSwKICAgICAgICByZXN1bHQ6IHsKICAgICAgICAgIGFjdGlvbjogImNoYXQiLAogICAgICAgICAgYXNzaXN0YW50VGV4dDogIk91dGZpdCBuZWNow6F2YW0gYmV6IHptZW55LiIsCiAgICAgICAgICBkaXNwbGF5OiB7a2luZDogIm5vbmUiLCBpdGVtSWRzOiBbXX0sCiAgICAgICAgfSwKICAgICAgfTsKICAgIH0sCiAgfTsKICBjb25zdCB3YXJuaW5ncyA9IFtdOwogIGNvbnN0IGhhbmRsZXIgPSBjcmVhdGVTdHlsaXN0Q2hhdFYySGFuZGxlcih7CiAgICBkYjoge30sCiAgICBhZG1pbjoge30sCiAgICBsb2dnZXI6IHt3YXJuKG1lc3NhZ2UsIGRhdGEpIHsgd2FybmluZ3MucHVzaCh7bWVzc2FnZSwgZGF0YX0pOyB9fSwKICAgIHJlc29sdmVPcGVuQUlTZWNyZXQ6IGFzeW5jICgpID0+ICJ1bnVzZWQiLAogICAgY2xvY2s6ICgpID0+IE5PVywKICAgIHNlc3Npb25SZXBvc2l0b3J5OiByZXBvc2l0b3J5LAogICAgbG9jYXRpb25SZXNvbHZlcjoge2FzeW5jIHJlc29sdmUoKSB7IHJldHVybiBudWxsOyB9fSwKICAgIHdlYXRoZXJUb29sOiB7YXN5bmMgZ2V0Rm9yZWNhc3QoKSB7IHJldHVybiBudWxsOyB9fSwKICAgIG1vZGVsRmFjdG9yeTogKCkgPT4gc3R5bGlzdE1vZGVsLAogICAgd2FyZHJvYmVUb29sRmFjdG9yeTogKCkgPT4gd2FyZHJvYmVUb29sLAogICAgc2hvcHBpbmdUb29sRmFjdG9yeTogKCkgPT4gKHsKICAgICAgYXN5bmMgc2VhcmNoKCkgeyByZXR1cm4ge2NhbmRpZGF0ZUlkczogW10sIGFwcGxpZWRIYXJkQ29uc3RyYWludHM6IFtdfTsgfSwKICAgIH0pLAogIH0pOwoKICBjb25zdCByZXNwb25zZSA9IGF3YWl0IGhhbmRsZXIoewogICAgdjJTZXNzaW9uSWQ6ICJjaGF0X2Jvb3RzdHJhcCIsCiAgICB0dXJuSWQ6ICJ0dXJuX2Jvb3RzdHJhcCIsCiAgICBtZXNzYWdlOiAixIxvIHBvdmllxaEgbmEgdGVudG8gb3V0Zml0PyIsCiAgICBjdXJyZW50T3V0Zml0SXRlbUlkczogWyJzaGlydCIsICJqZWFucyJdLAogICAgY3VycmVudFNlbGVjdGlvblJlYXNvbnM6IFsKICAgICAge2l0ZW1JZDogInNoaXJ0IiwgcmVhc29uOiAic2Vkw60gayB6dnnFoWt1In0sCiAgICAgIHtpdGVtSWQ6ICJqZWFucyIsIHJlYXNvbjogInZob2Ruw70gc3BvZG7DvSBkaWVsIn0sCiAgICBdLAogICAgY2xpZW50Q29udGV4dDoge30sCiAgfSwge2F1dGg6IHt1aWQ6ICJ1c2VyLWEifX0pOwoKICBhc3NlcnQuZXF1YWwocmVzcG9uc2Uub2ssIHRydWUpOwogIGFzc2VydC5lcXVhbChyZXNwb25zZS5mYWlsQ2xvc2VkLCBmYWxzZSk7CiAgYXNzZXJ0LmVxdWFsKHJlc3BvbnNlLmFjdGlvbiwgImNoYXQiKTsKICBhc3NlcnQuZGVlcEVxdWFsKHJlc3BvbnNlLnJlc3VsdGluZ091dGZpdEl0ZW1JZHMsIFsic2hpcnQiLCAiamVhbnMiXSk7CiAgYXNzZXJ0LmVxdWFsKHdhcm5pbmdzLmxlbmd0aCwgMCk7CgogIGNvbnN0IHN0b3JlZCA9IGF3YWl0IHJlcG9zaXRvcnkuZ2V0KHt1aWQ6ICJ1c2VyLWEiLCBjaGF0SWQ6ICJjaGF0X2Jvb3RzdHJhcCJ9KTsKICBhc3NlcnQuZGVlcEVxdWFsKHN0b3JlZC5zdGF0ZS5jdXJyZW50T3V0Zml0LnNlbGVjdGlvblJlYXNvbnNCeUl0ZW1JZCwgewogICAgc2hpcnQ6ICJzZWTDrSBrIHp2ecWha3UiLAogICAgamVhbnM6ICJ2aG9kbsO9IHNwb2Ruw70gZGllbCIsCiAgfSk7Cn0pOwo=
         run: |
           set -euo pipefail
           python - <<'PY'
+          import base64, os
           from pathlib import Path
-
           bridge = Path('functions/stylist/v2/stylist_production_bridge_v2.js')
           text = bridge.read_text(encoding='utf-8')
           old = '          persistedSelectionReasonsByItemId,\n'
@@ -40,85 +42,7 @@ jobs:
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one bootstrap typo occurrence, found {text.count(old)}')
           bridge.write_text(text.replace(old, new), encoding='utf-8')
-
-          test_file = Path('functions/stylist/v2/stylist_production_bridge_v2.test.js')
-          test_file.write_text(r'''"use strict";
-
-const test = require("node:test");
-const assert = require("node:assert/strict");
-const {createStylistChatV2Handler} = require("./stylist_production_bridge_v2");
-const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
-
-const NOW = Date.parse("2026-09-09T06:00:00.000Z");
-
-test("first production V2 turn bootstraps persisted selection reasons without fail-closed", async () => {
-  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
-  const wardrobeTool = {
-    async retrieve(request) {
-      const ids = Array.isArray(request?.itemIds) ? request.itemIds : [];
-      return ids.map((id) => ({id, category: "tops", bodySlots: ["upper_body"]}));
-    },
-    async materialize(itemIds, reasonsByItemId) {
-      return itemIds.map((id) => ({id, name: id, selectionReason: reasonsByItemId[id] || null}));
-    },
-  };
-  const stylistModel = {
-    planningNeedsCurrentOutfit: false,
-    async turn() {
-      return {
-        kind: "final",
-        statePatch: {},
-        result: {
-          action: "chat",
-          assistantText: "Outfit nechávam bez zmeny.",
-          display: {kind: "none", itemIds: []},
-        },
-      };
-    },
-  };
-  const warnings = [];
-  const handler = createStylistChatV2Handler({
-    db: {},
-    admin: {},
-    logger: {warn(message, data) { warnings.push({message, data}); }},
-    resolveOpenAISecret: async () => "unused",
-    clock: () => NOW,
-    sessionRepository: repository,
-    locationResolver: {async resolve() { return null; }},
-    weatherTool: {async getForecast() { return null; }},
-    modelFactory: () => stylistModel,
-    wardrobeToolFactory: () => wardrobeTool,
-    shoppingToolFactory: () => ({
-      async search() { return {candidateIds: [], appliedHardConstraints: []}; },
-    }),
-  });
-
-  const response = await handler({
-    v2SessionId: "chat_bootstrap",
-    turnId: "turn_bootstrap",
-    message: "Čo povieš na tento outfit?",
-    currentOutfitItemIds: ["shirt", "jeans"],
-    currentSelectionReasons: [
-      {itemId: "shirt", reason: "sedí k zvyšku"},
-      {itemId: "jeans", reason: "vhodný spodný diel"},
-    ],
-    clientContext: {},
-  }, {auth: {uid: "user-a"}});
-
-  assert.equal(response.ok, true);
-  assert.equal(response.failClosed, false);
-  assert.equal(response.action, "chat");
-  assert.deepEqual(response.resultingOutfitItemIds, ["shirt", "jeans"]);
-  assert.equal(warnings.length, 0);
-
-  const stored = await repository.get({uid: "user-a", chatId: "chat_bootstrap"});
-  assert.deepEqual(stored.state.currentOutfit.selectionReasonsByItemId, {
-    shirt: "sedí k zvyšku",
-    jeans: "vhodný spodný diel",
-  });
-});
-''', encoding='utf-8')
-
+          Path('functions/stylist/v2/stylist_production_bridge_v2.test.js').write_bytes(base64.b64decode(os.environ['TEST_B64']))
           ci = Path('.github/workflows/stylist-v2-ci.yml')
           ci_text = ci.read_text(encoding='utf-8')
           needle = '          functions/stylist/v2/stylist_v2_phase3_ports.test.js\n'
