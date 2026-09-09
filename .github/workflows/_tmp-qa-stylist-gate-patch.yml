@@ -47,6 +47,18 @@ jobs:
           s = s.replace(old, new, 1)
           p.write_text(s)
 
+          p = Path('functions/stylist/v2/stylist_grounding_policy_v2.js')
+          s = p.read_text()
+          old = r'const LOCAL_ROUTINE_TERMS = /\b(do prace|v praci|do skoly|v skole|do fitka|vo fitku|do posilnovne|v posilnovni|gym|work|school|na nakup|na nakupy|doma|home office)\b/;'
+          new = r'const LOCAL_ROUTINE_TERMS = /\b(do prace|v praci|do skoly|v skole|do fitka|vo fitku|do posilnovne|v posilnovni|gym|work|school|na nakup|na nakupy|kino|cinema|do kina|v kine|doma|home office)\b/;'
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = 'return new Set(["ahoj", "cau", "nazdar", "dobry den", "servus", "hello", "hi", "hey"]).has(normalizeSemanticTextV2(value));'
+          new = 'return new Set(["ahoj", "cau", "cauko", "nazdar", "dobry den", "servus", "hello", "hi", "hey"]).has(normalizeSemanticTextV2(value));'
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+
           p = Path('functions/stylist/v2/stylist_release_gate_v2.test.js')
           s = p.read_text()
           old = 'patch: patchDefaults(),'
@@ -58,11 +70,11 @@ jobs:
           assert old in s
           s = s.replace(old, new, 1)
           old = 'logger: {warn() {}, info() {}},'
-          new = 'logger: {warn(message, data) { calls.warnings.push({message, data}); }, info() {}},'
+          new = 'logger: {warn(message, data) { calls.warnings.push({message, data}); console.error("GATE_WARN", message, JSON.stringify(data || {})); }, info() {}},'
           assert old in s
           s = s.replace(old, new, 1)
           old = '''async getForecast(request) {\n        calls.weather.push(JSON.parse(JSON.stringify(request || {})));\n        return {summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0};\n      },'''
-          new = '''async getForecast(request) {\n        calls.weather.push(JSON.parse(JSON.stringify(request || {})));\n        return {\n          summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0,\n          locationProviderId: request.location.providerId,\n          dateKey: request.date.dateKey,\n          timeWindowKey: request.timeWindow.key,\n        };\n      },'''
+          new = '''async getForecast(request) {\n        calls.weather.push(JSON.parse(JSON.stringify(request || {})));\n        return {\n          summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0,\n          locationProviderId: request.location.providerId,\n          dateKey: request.date.dateKey,\n          timeWindowKey: request.timeWindow.key,\n          fetchedAt: new Date(NOW).toISOString(),\n          source: "release_gate",\n        };\n      },'''
           assert old in s
           s = s.replace(old, new, 1)
           old = 'assert.equal(response.ok, true);\n  assert.equal(response.failClosed, false);'
@@ -74,7 +86,7 @@ jobs:
           p = Path('functions/stylist/v2/stylist_live_smoke_v2.js')
           s = p.read_text()
           old = '''weatherTool: {async getForecast() {\n      return {summary: "sucho a mierne", minTempC: 10, maxTempC: 17, precipitationMm: 0};\n    }},'''
-          new = '''weatherTool: {async getForecast(request) {\n      return {\n        summary: "sucho a mierne", minTempC: 10, maxTempC: 17, precipitationMm: 0,\n        locationProviderId: request.location.providerId,\n        dateKey: request.date.dateKey,\n        timeWindowKey: request.timeWindow.key,\n      };\n    }},'''
+          new = '''weatherTool: {async getForecast(request) {\n      return {\n        summary: "sucho a mierne", minTempC: 10, maxTempC: 17, precipitationMm: 0,\n        locationProviderId: request.location.providerId,\n        dateKey: request.date.dateKey,\n        timeWindowKey: request.timeWindow.key,\n        fetchedAt: new Date().toISOString(),\n        source: "live_smoke",\n      };\n    }},'''
           assert old in s
           s = s.replace(old, new, 1)
           p.write_text(s)
@@ -100,11 +112,13 @@ jobs:
         working-directory: functions
         run: |
           node --check stylist/v2/stylist_turn_coordinator_v2.js
+          node --check stylist/v2/stylist_grounding_policy_v2.js
           node --check stylist/v2/stylist_release_gate_v2.test.js
           node --check stylist/v2/stylist_live_smoke_v2.js
           node --check stylist/v2/stylist_production_smoke_v2.js
           node --test stylist/v2/stylist_release_gate_v2.test.js
           node --test stylist/v2/stylist_help_first_contract_v2.test.js
+          node --test stylist/v2/stylist_grounding_policy_v2.test.js
 
       - name: Commit only reviewed source/test changes
         shell: bash
@@ -114,6 +128,7 @@ jobs:
           git config user.email "132705754+lerry555@users.noreply.github.com"
           git add \
             functions/stylist/v2/stylist_turn_coordinator_v2.js \
+            functions/stylist/v2/stylist_grounding_policy_v2.js \
             functions/stylist/v2/stylist_release_gate_v2.test.js \
             functions/stylist/v2/stylist_live_smoke_v2.js \
             functions/stylist/v2/stylist_production_smoke_v2.js
