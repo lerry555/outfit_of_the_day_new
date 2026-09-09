@@ -74,10 +74,6 @@ function finalEnvelope(result, statePatch = {}) {
   return {kind: "final", result, statePatch};
 }
 
-function toolEnvelope(requests, statePatch = {}) {
-  return {kind: "tool_request", requests, statePatch};
-}
-
 function outfitResult(text = "Na zajtrajšiu túru by som zvolil tričko, rifle a tvoje bežecké tenisky.") {
   return {
     action: "generate_outfit",
@@ -155,16 +151,13 @@ test("golden: country-level destination asks once for a useful narrower place", 
   assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["USA"]);
 });
 
-test("golden: a useful destination defaults weather to the broad day instead of asking time of day", async () => {
+test("golden: a useful destination defaults weather to the broad day and goes straight to one final stylist call", async () => {
   const state = pendingDestinationState("tatry-trip");
   const h = harness({
     initialStates: [state],
     resolutions: {Tatry: tatras},
     weatherSnapshots: {"place:tatras|2026-09-10|day": {summary: "mild"}},
-    modelResults: [
-      toolEnvelope([{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}]),
-      finalEnvelope(outfitResult()),
-    ],
+    modelResults: [finalEnvelope(outfitResult())],
   });
   const result = await h.coordinator.resolveTurn(request("tatry-trip", "t-1", 0, "Tatry"));
   assert.equal(result.action, "generate_outfit");
@@ -173,7 +166,8 @@ test("golden: a useful destination defaults weather to the broad day instead of 
   assert.equal(saved.context.destination.providerId, "place:tatras");
   assert.equal(saved.context.timeWindow.key, "day");
   assert.equal(h.ledger.calls("weather", "getForecast").length, 1);
-  assert.equal(h.ledger.calls("model", "plan").length, 1);
+  assert.equal(h.ledger.calls("wardrobe", "retrieve").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
   assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 
@@ -183,10 +177,7 @@ test("golden: Tatry followed by Teryho chata refines context and never falls bac
     initialStates: [state],
     resolutions: {"Téryho chata, Tatier": teryho},
     weatherSnapshots: {"place:teryho|2026-09-10|day": {summary: "mountain"}},
-    modelResults: [
-      toolEnvelope([{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}]),
-      finalEnvelope(outfitResult()),
-    ],
+    modelResults: [finalEnvelope(outfitResult())],
   });
   const result = await h.coordinator.resolveTurn(request("teryho-trip", "th-1", 0, "Téryho chata"));
   assert.equal(result.action, "generate_outfit");
@@ -194,6 +185,8 @@ test("golden: Tatry followed by Teryho chata refines context and never falls bac
   const saved = await h.sessionRepository.read("teryho-trip");
   assert.equal(saved.context.destination.providerId, "place:teryho");
   assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 
 test("golden: user can skip unknown remote weather context and still get a useful wardrobe recommendation", async () => {
@@ -201,7 +194,6 @@ test("golden: user can skip unknown remote weather context and still get a usefu
   const h = harness({
     initialStates: [state],
     modelResults: [
-      toolEnvelope([{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}]),
       finalEnvelope(outfitResult("Nevieme presné podmienky, takže volím bezpečný všeobecný základ z tvojho šatníka.")),
     ],
   });
@@ -209,6 +201,9 @@ test("golden: user can skip unknown remote weather context and still get a usefu
   assert.equal(result.action, "generate_outfit");
   assert.equal(h.ledger.calls("location").length, 0);
   assert.equal(h.ledger.calls("weather").length, 0);
+  assert.equal(h.ledger.calls("wardrobe", "retrieve").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
   const saved = await h.sessionRepository.read("skip-place");
   assert.equal(saved.context.groundingRequirements.weatherRequired, false);
   assert.equal(saved.conversationMemory.pendingQuestion, null);

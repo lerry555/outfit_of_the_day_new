@@ -11,13 +11,16 @@ void main() {
     expect(result['displayItemIds'], isEmpty);
   });
 
-  test('plain greeting and thanks are local fast paths', () {
+  test('plain and natural friendly greetings use local fast path', () {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Čau!')?['modelPath'], 'local_fast');
+    expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('čauko divočák')?['modelPath'], 'local_fast');
+    expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('cauko kamarat')?['modelPath'], 'local_fast');
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Díky 🙌')?['modelPath'], 'local_fast');
   });
 
   test('real stylist requests never get swallowed by local fast path', () {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj, zajtra idem na koncert a potrebujem outfit'), isNull);
+    expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('čauko, potrebujem outfit na túru'), isNull);
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('zajtra idem na túru a potrebujem outfit'), isNull);
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Áno'), isNull);
   });

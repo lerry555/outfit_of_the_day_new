@@ -551,15 +551,14 @@ test("resolved event location with no remaining grounding continues the same tur
   };
   const h = harness({
     initialStates: [validateStylistSessionStateV2(state)],
-    modelResults: [
-      toolEnvelope([{tool: "wardrobe", scope: "full_relevant"}]),
-      finalEnvelope(fullOutfitResult()),
-    ],
+    modelResults: [finalEnvelope(fullOutfitResult())],
   });
   const result = await h.coordinator.resolveTurn(request("resolved-event", "event-2", 0, "Bratislava."));
   assert.equal(result.action, "generate_outfit");
   assert.notEqual(result.action, "clarify");
   assert.equal(h.ledger.calls("weather")[0].args.location.providerId, "place:bratislava");
+  assert.equal(h.ledger.calls("wardrobe", "retrieve").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
   assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 
