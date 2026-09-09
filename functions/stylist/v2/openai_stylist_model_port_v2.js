@@ -327,8 +327,26 @@ function finalEnvelope(raw, input) {
 // Kept as an export for compatibility. Grounding is now enforced generically by
 // stylist_grounding_policy_v2 and the coordinator instead of a hike-specific
 // hard-coded question in the model adapter.
-function enforceHighConfidenceGrounding(raw) {
-  return raw;
+function enforceHighConfidenceGrounding(raw, input) {
+  const message = normalizeIntentTextV2(input?.request?.latestUserInput);
+  const outfitRequest = /\b(outfit|oblecenie|obliect|co si mam dat|co mam na seba|vyber mi|navrhni mi|zostav mi)\b/.test(message);
+  const hasLocationRequest = raw?.kind === "tool_request" &&
+    clean(raw?.locationQuery) &&
+    ["destination", "eventLocation"].includes(raw?.locationTargetField);
+  const hasWardrobeRequest = raw?.kind === "tool_request" &&
+    WARDROBE_SCOPES.includes(raw?.wardrobeScope) &&
+    raw.wardrobeScope !== "none";
+  if (!outfitRequest || !hasLocationRequest || hasWardrobeRequest) return raw;
+
+  // One planning phase may ask for location + wardrobe together. The coordinator
+  // resolves location/grounding first and skips the wardrobe read if another
+  // material fact is still missing, so this avoids an unnecessary second model
+  // phase without wasting a full wardrobe read.
+  return {
+    ...raw,
+    wardrobeScope: "full_relevant",
+    wardrobeCategory: null,
+  };
 }
 
 function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences = null}) {
