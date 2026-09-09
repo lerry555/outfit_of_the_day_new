@@ -52,9 +52,9 @@ function isFastChatEligibleV2({message, state = null, currentOutfitItemIds = [],
   const liveContext = /\b(dnes|zajtra|vecer|rano|poobede|pocasie|teplota|prsi|dazd|sneh|lad|blato|tura|turistika|hiking|svadba|pohovor|koncert|kino|vecera|rande|praca|kam idem|idem do|idem na)\b/.test(text);
   if (personalAction || liveContext) return false;
 
-  // Generic fashion knowledge / combination advice is safe to answer without
-  // wardrobe, weather, location, shopping or the large planner schema.
-  return /\b(farb|cier|biel|modr|zelen|cerven|ruz|hned|bezov|siv|zlty|oranz|fial|kombin|hodi sa|hodia sa|pasuje|ladit|styl|strih|material|vzor|rozdiel|znamena|fashion|moda)\b/.test(text);
+  // Match Slovak stems without requiring a word boundary immediately after
+  // the stem: "farb" must match "farby/farba/farebný", "modr" -> "modrej".
+  return /\b(farb|cier|biel|modr|zelen|cerven|ruz|hned|bezov|siv|zlt|oranz|fial|kombin|hodi sa|hodia sa|pasuje|lad|styl|strih|material|vzor|rozdiel|znamena|fashion|moda)/.test(text);
 }
 
 function fastChatSystemPromptV2() {
