@@ -89,6 +89,10 @@ jobs:
           new = 'logger: {warn(message, data) { calls.warnings.push({message, data}); console.error("GATE_WARN", message, JSON.stringify(data || {})); }, info() {}},'
           assert old in s
           s = s.replace(old, new, 1)
+          old = 'if (normalized.includes("tatr")) return TATRY;'
+          new = 'if (normalized.includes("tatr") || normalized.includes("tatier")) return TATRY;'
+          assert old in s
+          s = s.replace(old, new, 1)
           old = '''async getForecast(request) {\n        calls.weather.push(JSON.parse(JSON.stringify(request || {})));\n        return {summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0};\n      },'''
           new = '''async getForecast(request) {\n        calls.weather.push(JSON.parse(JSON.stringify(request || {})));\n        return {\n          summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0,\n          locationProviderId: request.location.providerId,\n          dateKey: request.date.dateKey,\n          timeWindowKey: request.timeWindow.key,\n          fetchedAt: new Date(NOW).toISOString(),\n          source: "release_gate",\n        };\n      },'''
           assert old in s
