@@ -1,0 +1,247 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {clone, createEmptySessionStateV2, validateStylistSessionStateV2} = require("./stylist_session_state_v2");
+const {
+  cleanLocationAnswerFragmentV2,
+  createStylistTurnCoordinatorV2,
+  pendingLocationResolutionQueriesV2,
+} = require("./stylist_turn_coordinator_v2");
+const {
+  createOpenMeteoLocationResolverV2,
+  locationQueryCandidatesV2,
+} = require("./open_meteo_ports_v2");
+const {
+  CallLedgerV2,
+  FakeLocationResolverV2,
+  FakeShoppingToolV2,
+  FakeStylistModelPortV2,
+  FakeWardrobeToolV2,
+  FakeWeatherToolV2,
+  InMemorySessionRepositoryV2,
+} = require("./fake_ports_v2");
+
+const NOW = Date.parse("2026-09-09T07:30:00.000Z");
+const martinGps = {
+  providerId: "gps:49.06360,18.92170",
+  label: "Martin",
+  lat: 49.0636,
+  lng: 18.9217,
+  observedAt: "2026-09-09T07:25:00.000Z",
+  source: "device_gps",
+};
+
+function place(providerId, label, lat, lng) {
+  return {providerId, label, lat, lng, source: "fake-location"};
+}
+
+function pendingLocationState({chatId, field = "destination", activityId = "hiking", attempts = [], currentLocation = null}) {
+  const state = clone(createEmptySessionStateV2(chatId));
+  state.context.activity = {id: activityId, label: activityId, source: "user"};
+  state.context.date = {dateKey: "2026-09-10", source: "user"};
+  state.context.timeWindow = null;
+  state.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: field,
+    terrainRequiredFields: [],
+  };
+  if (currentLocation) state.context.currentLocationObservation = clone(currentLocation);
+  state.conversationMemory.pendingQuestion = {
+    type: "question",
+    actionId: field === "eventLocation" ? "clarify_event_location" : "clarify_destination",
+    field,
+    question: field === "eventLocation" ? "Kde presne sa podujatie koná?" : "Kam presne ideš?",
+    acceptsYesNo: false,
+  };
+  if (attempts.length) state.conversationMemory.pendingQuestion.attemptedAnswers = [...attempts];
+  return validateStylistSessionStateV2(state);
+}
+
+function request(chatId, turnId, expectedSessionRevision, latestUserInput) {
+  return {
+    chatId,
+    turnId,
+    expectedSessionRevision,
+    latestUserInput,
+    explicitUiActionId: null,
+    freshClientObservations: {},
+    clientCapabilities: {},
+  };
+}
+
+function harness(initialState, resolutions = {}) {
+  const ledger = new CallLedgerV2();
+  const sessionRepository = new InMemorySessionRepositoryV2(ledger, [initialState]);
+  const coordinator = createStylistTurnCoordinatorV2({
+    sessionRepository,
+    wardrobeTool: new FakeWardrobeToolV2(ledger, []),
+    locationResolver: new FakeLocationResolverV2(ledger, resolutions),
+    weatherTool: new FakeWeatherToolV2(ledger, {}),
+    shoppingTool: new FakeShoppingToolV2(ledger),
+    stylistModel: new FakeStylistModelPortV2(ledger, []),
+    clock: () => NOW,
+  });
+  return {coordinator, ledger, sessionRepository};
+}
+
+function jsonResponse(body, {ok = true, status = 200} = {}) {
+  return {ok, status, async json() { return body; }};
+}
+
+test("pending destination keeps an unresolved user answer instead of repeating the generic question", async () => {
+  const state = pendingLocationState({chatId: "pending-region"});
+  const h = harness(state);
+
+  const result = await h.coordinator.resolveTurn(request("pending-region", "turn-1", 0, "do Tatier"));
+  assert.equal(result.action, "clarify");
+  assert.equal(result.clarification.field, "destination");
+  assert.notEqual(result.assistantText, "Kam presne ideš?");
+  assert.match(result.assistantText, /Tatier/u);
+
+  const saved = await h.sessionRepository.read("pending-region");
+  assert.equal(saved.context.destination, null);
+  assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["do Tatier"]);
+  assert.equal(h.ledger.calls("model").length, 0);
+});
+
+test("a more specific follow-up is combined with the previous broad answer and advances grounding", async () => {
+  const state = pendingLocationState({chatId: "pending-poi", attempts: ["do Tatier"]});
+  const teryho = place("place:teryho", "Téryho chata, Vysoké Tatry", 49.1902, 20.1990);
+  const h = harness(state, {"Téryho chata, Tatier": teryho});
+
+  const result = await h.coordinator.resolveTurn(request("pending-poi", "turn-1", 0, "Téryho chata"));
+  assert.equal(result.action, "clarify");
+  assert.equal(result.clarification.field, "timeWindow");
+
+  const saved = await h.sessionRepository.read("pending-poi");
+  assert.equal(saved.context.destination.providerId, "place:teryho");
+  assert.equal(saved.conversationMemory.pendingQuestion.field, "timeWindow");
+  assert.deepEqual(h.ledger.calls("location", "resolve")[0].args, {query: "Téryho chata, Tatier"});
+});
+
+test("remote event location wins over current GPS and is stored as eventLocation", async () => {
+  const state = pendingLocationState({
+    chatId: "remote-concert",
+    field: "eventLocation",
+    activityId: "concert",
+    currentLocation: martinGps,
+  });
+  const arena = place("place:o2-praha", "O2 arena, Praha", 50.1044, 14.4936);
+  const h = harness(state, {"O2 arena Praha": arena});
+
+  const result = await h.coordinator.resolveTurn(request("remote-concert", "turn-1", 0, "O2 arena Praha"));
+  assert.equal(result.clarification.field, "timeWindow");
+
+  const saved = await h.sessionRepository.read("remote-concert");
+  assert.equal(saved.context.eventLocation.providerId, "place:o2-praha");
+  assert.equal(saved.context.currentLocationObservation.providerId, martinGps.providerId);
+  assert.equal(saved.context.destination, null);
+});
+
+test("wedding location fragment is accepted as the pending event location", async () => {
+  const state = pendingLocationState({chatId: "wedding", field: "eventLocation", activityId: "wedding"});
+  const zilina = place("place:zilina", "Žilina", 49.2231, 18.7394);
+  const h = harness(state, {Žilina: zilina});
+
+  const result = await h.coordinator.resolveTurn(request("wedding", "turn-1", 0, "Žilina"));
+  assert.equal(result.clarification.field, "timeWindow");
+  const saved = await h.sessionRepository.read("wedding");
+  assert.equal(saved.context.eventLocation.providerId, "place:zilina");
+});
+
+test("natural fragment answers are resolved in the context of the pending destination question", async () => {
+  const cases = [
+    ["Bratislava", "Bratislava"],
+    ["do Košíc", "Košíc"],
+    ["na Donovaly", "Donovaly"],
+    ["Štrbské Pleso", "Štrbské Pleso"],
+  ];
+
+  for (let index = 0; index < cases.length; index += 1) {
+    const [input, resolverQuery] = cases[index];
+    const chatId = `fragment-${index}`;
+    const resolved = place(`place:${index}`, input, 48 + index / 10, 17 + index / 10);
+    const state = pendingLocationState({chatId});
+    const h = harness(state, {[resolverQuery]: resolved});
+
+    const result = await h.coordinator.resolveTurn(request(chatId, "turn-1", 0, input));
+    assert.equal(result.clarification.field, "timeWindow", input);
+    const saved = await h.sessionRepository.read(chatId);
+    assert.equal(saved.context.destination.providerId, `place:${index}`, input);
+  }
+});
+
+test("unresolvable new information is retained and does not loop with the identical generic clarification", async () => {
+  const state = pendingLocationState({chatId: "unknown-place"});
+  const h = harness(state);
+
+  const first = await h.coordinator.resolveTurn(request("unknown-place", "turn-1", 0, "nejaká dolina"));
+  const second = await h.coordinator.resolveTurn(request("unknown-place", "turn-2", 1, "pri starej chate"));
+
+  assert.equal(first.clarification.field, "destination");
+  assert.equal(second.clarification.field, "destination");
+  assert.notEqual(first.assistantText, "Kam presne ideš?");
+  assert.notEqual(second.assistantText, "Kam presne ideš?");
+  assert.notEqual(first.assistantText, second.assistantText);
+  assert.match(second.assistantText, /starej chate/u);
+
+  const saved = await h.sessionRepository.read("unknown-place");
+  assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["nejaká dolina", "pri starej chate"]);
+});
+
+test("pending query helpers keep the latest answer and combine it with retained context without place-specific rules", () => {
+  assert.equal(cleanLocationAnswerFragmentV2("na Donovaly"), "Donovaly");
+  assert.deepEqual(
+    pendingLocationResolutionQueriesV2({attemptedAnswers: ["do Tatier"]}, "Téryho chata"),
+    ["Téryho chata, Tatier", "Téryho chata"],
+  );
+  assert.deepEqual(locationQueryCandidatesV2("na Donovaly"), ["na Donovaly", "Donovaly"]);
+});
+
+test("location resolver falls back from Open-Meteo to Nominatim for a POI", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const text = String(url);
+    calls.push(text);
+    if (text.includes("geocoding-api.open-meteo.com")) return jsonResponse({results: []});
+    if (text.includes("nominatim.openstreetmap.org")) {
+      return jsonResponse([{
+        osm_type: "node",
+        osm_id: 123456,
+        display_name: "Téryho chata, Vysoké Tatry, Slovensko",
+        lat: "49.1902",
+        lon: "20.1990",
+      }]);
+    }
+    throw new Error(`unexpected URL ${text}`);
+  };
+
+  const resolved = await createOpenMeteoLocationResolverV2({fetchImpl}).resolve("Téryho chata");
+  assert.equal(resolved.providerId, "nominatim:node:123456");
+  assert.equal(resolved.source, "openstreetmap-nominatim");
+  assert.equal(resolved.lat, 49.1902);
+  assert.equal(calls.length, 2);
+});
+
+test("location resolver retries a cleaned conversational fragment before giving up", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(String(url));
+    calls.push(parsed.toString());
+    if (parsed.hostname === "geocoding-api.open-meteo.com") {
+      const query = parsed.searchParams.get("name");
+      if (query === "Donovaly") {
+        return jsonResponse({results: [{id: 77, name: "Donovaly", admin1: "Žilinský kraj", country: "Slovensko", latitude: 48.8777, longitude: 19.2240}]});
+      }
+      return jsonResponse({results: []});
+    }
+    if (parsed.hostname === "nominatim.openstreetmap.org") return jsonResponse([]);
+    throw new Error(`unexpected URL ${parsed.toString()}`);
+  };
+
+  const resolved = await createOpenMeteoLocationResolverV2({fetchImpl}).resolve("na Donovaly");
+  assert.equal(resolved.providerId, "openmeteo:77");
+  assert.equal(resolved.label, "Donovaly, Žilinský kraj, Slovensko");
+  assert.equal(calls.length, 3);
+});
