@@ -59,6 +59,22 @@ jobs:
           s = s.replace(old, new, 1)
           p.write_text(s)
 
+          p = Path('functions/stylist/v2/stylist_turn_contract_v2.js')
+          s = p.read_text()
+          old = '  "display", "shoppingResult", "quickReplies", "resultingSessionRevision",\n]);'
+          new = '  "display", "shoppingResult", "quickReplies", "quickReplyPrompt", "resultingSessionRevision",\n]);'
+          assert old in s
+          s = s.replace(old, new, 1)
+          old = '''  normalized.quickReplies = (normalized.quickReplies || []).map((reply) => ({\n    actionId: reply.actionId,\n    label: String(reply.label || reply.actionId || "").trim(),\n  })).sort((a, b) => a.actionId.localeCompare(b.actionId));'''
+          new = '''  normalized.quickReplies = (normalized.quickReplies || []).map((reply) => ({\n    actionId: reply.actionId,\n    label: String(reply.label || reply.actionId || "").trim(),\n  })).sort((a, b) => a.actionId.localeCompare(b.actionId));\n  if (normalized.quickReplyPrompt != null) {\n    normalized.quickReplyPrompt = String(normalized.quickReplyPrompt).replace(/\\s+/g, " ").trim();\n  }'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          marker = '''  if (new Set(result.quickReplies.map((reply) => reply.actionId)).size !== result.quickReplies.length) {\n    throw new TypeError("quick reply action IDs must be unique");\n  }'''
+          addition = marker + '''\n  if (result.quickReplyPrompt != null && (!result.quickReplyPrompt || result.quickReplies.length === 0)) {\n    throw new TypeError("quickReplyPrompt requires at least one typed quick reply");\n  }'''
+          assert marker in s
+          s = s.replace(marker, addition, 1)
+          p.write_text(s)
+
           p = Path('functions/stylist/v2/stylist_release_gate_v2.test.js')
           s = p.read_text()
           old = 'patch: patchDefaults(),'
@@ -113,12 +129,14 @@ jobs:
         run: |
           node --check stylist/v2/stylist_turn_coordinator_v2.js
           node --check stylist/v2/stylist_grounding_policy_v2.js
+          node --check stylist/v2/stylist_turn_contract_v2.js
           node --check stylist/v2/stylist_release_gate_v2.test.js
           node --check stylist/v2/stylist_live_smoke_v2.js
           node --check stylist/v2/stylist_production_smoke_v2.js
           node --test stylist/v2/stylist_release_gate_v2.test.js
           node --test stylist/v2/stylist_help_first_contract_v2.test.js
           node --test stylist/v2/stylist_grounding_policy_v2.test.js
+          node --test stylist/v2/stylist_v2_phase0_contracts.test.js
 
       - name: Commit only reviewed source/test changes
         shell: bash
@@ -129,6 +147,7 @@ jobs:
           git add \
             functions/stylist/v2/stylist_turn_coordinator_v2.js \
             functions/stylist/v2/stylist_grounding_policy_v2.js \
+            functions/stylist/v2/stylist_turn_contract_v2.js \
             functions/stylist/v2/stylist_release_gate_v2.test.js \
             functions/stylist/v2/stylist_live_smoke_v2.js \
             functions/stylist/v2/stylist_production_smoke_v2.js
