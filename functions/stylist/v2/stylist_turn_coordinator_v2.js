@@ -211,7 +211,7 @@ function clarificationDecision(field) {
     "terrain.condition": ["Bude trasa suchá, mokrá, blatistá alebo zasnežená?", "clarify_terrain_condition"],
   };
   const [question, actionId] = definitions[field] || ["Čo ešte potrebuješ upresniť?", "clarify_context"];
-  return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
+  return {action: "clarify", assistantText: question, clarification: {field, question, actionId, acceptsYesNo: false}, display: {kind: "none", itemIds: []}};
 }
 
 function greetingDecision() {
@@ -311,6 +311,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
 
       let decision = null;
       let wardrobeItems = [];
+      let pendingLocationContinuation = false;
       const toolResults = {wardrobeItems: [], resolvedLocations: [], weather: null, authorizedEditScope: null};
 
       if (preflight.kind === "pending" && preflight.answer === "no") {
@@ -336,11 +337,16 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           decision = whyLocationClarificationDecision(pendingField);
         } else if (disposition === "skip") {
           workingState = disableOptionalWeatherGroundingV2(workingState);
+          pendingLocationContinuation = true;
         } else if (disposition === "location") {
           const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
           if (!resolution.resolved) {
-            const attemptedAnswers = rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
-            decision = unresolvedLocationClarificationDecision(pendingField, request.latestUserInput, attemptedAnswers);
+            // Exact weather is optional after the user has already answered the
+            // one useful location question. A geocoder miss is a tool failure,
+            // not a reason to trap the conversation in another questionnaire.
+            rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
+            workingState = disableOptionalWeatherGroundingV2(workingState);
+            pendingLocationContinuation = true;
           } else if (locationIsTooBroadForWeatherV2(resolution.resolved)) {
             rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
             decision = broadLocationClarificationDecision(pendingField, request.latestUserInput);
@@ -350,10 +356,28 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
             workingState.conversationMemory.pendingQuestion = null;
             workingState = applyHelpFirstDefaultsV2(workingState);
             workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
+            toolResults.resolvedLocations.push({targetField: pendingField, location: clone(resolution.resolved)});
+            toolResults.weather = clone(workingState.context.weather);
             const missing = highestPriorityMissingGroundingV2(workingState);
             if (missing) decision = clarificationDecision(missing);
+            else pendingLocationContinuation = true;
           }
         }
+      }
+
+      // The common flow after answering the one location question is a new
+      // outfit request. We already know the intent/context from the persisted
+      // session, so another planner model call adds latency but no information.
+      // Retrieve the wardrobe and go straight to the final stylist once.
+      if (!decision && pendingLocationContinuation && workingState.currentOutfit.itemIds.length === 0) {
+        wardrobeItems = await wardrobeTool.retrieve({scope: "full_relevant", itemIds: [], category: null});
+        toolResults.wardrobeItems = clone(wardrobeItems);
+        toolResults.weather = clone(workingState.context.weather);
+        const finalEnvelope = await stylistModel.turn(modelInput(request, workingState, preflight, "final", toolResults));
+        validateFinalEnvelope(finalEnvelope);
+        workingState = applySafeStatePatch(workingState, finalEnvelope.statePatch);
+        workingState = applyHelpFirstDefaultsV2(workingState);
+        decision = finalEnvelope.result;
       }
 
       if (!decision) {
