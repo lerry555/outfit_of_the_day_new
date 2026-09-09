@@ -51,7 +51,7 @@ test("final model payload sends semantic wardrobe once and strips image transpor
   });
   await port.turn(baseInput());
   assert.equal(call.model, "gpt-5.6-luna");
-  assert.equal(call.reasoningEffort, "medium");
+  assert.equal(call.reasoningEffort, "low");
   const payload = JSON.parse(call.messages[1].content);
   assert.equal(Object.hasOwn(payload, "wardrobeV2"), false);
   assert.equal(payload.toolResults.wardrobeItems.length, 1);

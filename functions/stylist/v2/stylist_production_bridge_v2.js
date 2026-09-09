@@ -6,6 +6,7 @@ const {createStylistTurnEngineV2} = require("./stylist_turn_engine_v2");
 const {createFirestoreWardrobeToolV2} = require("./firestore_wardrobe_tool_v2");
 const {createOpenMeteoLocationResolverV2, createOpenMeteoWeatherToolV2} = require("./open_meteo_ports_v2");
 const {createOpenAiStylistModelPortV2} = require("./openai_stylist_model_port_v2");
+const {createStylistFastChatV2, isFastChatEligibleV2} = require("./stylist_fast_chat_v2");
 const {createOpenAiSimpleAgentExecutorV1} = require("../simple_stylist_agent_v1");
 const {createFirestoreCatalogSearchRepository} = require("../../shopping/catalog_search_repository");
 const {createFirestoreShoppingSessionStore} = require("../../shopping/shopping_session_store");
@@ -208,7 +209,7 @@ function failClosedResponse(message = "Túto požiadavku sa mi nepodarilo bezpe�
 function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fetch, resolveOpenAISecret,
   clock = () => Date.now(), sessionRepository: repositoryOverride = null,
   locationResolver: locationOverride = null, weatherTool: weatherOverride = null,
-  modelFactory = null, wardrobeToolFactory = null, shoppingToolFactory = null} = {}) {
+  modelFactory = null, fastChatFactory = null, wardrobeToolFactory = null, shoppingToolFactory = null} = {}) {
   if (!db || typeof resolveOpenAISecret !== "function") throw new TypeError("stylist_v2_production_dependencies_required");
   const repository = repositoryOverride || createFirestoreStylistSessionRepositoryV2(db, {now: clock});
   const recordUsage = modelFactory ? null : createAiUsageRecorderV1({db, logger});
@@ -228,6 +229,7 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
     const turnId = safeId(data?.turnId || notifyJobId || data?.requestId);
     let message = clean(data?.message, 3000);
     if (!sessionId || !turnId || !message) return failClosedResponse("Tomu úplne nerozumiem 😄 Skús mi napísať, čo riešiš s outfitom.");
+    const turnStartedAt = Date.now();
 
     try {
       await migrateProvisionalSession({repository, uid, previousSessionId, sessionId});
@@ -250,16 +252,44 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
         if (shoppingTurn.passThroughMessage) message = clean(shoppingTurn.passThroughMessage, 3000) || message;
       }
 
+      const executeStructured = modelFactory ? null : createOpenAiSimpleAgentExecutorV1({
+        fetchImpl, resolveOpenAISecret, logger, feature: "stylist_v2", cacheScope: `${uid}:stylist-v2`,
+        recordUsage: (event) => recordUsage({...event, userKey: hashValue(uid), requestKey: hashValue([uid, turnId, "v2"])}),
+      });
+      const fastChat = fastChatFactory ? fastChatFactory({uid, turnId}) :
+        (executeStructured ? createStylistFastChatV2({executeStructured}) : null);
+      if (fastChat && isFastChatEligibleV2({
+        message,
+        state: existing?.state || null,
+        currentOutfitItemIds: uniqueIds(data?.currentOutfitItemIds, 12),
+        shoppingActive,
+      })) {
+        const fastStartedAt = Date.now();
+        const fastResult = await fastChat.turn({message, history: data?.history});
+        const response = {
+          ok: true, simpleAgent: true, v2: true, failClosed: false, contractVersion: 2,
+          modelPath: "stylist_v2_fast_chat", sessionId, sessionRevision: existing?.state?.revision ?? 0,
+          reply: fastResult.reply, stylistComment: fastResult.reply,
+          resultingOutfitItemIds: [], displayItemIds: [], resultingOutfitItems: [], displayItems: [],
+          outfitChanged: false, quickReplyMode: "none", quickReplyPrompt: null, action: "chat",
+        };
+        logger?.info?.("STYLIST_V2_TURN_LATENCY", {
+          path: "fast_chat",
+          totalMs: Date.now() - turnStartedAt,
+          modelPathMs: Date.now() - fastStartedAt,
+        });
+        await writeJobResult({db, admin, uid, notifyJobId, result: response});
+        await sendPushBestEffort({db, admin, uid, notifyJobId, chatId: clean(data?.chatId, 160), result: response});
+        return response;
+      }
+
       const wardrobeTool = wardrobeToolFactory ? wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
       const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});
       const weatherTool = weatherOverride || createOpenMeteoWeatherToolV2({fetchImpl, clock});
       const shoppingTool = shoppingToolFactory ? shoppingToolFactory({uid}) : createShoppingToolV2({uid, orchestrator: catalogOrchestrator});
       const stylistModel = modelFactory ? modelFactory({uid, turnId}) : createOpenAiStylistModelPortV2({
         userStylePreferences: safeMap(data?.userStylePreferences),
-        executeStructured: createOpenAiSimpleAgentExecutorV1({
-          fetchImpl, resolveOpenAISecret, logger, feature: "stylist_v2", cacheScope: `${uid}:stylist-v2`,
-          recordUsage: (event) => recordUsage({...event, userKey: hashValue(uid), requestKey: hashValue([uid, turnId, "v2"])}),
-        }),
+        executeStructured,
       });
       const engine = createStylistTurnEngineV2({
         sessionRepository: repository, wardrobeTool, locationResolver, weatherTool, shoppingTool, stylistModel, clock,
@@ -277,6 +307,7 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
         freshClientObservations: observation ? {currentLocationObservation: observation} : {},
         clientCapabilities: clientCapabilities(data),
       };
+      const engineStartedAt = Date.now();
       const result = await engine.resolveTurn({
         uid,
         request,
@@ -286,12 +317,21 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
           knownExplicitDurableChoices: {},
         },
       });
+      const engineMs = Date.now() - engineStartedAt;
+      const materializeStartedAt = Date.now();
       const response = await legacyCompatibleResponse({result, sessionId, wardrobeTool});
+      logger?.info?.("STYLIST_V2_TURN_LATENCY", {
+        path: "agent",
+        totalMs: Date.now() - turnStartedAt,
+        engineMs,
+        materializeMs: Date.now() - materializeStartedAt,
+        action: result.action,
+      });
       await writeJobResult({db, admin, uid, notifyJobId, result: response});
       await sendPushBestEffort({db, admin, uid, notifyJobId, chatId: clean(data?.chatId, 160), result: response});
       return response;
     } catch (error) {
-      logger?.warn?.("STYLIST_V2_FAIL_CLOSED", {code: clean(error?.code || error?.message, 120)});
+      logger?.warn?.("STYLIST_V2_FAIL_CLOSED", {code: clean(error?.code || error?.message, 120), totalMs: Date.now() - turnStartedAt});
       const response = failClosedResponse();
       await writeJobResult({db, admin, uid, notifyJobId, result: response});
       return response;

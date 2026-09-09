@@ -250,11 +250,11 @@ test("golden: only country granularity is too broad for ordinary weather groundi
   assert.equal(locationIsTooBroadForWeatherV2(teryho), false);
 });
 
-test("golden: model routing uses Luna medium for ordinary styling and keeps a cheap planner", () => {
+test("golden: model routing uses Luna low for ordinary styling and keeps a cheap planner", () => {
   assert.equal(PLAN_MODEL, "gpt-5.6-luna");
   assert.equal(PLAN_REASONING, "low");
   assert.equal(FINAL_MODEL, "gpt-5.6-luna");
-  assert.equal(FINAL_REASONING, "medium");
+  assert.equal(FINAL_REASONING, "low");
   assert.equal(FINAL_ESCALATED_MODEL, "gpt-5.6-terra");
   assert.equal(FINAL_REASONING_ESCALATED, "medium");
 });
@@ -267,8 +267,8 @@ test("golden: safety-sensitive terrain escalates the final model to Terra medium
   assert.equal(finalReasoningForInputV2(input), "medium");
 
   session.context.terrain = {surface: null, difficulty: null, condition: null};
-  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "medium"});
-  assert.equal(finalReasoningForInputV2(input), "medium");
+  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "low"});
+  assert.equal(finalReasoningForInputV2(input), "low");
 });
 
 test("golden: current outfit is preloaded only for turns that actually discuss or edit it", () => {
