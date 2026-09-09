@@ -46,6 +46,20 @@ jobs:
       - name: Apply patch
         run: python tool/patch_v2_card_cta_latency_temp.py
 
+      - name: Fix Unicode shopping-question stripping
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('functions/stylist/v2/openai_stylist_model_port_v2.js')
+          s = p.read_text(encoding='utf-8')
+          old = r'.replace(/\s*(?:chceš|chces|mám ti|mam ti)\b[^?]{0,320}\?\s*$/iu, "")'
+          new = r'.replace(/\s*(?:chceš|chces|mám ti|mam ti)(?=\s|,|:)[^?]{0,320}\?\s*$/iu, "")'
+          if old not in s:
+              raise SystemExit('shopping-question strip pattern not found')
+          p.write_text(s.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Validate backend patch
         shell: bash
         run: |
