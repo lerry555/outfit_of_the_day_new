@@ -157,59 +157,6 @@ class StylistSimpleAgentServiceV1 {
     };
   }
 
-  void _resetV2Binding() {
-    _provisionalV2SessionId = _newProvisionalSessionId();
-    _boundRealChatId = null;
-    _lastV2SessionId = null;
-  }
-
-  String _stableV2SessionIdForTurn(String realChatId) {
-    // A newly opened blank chat is signalled by the UI dropping the previously
-    // bound real chat id. Start a fresh private V2 session in that case.
-    if (realChatId.isEmpty) {
-      if (_boundRealChatId != null) _resetV2Binding();
-      return _lastV2SessionId ?? _provisionalV2SessionId;
-    }
-
-    // Switching from one already-persisted chat to another must not leak the
-    // private session across threads. Existing threads use their durable chat id.
-    if (_boundRealChatId != null && _boundRealChatId != realChatId) {
-      _lastV2SessionId = realChatId;
-      _boundRealChatId = realChatId;
-      return realChatId;
-    }
-
-    // If this is the first server turn and the chat already has a durable id,
-    // use that id so a reopened conversation can recover its server state.
-    if (_lastV2SessionId == null) {
-      _lastV2SessionId = realChatId;
-      _boundRealChatId = realChatId;
-      return realChatId;
-    }
-
-    // Critical new-chat race guard: Firestore can assign the real UI chat id
-    // while the first callable is still in flight. Keep the V2 session id that
-    // actually handled the first turn instead of silently switching ids between
-    // consecutive messages and losing pending clarification state.
-    _boundRealChatId = realChatId;
-    return _lastV2SessionId!;
-  }
-
-  @visibleForTesting
-  String debugStableV2SessionIdForTurn(String? chatId) =>
-      _stableV2SessionIdForTurn(chatId?.trim() ?? '');
-
-  @visibleForTesting
-  void debugMarkV2TurnAccepted(String sessionId, {String? chatId}) {
-    final stableSessionId = sessionId.trim();
-    if (stableSessionId.isEmpty) {
-      throw ArgumentError.value(sessionId, 'sessionId');
-    }
-    _lastV2SessionId = stableSessionId;
-    final realChatId = chatId?.trim() ?? '';
-    if (realChatId.isNotEmpty) _boundRealChatId = realChatId;
-  }
-
   void _refreshStylePreferencesInBackground() {
     final loadedAt = _stylePreferencesLoadedAt;
     if (_stylePreferencesLoad != null) return;
@@ -225,8 +172,8 @@ class StylistSimpleAgentServiceV1 {
           .timeout(const Duration(seconds: 3));
       _cachedStylePreferencesPayload = StylePreferencesRuntime.stylistPayload(prefs);
     } catch (_) {
-      // Style preferences are optional personalization. Never hold the chat
-      // response hostage to Firestore/App Check/network retries.
+      // Optional personalization must never hold the chat response hostage to
+      // Firestore/App Check/network retries.
     } finally {
       _stylePreferencesLoadedAt = DateTime.now();
     }
@@ -259,7 +206,17 @@ class StylistSimpleAgentServiceV1 {
     try {
       final callable = FirebaseFunctions.instanceFor(region: 'us-east1').httpsCallable('stylistChatV2');
       final realChatId = chatId?.trim() ?? '';
-      final targetSessionId = _stableV2SessionIdForTurn(realChatId);
+      if (realChatId.isEmpty && _boundRealChatId != null) {
+        _provisionalV2SessionId = _newProvisionalSessionId();
+        _boundRealChatId = null;
+        _lastV2SessionId = null;
+      }
+      final targetSessionId = realChatId.isNotEmpty ? realChatId : _provisionalV2SessionId;
+      final previousSessionId = realChatId.isNotEmpty &&
+              _lastV2SessionId == _provisionalV2SessionId &&
+              _lastV2SessionId != targetSessionId
+          ? _lastV2SessionId
+          : null;
       final stableTurnId = notifyJobId != null && notifyJobId.trim().isNotEmpty
           ? notifyJobId.trim()
           : 'turn_${DateTime.now().microsecondsSinceEpoch}_${_turnCounter++}';
@@ -275,6 +232,8 @@ class StylistSimpleAgentServiceV1 {
         'shoppingEnabled': shoppingEnabled,
         'v2SessionId': targetSessionId,
         'turnId': stableTurnId,
+        if (previousSessionId != null) 'previousV2SessionId': previousSessionId,
+        if (notifyJobId != null && notifyJobId.trim().isNotEmpty) 'notifyJobId': notifyJobId.trim(),
         if (realChatId.isNotEmpty) 'chatId': realChatId,
       };
 
