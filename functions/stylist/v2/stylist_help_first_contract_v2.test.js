@@ -3,7 +3,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {clone, createEmptySessionStateV2, validateStylistSessionStateV2} = require("./stylist_session_state_v2");
-const {createStylistTurnCoordinatorV2} = require("./stylist_turn_coordinator_v2");
+const {createStylistTurnCoordinatorV2, deterministicRemoteOutfitClarificationV2} = require("./stylist_turn_coordinator_v2");
 const {
   CallLedgerV2,
   FakeLocationResolverV2,
@@ -18,6 +18,8 @@ const {
   PLAN_REASONING,
   FINAL_MODEL,
   FINAL_REASONING,
+  FINAL_REASONING_ESCALATED,
+  finalReasoningForInputV2,
   shouldPreloadCurrentOutfitV2,
 } = require("./openai_stylist_model_port_v2");
 const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
@@ -122,6 +124,36 @@ test("golden: friendly greeting is local and touches no expensive tools", async 
   assert.equal(h.ledger.calls("weather").length, 0);
 });
 
+test("golden: obvious tomorrow hiking request asks destination without a model call", async () => {
+  const h = harness();
+  const result = await h.coordinator.resolveTurn(
+    request("fast-hike", "fh-1", 0, "zajtra idem na túru potrebujem outfit"),
+  );
+  assert.equal(result.action, "clarify");
+  assert.equal(result.clarification.field, "destination");
+  assert.equal(result.assistantText, "Kam približne ideš?");
+  assert.equal(h.ledger.calls("model").length, 0);
+  assert.equal(h.ledger.calls("location").length, 0);
+  assert.equal(h.ledger.calls("weather").length, 0);
+  assert.equal(h.ledger.calls("wardrobe").length, 0);
+
+  const saved = await h.sessionRepository.read("fast-hike");
+  assert.equal(saved.context.activity.id, "hiking");
+  assert.equal(saved.context.date.dateKey, "2026-09-10");
+  assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(saved.context.groundingRequirements.weatherLocationField, "destination");
+  assert.equal(saved.conversationMemory.pendingQuestion.field, "destination");
+});
+
+test("golden: fast clarification does not steal a request that already includes a destination", () => {
+  const state = createEmptySessionStateV2("fast-with-place");
+  const result = deterministicRemoteOutfitClarificationV2(
+    request("fast-with-place", "fh-2", 0, "zajtra idem na túru do Tatier potrebujem outfit"),
+    state,
+  );
+  assert.equal(result, null);
+});
+
 test("golden: meta reply to a pending location is explained, never geocoded", async () => {
   const state = pendingDestinationState("why-location");
   const h = harness({initialStates: [state]});
@@ -216,11 +248,22 @@ test("golden: only country granularity is too broad for ordinary weather groundi
   assert.equal(locationIsTooBroadForWeatherV2(teryho), false);
 });
 
-test("golden: model routing uses cheap planner and stronger final stylist, not Sol twice", () => {
+test("golden: model routing uses cheap planner and low-reasoning Terra for ordinary final styling", () => {
   assert.equal(PLAN_MODEL, "gpt-5.6-luna");
   assert.equal(PLAN_REASONING, "low");
   assert.equal(FINAL_MODEL, "gpt-5.6-terra");
-  assert.equal(FINAL_REASONING, "medium");
+  assert.equal(FINAL_REASONING, "low");
+  assert.equal(FINAL_REASONING_ESCALATED, "medium");
+});
+
+test("golden: safety-sensitive terrain escalates final reasoning to medium", () => {
+  const session = clone(createEmptySessionStateV2("reasoning"));
+  session.context.terrain = {surface: "rock", difficulty: "technical", condition: "wet"};
+  const input = {request: {latestUserInput: "vyber mi outfit"}, session};
+  assert.equal(finalReasoningForInputV2(input), "medium");
+
+  session.context.terrain = {surface: null, difficulty: null, condition: null};
+  assert.equal(finalReasoningForInputV2(input), "low");
 });
 
 test("golden: current outfit is preloaded only for turns that actually discuss or edit it", () => {

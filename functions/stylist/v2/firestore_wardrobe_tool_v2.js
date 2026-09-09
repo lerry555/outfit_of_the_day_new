@@ -57,13 +57,33 @@ function projectWardrobeItemV2(id, raw = {}) {
     productImageUrl: text(item.productImageUrl, 2000),
     cutoutImageUrl: text(item.cutoutImageUrl, 2000),
     cleanImageUrl: text(item.cleanImageUrl, 2000),
-    imageUrl: text(item.productImageUrl || item.cutoutImageUrl || item.cleanImageUrl || item.imageUrl, 2000),
+    // Preserve both the current UI URL and the original source so materialized
+    // chat cards can recover when a derivative object/token is broken.
+    imageUrl: text(item.imageUrl || item.originalImageUrl, 2000),
+    originalImageUrl: text(item.originalImageUrl, 2000),
     safety: {
       // Conservative authority: ordinary/winter boots are NOT promoted to
       // technical hiking footwear merely because the activity is a hike.
       // This does not claim waterproofing, grip, or ice safety.
       hikingTechnical: isFootwear && HIKING_TECHNICAL_TYPES.has(canonicalType),
     },
+  };
+}
+
+function materializeStylistCardItemV2(item, reason = "") {
+  // Chat cards currently do not retry after a network-image HTTP failure. The
+  // original upload is the safest display fallback because it is independent
+  // of later clean/cutout processing. Use imageUrl only when no original exists.
+  const stableCardUrl = text(item?.originalImageUrl || item?.imageUrl, 2000);
+  return {
+    ...item,
+    ...(stableCardUrl ? {
+      cutoutImageUrl: stableCardUrl,
+      cleanImageUrl: stableCardUrl,
+      imageUrl: stableCardUrl,
+    } : {}),
+    ...(typeof reason === "string" && reason.trim() ?
+      {stylistSelectionReason: reason.trim()} : {}),
   };
 }
 
@@ -204,11 +224,8 @@ function createFirestoreWardrobeToolV2({db, uid}) {
     },
 
     async materialize(ids, reasonsById = {}) {
-      return (await loadExact(ids)).map((item) => ({
-        ...item,
-        ...(typeof reasonsById[item.id] === "string" && reasonsById[item.id].trim() ?
-          {stylistSelectionReason: reasonsById[item.id].trim()} : {}),
-      }));
+      return (await loadExact(ids)).map((item) =>
+        materializeStylistCardItemV2(item, reasonsById[item.id]));
     },
   });
 }
@@ -219,6 +236,7 @@ module.exports = {
   clearWardrobeCacheV2,
   createFirestoreWardrobeToolV2,
   loadRevisionAwareWardrobeV2,
+  materializeStylistCardItemV2,
   projectWardrobeItemV2,
   readCachedWardrobeSubsetIfFreshV2,
   readWardrobeRevisionTokenV2,

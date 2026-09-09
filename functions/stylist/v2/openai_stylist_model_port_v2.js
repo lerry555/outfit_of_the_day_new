@@ -3,7 +3,8 @@
 const PLAN_MODEL = "gpt-5.6-luna";
 const PLAN_REASONING = "low";
 const FINAL_MODEL = "gpt-5.6-terra";
-const FINAL_REASONING = "medium";
+const FINAL_REASONING = "low";
+const FINAL_REASONING_ESCALATED = "medium";
 // Backward-compatible exports for diagnostics that previously expected one model.
 const MODEL = FINAL_MODEL;
 const REASONING = FINAL_REASONING;
@@ -134,6 +135,27 @@ function normalizeIntentTextV2(value) {
     .trim();
 }
 
+function finalReasoningForInputV2(input) {
+  const terrain = input?.session?.context?.terrain || {};
+  const condition = clean(terrain.condition, 40).toLowerCase();
+  const difficulty = clean(terrain.difficulty, 40).toLowerCase();
+  const surface = clean(terrain.surface, 40).toLowerCase();
+  const latest = normalizeIntentTextV2(input?.request?.latestUserInput);
+  const safetySensitive = ["wet", "muddy", "snow", "ice"].includes(condition) ||
+    ["steep", "technical"].includes(difficulty) || surface === "rock";
+  const formalSensitive = /\b(svadba|wedding|pohovor|interview|ples|pohreb|funeral|ceremonia)\b/.test(latest);
+  return safetySensitive || formalSensitive ? FINAL_REASONING_ESCALATED : FINAL_REASONING;
+}
+
+function stripTrailingShoppingQuestionV2(value) {
+  const original = clean(value);
+  if (!original) return original;
+  const stripped = original
+    .replace(/\s*(?:chceš|chces|mám ti|mam ti)\b[^?]{0,320}\?\s*$/iu, "")
+    .trim();
+  return stripped || original;
+}
+
 function shouldPreloadCurrentOutfitV2(input) {
   const currentIds = input?.session?.currentOutfit?.itemIds || [];
   if (!currentIds.length) return false;
@@ -185,10 +207,12 @@ function finalPrompt() {
     "Ak ide o bežnú turistiku a NIE JE známy mokrý, blatistý, zasnežený, ľadový, skalnatý, strmý alebo technický terén, absencia turistických topánok nesmie zablokovať outfit. Vyber najpraktickejšie vhodné tenisky, ktoré používateľ vlastní, otvorene ich označ ako kompromis a ponúkni doplnenie turistickej obuvi.",
     "Neznámy terén nie je dôkaz nebezpečného terénu. Zároveň nikdy netvrď, že tenisky sú bezpečné na explicitne mokrý/strmý/technický/snehový/ľadový terén.",
     "Zimnú obuv nevyberaj len preto, že ide o les alebo túru. Potrebuje mráz, sneh/ľad alebo iný skutočný dôvod. V teple je praktická teniska lepší fallback než zimná topánka.",
-    "Ak vhodný ideálny kus chýba, vyber najlepší prijateľný kus zo šatníka, vysvetli limit a offerShopping=true, ak by doplnenie šatníka bolo užitočné.",
+    "Ak vhodný ideálny kus chýba, vyber najlepší prijateľný kus zo šatníka, vysvetli limit a offerShopping=true, ak by doplnenie šatníka bolo užitočné. Pri offerShopping vždy vyplň shoppingNeedLabel a shoppingNeedCanonicalType, ak ho poznáš.",
+    "Text píš ako 2 až 4 krátke, úplné a gramaticky prirodzené vety s normálnou interpunkciou. Nepíš surový inline zoznam oddelený pomlčkami; karty pod správou už zobrazia jednotlivé kúsky.",
+    "Najprv jednou vetou zhrň podmienky, potom jednou až dvoma vetami vysvetli kombináciu a prípadný kompromis. Neopakuj názov každého kúsku, ak to nepridáva užitočné vysvetlenie.",
+    "Ak ponúkneš nákup, assistantText NESMIE obsahovať otázku Áno/Nie ani vetu 'Chceš, aby som...'. UI zobrazí samostatnú nákupnú otázku až POD kartami outfitu. Nastav iba offerShopping=true a shoppingNeedLabel.",
     "Ak sa predchádzajúce odporúčanie ukáže ako zlé, pokojne to priznaj a oprav. Nevymýšľaj historický dôvod, ktorý nebol uložený.",
     "Text, resultingOutfitItemIds a displayItemIds musia opisovať ten istý výsledok.",
-    "Ak ponúkneš nákup, assistantText má prirodzene skončiť jednou áno/nie otázkou a offerShopping=true.",
   ].join("\n");
 }
 
@@ -302,8 +326,12 @@ function finalEnvelope(raw, input) {
   }
 
   const statePatch = {};
-  if (raw.offerShopping === true && clean(raw.shoppingNeedLabel, 180)) {
-    const needLabel = clean(raw.shoppingNeedLabel, 180);
+  const canonicalNeed = clean(raw.shoppingNeedCanonicalType, 100);
+  const needLabel = clean(raw.shoppingNeedLabel, 180) || canonicalNeed.replace(/_/g, " ");
+  if (raw.offerShopping === true) {
+    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
+  }
+  if (raw.offerShopping === true && needLabel) {
     const actionId = `shop_${String(input.request.turnId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120)}`;
     statePatch.pendingAction = {type: "action", kind: "shopping", actionId};
     result.quickReplies = [
@@ -314,7 +342,7 @@ function finalEnvelope(raw, input) {
     statePatch.shopping = {
       missingNeed: {
         label: needLabel,
-        canonicalType: clean(raw.shoppingNeedCanonicalType, 100) || null,
+        canonicalType: canonicalNeed || null,
       },
       hardConstraints: list(raw.shoppingHardConstraints, 12),
       softPreferences: list(raw.shoppingSoftPreferences, 12),
@@ -365,17 +393,31 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
         toolResults: input.toolResults,
         userStylePreferences,
       };
-      const raw = await executeStructured({
-        model: phase === "plan" ? PLAN_MODEL : FINAL_MODEL,
-        reasoningEffort: phase === "plan" ? PLAN_REASONING : FINAL_REASONING,
-        schema: phase === "plan" ? PLAN_SCHEMA : FINAL_SCHEMA,
-        schemaName: phase === "plan" ? "stylist_v2_plan" : "stylist_v2_final",
-        maxOutputTokens: phase === "plan" ? 1800 : 3000,
-        messages: [
-          {role: "system", content: phase === "plan" ? plannerPrompt() : finalPrompt()},
-          {role: "user", content: JSON.stringify(payload)},
-        ],
-      }, {modelAttempt: 1});
+      const reasoningEffort = phase === "plan" ? PLAN_REASONING : finalReasoningForInputV2(input);
+      const model = phase === "plan" ? PLAN_MODEL : FINAL_MODEL;
+      const startedAt = Date.now();
+      let raw;
+      try {
+        raw = await executeStructured({
+          model,
+          reasoningEffort,
+          schema: phase === "plan" ? PLAN_SCHEMA : FINAL_SCHEMA,
+          schemaName: phase === "plan" ? "stylist_v2_plan" : "stylist_v2_final",
+          maxOutputTokens: phase === "plan" ? 1200 : 1800,
+          messages: [
+            {role: "system", content: phase === "plan" ? plannerPrompt() : finalPrompt()},
+            {role: "user", content: JSON.stringify(payload)},
+          ],
+        }, {modelAttempt: 1});
+      } finally {
+        console.info("STYLIST_V2_MODEL_LATENCY", {
+          phase,
+          model,
+          reasoningEffort,
+          durationMs: Date.now() - startedAt,
+          wardrobeItemCount: wardrobeV2.length,
+        });
+      }
       return phase === "plan" ? planEnvelope(enforceHighConfidenceGrounding(raw, input), input) : finalEnvelope(raw, input);
     },
   });
@@ -384,6 +426,7 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
 module.exports = {
   FINAL_MODEL,
   FINAL_REASONING,
+  FINAL_REASONING_ESCALATED,
   FINAL_SCHEMA,
   MODEL,
   PLAN_MODEL,
@@ -393,6 +436,8 @@ module.exports = {
   createOpenAiStylistModelPortV2,
   enforceHighConfidenceGrounding,
   finalEnvelope,
+  finalReasoningForInputV2,
   planEnvelope,
   shouldPreloadCurrentOutfitV2,
+  stripTrailingShoppingQuestionV2,
 };

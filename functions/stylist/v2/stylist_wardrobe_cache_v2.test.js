@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const {
   clearWardrobeCacheV2,
   loadRevisionAwareWardrobeV2,
+  materializeStylistCardItemV2,
   readCachedWardrobeSubsetIfFreshV2,
   readWardrobeRevisionTokenV2,
 } = require("./firestore_wardrobe_tool_v2");
@@ -145,4 +146,20 @@ test("revision token changes for add/remove and ordinary updatedAt edits", async
 test("revision probe fails closed to no-cache when Firestore capabilities are missing", async () => {
   assert.equal(await readWardrobeRevisionTokenV2({}), null);
   assert.equal(await readWardrobeRevisionTokenV2({count() { return {}; }}), null);
+});
+
+test("stylist card materialization prefers original image over a broken derivative", () => {
+  const item = {
+    id: "pants",
+    cutoutImageUrl: "https://storage.example/cutout-broken.png",
+    cleanImageUrl: "https://storage.example/clean-broken.png",
+    imageUrl: "https://storage.example/derived-broken.png",
+    originalImageUrl: "https://storage.example/original-good.jpg",
+  };
+
+  const card = materializeStylistCardItemV2(item, "praktický spodný diel");
+  assert.equal(card.cutoutImageUrl, item.originalImageUrl);
+  assert.equal(card.cleanImageUrl, item.originalImageUrl);
+  assert.equal(card.imageUrl, item.originalImageUrl);
+  assert.equal(card.stylistSelectionReason, "praktický spodný diel");
 });
