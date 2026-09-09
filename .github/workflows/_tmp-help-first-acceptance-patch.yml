@@ -24,91 +24,17 @@ jobs:
         shell: bash
         run: |
           python3 - <<'PY'
+          import base64
           from pathlib import Path
 
           path = Path('functions/stylist/v2/stylist_v2_phase0_acceptance.test.js')
           text = path.read_text(encoding='utf-8')
           start_marker = 'test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {'
           end_marker = '\n\ntest("explicit destination candidate is resolved in the first hiking turn without a repeat question"'
+          replacement_b64 = 'dGVzdCgicmVtb3RlIGNvbmNlcnQgYW5kIHdlZGRpbmcgdXNlIHRoZWlyIHByb3ZpZGVyLXJlc29sdmVkIGV2ZW50IGxvY2F0aW9uIGFzIGdlbmVyaWMgd2VhdGhlciBhdXRob3JpdHkiLCBhc3luYyAoKSA9PiB7CiAgY29uc3QgY29uY2VydCA9IGhhcm5lc3Moe21vZGVsUmVzdWx0czogWwogICAgdG9vbEVudmVsb3BlKFsKICAgICAge3Rvb2w6ICJsb2NhdGlvbiIsIHF1ZXJ5OiAiQnJhdGlzbGF2YSIsIHRhcmdldEZpZWxkOiAiZXZlbnRMb2NhdGlvbiJ9LAogICAgICB7dG9vbDogIndhcmRyb2JlIiwgc2NvcGU6ICJmdWxsX3JlbGV2YW50In0sCiAgICBdLCB7CiAgICAgIGNvbnRleHQ6IHsKICAgICAgICBhY3Rpdml0eToge2lkOiAiY29uY2VydCJ9LAogICAgICAgIGRhdGU6IHtkYXRlS2V5OiAiMjAyNi0wOS0wOSIsIHNvdXJjZTogInVzZXIifSwKICAgICAgICBncm91bmRpbmdSZXF1aXJlbWVudHM6IHsKICAgICAgICAgIHdlYXRoZXJSZXF1aXJlZDogdHJ1ZSwKICAgICAgICAgIHdlYXRoZXJMb2NhdGlvbkZpZWxkOiAiZXZlbnRMb2NhdGlvbiIsCiAgICAgICAgICB0ZXJyYWluUmVxdWlyZWRGaWVsZHM6IFtdLAogICAgICAgIH0sCiAgICAgIH0sCiAgICB9KSwKICAgIGZpbmFsRW52ZWxvcGUoZnVsbE91dGZpdFJlc3VsdCgpKSwKICBdfSk7CiAgY29uc3QgY29uY2VydFJlc3VsdCA9IGF3YWl0IGNvbmNlcnQuY29vcmRpbmF0b3IucmVzb2x2ZVR1cm4ocmVxdWVzdCgiY29uY2VydCIsICJjb25jZXJ0LTEiLCAwLAogICAgIlphanRyYSBpZGVtIG5hIGtvbmNlcnQgZG8gQnJhdGlzbGF2eS4iLCB7CiAgICAgIGZyZXNoQ2xpZW50T2JzZXJ2YXRpb25zOiB7Y3VycmVudExvY2F0aW9uT2JzZXJ2YXRpb246IG1hcnRpbn0sCiAgICB9KSk7CiAgYXNzZXJ0LmVxdWFsKGNvbmNlcnRSZXN1bHQuYWN0aW9uLCAiZ2VuZXJhdGVfb3V0Zml0Iik7CiAgYXNzZXJ0LmRvZXNOb3RNYXRjaChjb25jZXJ0UmVzdWx0LmFzc2lzdGFudFRleHQsIC9rdG9yZWogxI1hc3RpIGTFiGF8a2FtIHByZXNuZXx0ZXLDqW4vaSk7CiAgbGV0IHNhdmVkID0gYXdhaXQgY29uY2VydC5zZXNzaW9uUmVwb3NpdG9yeS5yZWFkKCJjb25jZXJ0Iik7CiAgYXNzZXJ0LmVxdWFsKHNhdmVkLmNvbnRleHQuZXZlbnRMb2NhdGlvbi5wcm92aWRlcklkLCBicmF0aXNsYXZhLnByb3ZpZGVySWQpOwogIGFzc2VydC5lcXVhbChzYXZlZC5jb250ZXh0LmN1cnJlbnRMb2NhdGlvbk9ic2VydmF0aW9uLnByb3ZpZGVySWQsICJwbGFjZTptYXJ0aW4iKTsKICBhc3NlcnQuZXF1YWwoc2F2ZWQuY29udGV4dC50aW1lV2luZG93LmtleSwgImRheSIpOwogIGFzc2VydC5lcXVhbChjb25jZXJ0LmxlZGdlci5jYWxscygid2VhdGhlciIsICJnZXRGb3JlY2FzdCIpWzBdLmFyZ3MubG9jYXRpb24ucHJvdmlkZXJJZCwKICAgIGJyYXRpc2xhdmEucHJvdmlkZXJJZCk7CiAgYXNzZXJ0LmVxdWFsKGNvbmNlcnQubGVkZ2VyLmNhbGxzKCJ3YXJkcm9iZSIsICJyZXRyaWV2ZSIpLmxlbmd0aCwgMSk7CiAgYXNzZXJ0Lm9rKGNvbmNlcnQubGVkZ2VyLmVudHJpZXMuZmluZEluZGV4KChpdGVtKSA9PiBpdGVtLnBvcnQgPT09ICJ3YXJkcm9iZSIpIDwgbW9kZWxDYWxsSW5kZXgoY29uY2VydC5sZWRnZXIsICJmaW5hbCIpKTsKCiAgY29uc3Qgd2VkZGluZyA9IGhhcm5lc3Moe21vZGVsUmVzdWx0czogWwogICAgdG9vbEVudmVsb3BlKFsKICAgICAge3Rvb2w6ICJsb2NhdGlvbiIsIHF1ZXJ5OiAixb1pbGluYSIsIHRhcmdldEZpZWxkOiAiZXZlbnRMb2NhdGlvbiJ9LAogICAgICB7dG9vbDogIndhcmRyb2JlIiwgc2NvcGU6ICJmdWxsX3JlbGV2YW50In0sCiAgICBdLCB7CiAgICAgIGNvbnRleHQ6IHsKICAgICAgICBhY3Rpdml0eToge2lkOiAid2VkZGluZyJ9LAogICAgICAgIGdyb3VuZGluZ1JlcXVpcmVtZW50czogewogICAgICAgICAgd2VhdGhlclJlcXVpcmVkOiB0cnVlLAogICAgICAgICAgd2VhdGhlckxvY2F0aW9uRmllbGQ6ICJldmVudExvY2F0aW9uIiwKICAgICAgICAgIHRlcnJhaW5SZXF1aXJlZEZpZWxkczogW10sCiAgICAgICAgfSwKICAgICAgfSwKICAgIH0pLAogICAgdG9vbEVudmVsb3BlKAogICAgICBbe3Rvb2w6ICJ3YXJkcm9iZSIsIHNjb3BlOiAiZnVsbF9yZWxldmFudCJ9XSwKICAgICAge2NvbnRleHQ6IHsKICAgICAgICBkYXRlOiB7ZGF0ZUtleTogIjIwMjYtMDktMDkiLCBzb3VyY2U6ICJ1c2VyIn0sCiAgICAgICAgdGltZVdpbmRvdzoge2tleTogImFmdGVybm9vbiIsIGxhYmVsOiAicG9wb2x1ZG7DrSJ9LAogICAgICB9fSwKICAgICksCiAgICBmaW5hbEVudmVsb3BlKGZ1bGxPdXRmaXRSZXN1bHQoKSksCiAgXX0pOwogIGNvbnN0IHdlZGRpbmdGaXJzdCA9IGF3YWl0IHdlZGRpbmcuY29vcmRpbmF0b3IucmVzb2x2ZVR1cm4ocmVxdWVzdCgid2VkZGluZyIsICJ3ZWRkaW5nLTEiLCAwLAogICAgIklkZW0gbmEgc3ZhZGJ1IGRvIMW9aWxpbnkuIiwgewogICAgICBmcmVzaENsaWVudE9ic2VydmF0aW9uczoge2N1cnJlbnRMb2NhdGlvbk9ic2VydmF0aW9uOiBtYXJ0aW59LAogICAgfSkpOwogIGFzc2VydC5lcXVhbCh3ZWRkaW5nRmlyc3QuYWN0aW9uLCAiY2xhcmlmeSIpOwogIGFzc2VydC5lcXVhbCh3ZWRkaW5nRmlyc3QuY2xhcmlmaWNhdGlvbi5maWVsZCwgImRhdGUiKTsKICBhc3NlcnQuZXF1YWwod2VkZGluZy5sZWRnZXIuY2FsbHMoIndlYXRoZXIiKS5sZW5ndGgsIDApOwogIGFzc2VydC5lcXVhbCh3ZWRkaW5nLmxlZGdlci5jYWxscygid2FyZHJvYmUiKS5sZW5ndGgsIDApOwoKICBjb25zdCB3ZWRkaW5nUmVzdWx0ID0gYXdhaXQgd2VkZGluZy5jb29yZGluYXRvci5yZXNvbHZlVHVybihyZXF1ZXN0KAogICAgIndlZGRpbmciLCAid2VkZGluZy0yIiwgMSwgIlphanRyYSBwb3BvbHVkbsOtLiIsCiAgKSk7CiAgYXNzZXJ0LmVxdWFsKHdlZGRpbmdSZXN1bHQuYWN0aW9uLCAiZ2VuZXJhdGVfb3V0Zml0Iik7CiAgYXNzZXJ0LmRvZXNOb3RNYXRjaCh3ZWRkaW5nUmVzdWx0LmFzc2lzdGFudFRleHQsIC9rYW0gcHJlc25lfHRlcsOpbi9pKTsKICBzYXZlZCA9IGF3YWl0IHdlZGRpbmcuc2Vzc2lvblJlcG9zaXRvcnkucmVhZCgid2VkZGluZyIpOwogIGFzc2VydC5lcXVhbChzYXZlZC5jb250ZXh0LmV2ZW50TG9jYXRpb24ucHJvdmlkZXJJZCwgemlsaW5hLnByb3ZpZGVySWQpOwogIGFzc2VydC5lcXVhbChzYXZlZC5jb250ZXh0LmN1cnJlbnRMb2NhdGlvbk9ic2VydmF0aW9uLnByb3ZpZGVySWQsICJwbGFjZTptYXJ0aW4iKTsKICBhc3NlcnQuZXF1YWwod2VkZGluZy5sZWRnZXIuY2FsbHMoIndlYXRoZXIiLCAiZ2V0Rm9yZWNhc3QiKVswXS5hcmdzLmxvY2F0aW9uLnByb3ZpZGVySWQsCiAgICB6aWxpbmEucHJvdmlkZXJJZCk7CiAgYXNzZXJ0Lm9rKHdlZGRpbmcubGVkZ2VyLmVudHJpZXMuZmluZEluZGV4KChpdGVtKSA9PiBpdGVtLnBvcnQgPT09ICJ3YXJkcm9iZSIpIDwgbW9kZWxDYWxsSW5kZXgod2VkZGluZy5sZWRnZXIsICJmaW5hbCIpKTsKfSk7'
+          replacement = base64.b64decode(replacement_b64).decode('utf-8')
           start = text.index(start_marker)
           end = text.index(end_marker, start)
-          replacement = r'''test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {
-  const concert = harness({modelResults: [
-    toolEnvelope([
-      {tool: "location", query: "Bratislava", targetField: "eventLocation"},
-      {tool: "wardrobe", scope: "full_relevant"},
-    ], {
-      context: {
-        activity: {id: "concert"},
-        date: {dateKey: "2026-09-09", source: "user"},
-        groundingRequirements: {
-          weatherRequired: true,
-          weatherLocationField: "eventLocation",
-          terrainRequiredFields: [],
-        },
-      },
-    }),
-    finalEnvelope(fullOutfitResult()),
-  ]});
-  const concertResult = await concert.coordinator.resolveTurn(request("concert", "concert-1", 0,
-    "Zajtra idem na koncert do Bratislavy.", {
-      freshClientObservations: {currentLocationObservation: martin},
-    }));
-  assert.equal(concertResult.action, "generate_outfit");
-  assert.doesNotMatch(concertResult.assistantText, /ktorej časti dňa|kam presne|terén/i);
-  let saved = await concert.sessionRepository.read("concert");
-  assert.equal(saved.context.eventLocation.providerId, bratislava.providerId);
-  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-  assert.equal(saved.context.timeWindow.key, "day");
-  assert.equal(concert.ledger.calls("weather", "getForecast")[0].args.location.providerId,
-    bratislava.providerId);
-  assert.equal(concert.ledger.calls("wardrobe", "retrieve").length, 1);
-  assert.ok(concert.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(concert.ledger, "final"));
-
-  const wedding = harness({modelResults: [
-    toolEnvelope([
-      {tool: "location", query: "Žilina", targetField: "eventLocation"},
-      {tool: "wardrobe", scope: "full_relevant"},
-    ], {
-      context: {
-        activity: {id: "wedding"},
-        groundingRequirements: {
-          weatherRequired: true,
-          weatherLocationField: "eventLocation",
-          terrainRequiredFields: [],
-        },
-      },
-    }),
-    toolEnvelope(
-      [{tool: "wardrobe", scope: "full_relevant"}],
-      {context: {
-        date: {dateKey: "2026-09-09", source: "user"},
-        timeWindow: {key: "afternoon", label: "popoludní"},
-      }},
-    ),
-    finalEnvelope(fullOutfitResult()),
-  ]});
-  const weddingFirst = await wedding.coordinator.resolveTurn(request("wedding", "wedding-1", 0,
-    "Idem na svadbu do Žiliny.", {
-      freshClientObservations: {currentLocationObservation: martin},
-    }));
-  assert.equal(weddingFirst.action, "clarify");
-  assert.equal(weddingFirst.clarification.field, "date");
-  assert.equal(wedding.ledger.calls("weather").length, 0);
-  assert.equal(wedding.ledger.calls("wardrobe").length, 0);
-
-  const weddingResult = await wedding.coordinator.resolveTurn(request(
-    "wedding", "wedding-2", 1, "Zajtra popoludní.",
-  ));
-  assert.equal(weddingResult.action, "generate_outfit");
-  assert.doesNotMatch(weddingResult.assistantText, /kam presne|terén/i);
-  saved = await wedding.sessionRepository.read("wedding");
-  assert.equal(saved.context.eventLocation.providerId, zilina.providerId);
-  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-  assert.equal(wedding.ledger.calls("weather", "getForecast")[0].args.location.providerId,
-    zilina.providerId);
-  assert.ok(wedding.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(wedding.ledger, "final"));
-});'''
           path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
           PY
       - name: Commit patched acceptance and remove temporary workflow
