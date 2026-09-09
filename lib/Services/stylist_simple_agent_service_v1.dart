@@ -192,8 +192,10 @@ class StylistSimpleAgentServiceV1 {
     String? notifyJobId,
     String? chatId,
   }) async {
-    final shoppingActive = shoppingContext != null && shoppingContext.isNotEmpty;
-    if (!shoppingActive && history.length <= 1 && currentOutfitItemIds.isEmpty) {
+    // A first-turn greeting is conversation-only even if stale shopping context
+    // was hydrated while the new chat UI was being created. Never spend a
+    // callable/model round trip on a friendly hello.
+    if (history.length <= 1 && currentOutfitItemIds.isEmpty) {
       final localFast = localFastReplyForMessage(message);
       if (localFast != null) {
         debugPrint('SIMPLE_AGENT_LOCAL_FAST history=${history.length}');
