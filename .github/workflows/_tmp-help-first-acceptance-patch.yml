@@ -1,0 +1,122 @@
+name: Temporary help-first acceptance patch
+
+on:
+  push:
+    branches:
+      - stylist-v2-help-first-contract
+    paths:
+      - '.github/workflows/_tmp-help-first-acceptance-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact working branch
+        uses: actions/checkout@v4
+        with:
+          ref: stylist-v2-help-first-contract
+          fetch-depth: 1
+      - name: Patch obsolete remote-event acceptance flow
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('functions/stylist/v2/stylist_v2_phase0_acceptance.test.js')
+          text = path.read_text(encoding='utf-8')
+          start_marker = 'test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {'
+          end_marker = '\n\ntest("explicit destination candidate is resolved in the first hiking turn without a repeat question"'
+          start = text.index(start_marker)
+          end = text.index(end_marker, start)
+          replacement = r'''test("remote concert and wedding use their provider-resolved event location as generic weather authority", async () => {
+  const concert = harness({modelResults: [
+    toolEnvelope([
+      {tool: "location", query: "Bratislava", targetField: "eventLocation"},
+      {tool: "wardrobe", scope: "full_relevant"},
+    ], {
+      context: {
+        activity: {id: "concert"},
+        date: {dateKey: "2026-09-09", source: "user"},
+        groundingRequirements: {
+          weatherRequired: true,
+          weatherLocationField: "eventLocation",
+          terrainRequiredFields: [],
+        },
+      },
+    }),
+    finalEnvelope(fullOutfitResult()),
+  ]});
+  const concertResult = await concert.coordinator.resolveTurn(request("concert", "concert-1", 0,
+    "Zajtra idem na koncert do Bratislavy.", {
+      freshClientObservations: {currentLocationObservation: martin},
+    }));
+  assert.equal(concertResult.action, "generate_outfit");
+  assert.doesNotMatch(concertResult.assistantText, /ktorej časti dňa|kam presne|terén/i);
+  let saved = await concert.sessionRepository.read("concert");
+  assert.equal(saved.context.eventLocation.providerId, bratislava.providerId);
+  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+  assert.equal(saved.context.timeWindow.key, "day");
+  assert.equal(concert.ledger.calls("weather", "getForecast")[0].args.location.providerId,
+    bratislava.providerId);
+  assert.equal(concert.ledger.calls("wardrobe", "retrieve").length, 1);
+  assert.ok(concert.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(concert.ledger, "final"));
+
+  const wedding = harness({modelResults: [
+    toolEnvelope([
+      {tool: "location", query: "Žilina", targetField: "eventLocation"},
+      {tool: "wardrobe", scope: "full_relevant"},
+    ], {
+      context: {
+        activity: {id: "wedding"},
+        groundingRequirements: {
+          weatherRequired: true,
+          weatherLocationField: "eventLocation",
+          terrainRequiredFields: [],
+        },
+      },
+    }),
+    toolEnvelope(
+      [{tool: "wardrobe", scope: "full_relevant"}],
+      {context: {
+        date: {dateKey: "2026-09-09", source: "user"},
+        timeWindow: {key: "afternoon", label: "popoludní"},
+      }},
+    ),
+    finalEnvelope(fullOutfitResult()),
+  ]});
+  const weddingFirst = await wedding.coordinator.resolveTurn(request("wedding", "wedding-1", 0,
+    "Idem na svadbu do Žiliny.", {
+      freshClientObservations: {currentLocationObservation: martin},
+    }));
+  assert.equal(weddingFirst.action, "clarify");
+  assert.equal(weddingFirst.clarification.field, "date");
+  assert.equal(wedding.ledger.calls("weather").length, 0);
+  assert.equal(wedding.ledger.calls("wardrobe").length, 0);
+
+  const weddingResult = await wedding.coordinator.resolveTurn(request(
+    "wedding", "wedding-2", 1, "Zajtra popoludní.",
+  ));
+  assert.equal(weddingResult.action, "generate_outfit");
+  assert.doesNotMatch(weddingResult.assistantText, /kam presne|terén/i);
+  saved = await wedding.sessionRepository.read("wedding");
+  assert.equal(saved.context.eventLocation.providerId, zilina.providerId);
+  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
+  assert.equal(wedding.ledger.calls("weather", "getForecast")[0].args.location.providerId,
+    zilina.providerId);
+  assert.ok(wedding.ledger.entries.findIndex((item) => item.port === "wardrobe") < modelCallIndex(wedding.ledger, "final"));
+});'''
+          path.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          PY
+      - name: Commit patched acceptance and remove temporary workflow
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_tmp-help-first-acceptance-patch.yml
+          git add functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
+          git commit -m "test: align remote event acceptance with help-first flow"
+          git push origin HEAD:stylist-v2-help-first-contract
