@@ -23,12 +23,12 @@ jobs:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@v2
-      - name: Read exact recent Stylist V2 fail-closed payloads
+      - name: Read exact AI usage events for failed V2 turns
         shell: bash
         run: |
           set -euo pipefail
-          gcloud logging read 'timestamp>="2026-09-09T06:35:30Z" AND timestamp<="2026-09-09T06:37:10Z" AND jsonPayload.message="STYLIST_V2_FAIL_CLOSED"' \
+          gcloud logging read 'timestamp>="2026-09-09T06:35:30Z" AND timestamp<="2026-09-09T06:37:10Z" AND jsonPayload.message="AI_USAGE_V1"' \
             --project outfitoftheday-4d401 \
-            --limit 20 \
+            --limit 30 \
             --order asc \
-            --format=json
+            --format='table(timestamp,jsonPayload.feature,jsonPayload.model,jsonPayload.providerStatus,jsonPayload.modelAttempt,jsonPayload.providerAttempt,jsonPayload.providerResponseId,jsonPayload.inputTokens,jsonPayload.outputTokens)'
