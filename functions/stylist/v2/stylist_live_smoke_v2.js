@@ -89,8 +89,15 @@ async function main() {
         {providerId: "live:tatry", label: "Vysoké Tatry", lat: 49.1667, lng: 20.1333,
           source: "live_smoke_fixture", granularity: "locality"} : null;
     }},
-    weatherTool: {async getForecast() {
-      return {summary: "sucho a mierne", minTempC: 10, maxTempC: 17, precipitationMm: 0};
+    weatherTool: {async getForecast(request) {
+      return {
+        summary: "sucho a mierne", minTempC: 10, maxTempC: 17, precipitationMm: 0,
+        locationProviderId: request.location.providerId,
+        dateKey: request.date.dateKey,
+        timeWindowKey: request.timeWindow.key,
+        fetchedAt: new Date().toISOString(),
+        source: "live_smoke",
+      };
     }},
     wardrobeToolFactory: () => wardrobeTool,
     shoppingToolFactory: () => ({async search() { return {candidateIds: [], appliedHardConstraints: []}; }}),

@@ -89,7 +89,16 @@ function plannerWardrobeRaw() {
     allowedSlots: [],
     allowedCategories: [],
     allowRemovalOnly: false,
-    patch: patchDefaults(),
+    patch: {
+      ...patchDefaults(),
+      activityId: "cinema",
+      activityLabel: "kino",
+      dateKey: "2026-09-10",
+      timeWindowKey: "day",
+      replaceGroundingRequirements: true,
+      weatherRequired: false,
+      weatherLocationField: "none",
+    },
   };
 }
 
@@ -143,7 +152,7 @@ function baseData(sessionId, turnId, message, extra = {}) {
 
 function makeHarness({invalidFinal = false} = {}) {
   const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
-  const calls = {model: [], wardrobe: [], location: [], weather: [], cache: []};
+  const calls = {model: [], wardrobe: [], location: [], weather: [], cache: [], warnings: []};
 
   const wardrobeTool = {
     async retrieve(request) {
@@ -177,7 +186,7 @@ function makeHarness({invalidFinal = false} = {}) {
   const handler = createStylistChatV2Handler({
     db: {},
     admin: {},
-    logger: {warn() {}, info() {}},
+    logger: {warn(message, data) { calls.warnings.push({message, data}); console.error("GATE_WARN", message, JSON.stringify(data || {})); }, info() {}},
     resolveOpenAISecret: () => "unused",
     clock: () => NOW,
     sessionRepository: repository,
@@ -186,14 +195,21 @@ function makeHarness({invalidFinal = false} = {}) {
         calls.location.push(query);
         const normalized = String(query || "").toLowerCase();
         if (normalized.includes("usa")) return USA;
-        if (normalized.includes("tatr")) return TATRY;
+        if (normalized.includes("tatr") || normalized.includes("tatier")) return TATRY;
         return null;
       },
     },
     weatherTool: {
       async getForecast(request) {
         calls.weather.push(JSON.parse(JSON.stringify(request || {})));
-        return {summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0};
+        return {
+          summary: "dry_mild", minTempC: 10, maxTempC: 17, precipitationMm: 0,
+          locationProviderId: request.location.providerId,
+          dateKey: request.date.dateKey,
+          timeWindowKey: request.timeWindow.key,
+          fetchedAt: new Date(NOW).toISOString(),
+          source: "release_gate",
+        };
       },
     },
     modelFactory: () => createOpenAiStylistModelPortV2({executeStructured}),
@@ -209,8 +225,8 @@ async function invoke(handler, data) {
 }
 
 function assertHealthy(response) {
-  assert.equal(response.ok, true);
-  assert.equal(response.failClosed, false);
+  assert.equal(response.ok, true, `response=${JSON.stringify(response)}`);
+  assert.equal(response.failClosed, false, `response=${JSON.stringify(response)}`);
   assert.notEqual(response.action, "simple_agent_fail_closed");
   assert.ok(String(response.reply || "").trim());
 }

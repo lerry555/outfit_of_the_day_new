@@ -9,6 +9,16 @@ const API_KEY = String(process.env.FIREBASE_WEB_API_KEY || "").trim();
 const MAX_CALL_MS = Number(process.env.STYLIST_PROD_SMOKE_MAX_CALL_MS || 20000);
 const MAX_COST_USD = Number(process.env.STYLIST_PROD_SMOKE_MAX_COST_USD || 0.02);
 
+function bratislavaDateKeys() {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Europe/Bratislava", year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(new Date());
+  const value = Object.fromEntries(parts.filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  const base = new Date(Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day)));
+  const key = (offset) => new Date(base.getTime() + offset * 86400000).toISOString().slice(0, 10);
+  return {todayDateKey: key(0), tomorrowDateKey: key(1)};
+}
+
 function qualityCheck(text) {
   const value = String(text || "").trim();
   assert.ok(value.length >= 20 && value.length <= 700, `reply_length:${value.length}`);
@@ -49,6 +59,7 @@ async function main() {
   const db = admin.firestore();
   const auth = admin.auth();
   const stamp = Date.now();
+  const dates = bratislavaDateKeys();
   const uid = `stylist_smoke_${stamp}`;
   const chatId = `smoke_chat_${stamp}`;
   const userRef = db.collection("users").doc(uid);
@@ -92,7 +103,7 @@ async function main() {
         message,
         history: [],
         currentOutfitItemIds: [],
-        clientContext: {todayDateKey: "2026-09-09", tomorrowDateKey: "2026-09-10", timezoneOffsetMinutes: 120},
+        clientContext: {...dates, timezoneOffsetMinutes: -new Date().getTimezoneOffset()},
       };
     };
 

@@ -6,7 +6,7 @@ const {highestPriorityMissingGroundingV2, runPreflightV2} = require("./stylist_p
 const {RepairableStructuralTurnError, validateAuthoritativeTurnV2} = require("./stylist_turn_validator_v2");
 const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
 
-const GREETINGS = new Set(["ahoj", "čau", "cau", "dobrý deň", "dobry den"]);
+const GREETINGS = new Set(["ahoj", "čau", "cau", "čauko", "cauko", "nazdar", "servus", "hello", "hi", "hey", "dobrý deň", "dobry den"]);
 const LOCATION_FRESHNESS_MS = 30 * 60 * 1000;
 const MAX_PENDING_LOCATION_ATTEMPTS = 6;
 const TOOL_REQUEST_KEYS = new Set(["kind", "requests", "statePatch"]);
@@ -34,7 +34,7 @@ function normalizeConversationTextV2(value) {
 function isFriendlyGreetingV2(value) {
   const normalized = normalizeConversationTextV2(value);
   if (GREETINGS.has(String(value || "").trim().toLocaleLowerCase("sk-SK").replace(/[.!?]+$/g, ""))) return true;
-  return /^(ahoj|cau|nazdar|servus|hello|hi|hey)(?:\s+(divocak|kamo|kamarat|stylista))?$/.test(normalized);
+  return /^(ahoj|cau|cauko|nazdar|servus|hello|hi|hey)(?:\s+(divocak|kamo|kamarat|stylista))?$/.test(normalized);
 }
 
 function pendingLocationReplyDispositionV2(value) {
