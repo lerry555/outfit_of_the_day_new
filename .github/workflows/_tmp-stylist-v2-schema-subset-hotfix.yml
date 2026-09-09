@@ -90,20 +90,6 @@ jobs:
             assert.deepEqual(findForbidden(FINAL_SCHEMA), []);
           });
           EOF
-      - name: Add regression to permanent V2 CI
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('.github/workflows/stylist-v2-ci.yml')
-          text = path.read_text(encoding='utf-8')
-          anchor = '          functions/stylist/v2/stylist_production_bridge_v2.test.js\n'
-          addition = anchor + '          functions/stylist/v2/stylist_openai_schema_subset_v2.test.js\n'
-          if text.count(anchor) != 1:
-              raise SystemExit(f'expected one CI anchor, found {text.count(anchor)}')
-          path.write_text(text.replace(anchor, addition), encoding='utf-8')
-          PY
       - name: Run focused regressions
         shell: bash
         run: |
@@ -118,6 +104,6 @@ jobs:
           set -euo pipefail
           git config user.name "lerry555"
           git config user.email "132705754+lerry555@users.noreply.github.com"
-          git add functions/stylist/v2/openai_stylist_model_port_v2.js functions/stylist/v2/stylist_openai_schema_subset_v2.test.js .github/workflows/stylist-v2-ci.yml
+          git add functions/stylist/v2/openai_stylist_model_port_v2.js functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
           git commit -m "fix: keep V2 structured schemas provider-compatible"
           git push origin HEAD:ai-stylist-v2-schema-subset-hotfix
