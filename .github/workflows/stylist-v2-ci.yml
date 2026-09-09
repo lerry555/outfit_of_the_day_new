@@ -61,6 +61,7 @@ jobs:
           functions/stylist/v2/stylist_grounding_policy_v2.test.js
           functions/stylist/v2/stylist_v2_phase3_ports.test.js
           functions/stylist/v2/stylist_production_bridge_v2.test.js
+          functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 
