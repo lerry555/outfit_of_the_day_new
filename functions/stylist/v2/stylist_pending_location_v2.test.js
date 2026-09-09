@@ -93,20 +93,22 @@ function jsonResponse(body, {ok = true, status = 200} = {}) {
   return {ok, status, async json() { return body; }};
 }
 
-test("pending destination keeps an unresolved user answer instead of repeating the generic question", async () => {
+test("pending destination geocoder miss falls back once and continues instead of asking again", async () => {
   const state = pendingLocationState({chatId: "pending-region"});
   const h = harness(state);
 
   const result = await h.coordinator.resolveTurn(request("pending-region", "turn-1", 0, "do Tatier"));
-  assert.equal(result.action, "clarify");
-  assert.equal(result.clarification.field, "destination");
+  assert.equal(result.action, "chat");
+  assert.equal(result.clarification, null);
   assert.notEqual(result.assistantText, "Kam presne ideš?");
-  assert.match(result.assistantText, /Tatier/u);
 
   const saved = await h.sessionRepository.read("pending-region");
   assert.equal(saved.context.destination, null);
-  assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["do Tatier"]);
-  assert.equal(h.ledger.calls("model").length, 0);
+  assert.equal(saved.context.groundingRequirements.weatherRequired, false);
+  assert.equal(saved.conversationMemory.pendingQuestion, null);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
+  assert.ok(h.ledger.calls("location", "resolve").length >= 1);
 });
 
 test("a more specific follow-up is combined with the previous broad answer and advances without a time-of-day interrogation", async () => {
@@ -124,6 +126,8 @@ test("a more specific follow-up is combined with the previous broad answer and a
   assert.equal(saved.conversationMemory.pendingQuestion, null);
   assert.deepEqual(h.ledger.calls("location", "resolve")[0].args, {query: "Téryho chata, Tatier"});
   assert.equal(h.ledger.calls("weather", "getForecast").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 
 test("remote event location wins over current GPS and broad day default avoids redundant time question", async () => {
@@ -182,31 +186,30 @@ test("natural fragment answers are resolved in the context of the pending destin
   }
 });
 
-test("unresolvable new information is retained and does not loop with the identical generic clarification", async () => {
+test("unresolvable location answer does not create a second questionnaire turn", async () => {
   const state = pendingLocationState({chatId: "unknown-place"});
   const h = harness(state);
 
-  const first = await h.coordinator.resolveTurn(request("unknown-place", "turn-1", 0, "nejaká dolina"));
-  const second = await h.coordinator.resolveTurn(request("unknown-place", "turn-2", 1, "pri starej chate"));
+  const result = await h.coordinator.resolveTurn(request("unknown-place", "turn-1", 0, "nejaká dolina"));
 
-  assert.equal(first.clarification.field, "destination");
-  assert.equal(second.clarification.field, "destination");
-  assert.notEqual(first.assistantText, "Kam presne ideš?");
-  assert.notEqual(second.assistantText, "Kam presne ideš?");
-  assert.notEqual(first.assistantText, second.assistantText);
-  assert.match(second.assistantText, /starej chate/u);
-
+  assert.equal(result.action, "chat");
+  assert.equal(result.clarification, null);
+  assert.notEqual(result.assistantText, "Kam presne ideš?");
   const saved = await h.sessionRepository.read("unknown-place");
-  assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["nejaká dolina", "pri starej chate"]);
+  assert.equal(saved.conversationMemory.pendingQuestion, null);
+  assert.equal(saved.context.groundingRequirements.weatherRequired, false);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 
-test("pending query helpers keep the latest answer and combine it with retained context without place-specific rules", () => {
+test("pending query helpers combine retained context and prefer canonical geocoder candidates", () => {
   assert.equal(cleanLocationAnswerFragmentV2("na Donovaly"), "Donovaly");
   assert.deepEqual(
     pendingLocationResolutionQueriesV2({attemptedAnswers: ["do Tatier"]}, "Téryho chata"),
     ["Téryho chata, Tatier", "Téryho chata"],
   );
-  assert.deepEqual(locationQueryCandidatesV2("na Donovaly"), ["na Donovaly", "Donovaly"]);
+  assert.deepEqual(locationQueryCandidatesV2("na Donovaly"), ["Donovaly", "na Donovaly"]);
+  assert.deepEqual(locationQueryCandidatesV2("do Tatier"), ["Tatry", "Tatier", "do Tatier"]);
 });
 
 test("location resolver falls back from Open-Meteo to Nominatim for a POI", async () => {
@@ -237,7 +240,7 @@ test("location resolver falls back from Open-Meteo to Nominatim for a POI", asyn
   assert.equal(calls.length, 2);
 });
 
-test("location resolver retries a cleaned conversational fragment before giving up", async () => {
+test("location resolver uses the cleaned canonical candidate first", async () => {
   const calls = [];
   const fetchImpl = async (url) => {
     const parsed = new URL(String(url));
@@ -257,5 +260,29 @@ test("location resolver retries a cleaned conversational fragment before giving 
   assert.equal(resolved.providerId, "openmeteo:77");
   assert.equal(resolved.label, "Donovaly, Žilinský kraj, Slovensko");
   assert.equal(resolved.granularity, "locality");
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0]).searchParams.get("name"), "Donovaly");
+});
+
+test("production resolver canonicalizes the reproduced do Tatier answer before geocoding", async () => {
+  const calls = [];
+  const fetchImpl = async (url) => {
+    const parsed = new URL(String(url));
+    calls.push(parsed.toString());
+    if (parsed.hostname === "geocoding-api.open-meteo.com") {
+      const query = parsed.searchParams.get("name");
+      if (query === "Tatry") {
+        return jsonResponse({results: [{id: 999, name: "Vysoké Tatry", admin1: "Prešovský kraj", country: "Slovensko", latitude: 49.1667, longitude: 20.1333}]});
+      }
+      return jsonResponse({results: []});
+    }
+    if (parsed.hostname === "nominatim.openstreetmap.org") return jsonResponse([]);
+    throw new Error(`unexpected URL ${parsed.toString()}`);
+  };
+
+  const resolved = await createOpenMeteoLocationResolverV2({fetchImpl}).resolve("do Tatier");
+  assert.equal(resolved.providerId, "openmeteo:999");
+  assert.match(resolved.label, /Vysoké Tatry/u);
+  assert.equal(calls.length, 1);
+  assert.equal(new URL(calls[0]).searchParams.get("name"), "Tatry");
 });
