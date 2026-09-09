@@ -1,7 +1,12 @@
 "use strict";
 
-const MODEL = "gpt-5.6-sol";
-const REASONING = "medium";
+const PLAN_MODEL = "gpt-5.6-luna";
+const PLAN_REASONING = "low";
+const FINAL_MODEL = "gpt-5.6-terra";
+const FINAL_REASONING = "medium";
+// Backward-compatible exports for diagnostics that previously expected one model.
+const MODEL = FINAL_MODEL;
+const REASONING = FINAL_REASONING;
 
 const LOCATION_FIELDS = ["none", "currentLocationObservation", "destination", "eventLocation"];
 const TERRAIN_SURFACES = ["unknown", "paved", "trail", "grass", "forest_floor", "rock"];
@@ -119,22 +124,46 @@ function list(value, max = 20) {
   return Array.isArray(value) ? [...new Set(value.map((x) => clean(String(x), 180)).filter(Boolean))].slice(0, max) : [];
 }
 
+function normalizeIntentTextV2(value) {
+  return clean(value, 1200)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function shouldPreloadCurrentOutfitV2(input) {
+  const currentIds = input?.session?.currentOutfit?.itemIds || [];
+  if (!currentIds.length) return false;
+  const text = normalizeIntentTextV2(input?.request?.latestUserInput);
+  if (!text) return false;
+  const edit = /\b(vymen|vymenit|nahra|nahrad|zmen|zmenit|odober|odstran|pridaj|pridat|ine topanky|iny vrch|iny spodok|swap|replace)\b/.test(text);
+  const currentPiece = /\b(outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok)\b/.test(text);
+  const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);
+  return edit || currentPiece && opinion;
+}
+
 function plannerPrompt() {
   return [
     "Si plánovacia fáza jedného autoritatívneho AI Stylistu V2. Používateľ komunikuje po slovensky.",
-    "Najnovšia otázka má prioritu; starší kontext používaj len ako podporu.",
-    "Ak session.conversationMemory.pendingQuestion existuje, najnovšiu odpoveď najprv priraď k TOMUTO poľu (date/timeWindow/terrain/location). Nezačínaj pôvodnú tému odznova.",
+    "HLAVNÉ PRAVIDLO: HELP FIRST, CLARIFY ONLY WHEN NECESSARY. Najprv sa snaž pomôcť z faktov, ktoré už máš; otázku polož iba ak odpoveď materiálne zmení výsledok alebo bezpečnosť.",
+    "Najnovšia správa má prioritu; starší kontext používaj ako pamäť, nie ako formulár, ktorý musíš znovu vypĺňať.",
+    "pendingQuestion je iba kontext. Ak používateľ odpovie otázkou typu 'načo ti to je?', 'prečo?', povie 'neviem', 'je mi to jedno', 'preskoč to' alebo 'daj mi proste outfit', NESMIEŠ tú vetu interpretovať ako hodnotu pending poľa.",
     "V tejto fáze NESMIEŠ vybrať finálny nový outfit. Môžeš skončiť iba chat/clarify/stop alebo vyžiadať nástroje.",
     "GPS/currentLocationObservation a destination/eventLocation sú rôzne fakty. Nikdy nepovýš GPS na cieľ výletu či udalosti.",
-    "Ak používateľ žiada outfit na vzdialenú aktivitu/udalosť a miesto nepoznáme, polož presne JEDNU otázku na miesto a nežiadaj wardrobe.",
-    "Ak miesto používateľ uviedol v tej istej správe, vyžiadaj location tool s presným kandidátom; nežiadaj ho znova otázkou.",
+    "Pri vzdialenej aktivite sa na miesto pýtaj iba ak ho naozaj potrebuješ pre relevantné počasie. Mesto, horská oblasť, stredisko alebo konkrétny bod sú zvyčajne dostatočné; nežiadaj presnú trasu bez bezpečnostného dôvodu.",
+    "Ak používateľ uvedie iba veľmi širokú krajinu (napr. USA), vypýtaj si mesto, štát alebo región. Po užitočnom spresnení sa na miesto znovu nepýtaj.",
+    "Ak miesto používateľ uviedol v tej istej správe, vyžiadaj location tool s presným kandidátom; nepýtaj ho znova otázkou.",
     "Počasie pri remote/event outfite musí používať destination/eventLocation. Pri jasne lokálnom rutinnom outfite môže používať currentLocationObservation.",
+    "Chýbajúca časť dňa NIE JE dôvod na ďalšiu otázku. Ak je dátum známy a používateľ nepovedal čas, pracuj s celodenným oknom 'day'.",
     "Výrazy túra/les/huby samy osebe NEZNAMENAJÚ mokro, blato, strmosť, skaly, sneh ani ľad. Terrain fakt nastav len z explicitného tvrdenia.",
-    "Terrain clarification vyžaduj len keď konkrétna neznáma vlastnosť materiálne mení bezpečnosť obuvi; najviac jednu otázku na turn.",
+    "Terrain clarification vyžaduj len keď konkrétna neznáma vlastnosť skutočne mení bezpečnosť obuvi; najviac jednu otázku na turn.",
     "Relative date: používaj clientCapabilities.todayDateKey/tomorrowDateKey. Nevymýšľaj iný kalendárny deň.",
-    "replaceGroundingRequirements=true nastav iba keď tento turn zakladá alebo mení outfitový kontext; pri bežnom follow-upe ponechaj false, aby sa kanonické grounding pravidlá nestratili.",
-    "Pre nový outfit vyžiadaj full_relevant. Pre konzultáciu o aktuálnom outfite môžeš skončiť v plan fáze bez ďalšieho wardrobe, lebo current outfit facts sú už v toolResults.",
-    "Pri editácii jedného slotu vyžiadaj current_outfit_plus_category a zmraz presný edit scope. Z toolResults.current outfit facts vieš určiť exact replaceItemIds.",
+    "replaceGroundingRequirements=true nastav iba keď tento turn zakladá alebo mení outfitový kontext; pri bežnom follow-upe ponechaj false.",
+    "Pre nový outfit vyžiadaj full_relevant. Pre obyčajný chat wardrobe nežiadaj. Pri konzultácii aktuálneho outfitu používaj už prednačítané current outfit facts iba keď sú skutočne relevantné.",
+    "Pri editácii jedného slotu vyžiadaj current_outfit_plus_category a zmraz presný edit scope.",
     "Ak používateľ len chce pridať vrstvu, nepremieňaj to na úplný rebuild; zachovaj ostatné kusy a vyžiadaj príslušnú kategóriu.",
     "Karty sa nezobrazujú pri obyčajnej konzultácii alebo vysvetlení.",
     "Ak payload obsahuje userStylePreferences, rešpektuj ich ako mäkké preferencie; nesmú prebiť bezpečnosť ani explicitnú požiadavku.",
@@ -145,6 +174,7 @@ function plannerPrompt() {
 function finalPrompt() {
   return [
     "Si finálna fáza toho istého autoritatívneho AI Stylistu V2. Odpovedaj prirodzene po slovensky.",
+    "HLAVNÉ PRAVIDLO: HELP FIRST, CLARIFY ONLY WHEN NECESSARY. Keď vieš bezpečne odporučiť rozumný outfit, urob to namiesto ďalšej otázky.",
     "Vyberaj iba item IDs, ktoré sú v toolResults.wardrobeItems. Nikdy nevymýšľaj ID.",
     "Účel a bezpečnosť > počasie/tepelná vhodnosť > celkový štýl > dominantné farby > malé detaily.",
     "Ak payload obsahuje userStylePreferences, používaj ich ako mäkké preferencie po splnení účelu, bezpečnosti a explicitných požiadaviek.",
@@ -152,9 +182,10 @@ function finalPrompt() {
     "Pri zachovanom kuse zachovaj jeho persistovaný selection reason PRESNE; nový dôvod patrí len novému kusu.",
     "Ak používateľ chce meniť iba jednu vec, všetko mimo autorizovaného edit scope musí zostať rovnaké.",
     "Pri vysvetlení alebo otázke typu 'A rifle sú v poriadku?' outfit nemeníš a displayKind=none.",
-    "Ak pre bezpečné podmienky chýba vhodná obuv, povedz to otvorene. Neobhajuj zlú voľbu. Ponúkni Shopping len ako užitočný ďalší krok.",
-    "Tenisky môžu byť explicitný kompromis iba na ľahký suchý terén. Mokro/strmosť/technický terén nepredstieraj ako bezpečný pre nevhodnú obuv.",
-    "Zimnú obuv nevyberaj len preto, že ide o les/túru; potrebuje mráz, sneh/ľad alebo iný skutočný dôvod.",
+    "Ak ide o bežnú turistiku a NIE JE známy mokrý, blatistý, zasnežený, ľadový, skalnatý, strmý alebo technický terén, absencia turistických topánok nesmie zablokovať outfit. Vyber najpraktickejšie vhodné tenisky, ktoré používateľ vlastní, otvorene ich označ ako kompromis a ponúkni doplnenie turistickej obuvi.",
+    "Neznámy terén nie je dôkaz nebezpečného terénu. Zároveň nikdy netvrď, že tenisky sú bezpečné na explicitne mokrý/strmý/technický/snehový/ľadový terén.",
+    "Zimnú obuv nevyberaj len preto, že ide o les alebo túru. Potrebuje mráz, sneh/ľad alebo iný skutočný dôvod. V teple je praktická teniska lepší fallback než zimná topánka.",
+    "Ak vhodný ideálny kus chýba, vyber najlepší prijateľný kus zo šatníka, vysvetli limit a offerShopping=true, ak by doplnenie šatníka bolo užitočné.",
     "Ak sa predchádzajúce odporúčanie ukáže ako zlé, pokojne to priznaj a oprav. Nevymýšľaj historický dôvod, ktorý nebol uložený.",
     "Text, resultingOutfitItemIds a displayItemIds musia opisovať ten istý výsledok.",
     "Ak ponúkneš nákup, assistantText má prirodzene skončiť jednou áno/nie otázkou a offerShopping=true.",
@@ -241,8 +272,6 @@ function finalEnvelope(raw, input) {
     const reason = clean(entry?.reason, 300);
     if (id && reason && ids.includes(id)) reasons[id] = reason;
   }
-  // Retained reasons are immutable. Fill them from canonical session even if
-  // the model forgot to repeat them; this is safe normalization, not new advice.
   for (const id of ids) {
     const previous = input.session?.currentOutfit?.selectionReasonsByItemId?.[id];
     if (previous != null && input.session?.currentOutfit?.itemIds?.includes(id)) reasons[id] = previous;
@@ -274,54 +303,39 @@ function finalEnvelope(raw, input) {
 
   const statePatch = {};
   if (raw.offerShopping === true && clean(raw.shoppingNeedLabel, 180)) {
+    const needLabel = clean(raw.shoppingNeedLabel, 180);
     const actionId = `shop_${String(input.request.turnId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120)}`;
     statePatch.pendingAction = {type: "action", kind: "shopping", actionId};
     result.quickReplies = [
       {actionId: `${actionId}_yes`, label: "Áno"},
       {actionId: `${actionId}_no`, label: "Nie"},
     ];
+    result.resultingOutfit.missingWardrobeNeeds = [needLabel];
     statePatch.shopping = {
       missingNeed: {
-        label: clean(raw.shoppingNeedLabel, 180),
+        label: needLabel,
         canonicalType: clean(raw.shoppingNeedCanonicalType, 100) || null,
       },
       hardConstraints: list(raw.shoppingHardConstraints, 12),
       softPreferences: list(raw.shoppingSoftPreferences, 12),
-      openedReason: clean(raw.shoppingNeedLabel, 180),
+      openedReason: needLabel,
     };
   }
   return {kind: "final", result, statePatch};
 }
 
-
-function enforceHighConfidenceGrounding(raw, input) {
-  const message = clean(input?.request?.latestUserInput, 1200).toLocaleLowerCase("sk-SK");
-  const outfitRequest = /(outfit|oble[cč]|oblie[cč]|čo si mám dať|co si mam dat|potrebujem.{0,30}(oble|outfit))/i.test(message);
-  const outdoorTrip = /(túr|turist|hub(?:y|ár)|do lesa|v lese)/i.test(message);
-  const hasDestination = Boolean(input?.session?.context?.destination);
-  const requestsDestination = raw?.kind === "tool_request" && clean(raw?.locationQuery) && raw?.locationTargetField === "destination";
-  if (!outfitRequest || !outdoorTrip || hasDestination || requestsDestination) return raw;
-  const patch = {...(raw?.patch || {})};
-  patch.activityId = clean(patch.activityId, 100) || "hiking";
-  patch.activityLabel = clean(patch.activityLabel, 160) || "outdoor aktivita";
-  patch.replaceGroundingRequirements = true;
-  patch.weatherRequired = true;
-  patch.weatherLocationField = "destination";
-  patch.terrainRequiredFields = [];
-  return {
-    ...raw, kind: "final", action: "clarify",
-    assistantText: "Kam presne ideš?",
-    clarificationField: "destination", clarificationQuestion: "Kam presne ideš?",
-    locationQuery: null, locationTargetField: "none", wardrobeScope: "none", wardrobeCategory: null,
-    replaceItemIds: [], retainItemIds: [], allowedSlots: [], allowedCategories: [], allowRemovalOnly: false,
-    patch,
-  };
+// Kept as an export for compatibility. Grounding is now enforced generically by
+// stylist_grounding_policy_v2 and the coordinator instead of a hike-specific
+// hard-coded question in the model adapter.
+function enforceHighConfidenceGrounding(raw) {
+  return raw;
 }
 
 function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences = null}) {
   if (typeof executeStructured !== "function") throw new TypeError("v2_structured_model_executor_required");
   return Object.freeze({
-    planningNeedsCurrentOutfit: true,
+    planningNeedsCurrentOutfit: false,
+    shouldPreloadCurrentOutfit: shouldPreloadCurrentOutfitV2,
     async turn(input) {
       const phase = input?.phase === "final" ? "final" : "plan";
       const wardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];
@@ -334,11 +348,11 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
         userStylePreferences,
       };
       const raw = await executeStructured({
-        model: MODEL,
-        reasoningEffort: REASONING,
+        model: phase === "plan" ? PLAN_MODEL : FINAL_MODEL,
+        reasoningEffort: phase === "plan" ? PLAN_REASONING : FINAL_REASONING,
         schema: phase === "plan" ? PLAN_SCHEMA : FINAL_SCHEMA,
         schemaName: phase === "plan" ? "stylist_v2_plan" : "stylist_v2_final",
-        maxOutputTokens: phase === "plan" ? 2600 : 3600,
+        maxOutputTokens: phase === "plan" ? 1800 : 3000,
         messages: [
           {role: "system", content: phase === "plan" ? plannerPrompt() : finalPrompt()},
           {role: "user", content: JSON.stringify(payload)},
@@ -350,12 +364,17 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
 }
 
 module.exports = {
+  FINAL_MODEL,
+  FINAL_REASONING,
   FINAL_SCHEMA,
   MODEL,
+  PLAN_MODEL,
+  PLAN_REASONING,
   PLAN_SCHEMA,
   REASONING,
   createOpenAiStylistModelPortV2,
   enforceHighConfidenceGrounding,
   finalEnvelope,
   planEnvelope,
+  shouldPreloadCurrentOutfitV2,
 };
