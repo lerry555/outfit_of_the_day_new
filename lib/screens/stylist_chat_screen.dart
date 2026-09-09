@@ -30,6 +30,7 @@ import '../utils/slovak_outfit_instrumental.dart';
 import '../models/stylist_trip_window.dart';
 import '../models/stylist_chat_progress.dart';
 import '../widgets/stylist_quick_reply_buttons.dart';
+import '../widgets/stylist_suggested_item_card.dart';
 import '../utils/bottom_family_guidance.dart';
 import '../utils/footwear_family_guidance.dart';
 import '../utils/event_clarification.dart';
@@ -100,6 +101,7 @@ class StylistChatMessage {
   /// Explicit server-owned interaction hint. It is never inferred from Slovak
   /// wording, so open questions do not accidentally receive Áno/Nie buttons.
   final String quickReplyMode;
+  final String? quickReplyPrompt;
 
   const StylistChatMessage({
     required this.text,
@@ -113,6 +115,7 @@ class StylistChatMessage {
     this.outfitUpdateSlot,
     this.resultingOutfitItems = const <Map<String, dynamic>>[],
     this.quickReplyMode = 'none',
+    this.quickReplyPrompt,
   });
 
   StylistChatMessage copyWith({String? sourceJobId, String? outfitUpdateSlot}) {
@@ -128,6 +131,7 @@ class StylistChatMessage {
       outfitUpdateSlot: outfitUpdateSlot ?? this.outfitUpdateSlot,
       resultingOutfitItems: resultingOutfitItems,
       quickReplyMode: quickReplyMode,
+      quickReplyPrompt: quickReplyPrompt,
     );
   }
 
@@ -146,6 +150,8 @@ class StylistChatMessage {
       if (resultingOutfitItems.isNotEmpty)
         'resultingOutfitItems': resultingOutfitItems,
       if (quickReplyMode == 'yes_no') 'quickReplyMode': quickReplyMode,
+      if (quickReplyPrompt != null && quickReplyPrompt!.trim().isNotEmpty)
+        'quickReplyPrompt': quickReplyPrompt,
     };
   }
 
@@ -180,6 +186,9 @@ class StylistChatMessage {
                 .toList(growable: false)
           : const <Map<String, dynamic>>[],
       quickReplyMode: map['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',
+      quickReplyPrompt: (map['quickReplyPrompt'] ?? '').toString().trim().isEmpty
+          ? null
+          : (map['quickReplyPrompt'] ?? '').toString().trim(),
     );
   }
 }
@@ -836,8 +845,10 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           .map((item) => (item['id'] ?? '').toString().trim())
           .where((id) => id.isNotEmpty)
           .toList(growable: false);
-      _setSendingProgress(StylistChatProgressPhase.checkingWeather);
-      final weatherContext = await _simpleAgentWeatherContext();
+      // V2 resolves authoritative weather server-side from destination/eventLocation.
+      // Fetching Martin today+tomorrow here was pure latency and was ignored by
+      // the production bridge. Keep the legacy argument empty for compatibility.
+      const weatherContext = <String, dynamic>{};
       final clientContext = _simpleAgentClientContext();
       final jobId = _newJobId();
       _inFlightJobId = jobId;
@@ -1012,6 +1023,9 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
           quickReplyMode: response['quickReplyMode'] == 'yes_no'
               ? 'yes_no'
               : 'none',
+          quickReplyPrompt: (response['quickReplyPrompt'] ?? '').toString().trim().isEmpty
+              ? null
+              : (response['quickReplyPrompt'] ?? '').toString().trim(),
         ),
       );
       _isSending = false;
@@ -5315,7 +5329,10 @@ class _MessageBubble extends StatelessWidget {
                       message.quickReplyMode == 'yes_no' &&
                       onQuickReply != null) ...[
                     const SizedBox(height: 10),
-                    StylistQuickReplyButtons(onSelected: onQuickReply!),
+                    StylistQuickReplyButtons(
+                      prompt: message.quickReplyPrompt,
+                      onSelected: onQuickReply!,
+                    ),
                   ],
                 ],
               ),
@@ -5525,60 +5542,8 @@ class _SuggestedItemCard extends StatelessWidget {
 
   const _SuggestedItemCard({required this.item});
 
-  String? _resolveImageUrl(Map<String, dynamic> item) {
-    final cutout = (item['cutoutImageUrl'] ?? '').toString().trim();
-    if (cutout.startsWith('http')) return cutout;
-    final clean = (item['cleanImageUrl'] ?? '').toString().trim();
-    if (clean.startsWith('http')) return clean;
-    return getBestWardrobeImageUrlOrNull(item);
-  }
-
   @override
-  Widget build(BuildContext context) {
-    const textPrimary = Color(0xFFF1F0EC);
-    const textSecondary = Color(0xFFAAA59B);
-    final label = (item['name'] ?? item['label'] ?? item['category'] ?? 'Kúsok')
-        .toString();
-    final imageUrl = _resolveImageUrl(item);
-
-    return SizedBox(
-      width: 96,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          SizedBox(
-            height: 78,
-            width: double.infinity,
-            child: imageUrl == null
-                ? const Icon(Icons.checkroom, color: textSecondary, size: 22)
-                : Image.network(
-                    imageUrl,
-                    fit: BoxFit.contain,
-                    alignment: Alignment.center,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.broken_image_outlined,
-                      color: textSecondary,
-                      size: 20,
-                    ),
-                  ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            label,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(
-              color: textPrimary,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              height: 1.2,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => StylistSuggestedItemCard(item: item);
 }
 
 /// Bublina „Stylista píše …" s animovanými bodkami (•, ••, •••).

@@ -188,6 +188,7 @@ function legacyCompatibleResponse({result, sessionId, wardrobeTool}) {
         displayItemIds: displayIds,
         outfitChanged: ["generate_outfit", "edit_outfit"].includes(result.action),
         quickReplyMode: yesNo ? "yes_no" : "none",
+        quickReplyPrompt: yesNo ? clean(result.quickReplyPrompt, 240) || null : null,
         resultingOutfitItems: resultingItems,
         displayItems,
         action: result.action,

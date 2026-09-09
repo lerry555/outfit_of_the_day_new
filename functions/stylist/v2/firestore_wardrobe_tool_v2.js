@@ -57,10 +57,14 @@ function projectWardrobeItemV2(id, raw = {}) {
     productImageUrl: text(item.productImageUrl, 2000),
     cutoutImageUrl: text(item.cutoutImageUrl, 2000),
     cleanImageUrl: text(item.cleanImageUrl, 2000),
-    // Preserve both the current UI URL and the original source so materialized
-    // chat cards can recover when a derivative object/token is broken.
     imageUrl: text(item.imageUrl || item.originalImageUrl, 2000),
     originalImageUrl: text(item.originalImageUrl, 2000),
+    storagePath: text(item.storagePath, 1000),
+    cleanStoragePath: text(item.cleanStoragePath, 1000),
+    productStoragePath: text(item.productStoragePath, 1000),
+    processing: {
+      product: text(safeMap(item.processing).product || item["processing.product"], 40),
+    },
     safety: {
       // Conservative authority: ordinary/winter boots are NOT promoted to
       // technical hiking footwear merely because the activity is a hike.
@@ -71,17 +75,11 @@ function projectWardrobeItemV2(id, raw = {}) {
 }
 
 function materializeStylistCardItemV2(item, reason = "") {
-  // Chat cards currently do not retry after a network-image HTTP failure. The
-  // original upload is the safest display fallback because it is independent
-  // of later clean/cutout processing. Use imageUrl only when no original exists.
-  const stableCardUrl = text(item?.originalImageUrl || item?.imageUrl, 2000);
+  // Recommendation cards preserve product/cutout/clean lineage. The Flutter
+  // client can refresh stale Firebase URLs from storage paths; it must never
+  // disguise a raw/person original as a product image.
   return {
     ...item,
-    ...(stableCardUrl ? {
-      cutoutImageUrl: stableCardUrl,
-      cleanImageUrl: stableCardUrl,
-      imageUrl: stableCardUrl,
-    } : {}),
     ...(typeof reason === "string" && reason.trim() ?
       {stylistSelectionReason: reason.trim()} : {}),
   };
