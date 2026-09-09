@@ -1,0 +1,601 @@
+name: Patch V2 product cards CTA and latency
+
+on:
+  push:
+    branches:
+      - fix/v2-product-card-cta-latency-20260909
+    paths:
+      - '.github/workflows/_tmp-patch-v2-card-cta-latency.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/v2-product-card-cta-latency-20260909
+          fetch-depth: 0
+
+      - name: Guard exact source branches
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/v2-product-card-cta-latency-20260909
+          test "$(git rev-parse origin/stylist-simple-agent)" = "006c5aaca169d559b70ec7044de6c7b474c829e1"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD^)" = "006c5aaca169d559b70ec7044de6c7b474c829e1"
+
+      - name: Apply systemic product-card CTA latency patch
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              if old not in text:
+                  raise SystemExit(f'expected block not found in {path}: {old[:120]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Backend wardrobe card DTO: preserve derivative lineage; never rewrite
+          # product/cutout/clean fields to the raw original photo.
+          replace_once(
+              'functions/stylist/v2/firestore_wardrobe_tool_v2.js',
+              '''    accessoryGroup: text(item.accessoryGroup, 80).toLowerCase() || null,\n    productImageUrl: text(item.productImageUrl, 2000),\n    cutoutImageUrl: text(item.cutoutImageUrl, 2000),\n    cleanImageUrl: text(item.cleanImageUrl, 2000),\n    // Preserve both the current UI URL and the original source so materialized\n    // chat cards can recover when a derivative object/token is broken.\n    imageUrl: text(item.imageUrl || item.originalImageUrl, 2000),\n    originalImageUrl: text(item.originalImageUrl, 2000),\n    safety: {''',
+              '''    accessoryGroup: text(item.accessoryGroup, 80).toLowerCase() || null,\n    productImageUrl: text(item.productImageUrl, 2000),\n    cutoutImageUrl: text(item.cutoutImageUrl, 2000),\n    cleanImageUrl: text(item.cleanImageUrl, 2000),\n    imageUrl: text(item.imageUrl || item.originalImageUrl, 2000),\n    originalImageUrl: text(item.originalImageUrl, 2000),\n    storagePath: text(item.storagePath, 1000),\n    cleanStoragePath: text(item.cleanStoragePath, 1000),\n    productStoragePath: text(item.productStoragePath, 1000),\n    processing: {\n      product: text(safeMap(item.processing).product || item["processing.product"], 40),\n    },\n    safety: {'''
+          )
+          replace_once(
+              'functions/stylist/v2/firestore_wardrobe_tool_v2.js',
+              '''function materializeStylistCardItemV2(item, reason = "") {\n  // Chat cards currently do not retry after a network-image HTTP failure. The\n  // original upload is the safest display fallback because it is independent\n  // of later clean/cutout processing. Use imageUrl only when no original exists.\n  const stableCardUrl = text(item?.originalImageUrl || item?.imageUrl, 2000);\n  return {\n    ...item,\n    ...(stableCardUrl ? {\n      cutoutImageUrl: stableCardUrl,\n      cleanImageUrl: stableCardUrl,\n      imageUrl: stableCardUrl,\n    } : {}),\n    ...(typeof reason === "string" && reason.trim() ?\n      {stylistSelectionReason: reason.trim()} : {}),\n  };\n}''',
+              '''function materializeStylistCardItemV2(item, reason = "") {\n  // Stylist recommendation cards must preserve the product/cutout/clean\n  // derivative lineage. The client can refresh a stale Firebase download URL\n  // from its storage path; it must never disguise a raw/person original as a\n  // product image just to keep a picture visible.\n  return {\n    ...item,\n    ...(typeof reason === "string" && reason.trim() ?\n      {stylistSelectionReason: reason.trim()} : {}),\n  };\n}'''
+          )
+
+          # Update the old regression that explicitly encoded the raw-original
+          # fallback we now know is wrong for Stylist product cards.
+          replace_once(
+              'functions/stylist/v2/stylist_wardrobe_cache_v2.test.js',
+              '''test("stylist card materialization prefers original image over a broken derivative", () => {\n  const item = {\n    id: "pants",\n    cutoutImageUrl: "https://storage.example/cutout-broken.png",\n    cleanImageUrl: "https://storage.example/clean-broken.png",\n    imageUrl: "https://storage.example/derived-broken.png",\n    originalImageUrl: "https://storage.example/original-good.jpg",\n  };\n\n  const card = materializeStylistCardItemV2(item, "praktický spodný diel");\n  assert.equal(card.cutoutImageUrl, item.originalImageUrl);\n  assert.equal(card.cleanImageUrl, item.originalImageUrl);\n  assert.equal(card.imageUrl, item.originalImageUrl);\n  assert.equal(card.stylistSelectionReason, "praktický spodný diel");\n});''',
+              '''test("stylist card materialization preserves derivatives and never impersonates them with the raw original", () => {\n  const item = {\n    id: "pants",\n    productImageUrl: "https://storage.example/product.png",\n    cutoutImageUrl: "https://storage.example/cutout.png",\n    cleanImageUrl: "https://storage.example/clean.png",\n    imageUrl: "https://storage.example/original-person.jpg",\n    originalImageUrl: "https://storage.example/original-person.jpg",\n    storagePath: "wardrobe/user/pants.jpg",\n    cleanStoragePath: "wardrobe_clean/user/pants.png",\n    productStoragePath: "wardrobe_product/user/pants.png",\n    processing: {product: "done"},\n  };\n\n  const card = materializeStylistCardItemV2(item, "praktický spodný diel");\n  assert.equal(card.productImageUrl, item.productImageUrl);\n  assert.equal(card.cutoutImageUrl, item.cutoutImageUrl);\n  assert.equal(card.cleanImageUrl, item.cleanImageUrl);\n  assert.equal(card.imageUrl, item.imageUrl);\n  assert.equal(card.storagePath, item.storagePath);\n  assert.equal(card.cleanStoragePath, item.cleanStoragePath);\n  assert.equal(card.productStoragePath, item.productStoragePath);\n  assert.equal(card.processing.product, "done");\n  assert.equal(card.stylistSelectionReason, "praktický spodný diel");\n});'''
+          )
+
+          # Model routing + payload efficiency + server-owned CTA copy.
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''const PLAN_MODEL = "gpt-5.6-luna";\nconst PLAN_REASONING = "low";\nconst FINAL_MODEL = "gpt-5.6-terra";\nconst FINAL_REASONING = "low";\nconst FINAL_REASONING_ESCALATED = "medium";''',
+              '''const PLAN_MODEL = "gpt-5.6-luna";\nconst PLAN_REASONING = "low";\n// Ordinary styling is latency-sensitive and does not need the heavier model.\n// Safety/formal turns automatically escalate to Terra medium.\nconst FINAL_MODEL = "gpt-5.6-luna";\nconst FINAL_REASONING = "medium";\nconst FINAL_ESCALATED_MODEL = "gpt-5.6-terra";\nconst FINAL_REASONING_ESCALATED = "medium";'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''function finalReasoningForInputV2(input) {\n  const terrain = input?.session?.context?.terrain || {};\n  const condition = clean(terrain.condition, 40).toLowerCase();\n  const difficulty = clean(terrain.difficulty, 40).toLowerCase();\n  const surface = clean(terrain.surface, 40).toLowerCase();\n  const latest = normalizeIntentTextV2(input?.request?.latestUserInput);\n  const safetySensitive = ["wet", "muddy", "snow", "ice"].includes(condition) ||\n    ["steep", "technical"].includes(difficulty) || surface === "rock";\n  const formalSensitive = /\\b(svadba|wedding|pohovor|interview|ples|pohreb|funeral|ceremonia)\\b/.test(latest);\n  return safetySensitive || formalSensitive ? FINAL_REASONING_ESCALATED : FINAL_REASONING;\n}''',
+              '''function finalModelRoutingForInputV2(input) {\n  const terrain = input?.session?.context?.terrain || {};\n  const condition = clean(terrain.condition, 40).toLowerCase();\n  const difficulty = clean(terrain.difficulty, 40).toLowerCase();\n  const surface = clean(terrain.surface, 40).toLowerCase();\n  const latest = normalizeIntentTextV2(input?.request?.latestUserInput);\n  const safetySensitive = ["wet", "muddy", "snow", "ice"].includes(condition) ||\n    ["steep", "technical"].includes(difficulty) || surface === "rock";\n  const formalSensitive = /\\b(svadba|wedding|pohovor|interview|ples|pohreb|funeral|ceremonia)\\b/.test(latest);\n  if (safetySensitive || formalSensitive) {\n    return {model: FINAL_ESCALATED_MODEL, reasoningEffort: FINAL_REASONING_ESCALATED};\n  }\n  return {model: FINAL_MODEL, reasoningEffort: FINAL_REASONING};\n}\n\nfunction finalReasoningForInputV2(input) {\n  return finalModelRoutingForInputV2(input).reasoningEffort;\n}\n\nfunction compactWardrobeItemForModelV2(raw) {\n  const item = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};\n  const {\n    productImageUrl, cutoutImageUrl, cleanImageUrl, imageUrl, originalImageUrl,\n    storagePath, cleanStoragePath, productStoragePath, processing,\n    ...semantic\n  } = item;\n  return semantic;\n}\n\nfunction compactWardrobeForModelV2(items) {\n  return (Array.isArray(items) ? items : []).map(compactWardrobeItemForModelV2);\n}\n\nfunction shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {\n  const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);\n  if (/\\b(hiking|trekking|turist)/.test(normalized)) {\n    return "Chceš, aby som ti vybral vhodnejšie turistické topánky?";\n  }\n  if (/\\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {\n    return "Chceš, aby som ti vybral vhodnejšie topánky?";\n  }\n  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";\n}'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''    statePatch.pendingAction = {type: "action", kind: "shopping", actionId};\n    result.quickReplies = [\n      {actionId: `${actionId}_yes`, label: "Áno"},\n      {actionId: `${actionId}_no`, label: "Nie"},\n    ];''',
+              '''    statePatch.pendingAction = {type: "action", kind: "shopping", actionId};\n    result.quickReplyPrompt = shoppingQuickReplyPromptV2(needLabel, canonicalNeed);\n    result.quickReplies = [\n      {actionId: `${actionId}_yes`, label: "Áno"},\n      {actionId: `${actionId}_no`, label: "Nie"},\n    ];'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''      const phase = input?.phase === "final" ? "final" : "plan";\n      const wardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];\n      const payload = {\n        wardrobeV2,\n        request: input.request,\n        session: input.session,\n        preflightResolution: input.preflightResolution,\n        toolResults: input.toolResults,\n        userStylePreferences,\n      };\n      const reasoningEffort = phase === "plan" ? PLAN_REASONING : finalReasoningForInputV2(input);\n      const model = phase === "plan" ? PLAN_MODEL : FINAL_MODEL;''',
+              '''      const phase = input?.phase === "final" ? "final" : "plan";\n      const wardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];\n      const modelWardrobe = compactWardrobeForModelV2(wardrobeV2);\n      const payload = {\n        request: input.request,\n        session: input.session,\n        preflightResolution: input.preflightResolution,\n        toolResults: {\n          ...(input.toolResults || {}),\n          wardrobeItems: modelWardrobe,\n        },\n        userStylePreferences,\n      };\n      const finalRouting = finalModelRoutingForInputV2(input);\n      const reasoningEffort = phase === "plan" ? PLAN_REASONING : finalRouting.reasoningEffort;\n      const model = phase === "plan" ? PLAN_MODEL : finalRouting.model;'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''  FINAL_MODEL,\n  FINAL_REASONING,''',
+              '''  FINAL_ESCALATED_MODEL,\n  FINAL_MODEL,\n  FINAL_REASONING,'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''  enforceHighConfidenceGrounding,\n  finalEnvelope,\n  finalReasoningForInputV2,''',
+              '''  compactWardrobeForModelV2,\n  enforceHighConfidenceGrounding,\n  finalEnvelope,\n  finalModelRoutingForInputV2,\n  finalReasoningForInputV2,'''
+          )
+          replace_once(
+              'functions/stylist/v2/openai_stylist_model_port_v2.js',
+              '''  shouldPreloadCurrentOutfitV2,\n  stripTrailingShoppingQuestionV2,''',
+              '''  shoppingQuickReplyPromptV2,\n  shouldPreloadCurrentOutfitV2,\n  stripTrailingShoppingQuestionV2,'''
+          )
+
+          # Bridge the server-owned CTA text to Flutter.
+          replace_once(
+              'functions/stylist/v2/stylist_production_bridge_v2.js',
+              '''        quickReplyMode: yesNo ? "yes_no" : "none",\n        resultingOutfitItems: resultingItems,''',
+              '''        quickReplyMode: yesNo ? "yes_no" : "none",\n        quickReplyPrompt: yesNo ? clean(result.quickReplyPrompt, 240) || null : null,\n        resultingOutfitItems: resultingItems,'''
+          )
+
+          # Update routing expectations to Luna-medium ordinary / Terra-medium risky.
+          replace_once(
+              'functions/stylist/v2/stylist_help_first_contract_v2.test.js',
+              '''  FINAL_MODEL,\n  FINAL_REASONING,\n  FINAL_REASONING_ESCALATED,\n  finalReasoningForInputV2,''',
+              '''  FINAL_ESCALATED_MODEL,\n  FINAL_MODEL,\n  FINAL_REASONING,\n  FINAL_REASONING_ESCALATED,\n  finalModelRoutingForInputV2,\n  finalReasoningForInputV2,'''
+          )
+          replace_once(
+              'functions/stylist/v2/stylist_help_first_contract_v2.test.js',
+              '''test("golden: model routing uses cheap planner and low-reasoning Terra for ordinary final styling", () => {\n  assert.equal(PLAN_MODEL, "gpt-5.6-luna");\n  assert.equal(PLAN_REASONING, "low");\n  assert.equal(FINAL_MODEL, "gpt-5.6-terra");\n  assert.equal(FINAL_REASONING, "low");\n  assert.equal(FINAL_REASONING_ESCALATED, "medium");\n});\n\ntest("golden: safety-sensitive terrain escalates final reasoning to medium", () => {\n  const session = clone(createEmptySessionStateV2("reasoning"));\n  session.context.terrain = {surface: "rock", difficulty: "technical", condition: "wet"};\n  const input = {request: {latestUserInput: "vyber mi outfit"}, session};\n  assert.equal(finalReasoningForInputV2(input), "medium");\n\n  session.context.terrain = {surface: null, difficulty: null, condition: null};\n  assert.equal(finalReasoningForInputV2(input), "low");\n});''',
+              '''test("golden: model routing uses Luna medium for ordinary styling and keeps a cheap planner", () => {\n  assert.equal(PLAN_MODEL, "gpt-5.6-luna");\n  assert.equal(PLAN_REASONING, "low");\n  assert.equal(FINAL_MODEL, "gpt-5.6-luna");\n  assert.equal(FINAL_REASONING, "medium");\n  assert.equal(FINAL_ESCALATED_MODEL, "gpt-5.6-terra");\n  assert.equal(FINAL_REASONING_ESCALATED, "medium");\n});\n\ntest("golden: safety-sensitive terrain escalates the final model to Terra medium", () => {\n  const session = clone(createEmptySessionStateV2("reasoning"));\n  session.context.terrain = {surface: "rock", difficulty: "technical", condition: "wet"};\n  const input = {request: {latestUserInput: "vyber mi outfit"}, session};\n  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-terra", reasoningEffort: "medium"});\n  assert.equal(finalReasoningForInputV2(input), "medium");\n\n  session.context.terrain = {surface: null, difficulty: null, condition: null};\n  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "medium"});\n  assert.equal(finalReasoningForInputV2(input), "medium");\n});'''
+          )
+
+          Path('functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js').write_text(r'''"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  createOpenAiStylistModelPortV2,
+  finalEnvelope,
+  shoppingQuickReplyPromptV2,
+} = require("./openai_stylist_model_port_v2");
+
+function baseInput() {
+  return {
+    phase: "final",
+    request: {turnId: "turn-1", latestUserInput: "vyber mi outfit"},
+    session: {context: {terrain: {surface: null, difficulty: null, condition: null}}, currentOutfit: {itemIds: [], selectionReasonsByItemId: {}}},
+    preflightResolution: {},
+    toolResults: {
+      wardrobeItems: [{
+        id: "shirt", name: "Tričko", canonicalType: "t_shirt", canonicalFamily: "tops",
+        bodySlots: ["upper_body"], layerPosition: "base", warmth: 1, formality: 1,
+        productImageUrl: "https://img.example/product.png",
+        cutoutImageUrl: "https://img.example/cutout.png",
+        cleanImageUrl: "https://img.example/clean.png",
+        imageUrl: "https://img.example/person.jpg",
+        originalImageUrl: "https://img.example/person.jpg",
+        storagePath: "wardrobe/u/shirt.jpg",
+        cleanStoragePath: "wardrobe_clean/u/shirt.png",
+        productStoragePath: "wardrobe_product/u/shirt.png",
+        processing: {product: "done"},
+      }],
+      weatherSnapshot: {summary: "mild"},
+    },
+  };
+}
+
+test("final model payload sends semantic wardrobe once and strips image transport fields", async () => {
+  let call;
+  const port = createOpenAiStylistModelPortV2({
+    executeStructured: async (input) => {
+      call = input;
+      return {
+        action: "chat", assistantText: "Jasné.", resultingOutfitItemIds: [], selectionReasons: [],
+        displayKind: "none", displayItemIds: [], editReplaceItemIds: [], editRetainItemIds: [],
+        editAllowedSlots: [], editAllowedCategories: [], editAllowRemovalOnly: false,
+        clarificationField: null, clarificationQuestion: null, offerShopping: false,
+        shoppingNeedLabel: null, shoppingNeedCanonicalType: null,
+        shoppingHardConstraints: [], shoppingSoftPreferences: [],
+      };
+    },
+  });
+  await port.turn(baseInput());
+  assert.equal(call.model, "gpt-5.6-luna");
+  assert.equal(call.reasoningEffort, "medium");
+  const payload = JSON.parse(call.messages[1].content);
+  assert.equal(Object.hasOwn(payload, "wardrobeV2"), false);
+  assert.equal(payload.toolResults.wardrobeItems.length, 1);
+  const item = payload.toolResults.wardrobeItems[0];
+  assert.equal(item.id, "shirt");
+  for (const key of ["productImageUrl", "cutoutImageUrl", "cleanImageUrl", "imageUrl", "originalImageUrl", "storagePath", "cleanStoragePath", "productStoragePath", "processing"]) {
+    assert.equal(Object.hasOwn(item, key), false, key);
+  }
+  assert.deepEqual(payload.toolResults.weatherSnapshot, {summary: "mild"});
+});
+
+test("shopping CTA is footwear-specific instead of anonymous yes/no buttons", () => {
+  assert.equal(
+    shoppingQuickReplyPromptV2("turistická obuv", "hiking_shoes"),
+    "Chceš, aby som ti vybral vhodnejšie turistické topánky?",
+  );
+  const envelope = finalEnvelope({
+    action: "generate_outfit", assistantText: "Tenisky sú tu len kompromis. Chceš, aby som ti niečo vybral?",
+    resultingOutfitItemIds: ["shirt"], selectionReasons: [{itemId: "shirt", reason: "ľahký vrch"}],
+    displayKind: "outfit", displayItemIds: ["shirt"], editReplaceItemIds: [], editRetainItemIds: [],
+    editAllowedSlots: [], editAllowedCategories: [], editAllowRemovalOnly: false,
+    clarificationField: null, clarificationQuestion: null, offerShopping: true,
+    shoppingNeedLabel: "turistická obuv", shoppingNeedCanonicalType: "hiking_shoes",
+    shoppingHardConstraints: [], shoppingSoftPreferences: [],
+  }, baseInput());
+  assert.equal(envelope.result.quickReplyPrompt, "Chceš, aby som ti vybral vhodnejšie turistické topánky?");
+  assert.doesNotMatch(envelope.result.assistantText, /Chceš/i);
+});
+''', encoding='utf-8')
+
+          # Flutter callable DTO carries the server-owned CTA prompt.
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              '''    required this.quickReplyMode,\n    required this.resultingOutfitItems,''',
+              '''    required this.quickReplyMode,\n    required this.quickReplyPrompt,\n    required this.resultingOutfitItems,'''
+          )
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              '''  final String quickReplyMode;\n  final List<Map<String, dynamic>> resultingOutfitItems;''',
+              '''  final String quickReplyMode;\n  final String? quickReplyPrompt;\n  final List<Map<String, dynamic>> resultingOutfitItems;'''
+          )
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              '''        quickReplyMode: 'none', resultingOutfitItems: const [], displayItems: const []);''',
+              '''        quickReplyMode: 'none', quickReplyPrompt: null, resultingOutfitItems: const [], displayItems: const []);'''
+          )
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              '''    return StylistSimpleAgentResultV1(ok: true, failClosed: false, stylistComment: comment,\n      resultingOutfitItemIds: List<String>.unmodifiable(resultIds), displayItemIds: List<String>.unmodifiable(displayIds),\n      outfitChanged: data['outfitChanged'] as bool, quickReplyMode: data['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',\n      resultingOutfitItems:''',
+              '''    final quickReplyPromptRaw = (data['quickReplyPrompt'] ?? '').toString().trim();\n    return StylistSimpleAgentResultV1(ok: true, failClosed: false, stylistComment: comment,\n      resultingOutfitItemIds: List<String>.unmodifiable(resultIds), displayItemIds: List<String>.unmodifiable(displayIds),\n      outfitChanged: data['outfitChanged'] as bool, quickReplyMode: data['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',\n      quickReplyPrompt: quickReplyPromptRaw.isEmpty ? null : quickReplyPromptRaw,\n      resultingOutfitItems:'''
+          )
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              '''    'quickReplyMode': quickReplyMode, 'resultingOutfitItems': resultingOutfitItems, 'displayItems': displayItems,''',
+              '''    'quickReplyMode': quickReplyMode, if (quickReplyPrompt != null) 'quickReplyPrompt': quickReplyPrompt,\n    'resultingOutfitItems': resultingOutfitItems, 'displayItems': displayItems,'''
+          )
+
+          # No pre-call Martin weather fetch: V2 server owns destination weather.
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''      _setSendingProgress(StylistChatProgressPhase.checkingWeather);\n      final weatherContext = await _simpleAgentWeatherContext();\n      final clientContext = _simpleAgentClientContext();''',
+              '''      // V2 resolves authoritative weather server-side from destination/eventLocation.\n      // Fetching Martin today+tomorrow here was pure latency and was ignored by\n      // the production bridge. Keep the legacy argument empty for compatibility.\n      const weatherContext = <String, dynamic>{};\n      final clientContext = _simpleAgentClientContext();'''
+          )
+
+          # Chat message owns and persists the CTA text, then passes it to the
+          # panel that sits after outfit cards.
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''import '../widgets/stylist_quick_reply_buttons.dart';''',
+              '''import '../widgets/stylist_quick_reply_buttons.dart';\nimport '../widgets/stylist_suggested_item_card.dart';'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''  final String quickReplyMode;\n\n  const StylistChatMessage({''',
+              '''  final String quickReplyMode;\n  final String? quickReplyPrompt;\n\n  const StylistChatMessage({'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''    this.quickReplyMode = 'none',\n  });''',
+              '''    this.quickReplyMode = 'none',\n    this.quickReplyPrompt,\n  });'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''      quickReplyMode: quickReplyMode,\n    );''',
+              '''      quickReplyMode: quickReplyMode,\n      quickReplyPrompt: quickReplyPrompt,\n    );'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''      if (quickReplyMode == 'yes_no') 'quickReplyMode': quickReplyMode,\n    };''',
+              '''      if (quickReplyMode == 'yes_no') 'quickReplyMode': quickReplyMode,\n      if (quickReplyPrompt != null && quickReplyPrompt!.trim().isNotEmpty)\n        'quickReplyPrompt': quickReplyPrompt,\n    };'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''      quickReplyMode: map['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',\n    );''',
+              '''      quickReplyMode: map['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',\n      quickReplyPrompt: (map['quickReplyPrompt'] ?? '').toString().trim().isEmpty\n          ? null\n          : (map['quickReplyPrompt'] ?? '').toString().trim(),\n    );'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''          quickReplyMode: response['quickReplyMode'] == 'yes_no'\n              ? 'yes_no'\n              : 'none',\n        ),''',
+              '''          quickReplyMode: response['quickReplyMode'] == 'yes_no'\n              ? 'yes_no'\n              : 'none',\n          quickReplyPrompt: (response['quickReplyPrompt'] ?? '').toString().trim().isEmpty\n              ? null\n              : (response['quickReplyPrompt'] ?? '').toString().trim(),\n        ),'''
+          )
+          replace_once(
+              'lib/screens/stylist_chat_screen.dart',
+              '''                    StylistQuickReplyButtons(onSelected: onQuickReply!),''',
+              '''                    StylistQuickReplyButtons(\n                      prompt: message.quickReplyPrompt,\n                      onSelected: onQuickReply!,\n                    ),'''
+          )
+
+          old_card = '''class _SuggestedItemCard extends StatelessWidget {\n  final Map<String, dynamic> item;\n\n  const _SuggestedItemCard({required this.item});\n\n  String? _resolveImageUrl(Map<String, dynamic> item) {\n    final cutout = (item['cutoutImageUrl'] ?? '').toString().trim();\n    if (cutout.startsWith('http')) return cutout;\n    final clean = (item['cleanImageUrl'] ?? '').toString().trim();\n    if (clean.startsWith('http')) return clean;\n    return getBestWardrobeImageUrlOrNull(item);\n  }\n\n  @override\n  Widget build(BuildContext context) {\n    const textPrimary = Color(0xFFF1F0EC);\n    const textSecondary = Color(0xFFAAA59B);\n    final label = (item['name'] ?? item['label'] ?? item['category'] ?? 'Kúsok')\n        .toString();\n    final imageUrl = _resolveImageUrl(item);\n\n    return SizedBox(\n      width: 96,\n      child: Column(\n        crossAxisAlignment: CrossAxisAlignment.center,\n        children: [\n          SizedBox(\n            height: 78,\n            width: double.infinity,\n            child: imageUrl == null\n                ? const Icon(Icons.checkroom, color: textSecondary, size: 22)\n                : Image.network(\n                    imageUrl,\n                    fit: BoxFit.contain,\n                    alignment: Alignment.center,\n                    errorBuilder: (_, __, ___) => const Icon(\n                      Icons.broken_image_outlined,\n                      color: textSecondary,\n                      size: 20,\n                    ),\n                  ),\n          ),\n          const SizedBox(height: 6),\n          Text(\n            label,\n            maxLines: 2,\n            overflow: TextOverflow.ellipsis,\n            textAlign: TextAlign.center,\n            style: const TextStyle(\n              color: textPrimary,\n              fontSize: 11.5,\n              fontWeight: FontWeight.w600,\n              height: 1.2,\n            ),\n          ),\n        ],\n      ),\n    );\n  }\n}'''
+          new_card = '''class _SuggestedItemCard extends StatelessWidget {\n  final Map<String, dynamic> item;\n\n  const _SuggestedItemCard({required this.item});\n\n  @override\n  Widget build(BuildContext context) => StylistSuggestedItemCard(item: item);\n}'''
+          replace_once('lib/screens/stylist_chat_screen.dart', old_card, new_card)
+
+          # Dynamic CTA panel: server prompt when available, safe generic fallback.
+          replace_once(
+              'lib/widgets/stylist_quick_reply_buttons.dart',
+              '''class StylistQuickReplyButtons extends StatelessWidget {\n  const StylistQuickReplyButtons({super.key, required this.onSelected});\n\n  final ValueChanged<String> onSelected;''',
+              '''class StylistQuickReplyButtons extends StatelessWidget {\n  const StylistQuickReplyButtons({super.key, this.prompt, required this.onSelected});\n\n  final String? prompt;\n  final ValueChanged<String> onSelected;'''
+          )
+          replace_once(
+              'lib/widgets/stylist_quick_reply_buttons.dart',
+              '''        const Text(\n          'Chceš, aby som ti pomohol vybrať vhodnejší kúsok do šatníka?',\n          key: ValueKey('stylist-quick-reply-prompt'),\n          style: TextStyle(\n            color: secondaryText,\n            fontSize: 13,\n            height: 1.35,\n          ),\n        ),''',
+              '''        Text(\n          (prompt ?? '').trim().isNotEmpty\n              ? prompt!.trim()\n              : 'Chceš, aby som ti vybral vhodnejší kúsok do šatníka?',\n          key: const ValueKey('stylist-quick-reply-prompt'),\n          style: const TextStyle(\n            color: secondaryText,\n            fontSize: 13,\n            height: 1.35,\n          ),\n        ),'''
+          )
+
+          Path('lib/utils/stylist_card_image_priority.dart').write_text(r'''import '../Services/clothing_analyzer_pipeline.dart';
+import '../Services/product_link_v2_display_policy.dart';
+import 'wardrobe_image_url_priority.dart';
+
+class StylistCardImageCandidate {
+  const StylistCardImageCandidate({
+    required this.url,
+    required this.kind,
+    this.storagePath,
+  });
+
+  final String url;
+  final String kind;
+  final String? storagePath;
+}
+
+bool _http(String value) =>
+    value.startsWith('http://') || value.startsWith('https://');
+
+String? _pathFor(Map<String, dynamic> item, String key, String url) {
+  final explicit = (item[key] ?? '').toString().trim();
+  if (explicit.isNotEmpty) return explicit;
+  return ClothingAnalyzerPipeline.storagePathFromFirebaseUrl(url);
+}
+
+/// Stylist cards are product-like recommendation surfaces. They intentionally
+/// exclude raw imageUrl/originalImageUrl because those can contain the person
+/// who originally uploaded the garment. Broken derivatives therefore degrade
+/// to another derivative or a neutral clothing placeholder, never to a person.
+List<StylistCardImageCandidate> stylistCardImageCandidates(
+  Map<String, dynamic> item,
+) {
+  final out = <StylistCardImageCandidate>[];
+  final seen = <String>{};
+  final storagePath = (item['storagePath'] ?? '').toString().trim();
+  final ownedV2 = isOwnedV2CanonicalStoragePath(storagePath);
+
+  void add(String key, String kind, String storageKey, {bool product = false}) {
+    final url = (item[key] ?? '').toString().trim();
+    if (!_http(url) || seen.contains(url)) return;
+    if (product && !canUseProductImageUrl(item)) return;
+    if (!product && ownedV2 &&
+        !isOwnedV2SameSourceDisplayUrl(item: item, url: url)) {
+      return;
+    }
+    seen.add(url);
+    out.add(StylistCardImageCandidate(
+      url: url,
+      kind: kind,
+      storagePath: _pathFor(item, storageKey, url),
+    ));
+  }
+
+  add('productImageUrl', 'product', 'productStoragePath', product: true);
+  add('cutoutImageUrl', 'cutout', 'cleanStoragePath');
+  add('cleanImageUrl', 'clean', 'cleanStoragePath');
+  return List<StylistCardImageCandidate>.unmodifiable(out);
+}
+''', encoding='utf-8')
+
+          Path('lib/widgets/stylist_suggested_item_card.dart').write_text(r'''import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+
+import '../utils/stylist_card_image_priority.dart';
+
+class StylistSuggestedItemCard extends StatefulWidget {
+  const StylistSuggestedItemCard({super.key, required this.item});
+
+  final Map<String, dynamic> item;
+
+  @override
+  State<StylistSuggestedItemCard> createState() =>
+      _StylistSuggestedItemCardState();
+}
+
+class _StylistSuggestedItemCardState extends State<StylistSuggestedItemCard> {
+  late Future<List<String>> _urlsFuture;
+  int _index = 0;
+  final Set<int> _failed = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _reset();
+  }
+
+  @override
+  void didUpdateWidget(covariant StylistSuggestedItemCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.item['id'] ?? '').toString() !=
+            (widget.item['id'] ?? '').toString() ||
+        oldWidget.item['productImageUrl'] != widget.item['productImageUrl'] ||
+        oldWidget.item['cleanImageUrl'] != widget.item['cleanImageUrl'] ||
+        oldWidget.item['cutoutImageUrl'] != widget.item['cutoutImageUrl']) {
+      _reset();
+    }
+  }
+
+  void _reset() {
+    _index = 0;
+    _failed.clear();
+    _urlsFuture = _resolveFreshUrls();
+  }
+
+  Future<List<String>> _resolveFreshUrls() async {
+    final candidates = stylistCardImageCandidates(widget.item);
+    final urls = <String>[];
+    for (final candidate in candidates) {
+      var url = candidate.url;
+      final path = candidate.storagePath?.trim() ?? '';
+      if (path.isNotEmpty) {
+        try {
+          url = await FirebaseStorage.instance
+              .ref(path)
+              .getDownloadURL()
+              .timeout(const Duration(seconds: 4));
+        } catch (_) {
+          // The derivative object/path is unavailable. Do not fall back to the
+          // raw original/person photo; continue with the next product-like one.
+          continue;
+        }
+      }
+      if ((url.startsWith('http://') || url.startsWith('https://')) &&
+          !urls.contains(url)) {
+        urls.add(url);
+      }
+    }
+    return List<String>.unmodifiable(urls);
+  }
+
+  void _advanceAfterFailure(int failedIndex, int length) {
+    if (_failed.contains(failedIndex)) return;
+    _failed.add(failedIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _index != failedIndex) return;
+      if (failedIndex + 1 < length) {
+        setState(() => _index = failedIndex + 1);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const textPrimary = Color(0xFFF1F0EC);
+    const textSecondary = Color(0xFFAAA59B);
+    final label = (widget.item['name'] ??
+            widget.item['label'] ??
+            widget.item['category'] ??
+            'Kúsok')
+        .toString();
+
+    return SizedBox(
+      width: 96,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            height: 78,
+            width: double.infinity,
+            child: FutureBuilder<List<String>>(
+              future: _urlsFuture,
+              builder: (context, snapshot) {
+                final urls = snapshot.data ?? const <String>[];
+                if (urls.isEmpty || _index >= urls.length) {
+                  return const Icon(Icons.checkroom, color: textSecondary, size: 24);
+                }
+                final currentIndex = _index;
+                final url = urls[currentIndex];
+                return Image.network(
+                  url,
+                  key: ValueKey('${widget.item['id'] ?? label}:$url'),
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  errorBuilder: (_, __, ___) {
+                    _advanceAfterFailure(currentIndex, urls.length);
+                    return const Icon(
+                      Icons.checkroom,
+                      color: textSecondary,
+                      size: 24,
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: textPrimary,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+''', encoding='utf-8')
+
+          Path('test/stylist_card_image_priority_test.dart').write_text(r'''import 'package:flutter_test/flutter_test.dart';
+import 'package:outfitofTheDay/utils/stylist_card_image_priority.dart';
+
+void main() {
+  test('Stylist card keeps only product-like image candidates and excludes raw original', () {
+    final item = <String, dynamic>{
+      'productImageUrl': 'https://example.test/product.png',
+      'cutoutImageUrl': 'https://example.test/cutout.png',
+      'cleanImageUrl': 'https://example.test/clean.png',
+      'imageUrl': 'https://example.test/person.jpg',
+      'originalImageUrl': 'https://example.test/person.jpg',
+      'processing': <String, dynamic>{'product': 'done'},
+    };
+    final candidates = stylistCardImageCandidates(item);
+    expect(candidates.map((e) => e.kind), ['product', 'cutout', 'clean']);
+    expect(candidates.map((e) => e.url), isNot(contains(item['imageUrl'])));
+    expect(candidates.map((e) => e.url), isNot(contains(item['originalImageUrl'])));
+  });
+
+  test('Stylist card has no raw-person fallback when derivatives are absent', () {
+    final candidates = stylistCardImageCandidates(<String, dynamic>{
+      'imageUrl': 'https://example.test/person.jpg',
+      'originalImageUrl': 'https://example.test/person.jpg',
+    });
+    expect(candidates, isEmpty);
+  });
+}
+''', encoding='utf-8')
+
+          Path('test/stylist_quick_reply_contract_test.dart').write_text(r'''import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';
+import 'package:outfitofTheDay/widgets/stylist_quick_reply_buttons.dart';
+
+void main() {
+  test('server shopping prompt survives callable DTO normalization', () {
+    final result = StylistSimpleAgentResultV1.fromCallableData(<String, dynamic>{
+      'simpleAgent': true,
+      'failClosed': false,
+      'stylistComment': 'Tenisky sú kompromis.',
+      'resultingOutfitItemIds': <String>[],
+      'displayItemIds': <String>[],
+      'resultingOutfitItems': <Map<String, dynamic>>[],
+      'displayItems': <Map<String, dynamic>>[],
+      'outfitChanged': false,
+      'quickReplyMode': 'yes_no',
+      'quickReplyPrompt': 'Chceš, aby som ti vybral vhodnejšie turistické topánky?',
+    });
+    expect(result.quickReplyPrompt,
+        'Chceš, aby som ti vybral vhodnejšie turistické topánky?');
+    expect(result.toUiResponse()['quickReplyPrompt'], result.quickReplyPrompt);
+  });
+
+  testWidgets('shopping prompt is visibly rendered directly with Ano/Nie controls', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: StylistQuickReplyButtons(
+          prompt: 'Chceš, aby som ti vybral vhodnejšie turistické topánky?',
+          onSelected: (_) {},
+        ),
+      ),
+    ));
+    expect(find.text('Chceš, aby som ti vybral vhodnejšie turistické topánky?'), findsOneWidget);
+    expect(find.text('Áno'), findsOneWidget);
+    expect(find.text('Nie'), findsOneWidget);
+  });
+}
+''', encoding='utf-8')
+
+          # CI owns every new seam and regression.
+          replace_once(
+              '.github/workflows/stylist-v2-ci.yml',
+              '''      - 'lib/Services/stylist_simple_agent_service_v1.dart'\n      - 'test/stylist_simple_agent_fast_path_test.dart'\n      - 'firestore.rules' ''',
+              '''      - 'lib/Services/stylist_simple_agent_service_v1.dart'\n      - 'lib/screens/stylist_chat_screen.dart'\n      - 'lib/widgets/stylist_quick_reply_buttons.dart'\n      - 'lib/widgets/stylist_suggested_item_card.dart'\n      - 'lib/utils/stylist_card_image_priority.dart'\n      - 'test/stylist_simple_agent_fast_path_test.dart'\n      - 'test/stylist_quick_reply_contract_test.dart'\n      - 'test/stylist_card_image_priority_test.dart'\n      - 'firestore.rules' '''
+          )
+          replace_once(
+              '.github/workflows/stylist-v2-ci.yml',
+              '''          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js\n      - name: Existing Stylist backend regression''',
+              '''          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js\n          functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js\n      - name: Existing Stylist backend regression'''
+          )
+          replace_once(
+              '.github/workflows/stylist-v2-ci.yml',
+              '''          lib/Services/stylist_simple_agent_service_v1.dart\n          lib/screens/stylist_chat_screen.dart\n      - name: V2 client fast-path regression''',
+              '''          lib/Services/stylist_simple_agent_service_v1.dart\n          lib/screens/stylist_chat_screen.dart\n          lib/widgets/stylist_quick_reply_buttons.dart\n          lib/widgets/stylist_suggested_item_card.dart\n          lib/utils/stylist_card_image_priority.dart\n      - name: V2 client fast-path regression'''
+          )
+          replace_once(
+              '.github/workflows/stylist-v2-ci.yml',
+              '''      - name: Existing Stylist progress regression\n        run: flutter test test/stylist_chat_progress_test.dart''',
+              '''      - name: V2 CTA and product-card image regressions\n        run: >-\n          flutter test\n          test/stylist_quick_reply_contract_test.dart\n          test/stylist_card_image_priority_test.dart\n      - name: Existing Stylist progress regression\n        run: flutter test test/stylist_chat_progress_test.dart'''
+          )
+
+          # Remove the one-shot patch workflow from the final diff.
+          Path('.github/workflows/_tmp-patch-v2-card-cta-latency.yml').unlink()
+
+      - name: Commit final patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: stabilize Stylist product cards CTA and latency"
+          git push origin HEAD:fix/v2-product-card-cta-latency-20260909
