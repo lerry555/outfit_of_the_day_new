@@ -18,9 +18,11 @@ bool shouldShowStylistQuickReplies({
       !hasAlternativeActions;
 }
 
-/// Compact replies for a server-confirmed yes/no question. The selected value
-/// goes through the ordinary chat send path, preserving full conversation
-/// context and entitlement handling.
+/// Compact replies for a server-confirmed yes/no shopping follow-up. The
+/// question deliberately lives with the controls, so an outfit message can be
+/// rendered as: explanation -> wardrobe cards -> CTA -> Áno/Nie.
+/// The selected value goes through the ordinary chat send path, preserving full
+/// conversation context and entitlement handling.
 class StylistQuickReplyButtons extends StatelessWidget {
   const StylistQuickReplyButtons({super.key, required this.onSelected});
 
@@ -31,50 +33,66 @@ class StylistQuickReplyButtons extends StatelessWidget {
     const accent = Color(0xFFC8A36A);
     const darkText = Color(0xFF191512);
     const lightText = Color(0xFFF1F0EC);
+    const secondaryText = Color(0xFFCBC6BC);
     final shape = RoundedRectangleBorder(
       borderRadius: BorderRadius.circular(10),
     );
 
-    return Row(
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: SizedBox(
-            height: 36,
-            child: FilledButton(
-              key: const ValueKey('stylist-quick-reply-yes'),
-              onPressed: () => onSelected('Áno'),
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: darkText,
-                shape: shape,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-              ),
-              child: const Text(
-                'Áno',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
-              ),
-            ),
+        const Text(
+          'Chceš, aby som ti pomohol vybrať vhodnejší kúsok do šatníka?',
+          key: ValueKey('stylist-quick-reply-prompt'),
+          style: TextStyle(
+            color: secondaryText,
+            fontSize: 13,
+            height: 1.35,
           ),
         ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: SizedBox(
-            height: 36,
-            child: OutlinedButton(
-              key: const ValueKey('stylist-quick-reply-no'),
-              onPressed: () => onSelected('Nie'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: lightText,
-                side: BorderSide(color: accent.withValues(alpha: 0.72)),
-                shape: shape,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-              ),
-              child: const Text(
-                'Nie',
-                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: FilledButton(
+                  key: const ValueKey('stylist-quick-reply-yes'),
+                  onPressed: () => onSelected('Áno'),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: accent,
+                    foregroundColor: darkText,
+                    shape: shape,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  child: const Text(
+                    'Áno',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                  ),
+                ),
               ),
             ),
-          ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 36,
+                child: OutlinedButton(
+                  key: const ValueKey('stylist-quick-reply-no'),
+                  onPressed: () => onSelected('Nie'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: lightText,
+                    side: BorderSide(color: accent.withValues(alpha: 0.72)),
+                    shape: shape,
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  child: const Text(
+                    'Nie',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ],
     );
