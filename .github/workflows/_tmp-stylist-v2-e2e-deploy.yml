@@ -1,4 +1,4 @@
-name: AI Stylist V2 guarded production deploy
+name: AI Stylist V2 production model smoke
 
 on:
   push:
@@ -11,16 +11,16 @@ permissions:
   contents: read
 
 jobs:
-  deploy-and-smoke:
+  smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - name: Checkout exact deploy ref
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Guard exact production candidate
+      - name: Guard deployed production candidate
         shell: bash
         run: |
           set -euo pipefail
@@ -42,74 +42,16 @@ jobs:
           cache: npm
           cache-dependency-path: functions/package-lock.json
 
-      - name: Use Flutter stable for deterministic KB export
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Authenticate to Google Cloud
+      - name: Authenticate for local custom-token signing
         uses: google-github-actions/auth@v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter pub get
-          cd functions
-          npm ci --ignore-scripts
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
 
-      - name: Export authoritative clothing KB fixture
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter test \
-            --dart-define=UPDATE_CLOTHING_KB_PRIOR_ARTIFACT=true \
-            test/backend_clothing_kb_prior_artifact_export_test.dart
-          test -s test/fixtures/backend_qualification/artifacts/clothing_knowledge_base_prior_v1.json
-          test -s test/fixtures/backend_qualification/backend_clothing_kb_prior_artifact_manifest.json
-
-      - name: Generate deploy taxonomy artifacts
-        shell: bash
-        run: |
-          set -euo pipefail
-          node functions/scripts/generate_deploy_taxonomy_artifacts.js
-          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
-          test -s functions/artifacts/vision_canonical_family_registry_v1.json
-          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
-          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
-          test -s functions/artifacts/clothing_knowledge_base_prior_v1.manifest.json
-          test -s functions/artifacts/clothing_knowledge_base_prior_v1.json
-
-      - name: Re-run production-critical Stylist gates
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --check functions/index_v2.js
-          node --check functions/stylist/v2/stylist_turn_coordinator_v2.js
-          node --check functions/stylist/v2/stylist_grounding_policy_v2.js
-          node --check functions/stylist/v2/stylist_turn_contract_v2.js
-          node --check functions/stylist/v2/stylist_production_bridge_v2.js
-          node --check functions/stylist/v2/stylist_production_smoke_v2.js
-          node --test \
-            functions/stylist/v2/stylist_release_gate_v2.test.js \
-            functions/stylist/v2/stylist_adversarial_conversation_v2.test.js \
-            functions/stylist/v2/stylist_help_first_contract_v2.test.js \
-            functions/stylist/v2/stylist_pending_location_v2.test.js \
-            functions/stylist/v2/stylist_grounding_policy_v2.test.js
-
-      - name: Deploy only stylistChatV2
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx --yes firebase-tools deploy \
-            --only functions:stylistChatV2 \
-            --project outfitoftheday-4d401 \
-            --non-interactive
-
-      - name: Production callable smoke
+      - name: Call deployed Stylist through real Luna model path
         shell: bash
         run: |
           set -euo pipefail
@@ -117,6 +59,85 @@ jobs:
           echo "::add-mask::$FIREBASE_WEB_API_KEY"
           export FIREBASE_WEB_API_KEY
           export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
-          export STYLIST_PROD_SMOKE_MAX_CALL_MS=20000
-          export STYLIST_PROD_SMOKE_MAX_COST_USD=0.02
-          node functions/stylist/v2/stylist_production_smoke_v2.js
+          cd functions
+          node <<'NODE'
+          "use strict";
+          const assert = require("node:assert/strict");
+          const admin = require("firebase-admin");
+
+          const projectId = process.env.GOOGLE_CLOUD_PROJECT;
+          const apiKey = process.env.FIREBASE_WEB_API_KEY;
+          const uid = "stylist_prod_smoke_model_only";
+          const chatId = "stylist_prod_smoke_model_only_chat";
+
+          function bratislavaDateKeys() {
+            const parts = new Intl.DateTimeFormat("en-US", {
+              timeZone: "Europe/Bratislava", year: "numeric", month: "2-digit", day: "2-digit",
+            }).formatToParts(new Date());
+            const value = Object.fromEntries(parts.filter((p) => p.type !== "literal").map((p) => [p.type, p.value]));
+            const base = new Date(Date.UTC(Number(value.year), Number(value.month) - 1, Number(value.day)));
+            const key = (offset) => new Date(base.getTime() + offset * 86400000).toISOString().slice(0, 10);
+            return {todayDateKey: key(0), tomorrowDateKey: key(1)};
+          }
+
+          async function exchange(customToken) {
+            const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(apiKey)}`, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({token: customToken, returnSecureToken: true}),
+            });
+            const json = await response.json();
+            if (!response.ok) throw new Error(`token_exchange_failed:${response.status}:${json?.error?.message || "unknown"}`);
+            return json.idToken;
+          }
+
+          async function deleteOwnAuthUser(idToken) {
+            await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(apiKey)}`, {
+              method: "POST",
+              headers: {"Content-Type": "application/json"},
+              body: JSON.stringify({idToken}),
+            }).catch(() => {});
+          }
+
+          (async () => {
+            if (!admin.apps.length) admin.initializeApp({projectId});
+            const customToken = await admin.auth().createCustomToken(uid);
+            const idToken = await exchange(customToken);
+            try {
+              const stamp = Date.now();
+              const started = Date.now();
+              const response = await fetch(`https://us-east1-${projectId}.cloudfunctions.net/stylistChatV2`, {
+                method: "POST",
+                headers: {"Content-Type": "application/json", Authorization: `Bearer ${idToken}`},
+                body: JSON.stringify({data: {
+                  v2SessionId: chatId,
+                  turnId: `model_smoke_${stamp}`,
+                  message: "Aké farby sa hodia k modrej?",
+                  history: [],
+                  currentOutfitItemIds: [],
+                  currentSelectionReasons: [],
+                  shoppingEnabled: false,
+                  clientContext: {...bratislavaDateKeys(), timezoneOffsetMinutes: -new Date().getTimezoneOffset()},
+                }}),
+              });
+              const latencyMs = Date.now() - started;
+              const json = await response.json().catch(() => ({}));
+              if (!response.ok || !json.result) {
+                throw new Error(`callable_failed:${response.status}:${JSON.stringify(json).slice(0, 500)}`);
+              }
+              const result = json.result;
+              assert.equal(result.failClosed, false, JSON.stringify(result));
+              assert.equal(result.action, "chat", JSON.stringify(result));
+              const reply = String(result.reply || result.stylistComment || "").trim();
+              assert.ok(reply.length >= 20 && reply.length <= 700, `bad_reply_length:${reply.length}`);
+              assert.doesNotMatch(reply, /fail.?closed|validator|toolResults|grounding/i);
+              assert.ok(latencyMs <= 20000, `callable_latency_budget_exceeded:${latencyMs}`);
+              console.log(JSON.stringify({ok: true, action: result.action, latencyMs, replyLength: reply.length}));
+            } finally {
+              await deleteOwnAuthUser(idToken);
+            }
+          })().catch((error) => {
+            console.error(`STYLIST_MODEL_ONLY_PRODUCTION_SMOKE_FAILED ${error?.message || error}`);
+            process.exitCode = 1;
+          });
+          NODE
