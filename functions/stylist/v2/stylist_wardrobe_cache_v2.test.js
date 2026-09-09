@@ -148,18 +148,28 @@ test("revision probe fails closed to no-cache when Firestore capabilities are mi
   assert.equal(await readWardrobeRevisionTokenV2({count() { return {}; }}), null);
 });
 
-test("stylist card materialization prefers original image over a broken derivative", () => {
+test("stylist card materialization preserves derivatives and never impersonates them with the raw original", () => {
   const item = {
     id: "pants",
-    cutoutImageUrl: "https://storage.example/cutout-broken.png",
-    cleanImageUrl: "https://storage.example/clean-broken.png",
-    imageUrl: "https://storage.example/derived-broken.png",
-    originalImageUrl: "https://storage.example/original-good.jpg",
+    productImageUrl: "https://storage.example/product.png",
+    cutoutImageUrl: "https://storage.example/cutout.png",
+    cleanImageUrl: "https://storage.example/clean.png",
+    imageUrl: "https://storage.example/original-person.jpg",
+    originalImageUrl: "https://storage.example/original-person.jpg",
+    storagePath: "wardrobe/user/pants.jpg",
+    cleanStoragePath: "wardrobe_clean/user/pants.png",
+    productStoragePath: "wardrobe_product/user/pants.png",
+    processing: {product: "done"},
   };
 
   const card = materializeStylistCardItemV2(item, "praktický spodný diel");
-  assert.equal(card.cutoutImageUrl, item.originalImageUrl);
-  assert.equal(card.cleanImageUrl, item.originalImageUrl);
-  assert.equal(card.imageUrl, item.originalImageUrl);
+  assert.equal(card.productImageUrl, item.productImageUrl);
+  assert.equal(card.cutoutImageUrl, item.cutoutImageUrl);
+  assert.equal(card.cleanImageUrl, item.cleanImageUrl);
+  assert.equal(card.imageUrl, item.imageUrl);
+  assert.equal(card.storagePath, item.storagePath);
+  assert.equal(card.cleanStoragePath, item.cleanStoragePath);
+  assert.equal(card.productStoragePath, item.productStoragePath);
+  assert.equal(card.processing.product, "done");
   assert.equal(card.stylistSelectionReason, "praktický spodný diel");
 });

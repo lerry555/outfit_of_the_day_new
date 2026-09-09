@@ -27,7 +27,8 @@ void main() {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Áno'), isNull);
   });
 
-  testWidgets('shopping follow-up renders prompt directly above yes-no buttons', (tester) async {
+  testWidgets('shopping follow-up renders server prompt directly above yes-no buttons', (tester) async {
+    const prompt = 'Chceš, aby som ti vybral vhodnejšie turistické topánky?';
     String? selected;
     await tester.pumpWidget(
       MaterialApp(
@@ -35,6 +36,7 @@ void main() {
           body: SizedBox(
             width: 320,
             child: StylistQuickReplyButtons(
+              prompt: prompt,
               onSelected: (value) => selected = value,
             ),
           ),
@@ -43,7 +45,7 @@ void main() {
     );
 
     expect(find.byKey(const ValueKey('stylist-quick-reply-prompt')), findsOneWidget);
-    expect(find.text('Chceš, aby som ti pomohol vybrať vhodnejší kúsok do šatníka?'), findsOneWidget);
+    expect(find.text(prompt), findsOneWidget);
     expect(find.byKey(const ValueKey('stylist-quick-reply-yes')), findsOneWidget);
     expect(find.byKey(const ValueKey('stylist-quick-reply-no')), findsOneWidget);
 

@@ -24,8 +24,9 @@ bool shouldShowStylistQuickReplies({
 /// The selected value goes through the ordinary chat send path, preserving full
 /// conversation context and entitlement handling.
 class StylistQuickReplyButtons extends StatelessWidget {
-  const StylistQuickReplyButtons({super.key, required this.onSelected});
+  const StylistQuickReplyButtons({super.key, this.prompt, required this.onSelected});
 
+  final String? prompt;
   final ValueChanged<String> onSelected;
 
   @override
@@ -41,10 +42,12 @@ class StylistQuickReplyButtons extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text(
-          'Chceš, aby som ti pomohol vybrať vhodnejší kúsok do šatníka?',
-          key: ValueKey('stylist-quick-reply-prompt'),
-          style: TextStyle(
+        Text(
+          (prompt ?? '').trim().isNotEmpty
+              ? prompt!.trim()
+              : 'Chceš, aby som ti vybral vhodnejší kúsok do šatníka?',
+          key: const ValueKey('stylist-quick-reply-prompt'),
+          style: const TextStyle(
             color: secondaryText,
             fontSize: 13,
             height: 1.35,

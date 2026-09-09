@@ -16,9 +16,11 @@ const {
 const {
   PLAN_MODEL,
   PLAN_REASONING,
+  FINAL_ESCALATED_MODEL,
   FINAL_MODEL,
   FINAL_REASONING,
   FINAL_REASONING_ESCALATED,
+  finalModelRoutingForInputV2,
   finalReasoningForInputV2,
   shouldPreloadCurrentOutfitV2,
 } = require("./openai_stylist_model_port_v2");
@@ -248,22 +250,25 @@ test("golden: only country granularity is too broad for ordinary weather groundi
   assert.equal(locationIsTooBroadForWeatherV2(teryho), false);
 });
 
-test("golden: model routing uses cheap planner and low-reasoning Terra for ordinary final styling", () => {
+test("golden: model routing uses Luna medium for ordinary styling and keeps a cheap planner", () => {
   assert.equal(PLAN_MODEL, "gpt-5.6-luna");
   assert.equal(PLAN_REASONING, "low");
-  assert.equal(FINAL_MODEL, "gpt-5.6-terra");
-  assert.equal(FINAL_REASONING, "low");
+  assert.equal(FINAL_MODEL, "gpt-5.6-luna");
+  assert.equal(FINAL_REASONING, "medium");
+  assert.equal(FINAL_ESCALATED_MODEL, "gpt-5.6-terra");
   assert.equal(FINAL_REASONING_ESCALATED, "medium");
 });
 
-test("golden: safety-sensitive terrain escalates final reasoning to medium", () => {
+test("golden: safety-sensitive terrain escalates the final model to Terra medium", () => {
   const session = clone(createEmptySessionStateV2("reasoning"));
   session.context.terrain = {surface: "rock", difficulty: "technical", condition: "wet"};
   const input = {request: {latestUserInput: "vyber mi outfit"}, session};
+  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-terra", reasoningEffort: "medium"});
   assert.equal(finalReasoningForInputV2(input), "medium");
 
   session.context.terrain = {surface: null, difficulty: null, condition: null};
-  assert.equal(finalReasoningForInputV2(input), "low");
+  assert.deepEqual(finalModelRoutingForInputV2(input), {model: "gpt-5.6-luna", reasoningEffort: "medium"});
+  assert.equal(finalReasoningForInputV2(input), "medium");
 });
 
 test("golden: current outfit is preloaded only for turns that actually discuss or edit it", () => {

@@ -2,8 +2,11 @@
 
 const PLAN_MODEL = "gpt-5.6-luna";
 const PLAN_REASONING = "low";
-const FINAL_MODEL = "gpt-5.6-terra";
-const FINAL_REASONING = "low";
+// Ordinary styling is latency-sensitive. Safety/formal turns automatically
+// escalate to Terra medium.
+const FINAL_MODEL = "gpt-5.6-luna";
+const FINAL_REASONING = "medium";
+const FINAL_ESCALATED_MODEL = "gpt-5.6-terra";
 const FINAL_REASONING_ESCALATED = "medium";
 // Backward-compatible exports for diagnostics that previously expected one model.
 const MODEL = FINAL_MODEL;
@@ -135,7 +138,7 @@ function normalizeIntentTextV2(value) {
     .trim();
 }
 
-function finalReasoningForInputV2(input) {
+function finalModelRoutingForInputV2(input) {
   const terrain = input?.session?.context?.terrain || {};
   const condition = clean(terrain.condition, 40).toLowerCase();
   const difficulty = clean(terrain.difficulty, 40).toLowerCase();
@@ -144,14 +147,46 @@ function finalReasoningForInputV2(input) {
   const safetySensitive = ["wet", "muddy", "snow", "ice"].includes(condition) ||
     ["steep", "technical"].includes(difficulty) || surface === "rock";
   const formalSensitive = /\b(svadba|wedding|pohovor|interview|ples|pohreb|funeral|ceremonia)\b/.test(latest);
-  return safetySensitive || formalSensitive ? FINAL_REASONING_ESCALATED : FINAL_REASONING;
+  if (safetySensitive || formalSensitive) {
+    return {model: FINAL_ESCALATED_MODEL, reasoningEffort: FINAL_REASONING_ESCALATED};
+  }
+  return {model: FINAL_MODEL, reasoningEffort: FINAL_REASONING};
+}
+
+function finalReasoningForInputV2(input) {
+  return finalModelRoutingForInputV2(input).reasoningEffort;
+}
+
+function compactWardrobeItemForModelV2(raw) {
+  const item = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+  const {
+    productImageUrl, cutoutImageUrl, cleanImageUrl, imageUrl, originalImageUrl,
+    storagePath, cleanStoragePath, productStoragePath, processing,
+    ...semantic
+  } = item;
+  return semantic;
+}
+
+function compactWardrobeForModelV2(items) {
+  return (Array.isArray(items) ? items : []).map(compactWardrobeItemForModelV2);
+}
+
+function shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {
+  const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);
+  if (/\b(hiking|trekking|turist)/.test(normalized)) {
+    return "Chceš, aby som ti vybral vhodnejšie turistické topánky?";
+  }
+  if (/\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {
+    return "Chceš, aby som ti vybral vhodnejšie topánky?";
+  }
+  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";
 }
 
 function stripTrailingShoppingQuestionV2(value) {
   const original = clean(value);
   if (!original) return original;
   const stripped = original
-    .replace(/\s*(?:chceš|chces|mám ti|mam ti)\b[^?]{0,320}\?\s*$/iu, "")
+    .replace(/\s*(?:chceš|chces|mám ti|mam ti)(?=\s|,|:)[^?]{0,320}\?\s*$/iu, "")
     .trim();
   return stripped || original;
 }
@@ -334,6 +369,7 @@ function finalEnvelope(raw, input) {
   if (raw.offerShopping === true && needLabel) {
     const actionId = `shop_${String(input.request.turnId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120)}`;
     statePatch.pendingAction = {type: "action", kind: "shopping", actionId};
+    result.quickReplyPrompt = shoppingQuickReplyPromptV2(needLabel, canonicalNeed);
     result.quickReplies = [
       {actionId: `${actionId}_yes`, label: "Áno"},
       {actionId: `${actionId}_no`, label: "Nie"},
@@ -385,16 +421,20 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
     async turn(input) {
       const phase = input?.phase === "final" ? "final" : "plan";
       const wardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];
+      const modelWardrobe = compactWardrobeForModelV2(wardrobeV2);
       const payload = {
-        wardrobeV2,
         request: input.request,
         session: input.session,
         preflightResolution: input.preflightResolution,
-        toolResults: input.toolResults,
+        toolResults: {
+          ...(input.toolResults || {}),
+          wardrobeItems: modelWardrobe,
+        },
         userStylePreferences,
       };
-      const reasoningEffort = phase === "plan" ? PLAN_REASONING : finalReasoningForInputV2(input);
-      const model = phase === "plan" ? PLAN_MODEL : FINAL_MODEL;
+      const finalRouting = finalModelRoutingForInputV2(input);
+      const reasoningEffort = phase === "plan" ? PLAN_REASONING : finalRouting.reasoningEffort;
+      const model = phase === "plan" ? PLAN_MODEL : finalRouting.model;
       const startedAt = Date.now();
       let raw;
       try {
@@ -424,6 +464,7 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
 }
 
 module.exports = {
+  FINAL_ESCALATED_MODEL,
   FINAL_MODEL,
   FINAL_REASONING,
   FINAL_REASONING_ESCALATED,
@@ -434,10 +475,13 @@ module.exports = {
   PLAN_SCHEMA,
   REASONING,
   createOpenAiStylistModelPortV2,
+  compactWardrobeForModelV2,
   enforceHighConfidenceGrounding,
   finalEnvelope,
+  finalModelRoutingForInputV2,
   finalReasoningForInputV2,
   planEnvelope,
+  shoppingQuickReplyPromptV2,
   shouldPreloadCurrentOutfitV2,
   stripTrailingShoppingQuestionV2,
 };

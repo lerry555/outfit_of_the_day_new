@@ -17,6 +17,7 @@ class StylistSimpleAgentResultV1 {
     required this.displayItemIds,
     required this.outfitChanged,
     required this.quickReplyMode,
+    required this.quickReplyPrompt,
     required this.resultingOutfitItems,
     required this.displayItems,
   });
@@ -28,6 +29,7 @@ class StylistSimpleAgentResultV1 {
   final List<String> displayItemIds;
   final bool outfitChanged;
   final String quickReplyMode;
+  final String? quickReplyPrompt;
   final List<Map<String, dynamic>> resultingOutfitItems;
   final List<Map<String, dynamic>> displayItems;
 
@@ -58,7 +60,7 @@ class StylistSimpleAgentResultV1 {
     if (failClosed) {
       return StylistSimpleAgentResultV1(ok: false, failClosed: true, stylistComment: comment,
         resultingOutfitItemIds: const [], displayItemIds: const [], outfitChanged: false,
-        quickReplyMode: 'none', resultingOutfitItems: const [], displayItems: const []);
+        quickReplyMode: 'none', quickReplyPrompt: null, resultingOutfitItems: const [], displayItems: const []);
     }
     final resultIds = _ids(data['resultingOutfitItemIds']);
     final displayIds = _ids(data['displayItemIds']);
@@ -72,9 +74,11 @@ class StylistSimpleAgentResultV1 {
         !displayIds.every(resultIds.contains)) {
       throw const FormatException('simple_agent_id_materialization_mismatch');
     }
+    final quickReplyPromptRaw = (data['quickReplyPrompt'] ?? '').toString().trim();
     return StylistSimpleAgentResultV1(ok: true, failClosed: false, stylistComment: comment,
       resultingOutfitItemIds: List<String>.unmodifiable(resultIds), displayItemIds: List<String>.unmodifiable(displayIds),
       outfitChanged: data['outfitChanged'] as bool, quickReplyMode: data['quickReplyMode'] == 'yes_no' ? 'yes_no' : 'none',
+      quickReplyPrompt: quickReplyPromptRaw.isEmpty ? null : quickReplyPromptRaw,
       resultingOutfitItems: List<Map<String, dynamic>>.unmodifiable(resultIds.map((id) => Map<String, dynamic>.from(resultById[id]!))),
       displayItems: List<Map<String, dynamic>>.unmodifiable(displayIds.map((id) => Map<String, dynamic>.from(displayById[id]!))));
   }
@@ -82,7 +86,8 @@ class StylistSimpleAgentResultV1 {
   Map<String, dynamic> toUiResponse() => <String, dynamic>{
     'ok': ok, 'simpleAgent': true, 'failClosed': failClosed, 'reply': stylistComment, 'stylistComment': stylistComment,
     'resultingOutfitItemIds': resultingOutfitItemIds, 'displayItemIds': displayItemIds, 'outfitChanged': outfitChanged,
-    'quickReplyMode': quickReplyMode, 'resultingOutfitItems': resultingOutfitItems, 'displayItems': displayItems,
+    'quickReplyMode': quickReplyMode, if (quickReplyPrompt != null) 'quickReplyPrompt': quickReplyPrompt,
+    'resultingOutfitItems': resultingOutfitItems, 'displayItems': displayItems,
     'action': failClosed ? 'simple_agent_fail_closed' : 'simple_agent_result',
   };
 }
