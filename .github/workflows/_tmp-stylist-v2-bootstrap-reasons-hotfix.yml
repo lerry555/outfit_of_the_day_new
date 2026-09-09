@@ -1,0 +1,146 @@
+name: AI Stylist V2 bootstrap reasons hotfix
+
+on:
+  push:
+    branches:
+      - ai-stylist-v2-bootstrap-reasons-hotfix
+    paths:
+      - .github/workflows/_tmp-stylist-v2-bootstrap-reasons-hotfix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout hotfix branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Guard target refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment ai-stylist-v2-bootstrap-reasons-hotfix
+          test "$(git rev-parse origin/stylist-simple-agent)" = "6a0c2715b6ea6f2e17723b193fda16e36190a137"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+      - name: Apply production typo fix and regression test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          bridge = Path('functions/stylist/v2/stylist_production_bridge_v2.js')
+          text = bridge.read_text(encoding='utf-8')
+          old = '          persistedSelectionReasonsByItemId,\n'
+          new = '          persistedSelectionReasonsByItemId: persistedReasonsByItemId,\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one bootstrap typo occurrence, found {text.count(old)}')
+          bridge.write_text(text.replace(old, new), encoding='utf-8')
+
+          test_file = Path('functions/stylist/v2/stylist_production_bridge_v2.test.js')
+          test_file.write_text(r'''"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {createStylistChatV2Handler} = require("./stylist_production_bridge_v2");
+const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
+
+const NOW = Date.parse("2026-09-09T06:00:00.000Z");
+
+test("first production V2 turn bootstraps persisted selection reasons without fail-closed", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const wardrobeTool = {
+    async retrieve(request) {
+      const ids = Array.isArray(request?.itemIds) ? request.itemIds : [];
+      return ids.map((id) => ({id, category: "tops", bodySlots: ["upper_body"]}));
+    },
+    async materialize(itemIds, reasonsByItemId) {
+      return itemIds.map((id) => ({id, name: id, selectionReason: reasonsByItemId[id] || null}));
+    },
+  };
+  const stylistModel = {
+    planningNeedsCurrentOutfit: false,
+    async turn() {
+      return {
+        kind: "final",
+        statePatch: {},
+        result: {
+          action: "chat",
+          assistantText: "Outfit nechávam bez zmeny.",
+          display: {kind: "none", itemIds: []},
+        },
+      };
+    },
+  };
+  const warnings = [];
+  const handler = createStylistChatV2Handler({
+    db: {},
+    admin: {},
+    logger: {warn(message, data) { warnings.push({message, data}); }},
+    resolveOpenAISecret: async () => "unused",
+    clock: () => NOW,
+    sessionRepository: repository,
+    locationResolver: {async resolve() { return null; }},
+    weatherTool: {async getForecast() { return null; }},
+    modelFactory: () => stylistModel,
+    wardrobeToolFactory: () => wardrobeTool,
+    shoppingToolFactory: () => ({
+      async search() { return {candidateIds: [], appliedHardConstraints: []}; },
+    }),
+  });
+
+  const response = await handler({
+    v2SessionId: "chat_bootstrap",
+    turnId: "turn_bootstrap",
+    message: "Čo povieš na tento outfit?",
+    currentOutfitItemIds: ["shirt", "jeans"],
+    currentSelectionReasons: [
+      {itemId: "shirt", reason: "sedí k zvyšku"},
+      {itemId: "jeans", reason: "vhodný spodný diel"},
+    ],
+    clientContext: {},
+  }, {auth: {uid: "user-a"}});
+
+  assert.equal(response.ok, true);
+  assert.equal(response.failClosed, false);
+  assert.equal(response.action, "chat");
+  assert.deepEqual(response.resultingOutfitItemIds, ["shirt", "jeans"]);
+  assert.equal(warnings.length, 0);
+
+  const stored = await repository.get({uid: "user-a", chatId: "chat_bootstrap"});
+  assert.deepEqual(stored.state.currentOutfit.selectionReasonsByItemId, {
+    shirt: "sedí k zvyšku",
+    jeans: "vhodný spodný diel",
+  });
+});
+''', encoding='utf-8')
+
+          ci = Path('.github/workflows/stylist-v2-ci.yml')
+          ci_text = ci.read_text(encoding='utf-8')
+          needle = '          functions/stylist/v2/stylist_v2_phase3_ports.test.js\n'
+          addition = needle + '          functions/stylist/v2/stylist_production_bridge_v2.test.js\n'
+          if ci_text.count(needle) != 1:
+              raise SystemExit('phase3 test anchor missing or duplicated')
+          ci.write_text(ci_text.replace(needle, addition), encoding='utf-8')
+          PY
+      - name: Run focused regression before commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd functions
+          npm ci --ignore-scripts
+          node --check stylist/v2/stylist_production_bridge_v2.js
+          node --test stylist/v2/stylist_production_bridge_v2.test.js stylist/v2/stylist_grounding_policy_v2.test.js
+      - name: Commit hotfix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git add functions/stylist/v2/stylist_production_bridge_v2.js functions/stylist/v2/stylist_production_bridge_v2.test.js .github/workflows/stylist-v2-ci.yml
+          git commit -m "fix: bootstrap V2 selection reasons safely"
+          git push origin HEAD:ai-stylist-v2-bootstrap-reasons-hotfix
