@@ -7,6 +7,7 @@ const {RepairableStructuralTurnError, validateAuthoritativeTurnV2} = require("./
 
 const GREETINGS = new Set(["ahoj", "čau", "cau", "dobrý deň", "dobry den"]);
 const LOCATION_FRESHNESS_MS = 30 * 60 * 1000;
+const MAX_PENDING_LOCATION_ATTEMPTS = 6;
 const TOOL_REQUEST_KEYS = new Set(["kind", "requests", "statePatch"]);
 const FINAL_ENVELOPE_KEYS = new Set(["kind", "result", "statePatch"]);
 const TOOL_REQUEST_SCOPES = new Set(["current_outfit", "current_outfit_plus_category", "category", "full_relevant"]);
@@ -17,6 +18,53 @@ function isFreshLocationObservation(observation, nowMs) {
   if (!observation?.observedAt) return false;
   const observedMs = Date.parse(observation.observedAt);
   return Number.isFinite(observedMs) && observedMs <= nowMs && nowMs - observedMs <= LOCATION_FRESHNESS_MS;
+}
+
+function cleanLocationAnswerFragmentV2(value) {
+  const raw = String(value || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ");
+  if (!raw) return "";
+  const stripped = raw.replace(/^(?:(?:ja\s+)?(?:idem|ideme|pojdem|pojdeme|chystam\s+sa|chystáme\s+sa|chystame\s+sa)\s+)?(?:do|na|v|vo|k|ku|to|in|at)\s+/iu, "").trim();
+  return stripped || raw;
+}
+
+function pendingLocationResolutionQueriesV2(pendingQuestion, latestUserInput) {
+  const raw = String(latestUserInput || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ");
+  const cleaned = cleanLocationAnswerFragmentV2(raw);
+  const attempts = Array.isArray(pendingQuestion?.attemptedAnswers) ? pendingQuestion.attemptedAnswers : [];
+  const previous = attempts.length ? cleanLocationAnswerFragmentV2(attempts[attempts.length - 1]) : "";
+  const combined = previous && cleaned && previous.toLocaleLowerCase("sk-SK") !== cleaned.toLocaleLowerCase("sk-SK") ?
+    `${cleaned}, ${previous}` : "";
+  return [...new Set([combined, raw, cleaned].filter(Boolean))];
+}
+
+async function resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, latestUserInput) {
+  const queries = pendingLocationResolutionQueriesV2(pendingQuestion, latestUserInput);
+  for (const query of queries) {
+    const resolved = await locationResolver.resolve(query);
+    if (resolved) return {resolved, query, queries};
+  }
+  return {resolved: null, query: null, queries};
+}
+
+function rememberPendingLocationAttemptV2(state, field, latestUserInput) {
+  const pending = state.conversationMemory.pendingQuestion;
+  const answer = String(latestUserInput || "").trim().replace(/\s+/g, " ").slice(0, 300);
+  if (!pending || pending.field !== field || !answer) return [];
+  pending.attemptedAnswers = bounded([
+    ...(Array.isArray(pending.attemptedAnswers) ? pending.attemptedAnswers : []),
+    answer,
+  ], MAX_PENDING_LOCATION_ATTEMPTS);
+  return [...pending.attemptedAnswers];
+}
+
+function unresolvedLocationClarificationDecision(field, latestUserInput, attemptedAnswers = []) {
+  const candidate = String(latestUserInput || "").trim().replace(/[.!?]+$/g, "").replace(/\s+/g, " ").slice(0, 180);
+  const attempts = Array.isArray(attemptedAnswers) ? attemptedAnswers : [];
+  const question = attempts.length > 1 ?
+    `Rozumiem, teraz myslíš „${candidate}“. Stále to neviem jednoznačne priradiť k miestu; skús prosím presnejší názov alebo najbližšie mesto/obec.` :
+    `Rozumiem: „${candidate}“. Toto miesto som nevedel jednoznačne nájsť. Skús prosím presnejší názov, najbližšie mesto/obec alebo konkrétny bod.`;
+  const actionId = field === "eventLocation" ? "clarify_event_location" : "clarify_destination";
+  return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
 }
 
 function unchangedOutfit(state) {
@@ -68,10 +116,15 @@ function applyAcceptedResult(state, result) {
     next.currentOutfit.missingWardrobeNeeds = bounded(incoming.missingWardrobeNeeds || old.missingWardrobeNeeds);
   }
   if (result.action === "clarify") {
-    next.conversationMemory.pendingQuestion = {
+    const previousPending = next.conversationMemory.pendingQuestion;
+    const pendingQuestion = {
       type: "question", actionId: result.clarification.actionId, field: result.clarification.field,
       question: result.clarification.question, acceptsYesNo: Boolean(result.clarification.acceptsYesNo),
     };
+    if (previousPending?.field === pendingQuestion.field && Array.isArray(previousPending.attemptedAnswers)) {
+      pendingQuestion.attemptedAnswers = bounded(previousPending.attemptedAnswers, MAX_PENDING_LOCATION_ATTEMPTS);
+    }
+    next.conversationMemory.pendingQuestion = pendingQuestion;
   } else {
     next.conversationMemory.pendingQuestion = null;
   }
@@ -146,7 +199,7 @@ function validatePlanningEnvelope(envelope, state) {
   if (wardrobeRequests.length > 1 || locationRequests.length > 1 || envelope.requests.length !== wardrobeRequests.length + locationRequests.length) {
     throw new RepairableStructuralTurnError("only one wardrobe and one location request are allowed");
   }
-  if (wardrobeRequests.some((request) => !TOOL_REQUEST_SCOPES.has(request.scope) || request.scope === "current_outfit_plus_category" && !request.category)) {
+  if (wardrobeRequests.some((request) => !TOOL_REQUEST_SCOPES.has(request.scope) || wardrobeRequests.some((candidate) => candidate === request && request.scope === "current_outfit_plus_category" && !request.category))) {
     throw new RepairableStructuralTurnError("invalid wardrobe retrieval request");
   }
   if (locationRequests.some((request) => !request.query || !["destination", "eventLocation"].includes(request.targetField))) {
@@ -204,13 +257,16 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           display: {kind: "shopping", itemIds: shoppingResult.candidateIds || []}, shoppingResult};
       }
 
-      const pendingField = workingState.conversationMemory.pendingQuestion?.field;
+      const pendingQuestion = workingState.conversationMemory.pendingQuestion;
+      const pendingField = pendingQuestion?.field;
       if (!decision && ["destination", "eventLocation"].includes(pendingField)) {
-        const resolved = await locationResolver.resolve(request.latestUserInput.trim());
-        if (!resolved) decision = clarificationDecision(pendingField);
-        else {
-          workingState.context[pendingField] = resolved;
-          workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolved);
+        const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
+        if (!resolution.resolved) {
+          const attemptedAnswers = rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
+          decision = unresolvedLocationClarificationDecision(pendingField, request.latestUserInput, attemptedAnswers);
+        } else {
+          workingState.context[pendingField] = resolution.resolved;
+          workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
           workingState.conversationMemory.pendingQuestion = null;
           workingState = await refreshWeatherIfGrounded(workingState, weatherTool);
           const missing = highestPriorityMissingGroundingV2(workingState);
@@ -279,4 +335,15 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
   };
 }
 
-module.exports = {LOCATION_FRESHNESS_MS, createStylistTurnCoordinatorV2, isFreshLocationObservation, validateFinalEnvelope, validatePlanningEnvelope};
+module.exports = {
+  LOCATION_FRESHNESS_MS,
+  MAX_PENDING_LOCATION_ATTEMPTS,
+  cleanLocationAnswerFragmentV2,
+  createStylistTurnCoordinatorV2,
+  isFreshLocationObservation,
+  pendingLocationResolutionQueriesV2,
+  resolvePendingLocationAnswerV2,
+  unresolvedLocationClarificationDecision,
+  validateFinalEnvelope,
+  validatePlanningEnvelope,
+};
