@@ -40,6 +40,11 @@ function isFriendlyGreetingV2(value) {
 function pendingLocationReplyDispositionV2(value) {
   const normalized = normalizeConversationTextV2(value);
   if (!normalized) return "conversation";
+  const explicitlySkipsWeather = /\b(bez pocasia|neries pocasie|preskoc pocasie|pocasie neries)\b/.test(normalized);
+  if (!explicitlySkipsWeather &&
+      /\b(zatial to neries|neries to|nechaj to tak|nechaj tak|kasli na to|odlozme to|diky staci|dakujem staci)\b/.test(normalized)) {
+    return "defer";
+  }
   if (/^(naco|preco|aky je dovod|na co|a naco|a preco)\b/.test(normalized) ||
       /\b(naco ti to je|preco to potrebujes|na co ti to je)\b/.test(normalized)) return "why";
   if (/\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/.test(normalized)) return "skip";
@@ -100,6 +105,14 @@ function whyLocationClarificationDecision(field) {
     "Pomôže mi to zohľadniť počasie tam, kam ideš, namiesto tvojej aktuálnej polohy. Kam približne ideš?";
   const actionId = event ? "clarify_event_location" : "clarify_destination";
   return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
+}
+
+function deferredPendingDecisionV2() {
+  return {
+    action: "chat",
+    assistantText: "Jasné, necháme to zatiaľ tak 🙂",
+    display: {kind: "none", itemIds: []},
+  };
 }
 
 function broadLocationClarificationDecision(field, latestUserInput) {
@@ -380,6 +393,9 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
         const disposition = pendingLocationReplyDispositionV2(request.latestUserInput);
         if (disposition === "why") {
           decision = whyLocationClarificationDecision(pendingField);
+        } else if (disposition === "defer") {
+          workingState.conversationMemory.pendingQuestion = null;
+          decision = deferredPendingDecisionV2();
         } else if (disposition === "skip") {
           workingState = disableOptionalWeatherGroundingV2(workingState);
           pendingLocationContinuation = true;

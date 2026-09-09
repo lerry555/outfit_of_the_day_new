@@ -115,6 +115,13 @@ function applyMandatoryGroundingV2(state, policy) {
     if (answered && typeof answered === "object") {
       for (const key of ["destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"]) delete answered[key];
     }
+    // A clearly new style-only/event request supersedes a clarification from
+    // the previous task. Do not let stale pending state turn the new message
+    // into a location-parser input.
+    if (["style_only", "event"].includes(policy.scope)) {
+      next.conversationMemory.pendingQuestion = null;
+      next.conversationMemory.pendingAction = null;
+    }
   }
   next.context.groundingRequirements = mergeGroundingRequirementsV2(
     policy.resetContext ? {weatherRequired: false, weatherLocationField: null, terrainRequiredFields: []} : next.context.groundingRequirements,
