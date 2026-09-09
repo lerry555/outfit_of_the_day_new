@@ -24,4 +24,27 @@ void main() {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('zajtra idem na túru a potrebujem outfit'), isNull);
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('Áno'), isNull);
   });
+
+  test('new chat keeps one V2 session when Firestore chat id appears after first turn', () {
+    final service = StylistSimpleAgentServiceV1();
+
+    final provisional = service.debugStableV2SessionIdForTurn(null);
+    expect(provisional, startsWith('v2_'));
+    service.debugMarkV2TurnAccepted(provisional);
+
+    final afterUiChatCreated = service.debugStableV2SessionIdForTurn('real-chat-1');
+    expect(afterUiChatCreated, provisional);
+    service.debugMarkV2TurnAccepted(afterUiChatCreated, chatId: 'real-chat-1');
+
+    expect(service.debugStableV2SessionIdForTurn('real-chat-1'), provisional);
+
+    final switchedThread = service.debugStableV2SessionIdForTurn('real-chat-2');
+    expect(switchedThread, 'real-chat-2');
+    service.debugMarkV2TurnAccepted(switchedThread, chatId: 'real-chat-2');
+
+    final freshBlankChat = service.debugStableV2SessionIdForTurn(null);
+    expect(freshBlankChat, startsWith('v2_'));
+    expect(freshBlankChat, isNot(provisional));
+    expect(freshBlankChat, isNot('real-chat-2'));
+  });
 }
