@@ -23,6 +23,7 @@ The Stylist should make a useful recommendation from known facts and reasonable 
 - A useful place such as a city, resort, mountain area, venue, trailhead, or POI can be accepted when it is sufficient for the recommendation.
 - A country-level location such as `USA` is too broad for weather-sensitive advice. Ask for a city/state/region once.
 - A refinement such as `do Tatier` -> `Téryho chata` must retain the previous context and must never fall back to the identical generic question.
+- When the same outfit request already contains a useful location, planning should request location resolution and the needed wardrobe scope in the same tool phase. The coordinator must still avoid the wardrobe read if another material fact is missing after location resolution.
 
 ## Date and time behavior
 
@@ -36,6 +37,7 @@ The Stylist should make a useful recommendation from known facts and reasonable 
 - Do not read the full wardrobe for greetings, explanations, or unrelated chat.
 - The full wardrobe should be cached and reused while its revision token is unchanged.
 - A wardrobe change invalidates the cached inventory.
+- Cached exact-item reads must also revalidate the wardrobe revision before reuse; stale cached item facts must never leak into a recommendation.
 - Current-outfit edits should retrieve only the current outfit plus the relevant category when possible.
 
 ## Missing-item behavior
@@ -80,7 +82,7 @@ These are regression budgets, not promises about network conditions.
 6. `New York` -> accept and continue without another location question.
 7. `načo ti to je?` while location is pending -> explain why the location helps; do not call geocoding.
 8. `neviem, daj mi proste outfit` -> proceed with safe assumptions where possible.
-9. Remote concert/wedding -> event location controls event weather, not current GPS.
+9. Remote concert/wedding -> event location controls event weather, not current GPS; known date + useful location should continue to the outfit in the same turn.
 10. Missing hiking footwear -> best acceptable owned fallback + explicit limitation + shopping offer.
 11. User declines shopping -> acknowledge and continue; no shopping search.
 12. Photo + stated occasion -> immediate outfit review; no redundant occasion question.
