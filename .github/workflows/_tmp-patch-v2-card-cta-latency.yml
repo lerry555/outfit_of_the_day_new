@@ -72,11 +72,12 @@ jobs:
           node --test functions/stylist/v2/stylist_help_first_contract_v2.test.js
           node --test functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
 
-      - name: Commit patch and clean temporary files
+      - name: Commit production patch without workflow files
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/_tmp-patch-v2-card-cta-latency.yml tool/patch_v2_card_cta_latency_temp.py
+          git checkout HEAD -- .github/workflows/_tmp-patch-v2-card-cta-latency.yml .github/workflows/stylist-v2-ci.yml
+          rm -f tool/patch_v2_card_cta_latency_temp.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
