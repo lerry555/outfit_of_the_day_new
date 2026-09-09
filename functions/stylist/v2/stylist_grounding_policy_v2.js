@@ -26,7 +26,7 @@ const CONTINUITY_TERMS = /\b(iny|inu|ine|dalsi|dalsiu|dalsie|tento|tuto|toto|ten
 const EVENT_TERMS = /\b(svadba|svadbu|wedding|koncert|concert|festival|ples|oslava|oslavu|party|rande|date|vecera|dinner|restauracia|restaurant|pohovor|interview|promocia|promocie|stuzkova|krst|pohreb|funeral|ceremonia|ceremony|divadlo|theatre|opera|galavecer|event|podujatie)\b/;
 const OUTDOOR_TERMS = /\b(tura|turu|turistika|hiking|hike|trek|treking|hory|horach|les|lese|huby|hubarcenie|vylet|prechadzka|beh|behanie|running|bicykel|bicykli|bike|cycling|cyklistika|gril|grilovacka|piknik|plaz|beach|kupanie|kemp|camping|stanovacka|lyzovanie|lyze|skiing|snowboard|korculovanie|golf|ryby|rybarcenie|futbal|football|tenis|tennis|outdoor|vonku|priroda|prirode)\b/;
 const TRAVEL_TERMS = /\b(idem|ideme|pojdem|pojdeme|chystam sa|chystame sa|cestujem|cestujeme|letim|letime|vyrazam|vyrazime|budem na|budeme na|going to|travel|travelling|trip)\b/;
-const LOCAL_ROUTINE_TERMS = /\b(do prace|v praci|do skoly|v skole|do fitka|vo fitku|do posilnovne|v posilnovni|gym|work|school|na nakup|na nakupy|doma|home office)\b/;
+const LOCAL_ROUTINE_TERMS = /\b(do prace|v praci|do skoly|v skole|do fitka|vo fitku|do posilnovne|v posilnovni|gym|work|school|na nakup|na nakupy|kino|cinema|do kina|v kine|doma|home office)\b/;
 const VIRTUAL_TERMS = /\b(online|zoom|teams|videohovor|video call|remote|z domu|home office)\b/;
 const PENDING_META_OR_SKIP_TERMS = /\b(naco ti to je|preco to potrebujes|na co ti to je|neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
 
@@ -114,6 +114,13 @@ function applyMandatoryGroundingV2(state, policy) {
     const answered = next.conversationMemory?.answeredClarificationFields;
     if (answered && typeof answered === "object") {
       for (const key of ["destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"]) delete answered[key];
+    }
+    // A clearly new style-only/event request supersedes a clarification from
+    // the previous task. Do not let stale pending state turn the new message
+    // into a location-parser input.
+    if (["style_only", "event"].includes(policy.scope)) {
+      next.conversationMemory.pendingQuestion = null;
+      next.conversationMemory.pendingAction = null;
     }
   }
   next.context.groundingRequirements = mergeGroundingRequirementsV2(
@@ -252,7 +259,7 @@ function createGroundingEnforcedStylistModelV2(stylistModel, policy) {
 }
 
 function isGreetingV2(value) {
-  return new Set(["ahoj", "cau", "nazdar", "dobry den", "servus", "hello", "hi", "hey"]).has(normalizeSemanticTextV2(value));
+  return new Set(["ahoj", "cau", "cauko", "nazdar", "dobry den", "servus", "hello", "hi", "hey"]).has(normalizeSemanticTextV2(value));
 }
 
 module.exports = {

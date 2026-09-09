@@ -13,7 +13,7 @@ const REQUEST_KEYS = new Set([
 ]);
 const RESULT_KEYS = new Set([
   "turnId", "action", "assistantText", "resultingOutfit", "editScope", "clarification",
-  "display", "shoppingResult", "quickReplies", "resultingSessionRevision",
+  "display", "shoppingResult", "quickReplies", "quickReplyPrompt", "resultingSessionRevision",
 ]);
 
 function assertExactKeys(value, allowed, label) {
@@ -54,6 +54,9 @@ function normalizeCosmeticsV2(result) {
     actionId: reply.actionId,
     label: String(reply.label || reply.actionId || "").trim(),
   })).sort((a, b) => a.actionId.localeCompare(b.actionId));
+  if (normalized.quickReplyPrompt != null) {
+    normalized.quickReplyPrompt = String(normalized.quickReplyPrompt).replace(/\s+/g, " ").trim();
+  }
   if (normalized.display) {
     normalized.display.itemIds = [...new Set(normalized.display.itemIds || [])];
   }
@@ -80,6 +83,9 @@ function validateTurnResultContractV2(rawResult, previousState) {
   }
   if (new Set(result.quickReplies.map((reply) => reply.actionId)).size !== result.quickReplies.length) {
     throw new TypeError("quick reply action IDs must be unique");
+  }
+  if (result.quickReplyPrompt != null && (!result.quickReplyPrompt || result.quickReplies.length === 0)) {
+    throw new TypeError("quickReplyPrompt requires at least one typed quick reply");
   }
   if (previousState && result.resultingSessionRevision !== previousState.revision + 1) {
     throw new TypeError("resulting session revision must advance exactly once");
