@@ -1,0 +1,341 @@
+name: _tmp Stylist V2 dialog continuity fix
+
+on:
+  push:
+    branches:
+      - fix/stylist-v2-dialog-continuity-20260909
+    paths:
+      - .github/workflows/_tmp-stylist-v2-dialog-continuity-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/stylist-v2-dialog-continuity-20260909
+          fetch-depth: 0
+
+      - name: Guard refs and isolated branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_target="0dc7ea2c3096c100d1277b1d2a7fe5c22ce83533"
+          expected_brain="7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          git fetch origin stylist-simple-agent brain-v1-experiment
+          test "$(git rev-parse origin/stylist-simple-agent)" = "$expected_target"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "$expected_brain"
+          git merge-base --is-ancestor "$expected_target" HEAD
+          changed="$(git diff --name-only "$expected_target"...HEAD)"
+          test "$changed" = ".github/workflows/_tmp-stylist-v2-dialog-continuity-fix.yml"
+
+      - name: Apply scoped dialog fixes and regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          agent = Path('functions/stylist/simple_stylist_agent_v1.js')
+          text = agent.read_text(encoding='utf-8')
+
+          def replace_once(old, new, label):
+              global text
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected exactly 1 anchor, found {count}')
+              text = text.replace(old, new, 1)
+
+          replace_once(
+              '    "Vždy rešpektuj celú recent history. Pri follow-upe vychádzaj z exact current outfit.",',
+              '    "Vždy rešpektuj celú recent history. Pri follow-upe vychádzaj z exact current outfit iba vtedy, keď používateľ nadväzuje na aktuálny outfit.",\n'
+              '    "Keď používateľ výslovne odkáže späť na skorší plán, udalosť alebo outfit (napríklad \'tú túru\', \'ten koncert\' alebo \'ten outfit na zajtra\'), nájdi tento scenár v recentConversationHistory a znovu použi už vyriešené fakty ako aktivitu, deň a miesto. Nepýtaj sa znova na údaj, ktorý v tomto scenári už zaznel. exactCurrentOutfit môže patriť k novšiemu inému scenáru; pri návrate k staršiemu scenáru ho nepovažuj za autoritu pre význam odkazu.",\n'
+              '    "Ak návrat k skoršiemu scenáru zároveň žiada outfit zobraziť, vytvoriť alebo zmeniť, nastav outfitRequested=true. Rekonštruuj vhodný outfit pre odkazovaný scenár z wardrobeV2 a recentConversationHistory namiesto opakovanej otázky na už známe miesto alebo čas.",',
+              'backreference prompt',
+          )
+
+          replace_once(
+              '    "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",',
+              '    "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",\n'
+              '    "Pri indoor udalosti alebo cieli (kino, divadlo, reštaurácia, kancelária či iný interiér) je vonkajšia predpoveď iba kontext na cestu, pobyt vonku a prípadnú vrchnú vrstvu. Nikdy nehovor, že v kine, divadle, reštaurácii alebo kancelárii je podľa vonkajšej predpovede napríklad 23–31 °C, teplo, sucho či daždivo. Ak počasie spomenieš, jasne povedz \'vonku\' alebo \'na cestu\'; vnútornú teplotu nepoznáš. Klimatizáciu môžeš uviesť ako možnosť, nie ako fakt.",',
+              'indoor weather prompt',
+          )
+
+          replace_once(
+              '      "Keď v NOVOM návrhu sám prvýkrát pomenuješ skutočne chýbajúci vhodný kúpiteľný kus, MUSÍ po obmedzení nasledovať presná záverečná otázka \'Chceš, aby som pozrel možnosti v obchodoch?\' a quickReplyMode=yes_no. Platí to aj pri conditional kompromise, keď sám pomenuješ chýbajúci vhodnejší pár. Skráť opis outfitu, aby sa otázka zmestila do 500 znakov. Neopakuj ju, ak už zaznela alebo ju používateľ odmietol, a nepripájaj ju k nesúvisiacej otázke." :',
+              '      "Keď v NOVOM návrhu sám prvýkrát pomenuješ skutočne chýbajúci vhodný kúpiteľný kus, MUSÍ po obmedzení nasledovať záverečná nákupná otázka a quickReplyMode=yes_no. Ak ide o chýbajúcu alebo iba kompromisnú obuv, použi presne \'Chceš, aby som ti pozrel vhodné topánky v obchodoch?\'. Pri inom kuse použi \'Chceš, aby som pozrel možnosti v obchodoch?\'. Skráť opis outfitu, aby sa otázka zmestila do 500 znakov. Neopakuj ju, ak už zaznela alebo ju používateľ odmietol, a nepripájaj ju k nesúvisiacej otázke." :',
+              'shopping CTA prompt',
+          )
+
+          old_materialize = '''function materializeResultV1(validated, request) {
+            const value = validated.value;
+            const publicById = new Map();'''
+          new_materialize = '''function quickReplyPresentationV1(stylistComment, quickReplyMode, request, footwearAssessment) {
+            const original = cleanText(stylistComment, 500);
+            if (quickReplyMode !== "yes_no" || !original) {
+              return Object.freeze({stylistComment: original, quickReplyPrompt: null});
+            }
+            const questionMark = original.lastIndexOf("?");
+            if (questionMark < 0) {
+              return Object.freeze({stylistComment: original, quickReplyPrompt: null});
+            }
+            let questionStart = 0;
+            for (let i = questionMark - 1; i >= 0; i -= 1) {
+              if (original[i] === "." || original[i] === "!" || original[i] === "?" || original[i] === "\\n") {
+                questionStart = i + 1;
+                break;
+              }
+            }
+            const prefix = original.slice(0, questionStart).trimEnd();
+            let prompt = original.slice(questionStart).trim();
+            let normalizedComment = original;
+            const footwearShopping = request?.shoppingEnabled === true &&
+              ["conditional", "missing"].includes(footwearAssessment?.status) &&
+              footwearAssessment?.use !== "none";
+            if (footwearShopping) {
+              prompt = "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";
+              normalizedComment = prefix ? `${prefix} ${prompt}` : prompt;
+            }
+            return Object.freeze({stylistComment: normalizedComment, quickReplyPrompt: prompt || null});
+          }
+
+          function materializeResultV1(validated, request) {
+            const value = validated.value;
+            const publicById = new Map();'''
+          replace_once(old_materialize, new_materialize, 'quick reply materializer helper')
+
+          replace_once(
+              '  const stylistComment = value.stylistComment || fallbackStylistCommentV1(value);\n  return Object.freeze({',
+              '  const baseStylistComment = value.stylistComment || fallbackStylistCommentV1(value);\n'
+              '  const quickReplyPresentation = quickReplyPresentationV1(\n'
+              '    baseStylistComment, value.quickReplyMode, request, value.footwearAssessment,\n'
+              '  );\n'
+              '  const stylistComment = quickReplyPresentation.stylistComment || baseStylistComment;\n'
+              '  return Object.freeze({',
+              'materializer presentation call',
+          )
+
+          replace_once(
+              '    quickReplyMode: value.quickReplyMode,\n    selectionReasons: value.selectionReasons,',
+              '    quickReplyMode: value.quickReplyMode,\n'
+              '    ...(quickReplyPresentation.quickReplyPrompt ? {quickReplyPrompt: quickReplyPresentation.quickReplyPrompt} : {}),\n'
+              '    selectionReasons: value.selectionReasons,',
+              'materializer quickReplyPrompt field',
+          )
+
+          replace_once(
+              '  validateAgentResultV1,\n  materializeResultV1,',
+              '  validateAgentResultV1,\n  quickReplyPresentationV1,\n  materializeResultV1,',
+              'helper export',
+          )
+          agent.write_text(text, encoding='utf-8')
+
+          widget = Path('lib/widgets/stylist_quick_reply_buttons.dart')
+          widget_text = widget.read_text(encoding='utf-8')
+          widget_anchor = "import 'package:flutter/material.dart';\n\n"
+          helper = '''import 'package:flutter/material.dart';
+
+String stylistBubbleTextWithoutQuickReplyPrompt({
+  required String text,
+  String? prompt,
+}) {
+  final full = text.trim();
+  final quickPrompt = (prompt ?? '').trim();
+  if (quickPrompt.isEmpty || !full.endsWith(quickPrompt)) return full;
+  return full.substring(0, full.length - quickPrompt.length).trimRight();
+}
+
+'''
+          if widget_text.count(widget_anchor) != 1:
+              raise SystemExit('quick reply widget import anchor mismatch')
+          widget.write_text(widget_text.replace(widget_anchor, helper, 1), encoding='utf-8')
+
+          screen = Path('lib/screens/stylist_chat_screen.dart')
+          screen_text = screen.read_text(encoding='utf-8')
+          old = '    final hasText = message.text.trim().isNotEmpty;'
+          new = '''    final displayText = stylistBubbleTextWithoutQuickReplyPrompt(
+      text: message.text,
+      prompt: message.quickReplyPrompt,
+    );
+    final hasText = displayText.isNotEmpty;'''
+          if screen_text.count(old) != 1:
+              raise SystemExit(f'screen hasText anchor mismatch: {screen_text.count(old)}')
+          screen_text = screen_text.replace(old, new, 1)
+          old = '''                    Text(
+                      message.text,
+                      style: TextStyle('''
+          new = '''                    Text(
+                      displayText,
+                      style: TextStyle('''
+          if screen_text.count(old) != 1:
+              raise SystemExit(f'screen Text anchor mismatch: {screen_text.count(old)}')
+          screen.write_text(screen_text.replace(old, new, 1), encoding='utf-8')
+
+          node_test = Path('functions/stylist/simple_stylist_dialog_continuity_v1.test.js')
+          node_test.write_text(r'''"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  createSimpleStylistAgentV1,
+  quickReplyPresentationV1,
+} = require("./simple_stylist_agent_v1");
+
+test("dialog prompt preserves resolved backreferences and scopes weather outside indoor venues", async () => {
+  let captured;
+  const agent = createSimpleStylistAgentV1({
+    executeModel: async (input) => {
+      captured = input;
+      return {
+        stylistComment: "Jasné.",
+        resultingOutfitItemIds: [],
+        displayItemIds: [],
+        outfitChanged: false,
+        outfitRequested: false,
+        quickReplyMode: "none",
+        weatherContextKey: "none",
+        hardRequirementEvidence: [],
+        commentGroundingEvidence: [],
+        selectionReasons: [],
+        footwearAssessment: {
+          use: "none",
+          weatherWindow: "unknown",
+          status: "not_applicable",
+          message: "",
+        },
+      };
+    },
+    logger: {info() {}, warn() {}},
+  });
+  await agent.resolve({
+    message: "mohol by si mi ukázať outfit na tú túru ale s iným tričkom?",
+    history: [
+      {role: "user", content: "zajtra idem na túru a potrebujem outfit"},
+      {role: "assistant", content: "Kam približne ideš?"},
+      {role: "user", content: "do tatier"},
+      {role: "assistant", content: "Na zajtrajšiu túru v Tatrách vyberám vrstvenie."},
+      {role: "user", content: "dobre a dnes do kina?"},
+      {role: "assistant", content: "Vonku je teplo; do kina stačí ľahký outfit."},
+    ],
+    currentOutfitItemIds: [],
+    wardrobeItems: [],
+    weatherContext: {},
+    clientContext: {},
+    shoppingEnabled: true,
+  });
+  assert.ok(captured);
+  const system = captured.messages[0].content;
+  assert.match(system, /skorší plán/);
+  assert.match(system, /Nepýtaj sa znova na údaj/);
+  assert.match(system, /indoor udalosti alebo cieli/);
+  assert.match(system, /vonkajšia predpoveď iba kontext na cestu/);
+  assert.match(system, /Chceš, aby som ti pozrel vhodné topánky v obchodoch\?/);
+});
+
+test("footwear shopping quick reply gets a specific prompt while preserving it in stored assistant text", () => {
+  const result = quickReplyPresentationV1(
+    "Tenisky sú iba kompromis do ľahkého suchého terénu. Chceš, aby som pozrel možnosti v obchodoch?",
+    "yes_no",
+    {shoppingEnabled: true},
+    {status: "conditional", use: "terrain"},
+  );
+  assert.equal(result.quickReplyPrompt, "Chceš, aby som ti pozrel vhodné topánky v obchodoch?");
+  assert.equal(
+    result.stylistComment,
+    "Tenisky sú iba kompromis do ľahkého suchého terénu. Chceš, aby som ti pozrel vhodné topánky v obchodoch?",
+  );
+});
+
+test("ordinary yes-no prompt is extracted without changing assistant history text", () => {
+  const text = "Táto mikina funguje. Chceš skúsiť inú farbu?";
+  const result = quickReplyPresentationV1(text, "yes_no", {shoppingEnabled: false}, {
+    status: "not_applicable", use: "none",
+  });
+  assert.equal(result.stylistComment, text);
+  assert.equal(result.quickReplyPrompt, "Chceš skúsiť inú farbu?");
+});
+''', encoding='utf-8')
+
+          dart_test = Path('test/stylist_quick_reply_prompt_test.dart')
+          dart_test.write_text(r'''import 'package:flutter_test/flutter_test.dart';
+import 'package:outfitofTheDay/widgets/stylist_quick_reply_buttons.dart';
+
+void main() {
+  test('quick reply prompt is removed from bubble text only when it is the exact suffix', () {
+    expect(
+      stylistBubbleTextWithoutQuickReplyPrompt(
+        text: 'Tenisky sú kompromis. Chceš, aby som ti pozrel vhodné topánky v obchodoch?',
+        prompt: 'Chceš, aby som ti pozrel vhodné topánky v obchodoch?',
+      ),
+      'Tenisky sú kompromis.',
+    );
+    expect(
+      stylistBubbleTextWithoutQuickReplyPrompt(
+        text: 'Zostáva celý text.',
+        prompt: null,
+      ),
+      'Zostáva celý text.',
+    );
+    expect(
+      stylistBubbleTextWithoutQuickReplyPrompt(
+        text: 'Otázka je iba v ovládaní?',
+        prompt: 'Iná otázka?',
+      ),
+      'Otázka je iba v ovládaní?',
+    );
+  });
+}
+''', encoding='utf-8')
+          PY
+
+          git diff --check
+          git diff --stat
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Run Stylist backend regressions
+        run: |
+          node --test \
+            functions/stylist/simple_stylist_dialog_continuity_v1.test.js \
+            functions/stylist/simple_stylist_agent_v1.test.js \
+            functions/stylist/stylist_fast_chat_v2.test.js \
+            functions/stylist/stylist_production_bridge_v2.test.js \
+            functions/stylist/stylist_release_gate_v2.test.js
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Run quick-reply Flutter regression
+        run: |
+          flutter pub get
+          flutter test test/stylist_quick_reply_prompt_test.dart
+
+      - name: Commit scoped fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            functions/stylist/simple_stylist_agent_v1.js \
+            functions/stylist/simple_stylist_dialog_continuity_v1.test.js \
+            lib/widgets/stylist_quick_reply_buttons.dart \
+            lib/screens/stylist_chat_screen.dart \
+            test/stylist_quick_reply_prompt_test.dart
+          test -n "$(git diff --cached --name-only)"
+          git commit -m "fix: preserve Stylist scenario context and shopping CTA"
+          git push origin HEAD:fix/stylist-v2-dialog-continuity-20260909
