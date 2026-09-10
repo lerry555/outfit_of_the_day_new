@@ -57,14 +57,20 @@ function runPreflightV2(state, request) {
   return {kind: "continue"};
 }
 
+function clarificationWasSkippedV2(state, field) {
+  return state?.conversationMemory?.answeredClarificationFields?.[field]?.status === "unknown";
+}
+
 function highestPriorityMissingGroundingV2(state) {
   const grounding = state.context.groundingRequirements;
-  if (grounding.weatherLocationField && !state.context[grounding.weatherLocationField]) return grounding.weatherLocationField;
+  if (grounding.weatherLocationField && !state.context[grounding.weatherLocationField] &&
+      !clarificationWasSkippedV2(state, grounding.weatherLocationField)) return grounding.weatherLocationField;
   if (grounding.weatherRequired) {
-    if (!state.context.date) return "date";
-    if (!state.context.timeWindow) return "timeWindow";
+    if (!state.context.date && !clarificationWasSkippedV2(state, "date")) return "date";
+    if (!state.context.timeWindow && !clarificationWasSkippedV2(state, "timeWindow")) return "timeWindow";
   }
-  const missingTerrainField = grounding.terrainRequiredFields.find((field) => state.context.terrain[field] == null);
+  const missingTerrainField = grounding.terrainRequiredFields.find((field) =>
+    state.context.terrain[field] == null && !clarificationWasSkippedV2(state, `terrain.${field}`));
   if (missingTerrainField) return `terrain.${missingTerrainField}`;
   return null;
 }

@@ -169,20 +169,27 @@ test("golden: meta reply to a pending location is explained, never geocoded", as
   assert.equal(saved.conversationMemory.pendingQuestion.field, "destination");
 });
 
-test("golden: country-level destination asks once for a useful narrower place", async () => {
+test("golden: one broad answer to the location question is enough and continues weatherless", async () => {
   const state = pendingDestinationState("usa-trip");
-  const h = harness({initialStates: [state], resolutions: {USA: usa}});
+  const h = harness({
+    initialStates: [state],
+    resolutions: {USA: usa},
+    modelResults: [finalEnvelope(outfitResult("Presnú lokálnu predpoveď nemám, preto volím konzervatívny outfit."))],
+  });
   const result = await h.coordinator.resolveTurn(request("usa-trip", "u-1", 0, "USA"));
-  assert.equal(result.action, "clarify");
-  assert.equal(result.clarification.field, "destination");
-  assert.match(result.assistantText, /mesto|štát|stat|región|region/i);
+  assert.equal(result.action, "generate_outfit");
+  assert.equal(result.clarification, null);
+  assert.doesNotMatch(result.assistantText, /mesto|štát|stat|región|region/i);
   assert.equal(h.ledger.calls("location").length, 1);
   assert.equal(h.ledger.calls("weather").length, 0);
-  assert.equal(h.ledger.calls("wardrobe").length, 0);
-  assert.equal(h.ledger.calls("model").length, 0);
+  assert.equal(h.ledger.calls("wardrobe").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
+  assert.equal(h.ledger.calls("model", "final").length, 1);
   const saved = await h.sessionRepository.read("usa-trip");
-  assert.equal(saved.context.destination, null);
-  assert.deepEqual(saved.conversationMemory.pendingQuestion.attemptedAnswers, ["USA"]);
+  assert.equal(saved.context.destination.providerId, "place:usa");
+  assert.equal(saved.context.groundingRequirements.weatherRequired, false);
+  assert.equal(saved.context.groundingRequirements.weatherLocationField, null);
+  assert.equal(saved.conversationMemory.pendingQuestion, null);
 });
 
 test("golden: a useful destination defaults weather to the broad day and goes straight to one final stylist call", async () => {

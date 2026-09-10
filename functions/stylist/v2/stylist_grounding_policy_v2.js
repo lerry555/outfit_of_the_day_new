@@ -101,7 +101,7 @@ function mergeGroundingRequirementsV2(current, incoming, mandatory = null) {
   return {
     weatherRequired,
     weatherLocationField: locationField,
-    terrainRequiredFields: uniqueTerrainFields(base.terrainRequiredFields, patch.terrainRequiredFields, must?.terrainRequiredFields),
+    terrainRequiredFields: uniqueTerrainFields(base.terrainRequiredFields, must ? must.terrainRequiredFields : patch.terrainRequiredFields),
   };
 }
 
@@ -131,16 +131,22 @@ function applyEnvelopeContextPatchV2(state, statePatch, mandatory) {
   return next;
 }
 
+function clarificationWasSkippedV2(state, field) {
+  return state?.conversationMemory?.answeredClarificationFields?.[field]?.status === "unknown";
+}
+
 function missingGroundingFieldV2(state) {
   const grounding = state?.context?.groundingRequirements;
   if (!grounding) return null;
-  if (grounding.weatherLocationField && !state.context[grounding.weatherLocationField]) return grounding.weatherLocationField;
+  if (grounding.weatherLocationField && !state.context[grounding.weatherLocationField] &&
+      !clarificationWasSkippedV2(state, grounding.weatherLocationField)) return grounding.weatherLocationField;
   if (grounding.weatherRequired) {
-    if (!state.context.date) return "date";
-    if (!state.context.timeWindow) return "timeWindow";
+    if (!state.context.date && !clarificationWasSkippedV2(state, "date")) return "date";
+    if (!state.context.timeWindow && !clarificationWasSkippedV2(state, "timeWindow")) return "timeWindow";
   }
   const terrain = state.context.terrain || {};
-  const missingTerrain = (grounding.terrainRequiredFields || []).find((field) => terrain[field] == null);
+  const missingTerrain = (grounding.terrainRequiredFields || []).find((field) =>
+    terrain[field] == null && !clarificationWasSkippedV2(state, `terrain.${field}`));
   return missingTerrain ? `terrain.${missingTerrain}` : null;
 }
 

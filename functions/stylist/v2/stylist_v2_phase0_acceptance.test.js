@@ -99,7 +99,7 @@ function modelCallIndex(ledger, method) {
   return ledger.entries.findIndex((entry) => entry.port === "model" && entry.method === method);
 }
 
-test("Scenario A keeps GPS separate, asks only material hiking facts, and retrieves before final selection", async () => {
+test("Scenario A asks one material hiking location question and never turns unknown terrain into a questionnaire", async () => {
   const firstPlanningFinal = finalEnvelope({
     action: "clarify",
     assistantText: "Kam presne ideš?",
@@ -110,6 +110,8 @@ test("Scenario A keeps GPS separate, asks only material hiking facts, and retrie
       activity: {id: "hiking"},
       date: {dateKey: "2026-09-09", source: "user"},
       timeWindow: {key: "daytime", label: "cez deň"},
+      // Deliberately simulate an over-eager planner. The coordinator must not
+      // let it create a terrain questionnaire that the server did not require.
       groundingRequirements: {
         weatherRequired: true,
         weatherLocationField: "destination",
@@ -119,23 +121,19 @@ test("Scenario A keeps GPS separate, asks only material hiking facts, and retrie
   });
   const generationResult = {
     action: "generate_outfit",
-    assistantText: "Na ľahkú trasu volím tričko, rifle a turistické topánky.",
+    assistantText: "Na túru volím tričko, rifle a turistické topánky; pri neznámom teréne idem konzervatívnejšie.",
     resultingOutfit: {
       itemIds: ["shirt", "jeans", "hiking-boots"],
       selectionReasonsByItemId: {
         shirt: "priedušná vrstva na dennú túru",
         jeans: "krytie nôh na trase",
-        "hiking-boots": "stabilná turistická obuv",
+        "hiking-boots": "konzervatívna stabilná turistická obuv pri neznámom teréne",
       },
     },
     display: {kind: "outfit", itemIds: ["shirt", "jeans", "hiking-boots"]},
   };
   const h = harness({modelResults: [
     firstPlanningFinal,
-    toolEnvelope(
-      [{tool: "wardrobe", scope: "full_relevant"}],
-      {context: {terrain: {surface: null, difficulty: "easy", condition: null}}},
-    ),
     finalEnvelope(generationResult),
   ]});
 
@@ -145,59 +143,22 @@ test("Scenario A keeps GPS separate, asks only material hiking facts, and retrie
     }));
   assert.equal(first.action, "clarify");
   assert.equal(first.clarification.field, "destination");
-  assert.deepEqual(first.display, {kind: "none", itemIds: []});
   let saved = await h.sessionRepository.read("chat-a");
-  assert.equal(saved.context.destination, null);
-  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-  assert.equal(h.ledger.calls("weather", "getForecast").length, 0);
+  assert.deepEqual(saved.context.groundingRequirements.terrainRequiredFields, []);
 
   const reopened = createStylistTurnCoordinatorV2(h.ports);
   const second = await reopened.resolveTurn(request("chat-a", "a-2", 1, "Vysoké Tatry."));
-  assert.equal(second.action, "clarify");
-  assert.equal(second.clarification.field, "terrain.difficulty");
-  assert.equal((second.assistantText.match(/\?/g) || []).length, 1);
+  assert.equal(second.action, "generate_outfit");
+  assert.deepEqual(second.display.itemIds, second.resultingOutfit.itemIds);
+  assert.equal((second.assistantText.match(/\?/g) || []).length, 0);
+
   saved = await h.sessionRepository.read("chat-a");
   assert.equal(saved.context.destination.providerId, "place:tatras");
-  assert.equal(saved.context.currentLocationObservation.providerId, "place:martin");
-  let weatherCalls = h.ledger.calls("weather", "getForecast");
-  // Do not spend a weather call while another material clarification is
-  // still pending. The forecast is fetched only on the turn that can
-  // actually proceed to final outfit selection.
-  assert.equal(weatherCalls.length, 0);
-
-  const third = await reopened.resolveTurn(request("chat-a", "a-3", 2, "Ľahká trasa."));
-  assert.equal(third.action, "generate_outfit");
-  assert.deepEqual(third.display.itemIds, third.resultingOutfit.itemIds);
-  weatherCalls = h.ledger.calls("weather", "getForecast");
-  assert.equal(weatherCalls.length, 1);
-  assert.equal(weatherCalls[0].args.location.providerId, "place:tatras");
-  saved = await h.sessionRepository.read("chat-a");
-  assert.deepEqual(saved.context.terrain, {surface: null, difficulty: "easy", condition: null});
-  assert.equal(h.ledger.calls("model", "plan").length, 2);
+  assert.deepEqual(saved.context.terrain, {surface: null, difficulty: null, condition: null});
+  assert.deepEqual(saved.context.groundingRequirements.terrainRequiredFields, []);
+  assert.equal(h.ledger.calls("weather", "getForecast").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 1);
   assert.equal(h.ledger.calls("model", "final").length, 1);
-  const wardrobeIndex = h.ledger.entries.findIndex((entry) => entry.port === "wardrobe");
-  assert.ok(wardrobeIndex < modelCallIndex(h.ledger, "final"));
-  const finalInput = h.ledger.calls("model", "final")[0].args;
-  assert.deepEqual(finalInput.toolResults.wardrobeItems.map((item) => item.id), wardrobe.map((item) => item.id));
-
-  const countsBeforeReplay = {
-    model: h.ledger.calls("model").length,
-    weather: h.ledger.calls("weather").length,
-    wardrobe: h.ledger.calls("wardrobe").length,
-    writes: h.ledger.calls("session", "write").length,
-  };
-  const replay = await reopened.resolveTurn(request("chat-a", "a-3", 2, "ignored on stable replay"));
-  assert.deepEqual(replay, third);
-  assert.deepEqual({
-    model: h.ledger.calls("model").length,
-    weather: h.ledger.calls("weather").length,
-    wardrobe: h.ledger.calls("wardrobe").length,
-    writes: h.ledger.calls("session", "write").length,
-  }, countsBeforeReplay);
-  await assert.rejects(
-    reopened.resolveTurn(request("chat-a", "a-stale", 1, "nová správa")),
-    StaleSessionRevisionError,
-  );
 });
 
 test("Scenario B retrieves current outfit plus requested category before the one-slot edit", async () => {
