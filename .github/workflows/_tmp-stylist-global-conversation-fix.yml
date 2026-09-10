@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   patch-test-commit:
-    if: github.event.head_commit.message == 'chore: bootstrap Stylist global conversation fix'
+    if: "github.event.head_commit.message == 'chore: bootstrap Stylist global conversation fix'"
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,7 +41,6 @@ jobs:
                   raise SystemExit(f'{path}: expected one anchor, found {count}: {old[:100]!r}')
               p.write_text(text.replace(old, new, 1), encoding='utf-8')
 
-          # Neutral greeting in both the local first-turn fast path and authoritative V2.
           replace_once(
               'lib/Services/stylist_simple_agent_service_v1.dart',
               "reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';",
@@ -53,8 +52,6 @@ jobs:
               'return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť?", display: {kind: "none", itemIds: []}};',
           )
 
-          # Keep a broader conversational span without increasing the max character budget:
-          # 8 x 1200 chars -> 12 x 800 chars.
           replace_once(
               'functions/stylist/v2/stylist_production_bridge_v2.js',
               '''  const recentHistory = (Array.isArray(data?.history) ? data.history : [])\n    .slice(-8)\n    .map((entry) => ({\n      role: entry?.role === "assistant" ? "assistant" : "user",\n      content: clean(entry?.content, 1200),\n    }))''',
@@ -88,7 +85,6 @@ jobs:
               '  finalModelRoutingForInputV2,\n  finalReasoningForInputV2,\n  finalPrompt,\n  plannerPrompt,\n  planEnvelope,',
           )
 
-          # Export tiny pure helpers used by the regression suite.
           replace_once(
               'functions/stylist/v2/stylist_production_bridge_v2.js',
               'module.exports = {\n  createStylistChatV2Handler,',
@@ -100,15 +96,12 @@ jobs:
               '  disableOptionalWeatherGroundingV2,\n  greetingDecision,\n  isFriendlyGreetingV2,',
           )
 
-          # UI fallback matches the server-owned generic shopping CTA. The V2 server already
-          # strips the CTA from assistantText and supplies quickReplyPrompt separately.
           replace_once(
               'lib/widgets/stylist_quick_reply_buttons.dart',
               ": 'Chceš, aby som ti vybral vhodnejší kúsok do šatníka?',",
               ": 'Chceš, aby som pozrel možnosti v obchodoch?',",
           )
 
-          # Keep the lower-level SIMPLE AGENT policy consistent as a safety net.
           simple = 'functions/stylist/simple_stylist_agent_v1.js'
           replace_once(
               simple,
@@ -126,7 +119,6 @@ jobs:
               "      \"Keď v NOVOM návrhu sám prvýkrát pomenuješ skutočne chýbajúci vhodný kúpiteľný kus, MUSÍ po obmedzení nasledovať záverečná yes/no otázka a quickReplyMode=yes_no. Ak ide o chýbajúcu alebo conditional obuv, použi presne 'Chceš, aby som ti pozrel vhodné topánky v obchodoch?'; pri inom kúsku použi presne 'Chceš, aby som pozrel možnosti v obchodoch?'. Skráť opis outfitu, aby sa otázka zmestila do 500 znakov. Neopakuj ju, ak už zaznela alebo ju používateľ odmietol, a nepripájaj ju k nesúvisiacej otázke.\" :",
           )
 
-          # Update any focused Dart expectation that intentionally checked the old local greeting.
           for p in Path('test').rglob('*.dart'):
               text = p.read_text(encoding='utf-8')
               updated = text.replace("Ahoj! Ako ti môžem pomôcť s outfitom?", "Ahoj! Ako ti môžem pomôcť?")
