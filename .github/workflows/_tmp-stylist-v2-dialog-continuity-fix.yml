@@ -88,7 +88,37 @@ jobs:
           new = r"\bdazd|dážď|\bprsi|prší|\bsneh|\bsnezi|sneží|\bvietor|\bfuka|fúka"
           if text.count(old) != 1:
               raise SystemExit("indoor weather diacritics hotfix anchor mismatch")
-          p.write_text(text.replace(old, new, 1), encoding="utf-8")
+          text = text.replace(old, new, 1)
+
+          old = r'''    sentence = sentence.replace(/^(?:v|vo)\s+[^,.!?]{1,80}?\s+(?=(?:je|bude|budu|má|ma|prší|prsi|sneží|snezi|fúka|fuka)\b)/iu, "");'''
+          new = r'''    sentence = sentence.replace(/^(?:v|vo)\s+[^,.!?]{1,80}?\s+(?=(?:je|bude|budu|má|ma|prší|prsi|sneží|snezi|fúka|fuka)(?:\s|[,.!?]|$))/iu, "");'''
+          if text.count(old) != 1:
+              raise SystemExit(f"indoor scope strip anchor mismatch: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          old = r'''  const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);
+  return edit || currentPiece && opinion;'''
+          new = r'''  const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);
+  const alternativePiece = /\b(?:iny|ina|ine)\s+(?:outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok|vrch|spodok)\b/.test(text);
+  return edit || alternativePiece || currentPiece && opinion;'''
+          if text.count(old) != 1:
+              raise SystemExit(f"current edit preload anchor mismatch: {text.count(old)}")
+          text = text.replace(old, new, 1)
+          p.write_text(text, encoding="utf-8")
+
+          expected_old = "Chceš, aby som ti vybral vhodnejšie turistické topánky?"
+          expected_new = "Chceš, aby som ti pozrel vhodné topánky v obchodoch?"
+          updates = {
+              "functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js": 2,
+              "functions/stylist/v2/stylist_release_gate_v2.test.js": 1,
+          }
+          for filename, expected_count in updates.items():
+              p = Path(filename)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(expected_old)
+              if count != expected_count:
+                  raise SystemExit(f"{filename} old CTA count mismatch: {count}")
+              p.write_text(text.replace(expected_old, expected_new), encoding="utf-8")
           PY
 
       - name: Install Functions dependencies
@@ -143,7 +173,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add functions/stylist/v2/stylist_session_state_v2.js functions/stylist/v2/stylist_scenario_memory_v2.js functions/stylist/v2/stylist_grounding_policy_v2.js functions/stylist/v2/openai_stylist_model_port_v2.js functions/stylist/v2/stylist_turn_coordinator_v2.js functions/stylist/v2/stylist_dialog_continuity_v2.test.js lib/Services/stylist_simple_agent_service_v1.dart test/stylist_simple_agent_fast_path_test.dart
+          git add functions/stylist/v2/stylist_session_state_v2.js functions/stylist/v2/stylist_scenario_memory_v2.js functions/stylist/v2/stylist_grounding_policy_v2.js functions/stylist/v2/openai_stylist_model_port_v2.js functions/stylist/v2/stylist_turn_coordinator_v2.js functions/stylist/v2/stylist_dialog_continuity_v2.test.js functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js functions/stylist/v2/stylist_release_gate_v2.test.js lib/Services/stylist_simple_agent_service_v1.dart test/stylist_simple_agent_fast_path_test.dart
           git diff --cached --check
           git commit -m "fix: preserve AI Stylist scenario continuity"
           git push origin HEAD:fix/stylist-v2-dialog-continuity-20260909
