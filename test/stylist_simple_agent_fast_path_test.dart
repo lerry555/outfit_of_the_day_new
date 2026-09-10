@@ -11,6 +11,8 @@ void main() {
     expect(result['modelPath'], 'local_fast');
     expect(result['outfitChanged'], isFalse);
     expect(result['displayItemIds'], isEmpty);
+    expect(result['reply'], 'Ahoj! Ako ti môžem pomôcť?');
+    expect((result['reply'] as String).toLowerCase(), isNot(contains('outfit')));
   });
 
   test('plain and natural friendly greetings use local fast path', () {
@@ -46,7 +48,7 @@ void main() {
   });
 
   testWidgets('shopping follow-up renders server prompt directly above yes-no buttons', (tester) async {
-    const prompt = 'Chceš, aby som ti vybral vhodnejšie turistické topánky?';
+    const prompt = 'Chceš, aby som ti pozrel vhodné topánky v obchodoch?';
     String? selected;
     await tester.pumpWidget(
       MaterialApp(

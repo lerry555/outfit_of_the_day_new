@@ -1,6 +1,7 @@
 "use strict";
 
 const {MAX_HISTORY, bounded, clone, validateStylistSessionStateV2} = require("./stylist_session_state_v2");
+const {beginNewScenarioV2, restoreScenarioSnapshotV2, upsertScenarioSnapshotV2} = require("./stylist_scenario_memory_v2");
 const {validateTurnRequestV2} = require("./stylist_turn_contract_v2");
 const {highestPriorityMissingGroundingV2, runPreflightV2} = require("./stylist_preflight_v2");
 const {RepairableStructuralTurnError, validateAuthoritativeTurnV2} = require("./stylist_turn_validator_v2");
@@ -200,9 +201,11 @@ function normalizeDecision(decision, state, resultingRevision, turnId) {
 }
 
 function applySafeStatePatch(state, statePatch = {}) {
-  const next = clone(state);
+  let next = clone(state);
+  if (statePatch.scenarioMode === "restore" && statePatch.scenarioReferenceId) next = restoreScenarioSnapshotV2(next, statePatch.scenarioReferenceId);
+  else if (statePatch.scenarioMode === "new") next = beginNewScenarioV2(next);
   const context = statePatch.context || {};
-  for (const key of ["activity", "date", "timeWindow", "terrain", "groundingRequirements"]) {
+  for (const key of ["activity", "date", "timeWindow", "terrain", "environment", "groundingRequirements"]) {
     if (Object.prototype.hasOwnProperty.call(context, key)) next.context[key] = clone(context[key]);
   }
   const memory = statePatch.conversationMemory || {};
@@ -246,7 +249,8 @@ function applyAcceptedResult(state, result) {
   }
   if (result.action === "shop") next.conversationMemory.pendingAction = null;
   next.replay.turns = [...next.replay.turns, {turnId: result.turnId, result: clone(result)}].slice(-MAX_HISTORY);
-  return validateStylistSessionStateV2(next);
+  const withScenarioSnapshot = ["generate_outfit", "edit_outfit"].includes(result.action) ? upsertScenarioSnapshotV2(next, {turnId: result.turnId}) : next;
+  return validateStylistSessionStateV2(withScenarioSnapshot);
 }
 
 function clarificationDecision(field) {
@@ -265,7 +269,7 @@ function clarificationDecision(field) {
 }
 
 function greetingDecision() {
-  return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť s outfitom?", display: {kind: "none", itemIds: []}};
+  return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť?", display: {kind: "none", itemIds: []}};
 }
 function declinedPendingDecision() {
   return {action: "chat", assistantText: "Jasné, zostaneme pri tom, čo už máme.", display: {kind: "none", itemIds: []}};
@@ -355,6 +359,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
       if (preflight.kind === "replay") return clone(preflight.result);
 
       let workingState = clone(originalState);
+      let validationPreviousState = clone(originalState);
       const observation = request.freshClientObservations.currentLocationObservation;
       if (observation && isFreshLocationObservation(observation, clock())) workingState.context.currentLocationObservation = clone(observation);
       workingState = applyHelpFirstDefaultsV2(workingState);
@@ -458,6 +463,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
         validatePlanningEnvelope(planningEnvelope, workingState);
         workingState = applySafeStatePatch(workingState, planningEnvelope.statePatch);
         workingState = applyHelpFirstDefaultsV2(workingState);
+        validationPreviousState = clone(workingState);
 
         if (planningEnvelope.kind === "final") decision = planningEnvelope.result;
         else {
@@ -510,7 +516,7 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
       }
 
       const rawResult = normalizeDecision(decision, workingState, originalState.revision + 1, request.turnId);
-      const validatedResult = validateAuthoritativeTurnV2({rawResult, previousState: originalState, proposedState: workingState,
+      const validatedResult = validateAuthoritativeTurnV2({rawResult, previousState: validationPreviousState, proposedState: workingState,
         wardrobeItems, authorizedEditScope: toolResults.authorizedEditScope});
       const nextState = applyAcceptedResult(workingState, validatedResult);
       await sessionRepository.write(nextState);
@@ -522,11 +528,14 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
 module.exports = {
   LOCATION_FRESHNESS_MS,
   MAX_PENDING_LOCATION_ATTEMPTS,
+  applyAcceptedResult,
   applyHelpFirstDefaultsV2,
+  applySafeStatePatch,
   cleanLocationAnswerFragmentV2,
   createStylistTurnCoordinatorV2,
   deterministicRemoteOutfitClarificationV2,
   disableOptionalWeatherGroundingV2,
+  greetingDecision,
   isFriendlyGreetingV2,
   isFreshLocationObservation,
   pendingLocationReplyDispositionV2,

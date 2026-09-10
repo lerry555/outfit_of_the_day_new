@@ -139,7 +139,7 @@ class StylistSimpleAgentServiceV1 {
     String? reply;
     if (_isFriendlyLocalGreeting(normalized) ||
         (normalized.isEmpty && message.contains('👋'))) {
-      reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';
+      reply = 'Ahoj! Ako ti môžem pomôcť?';
     } else if (_localThanksTexts.contains(normalized)) {
       reply = 'Rado sa stalo 🙂';
     }
