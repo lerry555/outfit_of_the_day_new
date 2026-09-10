@@ -37,6 +37,7 @@ jobs:
         run: |
           python - <<'PY'
           from pathlib import Path
+          import re
           import textwrap
 
           workflow = Path('.github/workflows/_tmp-stylist-v2-context-tools.yml').read_text(encoding='utf-8')
@@ -58,24 +59,25 @@ jobs:
               if count > 1:
                   raise SystemExit(f"{path}: exact match is ambiguous ({count} matches)")
 
-              lines = text.splitlines()
               old_lines = old.splitlines()
               if not old_lines:
                   raise SystemExit(f"{path}: empty replacement matcher")
-              candidates = []
-              for index in range(0, len(lines) - len(old_lines) + 1):
-                  window = lines[index:index + len(old_lines)]
-                  if all(actual.lstrip() == expected.lstrip()
-                         for actual, expected in zip(window, old_lines)):
-                      candidates.append(index)
-              if len(candidates) != 1:
+              pattern_parts = []
+              for index, line in enumerate(old_lines):
+                  content = line.lstrip(" \t")
+                  if index == 0:
+                      pattern_parts.append(r"(?m)^[ \t]*" + re.escape(content))
+                  else:
+                      pattern_parts.append(r"\r?\n[ \t]*" + re.escape(content))
+              pattern = "".join(pattern_parts)
+              matches = list(re.finditer(pattern, text))
+              if len(matches) != 1:
                   raise SystemExit(
-                      f"{path}: whitespace-safe matcher expected one candidate, got {len(candidates)}\n"
+                      f"{path}: whitespace-safe matcher expected one candidate, got {len(matches)}\n"
                       f"--- OLD ---\n{old}"
                   )
-              index = candidates[0]
-              updated_lines = lines[:index] + new.splitlines() + lines[index + len(old_lines):]
-              updated = "\n".join(updated_lines) + ("\n" if text.endswith("\n") else "")
+              match = matches[0]
+              updated = text[:match.start()] + new + text[match.end():]
               p.write_text(updated, encoding="utf-8")'''
           script = script[:fn_start] + robust_fn + script[fn_end:]
           exec(compile(script, '<context-tools-patch>', 'exec'))
