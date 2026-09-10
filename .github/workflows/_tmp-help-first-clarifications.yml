@@ -82,6 +82,12 @@ jobs:
           flutter test test/stylist_quick_reply_contract_test.dart
           flutter test --dart-define=SHOPPING_UI_ENABLED=false --dart-define=SHOPPING_FIXTURE_MODE=false test/stylist_shopping_runtime_test.dart
 
+      - name: Restore Flutter tool migrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          git restore --worktree -- analysis_options.yaml pubspec.lock
+
       - name: Diff hygiene
         shell: bash
         run: |
