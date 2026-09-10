@@ -18,8 +18,8 @@ replace_once(
 
 replace_once(
     "functions/stylist/v2/stylist_pending_location_v2.test.js",
-    "  assert.equal(saved.context.destination, null);",
-    '  assert.equal(saved.context.destination.label, "Tatier");\n  assert.equal(saved.context.destination.source, "user_text");',
+    '  const saved = await h.sessionRepository.read("pending-region");\n  assert.equal(saved.context.destination, null);\n  assert.equal(saved.context.groundingRequirements.weatherRequired, false);',
+    '  const saved = await h.sessionRepository.read("pending-region");\n  assert.equal(saved.context.destination.label, "Tatier");\n  assert.equal(saved.context.destination.source, "user_text");\n  assert.equal(saved.context.groundingRequirements.weatherRequired, false);',
 )
 
 replace_once(
