@@ -14,7 +14,7 @@ const {
 } = require("./stylist/ai_stylist_role_secret_binding_v1");
 const {
   createStylistChatV2Handler,
-} = require("./stylist/v2/stylist_production_bridge_v2");
+} = require("./stylist/v2/stylist_production_bridge_one_brain_v2");
 const {
   createServerOnlyFirestoreStylistSessionRepositoryV2,
 } = require("./stylist/v2/server_only_stylist_session_repository_v2");
