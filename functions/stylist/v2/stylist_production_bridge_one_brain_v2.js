@@ -253,7 +253,7 @@ function createStylistChatV2Handler({
         knownCanonicalState: existing?.state || null,
         bootstrapInput: existing ? null : {
           currentOutfitItemIds: currentIds,
-          persistedSelectionReasonsByItemId,
+          persistedSelectionReasonsByItemId: persistedReasonsByItemId,
           knownExplicitDurableChoices: {},
         },
       });
