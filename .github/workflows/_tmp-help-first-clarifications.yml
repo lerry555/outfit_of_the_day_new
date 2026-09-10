@@ -29,11 +29,18 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/fix/stylist-v2-help-first-clarifications-20260910)" = "$GITHUB_SHA"
           changed="$(git diff --name-only origin/stylist-simple-agent HEAD | sort)"
-          expected="$(printf '%s\n' '.github/_tmp_apply_help_first_clarifications.py' '.github/workflows/_tmp-help-first-clarifications.yml' | sort)"
+          expected="$(printf '%s\n' \
+            '.github/_tmp_apply_help_first_clarifications.py' \
+            '.github/_tmp_update_help_first_expectations.py' \
+            '.github/workflows/_tmp-help-first-clarifications.yml' | sort)"
           test "$changed" = "$expected"
 
       - name: Apply product patch
-        run: python3 .github/_tmp_apply_help_first_clarifications.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/_tmp_apply_help_first_clarifications.py
+          python3 .github/_tmp_update_help_first_expectations.py
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -84,11 +91,14 @@ jobs:
           changed="$(git diff --name-only origin/stylist-simple-agent | sort)"
           expected="$(printf '%s\n' \
             '.github/_tmp_apply_help_first_clarifications.py' \
+            '.github/_tmp_update_help_first_expectations.py' \
             '.github/workflows/_tmp-help-first-clarifications.yml' \
             'functions/stylist/v2/openai_stylist_model_port_v2.js' \
             'functions/stylist/v2/stylist_grounding_policy_v2.js' \
+            'functions/stylist/v2/stylist_help_first_contract_v2.test.js' \
             'functions/stylist/v2/stylist_help_first_torture_v2.test.js' \
             'functions/stylist/v2/stylist_preflight_v2.js' \
+            'functions/stylist/v2/stylist_release_gate_v2.test.js' \
             'functions/stylist/v2/stylist_turn_coordinator_v2.js' \
             'functions/stylist/v2/stylist_v2_phase0_acceptance.test.js' | sort)"
           test "$changed" = "$expected"
@@ -106,8 +116,10 @@ jobs:
           git add \
             functions/stylist/v2/openai_stylist_model_port_v2.js \
             functions/stylist/v2/stylist_grounding_policy_v2.js \
+            functions/stylist/v2/stylist_help_first_contract_v2.test.js \
             functions/stylist/v2/stylist_help_first_torture_v2.test.js \
             functions/stylist/v2/stylist_preflight_v2.js \
+            functions/stylist/v2/stylist_release_gate_v2.test.js \
             functions/stylist/v2/stylist_turn_coordinator_v2.js \
             functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
           git diff --cached --check
