@@ -1,5 +1,7 @@
 "use strict";
 
+const {beginNewScenarioV2, hasExplicitScenarioBackreferenceV2} = require("./stylist_scenario_memory_v2");
+
 function clone(value) { return value == null ? value : JSON.parse(JSON.stringify(value)); }
 
 function normalizeSemanticTextV2(value) {
@@ -46,6 +48,9 @@ function inferMandatoryGroundingV2({latestUserInput, state}) {
   // conversation intact so the coordinator can handle them naturally.
   if (state?.conversationMemory?.pendingQuestion && PENDING_META_OR_SKIP_TERMS.test(text)) {
     return {active: false, scope: "pending_followup", resetContext: false, requirements: null};
+  }
+  if (hasExplicitScenarioBackreferenceV2({latestUserInput, state})) {
+    return {active: false, scope: "scenario_reference", resetContext: false, requirements: null};
   }
   if (!isConcreteOutfitRequestV2(text)) {
     return {active: false, scope: "none", resetContext: false, requirements: null};
@@ -102,27 +107,8 @@ function mergeGroundingRequirementsV2(current, incoming, mandatory = null) {
 
 function applyMandatoryGroundingV2(state, policy) {
   if (!policy?.active) return clone(state);
-  const next = clone(state);
-  if (policy.resetContext) {
-    next.context.activity = null;
-    next.context.destination = null;
-    next.context.eventLocation = null;
-    next.context.date = null;
-    next.context.timeWindow = null;
-    next.context.weather = null;
-    next.context.terrain = {surface: null, difficulty: null, condition: null};
-    const answered = next.conversationMemory?.answeredClarificationFields;
-    if (answered && typeof answered === "object") {
-      for (const key of ["destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"]) delete answered[key];
-    }
-    // A clearly new style-only/event request supersedes a clarification from
-    // the previous task. Do not let stale pending state turn the new message
-    // into a location-parser input.
-    if (["style_only", "event"].includes(policy.scope)) {
-      next.conversationMemory.pendingQuestion = null;
-      next.conversationMemory.pendingAction = null;
-    }
-  }
+  let next = clone(state);
+  if (policy.resetContext) next = beginNewScenarioV2(next);
   next.context.groundingRequirements = mergeGroundingRequirementsV2(
     policy.resetContext ? {weatherRequired: false, weatherLocationField: null, terrainRequiredFields: []} : next.context.groundingRequirements,
     null,
@@ -134,7 +120,7 @@ function applyMandatoryGroundingV2(state, policy) {
 function applyEnvelopeContextPatchV2(state, statePatch, mandatory) {
   const next = clone(state);
   const context = statePatch?.context && typeof statePatch.context === "object" ? statePatch.context : {};
-  for (const key of ["activity", "date", "timeWindow", "terrain"]) {
+  for (const key of ["activity", "date", "timeWindow", "terrain", "environment"]) {
     if (Object.prototype.hasOwnProperty.call(context, key)) next.context[key] = clone(context[key]);
   }
   next.context.groundingRequirements = mergeGroundingRequirementsV2(

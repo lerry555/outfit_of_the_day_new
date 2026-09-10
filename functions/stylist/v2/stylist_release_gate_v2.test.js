@@ -277,7 +277,7 @@ test("release gate: reproduced hike conversation is help-first, one-final-call, 
   assert.equal(h.calls.wardrobe.length, 1);
   assert.deepEqual(outfit.resultingOutfitItemIds, ["shirt", "pants", "sneakers"]);
   assert.equal(outfit.quickReplyMode, "yes_no");
-  assert.equal(outfit.quickReplyPrompt, "Chceš, aby som ti vybral vhodnejšie turistické topánky?");
+  assert.equal(outfit.quickReplyPrompt, "Chceš, aby som ti pozrel vhodné topánky v obchodoch?");
   assert.doesNotMatch(outfit.stylistComment, /chceš/i);
   assert.doesNotMatch(outfit.stylistComment, /kam približne|ktorej časti dňa|presnú trasu/i);
 

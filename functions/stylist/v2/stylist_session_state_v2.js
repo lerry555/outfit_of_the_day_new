@@ -2,6 +2,7 @@
 
 const MAX_HISTORY = 50;
 const MAX_COLLECTION = 100;
+const MAX_SCENARIO_SNAPSHOTS = 8;
 
 const TERRAIN_SURFACES = new Set([null, "paved", "trail", "grass", "forest_floor", "rock"]);
 const TERRAIN_DIFFICULTIES = new Set([null, "easy", "moderate", "steep", "technical"]);
@@ -21,13 +22,14 @@ function createEmptySessionStateV2(chatId) {
     schemaVersion: 2, chatId: chatId.trim(), revision: 0,
     context: {
       currentLocationObservation: null, destination: null, eventLocation: null, date: null, timeWindow: null,
-      activity: null, terrain: emptyTerrain(), weather: null,
+      activity: null, environment: null, terrain: emptyTerrain(), weather: null,
       groundingRequirements: {weatherRequired: false, weatherLocationField: null, terrainRequiredFields: []},
     },
     currentOutfit: {itemIds: [], selectionReasonsByItemId: {}, revision: 0, compromises: [], missingWardrobeNeeds: [], selectionReasonHistory: []},
     conversationMemory: {pendingQuestion: null, pendingAction: null, answeredClarificationFields: {}, communicatedWarnings: [], rejectedWardrobeItemIds: [], rejectedShoppingOptionIds: [], userCorrections: [], acceptedCompromises: []},
     shopping: {missingNeed: null, hardConstraints: [], softPreferences: [], size: null, budget: null, brandPreferences: {preferred: [], blocked: []}, rejectedCandidateIds: [], openedReason: null},
     wardrobePreferences: {wardrobeRevision: null, preferencesRevision: null, retrievalCache: null},
+    scenarioMemory: {activeScenarioId: null, snapshots: []},
     replay: {turns: []},
   });
 }
@@ -38,9 +40,22 @@ function validateLocationObservation(value, fieldName) {
   if (fieldName === "currentLocationObservation" && !value.observedAt) throw new TypeError("current GPS location requires observedAt freshness metadata");
 }
 
+function normalizeBackwardCompatibleStateV2(state) {
+  const normalized = clone(state);
+  if (normalized?.context && !Object.prototype.hasOwnProperty.call(normalized.context, "environment")) {
+    normalized.context.environment = null;
+  }
+  if (normalized && !normalized.scenarioMemory) {
+    normalized.scenarioMemory = {activeScenarioId: null, snapshots: []};
+  }
+  return normalized;
+}
+
 function validateStylistSessionStateV2(state) {
+  state = normalizeBackwardCompatibleStateV2(state);
   if (!state || state.schemaVersion !== 2 || typeof state.chatId !== "string") throw new TypeError("invalid StylistSessionStateV2 identity");
   if (!Number.isInteger(state.revision) || state.revision < 0) throw new TypeError("invalid session revision");
+  if (![null, "indoor", "outdoor", "mixed"].includes(state.context.environment)) throw new TypeError("invalid scenario environment");
   validateLocationObservation(state.context.currentLocationObservation, "currentLocationObservation");
   validateLocationObservation(state.context.destination, "destination");
   validateLocationObservation(state.context.eventLocation, "eventLocation");
@@ -68,6 +83,16 @@ function validateStylistSessionStateV2(state) {
     const reason = outfit.selectionReasonsByItemId[itemId];
     if (reason !== null && (typeof reason !== "string" || !reason.trim())) throw new TypeError(`invalid persisted selection reason for ${itemId}`);
   }
+  const scenarioMemory = state.scenarioMemory;
+  if (!scenarioMemory || !Array.isArray(scenarioMemory.snapshots) || scenarioMemory.snapshots.length > MAX_SCENARIO_SNAPSHOTS) throw new TypeError("scenario memory must be bounded");
+  const scenarioIds = scenarioMemory.snapshots.map((snapshot) => snapshot?.id);
+  if (scenarioIds.some((id) => typeof id !== "string" || !id.trim()) || new Set(scenarioIds).size !== scenarioIds.length) throw new TypeError("scenario snapshot IDs must be unique");
+  if (scenarioMemory.activeScenarioId != null && !scenarioIds.includes(scenarioMemory.activeScenarioId)) throw new TypeError("active scenario must reference a stored snapshot");
+  for (const snapshot of scenarioMemory.snapshots) {
+    if (!snapshot.context || !snapshot.outfit || !Array.isArray(snapshot.referenceSignals) || snapshot.referenceSignals.length > 20 || !Array.isArray(snapshot.outfit.itemIds) || snapshot.outfit.itemIds.length > MAX_COLLECTION || new Set(snapshot.outfit.itemIds).size !== snapshot.outfit.itemIds.length || !sameStringMembers(Object.keys(snapshot.outfit.selectionReasonsByItemId || {}), snapshot.outfit.itemIds)) throw new TypeError("invalid scenario snapshot");
+    if (![null, "indoor", "outdoor", "mixed"].includes(snapshot.context.environment ?? null)) throw new TypeError("invalid scenario snapshot environment");
+  }
+
   const boundedCollections = [outfit.compromises, outfit.missingWardrobeNeeds, outfit.selectionReasonHistory,
     state.conversationMemory.communicatedWarnings, state.conversationMemory.rejectedWardrobeItemIds,
     state.conversationMemory.rejectedShoppingOptionIds, state.conversationMemory.userCorrections,
@@ -112,5 +137,6 @@ function bootstrapExistingChatV2(input) {
   return validateStylistSessionStateV2(state);
 }
 
-module.exports = {MAX_COLLECTION, MAX_HISTORY, TERRAIN_SURFACES, TERRAIN_DIFFICULTIES, TERRAIN_CONDITIONS,
-  bootstrapExistingChatV2, bounded, clone, createEmptySessionStateV2, deepFreeze, emptyTerrain, validateStylistSessionStateV2};
+module.exports = {MAX_COLLECTION, MAX_HISTORY, MAX_SCENARIO_SNAPSHOTS, TERRAIN_SURFACES, TERRAIN_DIFFICULTIES, TERRAIN_CONDITIONS,
+  bootstrapExistingChatV2, bounded, clone, createEmptySessionStateV2, deepFreeze, emptyTerrain, normalizeBackwardCompatibleStateV2,
+  validateStylistSessionStateV2};

@@ -1,5 +1,7 @@
 "use strict";
 
+const {hasExplicitScenarioBackreferenceV2} = require("./stylist_scenario_memory_v2");
+
 const PLAN_MODEL = "gpt-5.6-luna";
 const PLAN_REASONING = "low";
 // Ordinary styling is latency-sensitive. Safety/formal turns automatically
@@ -17,6 +19,8 @@ const TERRAIN_SURFACES = ["unknown", "paved", "trail", "grass", "forest_floor", 
 const TERRAIN_DIFFICULTIES = ["unknown", "easy", "moderate", "steep", "technical"];
 const TERRAIN_CONDITIONS = ["unknown", "dry", "wet", "muddy", "snow", "ice"];
 const TERRAIN_FIELDS = ["surface", "difficulty", "condition"];
+const ENVIRONMENTS = ["unknown", "indoor", "outdoor", "mixed"];
+const SCENARIO_MODES = ["current", "new", "restore"];
 const WARDROBE_SCOPES = ["none", "current_outfit", "current_outfit_plus_category", "category", "full_relevant"];
 const ACTIONS = ["chat", "clarify", "generate_outfit", "edit_outfit", "explain_outfit", "show_items", "stop"];
 
@@ -28,7 +32,7 @@ const PATCH_SCHEMA = {
   type: "object",
   additionalProperties: false,
   required: [
-    "activityId", "activityLabel", "dateKey", "timeWindowKey",
+    "activityId", "activityLabel", "dateKey", "timeWindowKey", "environment",
     "terrainSurface", "terrainDifficulty", "terrainCondition",
     "replaceGroundingRequirements", "weatherRequired", "weatherLocationField", "terrainRequiredFields",
   ],
@@ -37,6 +41,7 @@ const PATCH_SCHEMA = {
     activityLabel: nullableString(),
     dateKey: nullableString(),
     timeWindowKey: nullableString(),
+    environment: {type: "string", enum: ENVIRONMENTS},
     terrainSurface: {type: "string", enum: TERRAIN_SURFACES},
     terrainDifficulty: {type: "string", enum: TERRAIN_DIFFICULTIES},
     terrainCondition: {type: "string", enum: TERRAIN_CONDITIONS},
@@ -55,6 +60,7 @@ const PLAN_SCHEMA = {
   additionalProperties: false,
   required: [
     "kind", "action", "assistantText", "clarificationField", "clarificationQuestion",
+    "scenarioMode", "scenarioReferenceId",
     "locationQuery", "locationTargetField", "wardrobeScope", "wardrobeCategory",
     "replaceItemIds", "retainItemIds", "allowedSlots", "allowedCategories", "allowRemovalOnly",
     "patch",
@@ -65,6 +71,8 @@ const PLAN_SCHEMA = {
     assistantText: {type: "string"},
     clarificationField: {type: ["string", "null"]},
     clarificationQuestion: {type: ["string", "null"]},
+    scenarioMode: {type: "string", enum: SCENARIO_MODES},
+    scenarioReferenceId: nullableString(),
     locationQuery: {type: ["string", "null"]},
     locationTargetField: {type: "string", enum: ["none", "destination", "eventLocation"]},
     wardrobeScope: {type: "string", enum: WARDROBE_SCOPES},
@@ -174,12 +182,12 @@ function compactWardrobeForModelV2(items) {
 function shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {
   const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);
   if (/\b(hiking|trekking|turist)/.test(normalized)) {
-    return "Chceš, aby som ti vybral vhodnejšie turistické topánky?";
+    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";
   }
   if (/\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {
-    return "Chceš, aby som ti vybral vhodnejšie topánky?";
+    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";
   }
-  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";
+  return "Chceš, aby som ti pozrel možnosti v obchodoch?";
 }
 
 function stripTrailingShoppingQuestionV2(value) {
@@ -192,6 +200,7 @@ function stripTrailingShoppingQuestionV2(value) {
 }
 
 function shouldPreloadCurrentOutfitV2(input) {
+  if (hasExplicitScenarioBackreferenceV2({latestUserInput: input?.request?.latestUserInput, state: input?.session})) return false;
   const currentIds = input?.session?.currentOutfit?.itemIds || [];
   if (!currentIds.length) return false;
   const text = normalizeIntentTextV2(input?.request?.latestUserInput);
@@ -199,7 +208,7 @@ function shouldPreloadCurrentOutfitV2(input) {
   const edit = /\b(vymen|vymenit|nahra|nahrad|zmen|zmenit|odober|odstran|pridaj|pridat|ine topanky|iny vrch|iny spodok|swap|replace)\b/.test(text);
   const currentPiece = /\b(outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok)\b/.test(text);
   const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);
-  return edit || currentPiece && opinion;
+  return edit || /\b(?:iny|ina|ine)\s+(?:outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok|vrch|spodok)\b/.test(text) || currentPiece && opinion;
 }
 
 function plannerPrompt() {
@@ -207,6 +216,9 @@ function plannerPrompt() {
     "Si plánovacia fáza jedného autoritatívneho AI Stylistu V2. Používateľ komunikuje po slovensky.",
     "HLAVNÉ PRAVIDLO: HELP FIRST, CLARIFY ONLY WHEN NECESSARY. Najprv sa snaž pomôcť z faktov, ktoré už máš; otázku polož iba ak odpoveď materiálne zmení výsledok alebo bezpečnosť.",
     "Najnovšia správa má prioritu; starší kontext používaj ako pamäť, nie ako formulár, ktorý musíš znovu vypĺňať.",
+    "Session môže obsahovať scenarioMemory.snapshots. scenarioMode=current použi pri obyčajnom follow-upe/editácii aktuálneho outfitu; scenarioMode=new pri prechode na inú aktuálnu aktivitu/occasion; scenarioMode=restore IBA keď používateľ explicitne odkazuje na starší scenár.",
+    "Pri scenarioMode=restore nastav scenarioReferenceId PRESNE na id najlepšieho semanticky zodpovedajúceho snapshotu. Nevyberaj ho iba podľa pár hard-coded udalostí; porovnaj význam celej správy s label/referenceSignals a štruktúrovaným kontextom snapshotov.",
+    "Po restore ber vyriešenú aktivitu, dátum, čas, miesto, terén a outfit snapshotu ako autoritatívnu pamäť. Nepýtaj sa znovu na údaj, ktorý snapshot už pozná. Pri 'daj mi iné tričko' bez explicitného návratu nechaj scenarioMode=current a scenarioReferenceId=null.",
     "pendingQuestion je iba kontext. Ak používateľ odpovie otázkou typu 'načo ti to je?', 'prečo?', povie 'neviem', 'je mi to jedno', 'preskoč to' alebo 'daj mi proste outfit', NESMIEŠ tú vetu interpretovať ako hodnotu pending poľa.",
     "V tejto fáze NESMIEŠ vybrať finálny nový outfit. Môžeš skončiť iba chat/clarify/stop alebo vyžiadať nástroje.",
     "GPS/currentLocationObservation a destination/eventLocation sú rôzne fakty. Nikdy nepovýš GPS na cieľ výletu či udalosti.",
@@ -214,6 +226,7 @@ function plannerPrompt() {
     "Ak používateľ uvedie iba veľmi širokú krajinu (napr. USA), vypýtaj si mesto, štát alebo región. Po užitočnom spresnení sa na miesto znovu nepýtaj.",
     "Ak miesto používateľ uviedol v tej istej správe, vyžiadaj location tool s presným kandidátom; nepýtaj ho znova otázkou.",
     "Počasie pri remote/event outfite musí používať destination/eventLocation. Pri jasne lokálnom rutinnom outfite môže používať currentLocationObservation.",
+    "V patch.environment klasifikuj hlavné prostredie nosenia outfitu semanticky ako indoor, outdoor, mixed alebo unknown. Pri indoor je vonkajšia predpoveď iba kontext na cestu, pobyt vonku a vrchnú vrstvu, nie teplota či dážď vo vnútri.",
     "Chýbajúca časť dňa NIE JE dôvod na ďalšiu otázku. Ak je dátum známy a používateľ nepovedal čas, pracuj s celodenným oknom 'day'.",
     "Výrazy túra/les/huby samy osebe NEZNAMENAJÚ mokro, blato, strmosť, skaly, sneh ani ľad. Terrain fakt nastav len z explicitného tvrdenia.",
     "Terrain clarification vyžaduj len keď konkrétna neznáma vlastnosť skutočne mení bezpečnosť obuvi; najviac jednu otázku na turn.",
@@ -246,6 +259,7 @@ function finalPrompt() {
     "Text píš ako 2 až 4 krátke, úplné a gramaticky prirodzené vety s normálnou interpunkciou. Nepíš surový inline zoznam oddelený pomlčkami; karty pod správou už zobrazia jednotlivé kúsky.",
     "Najprv jednou vetou zhrň podmienky, potom jednou až dvoma vetami vysvetli kombináciu a prípadný kompromis. Neopakuj názov každého kúsku, ak to nepridáva užitočné vysvetlenie.",
     "Ak ponúkneš nákup, assistantText NESMIE obsahovať otázku Áno/Nie ani vetu 'Chceš, aby som...'. UI zobrazí samostatnú nákupnú otázku až POD kartami outfitu. Nastav iba offerShopping=true a shoppingNeedLabel.",
+    "Ak session.context.environment=indoor, vonkajšiu predpoveď formuluj výhradne ako 'Vonku...' alebo 'Na cestu...'. Nikdy nepripisuj vonkajšiu teplotu, dážď, vietor či sucho interiéru. Vnútornú teplotu nepoznáme. Klimatizáciu spomeň iba ako možnosť, nie ako istý fakt.",
     "Ak sa predchádzajúce odporúčanie ukáže ako zlé, pokojne to priznaj a oprav. Nevymýšľaj historický dôvod, ktorý nebol uložený.",
     "Text, resultingOutfitItemIds a displayItemIds musia opisovať ten istý výsledok.",
   ].join("\n");
@@ -259,6 +273,7 @@ function patchFromRaw(raw, session) {
   }
   if (clean(patch.dateKey, 20)) context.date = {dateKey: clean(patch.dateKey, 20), source: "user"};
   if (clean(patch.timeWindowKey, 40)) context.timeWindow = {key: clean(patch.timeWindowKey, 40), source: "user"};
+  if (ENVIRONMENTS.includes(patch.environment) && patch.environment !== "unknown") context.environment = patch.environment;
   const terrain = {...(session?.context?.terrain || {surface: null, difficulty: null, condition: null})};
   let terrainChanged = false;
   for (const [rawKey, target] of [["terrainSurface", "surface"], ["terrainDifficulty", "difficulty"], ["terrainCondition", "condition"]]) {
@@ -281,6 +296,11 @@ function patchFromRaw(raw, session) {
 
 function planEnvelope(raw, input) {
   const statePatch = patchFromRaw(raw, input.session);
+  const requestedScenarioId = clean(raw?.scenarioReferenceId, 140) || null;
+  const knownScenarioIds = new Set((input?.session?.scenarioMemory?.snapshots || []).map((snapshot) => snapshot.id));
+  const requestedMode = SCENARIO_MODES.includes(raw?.scenarioMode) ? raw.scenarioMode : "current";
+  statePatch.scenarioMode = requestedMode === "restore" && !knownScenarioIds.has(requestedScenarioId) ? "current" : requestedMode;
+  statePatch.scenarioReferenceId = statePatch.scenarioMode === "restore" ? requestedScenarioId : null;
   if (raw.kind === "final") {
     const action = ["chat", "clarify", "stop"].includes(raw.action) ? raw.action : "stop";
     const result = {
@@ -323,6 +343,28 @@ function planEnvelope(raw, input) {
   return {kind: "tool_request", requests, statePatch};
 }
 
+function guardIndoorWeatherWordingV2(value, environment) {
+  const original = clean(value);
+  if (environment !== "indoor" || !original) return original;
+  const weatherSignal = /(?:°\s*c|\bstupn|\btepl|\bhoruc|\bchlad|\bsuch|\bdazd|dážď|\bprsi|prší|\bsneh|\bsnezi|sneží|\bvietor|\bfuka|fúka|\bburk|\bmrhol)/iu;
+  const outsideScope = /\b(vonku|na cestu|cestou|po ceste|pri presune|pred cestou)\b/iu;
+  const climate = /\bklimatiz/iu;
+  const climatePossibility = /\b(moze|môže|mozno|možno|pripadne|prípadne)\b/iu;
+  const sentences = original.match(/[^.!?]+[.!?]?/gu) || [original];
+  return sentences.map((rawSentence) => {
+    let sentence = rawSentence.trim();
+    if (!sentence) return "";
+    if (climate.test(sentence)) {
+      if (climatePossibility.test(sentence)) return sentence;
+      return "Vnútri môže byť kvôli klimatizácii chladnejšie.";
+    }
+    if (!weatherSignal.test(sentence) || outsideScope.test(sentence)) return sentence;
+    sentence = sentence.replace(/^(?:v|vo)\s+[^,.!?]{1,80}?\s+(?=(?:je|bude|budu|má|ma|prší|prsi|sneží|snezi|fúka|fuka)(?:\s|[,.!?]|$))/iu, "");
+    sentence = sentence.replace(/^([A-ZÁÄČĎÉÍĹĽŇÓÔŔŠŤÚÝŽ])/, (match) => match.toLocaleLowerCase("sk-SK"));
+    return `Vonku ${sentence}`.replace(/\s+/g, " ").trim();
+  }).filter(Boolean).join(" ");
+}
+
 function finalEnvelope(raw, input) {
   const ids = list(raw.resultingOutfitItemIds, 12);
   const reasons = {};
@@ -338,7 +380,7 @@ function finalEnvelope(raw, input) {
   const action = ACTIONS.includes(raw.action) ? raw.action : "stop";
   const result = {
     action,
-    assistantText: clean(raw.assistantText) || "Rozumiem.",
+    assistantText: guardIndoorWeatherWordingV2(clean(raw.assistantText) || "Rozumiem.", input?.session?.context?.environment),
     resultingOutfit: {itemIds: ids, selectionReasonsByItemId: reasons, compromises: [], missingWardrobeNeeds: []},
     display: {kind: ["none", "outfit", "items"].includes(raw.displayKind) ? raw.displayKind : "none", itemIds: list(raw.displayItemIds, 12)},
   };
@@ -480,6 +522,7 @@ module.exports = {
   finalEnvelope,
   finalModelRoutingForInputV2,
   finalReasoningForInputV2,
+  guardIndoorWeatherWordingV2,
   planEnvelope,
   shoppingQuickReplyPromptV2,
   shouldPreloadCurrentOutfitV2,

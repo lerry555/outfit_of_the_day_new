@@ -106,7 +106,7 @@ test("prompt cache keeps the legacy top-level wardrobeV2 contract compatible", (
 
 test("shopping CTA is footwear-specific instead of anonymous yes/no buttons", () => {
   assert.equal(shoppingQuickReplyPromptV2("turistická obuv", "hiking_shoes"),
-    "Chceš, aby som ti vybral vhodnejšie turistické topánky?");
+    "Chceš, aby som ti pozrel vhodné topánky v obchodoch?");
   const envelope = finalEnvelope({
     action: "generate_outfit", assistantText: "Tenisky sú tu len kompromis. Chceš, aby som ti niečo vybral?",
     resultingOutfitItemIds: ["shirt"], selectionReasons: [{itemId: "shirt", reason: "ľahký vrch"}],
@@ -117,6 +117,6 @@ test("shopping CTA is footwear-specific instead of anonymous yes/no buttons", ()
     shoppingHardConstraints: [], shoppingSoftPreferences: [],
   }, baseInput());
   assert.equal(envelope.result.quickReplyPrompt,
-    "Chceš, aby som ti vybral vhodnejšie turistické topánky?");
+    "Chceš, aby som ti pozrel vhodné topánky v obchodoch?");
   assert.doesNotMatch(envelope.result.assistantText, /Chceš/i);
 });
