@@ -217,8 +217,23 @@ function createStylistChatV2Handler({
         });
 
       const wardrobeTool = wardrobeToolFactory ?
-        wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
-      const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});
+      wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
+    const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
+    const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
+    const canonicalCurrentIds = uniqueIds(existing?.state?.currentOutfit?.itemIds, 12);
+    let knownWardrobeItems = null;
+    if (canonicalCurrentIds.length || currentIds.length) {
+      try {
+        knownWardrobeItems = await wardrobeTool.retrieve({
+          scope: "full_relevant",
+          itemIds: canonicalCurrentIds.length ? canonicalCurrentIds : currentIds,
+          category: null,
+        });
+      } catch (_) {
+        knownWardrobeItems = null;
+      }
+    }
+    const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});
       const weatherTool = weatherOverride || createOpenMeteoWeatherToolV2({fetchImpl, clock});
       const shoppingTool = shoppingToolFactory ?
         shoppingToolFactory({uid}) : createShoppingToolV2({uid, orchestrator: catalogOrchestrator});
@@ -233,10 +248,8 @@ function createStylistChatV2Handler({
       });
 
       const clientContext = safeMap(data?.clientContext);
-      const observation = currentLocationObservation(clientContext, clock);
-      const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
-      const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
-      const request = {
+    const observation = currentLocationObservation(clientContext, clock);
+    const request = {
         chatId: sessionId,
         turnId,
         expectedSessionRevision: existing?.state?.revision ?? 0,
@@ -251,7 +264,8 @@ function createStylistChatV2Handler({
         uid,
         request,
         knownCanonicalState: existing?.state || null,
-        bootstrapInput: existing ? null : {
+      knownWardrobeItems,
+      bootstrapInput: existing ? null : {
           currentOutfitItemIds: currentIds,
           persistedSelectionReasonsByItemId: persistedReasonsByItemId,
           knownExplicitDurableChoices: {},

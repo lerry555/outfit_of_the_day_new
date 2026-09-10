@@ -25,6 +25,7 @@ const {
   upsertScenarioSnapshotV2,
 } = require("./stylist_scenario_memory_v2");
 const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
+const {categoryMatches} = require("./firestore_wardrobe_tool_v2");
 const {ONE_BRAIN_MAX_MODEL_CALLS} = require("./openai_one_brain_model_port_v2");
 
 const TOOL_REQUEST_SCOPES = new Set([
@@ -33,7 +34,8 @@ const TOOL_REQUEST_SCOPES = new Set([
   "category",
   "full_relevant",
 ]);
-const SKIP_DIRECTIVE_RE = /\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
+const SKIP_DIRECTIVE_RE = /\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
+const PENDING_REPLY_DISPOSITIONS = new Set(["none", "answer", "skip", "meta", "unrelated"]);
 
 function normalizeConversationTextV2(value) {
   return String(value || "")
@@ -47,6 +49,42 @@ function normalizeConversationTextV2(value) {
 
 function userRequestsBestEffortV2(value) {
   return SKIP_DIRECTIVE_RE.test(normalizeConversationTextV2(value));
+}
+
+function pendingReplyDispositionV2(envelope, pendingQuestion) {
+  const raw = envelope?.pendingReplyDisposition;
+  if (!pendingQuestion) {
+    if (raw == null || raw === "none") return "none";
+    throw new RepairableStructuralTurnError("pending reply disposition exists without a pending question");
+  }
+  // Legacy injected test doubles from before this contract are interpreted
+  // as answer. Production structured output always supplies the field.
+  if (raw == null) return "answer";
+  if (!PENDING_REPLY_DISPOSITIONS.has(raw) || raw === "none") {
+    throw new RepairableStructuralTurnError("pending reply disposition is missing or invalid");
+  }
+  return raw;
+}
+
+function clearPendingQuestionV2(state) {
+  const next = clone(state);
+  next.conversationMemory.pendingQuestion = null;
+  return next;
+}
+
+function selectKnownWardrobeV2(items, request, currentIds) {
+  const all = clone(Array.isArray(items) ? items : []);
+  if (!request || request.scope === "full_relevant") return all;
+  if (request.scope === "current_outfit") {
+    return all.filter((item) => currentIds.includes(item.id));
+  }
+  if (request.scope === "category") {
+    return all.filter((item) => categoryMatches(item, request.category));
+  }
+  if (request.scope === "current_outfit_plus_category") {
+    return all.filter((item) => currentIds.includes(item.id) || categoryMatches(item, request.category));
+  }
+  return all;
 }
 
 function requirePort(value, label) {
@@ -176,7 +214,7 @@ function normalizeDecisionV2(decision, state, resultingRevision, turnId) {
   return raw;
 }
 
-function applyAcceptedResultV2(state, result) {
+function applyAcceptedResultV2(state, result, {preservePendingQuestion = false} = {}) {
   const next = clone(state);
   next.revision = result.resultingSessionRevision;
   if (["generate_outfit", "edit_outfit"].includes(result.action)) {
@@ -205,10 +243,10 @@ function applyAcceptedResultV2(state, result) {
       question: result.clarification.question,
       acceptsYesNo: Boolean(result.clarification.acceptsYesNo),
     };
-  } else {
-    next.conversationMemory.pendingQuestion = null;
-  }
-  if (result.action === "shop") next.conversationMemory.pendingAction = null;
+  } else if (!preservePendingQuestion) {
+  next.conversationMemory.pendingQuestion = null;
+}
+if (result.action === "shop") next.conversationMemory.pendingAction = null;
   next.replay.turns = [
     ...next.replay.turns,
     {turnId: result.turnId, result: clone(result)},
@@ -218,14 +256,43 @@ function applyAcceptedResultV2(state, result) {
   return validateStylistSessionStateV2(withScenarioSnapshot);
 }
 
-function validateToolDecisionEnvelopeV2(envelope, {allowClarification}) {
+function validateToolDecisionEnvelopeV2(envelope, {allowClarification, pendingQuestion = null}) {
+  const disposition = pendingReplyDispositionV2(envelope, pendingQuestion);
+  const pendingField = pendingQuestion?.field || null;
+  const locationRequests = Array.isArray(envelope?.requests) ?
+    envelope.requests.filter((entry) => entry?.tool === "location") : [];
+  if (disposition === "meta" &&
+      (envelope?.kind !== "final" || envelope.result?.action !== "chat" ||
+       ![undefined, null, "current"].includes(envelope.statePatch?.scenarioMode))) {
+    throw new RepairableStructuralTurnError("meta reply must answer conversationally and preserve the pending question");
+  }
+  if (["skip", "meta"].includes(disposition) &&
+      locationRequests.some((entry) => entry.targetField === pendingField)) {
+    throw new RepairableStructuralTurnError("skipped or meta pending reply cannot be consumed as the pending location");
+  }
+  if (disposition === "unrelated" &&
+      locationRequests.some((entry) => entry.targetField === pendingField) &&
+      envelope.statePatch?.scenarioMode !== "new") {
+    throw new RepairableStructuralTurnError("unrelated reply cannot populate the old pending location");
+  }
+  if (disposition === "answer" && ["destination", "eventLocation"].includes(pendingField) &&
+      locationRequests.some((entry) => entry.targetField !== pendingField)) {
+    throw new RepairableStructuralTurnError("pending location answer targeted a different location field");
+  }
   if (envelope?.kind === "final") {
     if (!["chat", "clarify", "stop"].includes(envelope.result?.action)) {
       throw new RepairableStructuralTurnError("one-brain tool stage may finalize only chat, clarify, or stop");
     }
     if (!allowClarification && envelope.result?.action === "clarify") {
-      throw new RepairableStructuralTurnError("one-brain clarification budget already consumed");
-    }
+    throw new RepairableStructuralTurnError("one-brain clarification budget already consumed");
+  }
+  if (pendingQuestion && envelope.result?.action === "clarify" && disposition !== "unrelated") {
+    throw new RepairableStructuralTurnError("answered pending question cannot start another questionnaire round");
+  }
+  if (pendingQuestion && envelope.result?.action === "clarify" && disposition === "unrelated" &&
+      envelope.statePatch?.scenarioMode !== "new") {
+    throw new RepairableStructuralTurnError("new clarification after topic change requires a new scenario");
+  }
     return;
   }
   if (envelope?.kind !== "tool_request" || !Array.isArray(envelope.requests) || envelope.requests.length === 0) {
@@ -300,17 +367,19 @@ function shoppingContextV2(state, pending) {
   };
 }
 
-async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool}) {
+async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool,
+  knownWardrobeItems = null}) {
   let workingState = applyBrainStatePatchV2(state, envelope.statePatch);
+  const preloadedWardrobe = Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : null;
   const toolResults = {
-    wardrobeItems: [],
+    wardrobeItems: preloadedWardrobe || [],
     resolvedLocations: [],
     locationStatus: "not_requested",
     weather: null,
     weatherStatus: "not_requested",
     authorizedEditScope: null,
   };
-  let wardrobeItems = [];
+  let wardrobeItems = preloadedWardrobe || [];
 
   const locationRequest = envelope.requests.find((entry) => entry.tool === "location");
   if (locationRequest) {
@@ -340,11 +409,13 @@ async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationR
 
   const wardrobeRequest = envelope.requests.find((entry) => entry.tool === "wardrobe");
   if (wardrobeRequest) {
-    wardrobeItems = await wardrobeTool.retrieve({
-      scope: wardrobeRequest.scope,
-      itemIds: workingState.currentOutfit.itemIds,
-      category: wardrobeRequest.category || null,
-    });
+    wardrobeItems = preloadedWardrobe ?
+      selectKnownWardrobeV2(preloadedWardrobe, wardrobeRequest, workingState.currentOutfit.itemIds) :
+      await wardrobeTool.retrieve({
+        scope: wardrobeRequest.scope,
+        itemIds: workingState.currentOutfit.itemIds,
+        category: wardrobeRequest.category || null,
+      });
     toolResults.wardrobeItems = clone(wardrobeItems);
     toolResults.authorizedEditScope = clone(wardrobeRequest.editScope || null);
   }
@@ -379,7 +450,7 @@ async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationR
 }
 
 async function commitResultV2({durableRepository, uid, request, originalState, workingState, decision,
-  wardrobeItems, authorizedEditScope}) {
+  wardrobeItems, authorizedEditScope, preservePendingQuestion = false}) {
   const rawResult = normalizeDecisionV2(decision, workingState, originalState.revision + 1, request.turnId);
   const validatedResult = validateAuthoritativeTurnV2({
     rawResult,
@@ -388,7 +459,7 @@ async function commitResultV2({durableRepository, uid, request, originalState, w
     wardrobeItems,
     authorizedEditScope,
   });
-  const nextState = applyAcceptedResultV2(workingState, validatedResult);
+  const nextState = applyAcceptedResultV2(workingState, validatedResult, {preservePendingQuestion});
   try {
     const outcome = await durableRepository.commitTurn({
       uid,
@@ -424,7 +495,8 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
   requirePort(stylistBrain, "stylistBrain");
 
   return Object.freeze({
-    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null}) {
+    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null,
+    knownWardrobeItems = null}) {
       const request = validateTurnRequestV2(untrustedRequest);
       const originalState = knownCanonicalState ? validateStylistSessionStateV2(knownCanonicalState) :
         await ensureCanonicalSessionV2({durableRepository, uid, request, bootstrapInput});
@@ -449,10 +521,11 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       const hadPendingQuestion = Boolean(workingState.conversationMemory.pendingQuestion);
       const bestEffortDirective = userRequestsBestEffortV2(request.latestUserInput);
       if (hadPendingQuestion && bestEffortDirective) {
-        workingState = applySkipToPendingQuestionV2(workingState);
-      }
+      workingState = applySkipToPendingQuestionV2(workingState);
+    }
+    const pendingQuestionAtBrain = clone(workingState.conversationMemory.pendingQuestion);
 
-      let preflight;
+    let preflight;
       try {
         preflight = runPreflightV2(originalState, request);
       } catch (error) {
@@ -486,13 +559,15 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       const runtimeConstraints = {
         maxModelCalls: ONE_BRAIN_MAX_MODEL_CALLS,
         modelCallsRemaining: ONE_BRAIN_MAX_MODEL_CALLS,
-        allowClarification: !hadPendingQuestion && !bestEffortDirective,
-        cannotClarifyFields: cannotClarifyFieldsV2(workingState),
-        noAutomaticGroundingQuestions: true,
-        answerStageMayClarify: false,
+        allowClarification: !bestEffortDirective,
+      cannotClarifyFields: cannotClarifyFieldsV2(workingState),
+      pendingReplyRequired: Boolean(pendingQuestionAtBrain),
+      pendingReplyField: pendingQuestionAtBrain?.field || null,
+      noAutomaticGroundingQuestions: true,
+      answerStageMayClarify: false,
       };
       const emptyToolResults = {
-        wardrobeItems: [],
+      wardrobeItems: Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : [],
         resolvedLocations: [],
         locationStatus: "not_requested",
         weather: clone(workingState.context.weather),
@@ -503,15 +578,29 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       const toolEnvelope = await callBrainV2(stylistBrain,
         brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));
       runtimeConstraints.modelCallsRemaining -= 1;
-      validateToolDecisionEnvelopeV2(toolEnvelope, runtimeConstraints);
-      workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
-
-      if (toolEnvelope.kind === "final") {
-        return commitResultV2({
-          durableRepository, uid, request, originalState, workingState,
-          decision: toolEnvelope.result, wardrobeItems: [], authorizedEditScope: null,
-        });
+      validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
+    const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
+    let preservePendingQuestion = false;
+    if (pendingQuestionAtBrain) {
+      if (pendingDisposition === "skip") {
+        workingState = applySkipToPendingQuestionV2(workingState);
+      } else if (["answer", "unrelated"].includes(pendingDisposition)) {
+        workingState = clearPendingQuestionV2(workingState);
+      } else if (pendingDisposition === "meta") {
+        preservePendingQuestion = true;
       }
+    }
+    workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+
+    if (toolEnvelope.kind === "final") {
+      return commitResultV2({
+        durableRepository, uid, request, originalState, workingState,
+        decision: toolEnvelope.result,
+        wardrobeItems: Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : [],
+        authorizedEditScope: null,
+        preservePendingQuestion,
+      });
+    }
 
       const executed = await executeRequestedToolsV2({
         envelope: toolEnvelope,
@@ -519,7 +608,8 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         wardrobeTool,
         locationResolver,
         weatherTool,
-      });
+      knownWardrobeItems,
+    });
       workingState = executed.workingState;
       const answerConstraints = {
         ...runtimeConstraints,
@@ -555,6 +645,8 @@ module.exports = {
   createStylistOneBrainEngineV2,
   disableWeatherGroundingV2,
   executeRequestedToolsV2,
+  pendingReplyDispositionV2,
+  selectKnownWardrobeV2,
   semanticLocationFallbackV2,
   userRequestsBestEffortV2,
   validateAnswerEnvelopeV2,
