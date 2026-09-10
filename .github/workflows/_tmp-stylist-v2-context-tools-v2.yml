@@ -46,14 +46,8 @@ jobs:
           end = workflow.index(end_token, start)
           script = textwrap.dedent(workflow[start:end])
 
-          bad = ''''''  if (raw.offerShopping === true) {
-            result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
-          }
-          if (raw.offerShopping === true && needLabel) {''''''
-          good = ''''''  if (raw.offerShopping === true) {
-              result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
-            }
-            if (raw.offerShopping === true && needLabel) {''''''
+          bad = "'''  if (raw.offerShopping === true) {\n  result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n}\nif (raw.offerShopping === true && needLabel) {'''"
+          good = "'''  if (raw.offerShopping === true) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (raw.offerShopping === true && needLabel) {'''"
           if bad not in script:
               raise SystemExit('expected malformed CTA matcher was not found in extracted patch script')
           script = script.replace(bad, good, 1)
