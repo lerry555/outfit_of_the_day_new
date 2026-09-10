@@ -46,11 +46,22 @@ jobs:
           end = workflow.index(end_token, start)
           script = textwrap.dedent(workflow[start:end])
 
-          bad = "'''  if (raw.offerShopping === true) {\n  result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n}\nif (raw.offerShopping === true && needLabel) {'''"
-          good = "'''  if (raw.offerShopping === true) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (raw.offerShopping === true && needLabel) {'''"
-          if bad not in script:
-              raise SystemExit('expected malformed CTA matcher was not found in extracted patch script')
-          script = script.replace(bad, good, 1)
+          replacements = [
+              (
+                  "'''  if (raw.offerShopping === true) {\n  result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n}\nif (raw.offerShopping === true && needLabel) {'''",
+                  "'''  if (raw.offerShopping === true) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (raw.offerShopping === true && needLabel) {'''",
+                  'CTA matcher',
+              ),
+              (
+                  "'''      \"Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.\",\n    \"Ak má vzniknúť alebo zmeniť outfit, musíš si vyžiadať wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.\",'''",
+                  "'''      \"Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.\",\n      \"Ak má vzniknúť alebo zmeniť outfit, musíš si vyžiadať wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.\",'''",
+                  'One-Brain tool prompt matcher',
+              ),
+          ]
+          for bad, good, label in replacements:
+              if bad not in script:
+                  raise SystemExit(f'expected malformed {label} was not found in extracted patch script')
+              script = script.replace(bad, good, 1)
           exec(compile(script, '<context-tools-patch>', 'exec'))
           PY
 
