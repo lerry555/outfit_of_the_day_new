@@ -39,7 +39,7 @@ text = p.read_text(encoding="utf-8")
 marker = 'test("absent warmth/formality stay absent instead of becoming zero"'
 if marker in text:
     raise RuntimeError("nullable metadata test already present")
-text = text.rstrip() + r'''
+text = (text.rstrip() + r'''
 
 
 test("absent warmth/formality stay absent instead of becoming zero", async () => {
@@ -53,7 +53,7 @@ test("absent warmth/formality stay absent instead of becoming zero", async () =>
   assert.equal(Object.hasOwn(item, "warmth"), false);
   assert.equal(Object.hasOwn(item, "formality"), false);
 });
-''' + "\n"
+''').rstrip() + "\n"
 p.write_text(text, encoding="utf-8")
 
 print("Stylist V2 fastlane contract updates applied")
