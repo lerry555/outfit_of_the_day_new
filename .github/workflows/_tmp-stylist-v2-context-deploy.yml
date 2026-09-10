@@ -49,6 +49,21 @@ jobs:
         working-directory: functions
         run: npm ci
 
+      - name: Generate required deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          const family = g.generateFamilyRegistry();
+          const structured = g.generateStructuredTaxonomy();
+          console.log(JSON.stringify({ok: true, family, structured}));
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
+
       - name: Narrow Firebase discovery to stylistChatV2
         shell: bash
         run: |
