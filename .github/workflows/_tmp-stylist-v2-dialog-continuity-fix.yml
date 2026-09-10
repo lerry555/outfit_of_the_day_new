@@ -96,8 +96,8 @@ jobs:
               raise SystemExit(f"indoor scope strip anchor mismatch: {text.count(old)}")
           text = text.replace(old, new, 1)
 
-          old = r'  const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);\n  return edit || currentPiece && opinion;'
-          new = r'  const opinion = /\b(je to ok|su v poriadku|co povies|co si myslis|hodi sa|sedi to|pasuje)\b/.test(text);\n  const alternativePiece = /\b(?:iny|ina|ine)\s+(?:outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok|vrch|spodok)\b/.test(text);\n  return edit || alternativePiece || currentPiece && opinion;'
+          old = "  return edit || currentPiece && opinion;"
+          new = r"  return edit || /\b(?:iny|ina|ine)\s+(?:outfit|rifle|nohavice|sortky|kratasy|tricko|kosela|mikina|sveter|bunda|kabat|topanky|tenisky|obuv|doplnok|vrch|spodok)\b/.test(text) || currentPiece && opinion;"
           if text.count(old) != 1:
               raise SystemExit(f"current edit preload anchor mismatch: {text.count(old)}")
           text = text.replace(old, new, 1)
