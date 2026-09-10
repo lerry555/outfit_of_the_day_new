@@ -116,6 +116,19 @@ jobs:
               if count != expected_count:
                   raise SystemExit(f"{filename} old CTA count mismatch: {count}")
               p.write_text(text.replace(expected_old, expected_new), encoding="utf-8")
+
+          p = Path("test/stylist_simple_agent_fast_path_test.dart")
+          text = p.read_text(encoding="utf-8")
+          old = "    expect(result['assistantText'], 'Ahoj! Ako ti môžem pomôcť?');"
+          new = "    expect(result['reply'], 'Ahoj! Ako ti môžem pomôcť?');"
+          if text.count(old) != 1:
+              raise SystemExit(f"Flutter greeting reply assertion mismatch: {text.count(old)}")
+          text = text.replace(old, new, 1)
+          old = "    expect((result['assistantText'] as String).toLowerCase(), isNot(contains('outfit')));"
+          new = "    expect((result['reply'] as String).toLowerCase(), isNot(contains('outfit')));"
+          if text.count(old) != 1:
+              raise SystemExit(f"Flutter greeting reply key mismatch: {text.count(old)}")
+          p.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
 
       - name: Install Functions dependencies
