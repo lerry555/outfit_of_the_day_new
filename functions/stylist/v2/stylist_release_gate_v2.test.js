@@ -321,16 +321,27 @@ test("release gate: user can skip location and still get an outfit without weath
   assert.equal(h.calls.model.length, 1);
 });
 
-test("release gate: country-only destination narrows once without spending a model call", async () => {
+test("release gate: after one location clarification a country answer proceeds without a questionnaire loop", async () => {
   const h = makeHarness();
-  await invoke(h.handler, baseData("country_chat", "c1", "zajtra idem na túru potrebujem outfit"));
+  const first = await invoke(h.handler, baseData("country_chat", "c1", "zajtra idem na túru potrebujem outfit"));
+  assertHealthy(first);
+  assert.equal(first.action, "clarify");
+  assert.match(first.reply, /kam približne/i);
+
   const response = await invoke(h.handler, baseData("country_chat", "c2", "USA"));
   assertHealthy(response);
-  assert.equal(response.action, "clarify");
-  assert.match(response.reply, /mesto|štát|stat|región|region/i);
-  assert.equal(h.calls.model.length, 0);
+  assert.equal(response.action, "generate_outfit");
+  assert.doesNotMatch(response.reply, /mesto|štát|stat|región|region|kam približne/i);
+  assert.equal(h.calls.location.length, 1);
+  assert.equal(h.calls.model.length, 1);
+  assert.equal(h.calls.model[0].schemaName, "stylist_v2_final");
   assert.equal(h.calls.weather.length, 0);
-  assert.equal(h.calls.wardrobe.length, 0);
+  assert.equal(h.calls.wardrobe.length, 1);
+
+  const stored = await h.repository.get({uid: UID, chatId: "country_chat"});
+  assert.equal(stored.state.context.destination.providerId, "place:usa");
+  assert.equal(stored.state.context.groundingRequirements.weatherRequired, false);
+  assert.equal(stored.state.conversationMemory.pendingQuestion, null);
 });
 
 test("release gate: current GPS never silently becomes a remote hike destination", async () => {

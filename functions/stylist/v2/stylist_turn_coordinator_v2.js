@@ -184,6 +184,32 @@ function disableOptionalWeatherGroundingV2(state) {
   return next;
 }
 
+function skipPendingClarificationV2(state, field) {
+  const next = clone(state);
+  next.conversationMemory.answeredClarificationFields = {
+    ...(next.conversationMemory.answeredClarificationFields || {}),
+    [field]: {status: "unknown", source: "user"},
+  };
+  next.conversationMemory.pendingQuestion = null;
+
+  if (String(field || "").startsWith("terrain.")) {
+    const terrainField = String(field).slice("terrain.".length);
+    next.context.groundingRequirements = {
+      ...next.context.groundingRequirements,
+      terrainRequiredFields: (next.context.groundingRequirements?.terrainRequiredFields || [])
+        .filter((entry) => entry !== terrainField),
+    };
+  } else if (["currentLocationObservation", "destination", "eventLocation", "date", "timeWindow"].includes(field)) {
+    next.context.weather = null;
+    next.context.groundingRequirements = {
+      ...next.context.groundingRequirements,
+      weatherRequired: false,
+      weatherLocationField: null,
+    };
+  }
+  return next;
+}
+
 function unchangedOutfit(state) {
   return {itemIds: [...state.currentOutfit.itemIds], selectionReasonsByItemId: {...state.currentOutfit.selectionReasonsByItemId}};
 }
@@ -205,8 +231,15 @@ function applySafeStatePatch(state, statePatch = {}) {
   if (statePatch.scenarioMode === "restore" && statePatch.scenarioReferenceId) next = restoreScenarioSnapshotV2(next, statePatch.scenarioReferenceId);
   else if (statePatch.scenarioMode === "new") next = beginNewScenarioV2(next);
   const context = statePatch.context || {};
-  for (const key of ["activity", "date", "timeWindow", "terrain", "environment", "groundingRequirements"]) {
+  for (const key of ["activity", "date", "timeWindow", "terrain", "environment"]) {
     if (Object.prototype.hasOwnProperty.call(context, key)) next.context[key] = clone(context[key]);
+  }
+  if (Object.prototype.hasOwnProperty.call(context, "groundingRequirements")) {
+    const incoming = clone(context.groundingRequirements || {});
+    const serverOwnedTerrain = new Set(next.context.groundingRequirements?.terrainRequiredFields || []);
+    incoming.terrainRequiredFields = (incoming.terrainRequiredFields || [])
+      .filter((field) => serverOwnedTerrain.has(field));
+    next.context.groundingRequirements = incoming;
   }
   const memory = statePatch.conversationMemory || {};
   for (const key of ["communicatedWarnings", "rejectedWardrobeItemIds", "rejectedShoppingOptionIds", "userCorrections", "acceptedCompromises"]) {
@@ -394,15 +427,30 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
 
       const pendingQuestion = workingState.conversationMemory.pendingQuestion;
       const pendingField = pendingQuestion?.field;
+      const pendingDisposition = pendingField ? pendingLocationReplyDispositionV2(request.latestUserInput) : null;
+
+      // "Neviem", "preskoč" and equivalent replies work for every clarification,
+      // not only locations. Persist that the user does not know the fact so the
+      // same field cannot become another questionnaire turn later in the scenario.
+      if (!decision && pendingField && !["destination", "eventLocation"].includes(pendingField)) {
+        if (pendingDisposition === "defer") {
+          workingState.conversationMemory.pendingQuestion = null;
+          decision = deferredPendingDecisionV2();
+        } else if (pendingDisposition === "skip") {
+          workingState = skipPendingClarificationV2(workingState, pendingField);
+          pendingLocationContinuation = true;
+        }
+      }
+
       if (!decision && ["destination", "eventLocation"].includes(pendingField)) {
-        const disposition = pendingLocationReplyDispositionV2(request.latestUserInput);
+        const disposition = pendingDisposition;
         if (disposition === "why") {
           decision = whyLocationClarificationDecision(pendingField);
         } else if (disposition === "defer") {
           workingState.conversationMemory.pendingQuestion = null;
           decision = deferredPendingDecisionV2();
         } else if (disposition === "skip") {
-          workingState = disableOptionalWeatherGroundingV2(workingState);
+          workingState = skipPendingClarificationV2(workingState, pendingField);
           pendingLocationContinuation = true;
         } else if (disposition === "location") {
           const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
@@ -411,11 +459,17 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
             // one useful location question. A geocoder miss is a tool failure,
             // not a reason to trap the conversation in another questionnaire.
             rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
-            workingState = disableOptionalWeatherGroundingV2(workingState);
+            workingState = skipPendingClarificationV2(workingState, pendingField);
             pendingLocationContinuation = true;
           } else if (locationIsTooBroadForWeatherV2(resolution.resolved)) {
+            // One location clarification is enough. Keep the broad place as useful
+            // semantic context, but continue without pretending we have precise
+            // local weather instead of asking the user for yet another place.
             rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
-            decision = broadLocationClarificationDecision(pendingField, request.latestUserInput);
+            workingState.context[pendingField] = resolution.resolved;
+            workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
+            workingState = disableOptionalWeatherGroundingV2(workingState);
+            pendingLocationContinuation = true;
           } else {
             workingState.context[pendingField] = resolution.resolved;
             workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(resolution.resolved);
@@ -541,6 +595,7 @@ module.exports = {
   pendingLocationReplyDispositionV2,
   pendingLocationResolutionQueriesV2,
   resolvePendingLocationAnswerV2,
+  skipPendingClarificationV2,
   unresolvedLocationClarificationDecision,
   validateFinalEnvelope,
   validatePlanningEnvelope,
