@@ -1,0 +1,178 @@
+name: Temporary Stylist V2 context-tools refactor v3
+
+on:
+  push:
+    branches:
+      - refactor/stylist-v2-context-tools-20260910
+    paths:
+      - '.github/workflows/_tmp-stylist-v2-context-tools-v3.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/stylist-v2-context-tools-20260910
+          fetch-depth: 0
+
+      - name: Guard canonical brain and work heads
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment refactor/stylist-v2-context-tools-20260910 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "2e4a119eeac7c5422d585905a845333a8435b77e"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/refactor/stylist-v2-context-tools-20260910)"
+          git diff --exit-code
+
+      - name: Apply prepared product patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+          workflow = Path('.github/workflows/_tmp-stylist-v2-context-tools.yml').read_text(encoding='utf-8')
+          start_token = "          python - <<'PY'\n"
+          end_token = "\n          PY\n"
+          start = workflow.index(start_token) + len(start_token)
+          end = workflow.index(end_token, start)
+          script = textwrap.dedent(workflow[start:end])
+          fn_start = script.index('def replace_once(path, old, new):')
+          fn_end = script.index('\n\nmodel =', fn_start)
+          robust_fn = r'''def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count == 1:
+                  p.write_text(text.replace(old, new, 1), encoding="utf-8")
+                  return
+              if count > 1:
+                  raise SystemExit(f"{path}: exact match ambiguous ({count})")
+              old_lines = old.splitlines()
+              parts = []
+              for i, line in enumerate(old_lines):
+                  content = line.lstrip(" \t")
+                  parts.append((r"(?m)^[ \t]*" if i == 0 else r"\r?\n[ \t]*") + re.escape(content))
+              matches = list(re.finditer("".join(parts), text))
+              if len(matches) != 1:
+                  raise SystemExit(f"{path}: whitespace matcher got {len(matches)} candidates\n{old}")
+              m = matches[0]
+              p.write_text(text[:m.start()] + new + text[m.end():], encoding="utf-8")'''
+          script = script[:fn_start] + robust_fn + script[fn_end:]
+          exec(compile(script, '<context-tools-patch>', 'exec'))
+          PY
+
+      - name: Isolate Terra and pending schema to One-Brain
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show origin/stylist-simple-agent:functions/stylist/v2/openai_stylist_model_port_v2.js > functions/stylist/v2/openai_stylist_model_port_v2.js
+          python - <<'PY'
+          from pathlib import Path
+          generic = Path('functions/stylist/v2/openai_stylist_model_port_v2.js')
+          text = generic.read_text(encoding='utf-8')
+          old = '''  if (raw.offerShopping === true) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (raw.offerShopping === true && needLabel) {'''
+          new = '''  const shouldOfferShopping = Boolean(needLabel) &&\n    (raw.offerShopping === true || ["generate_outfit", "edit_outfit"].includes(action));\n  if (shouldOfferShopping) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (shouldOfferShopping) {'''
+          if text.count(old) != 1:
+              raise SystemExit('generic CTA matcher failed')
+          generic.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          one = Path('functions/stylist/v2/openai_one_brain_model_port_v2.js')
+          text = one.read_text(encoding='utf-8')
+          old = '''function schemaForStageV2(stage, allowClarification) {\n  const schema = clone(stage === "answer" ? FINAL_SCHEMA : PLAN_SCHEMA);\n  if (allowClarification !== false) return schema;'''
+          new = '''function schemaForStageV2(stage, allowClarification) {\n  const schema = clone(stage === "answer" ? FINAL_SCHEMA : PLAN_SCHEMA);\n  if (stage !== "answer") {\n    schema.required = [...schema.required, "pendingReplyDisposition"];\n    schema.properties.pendingReplyDisposition = {\n      type: "string",\n      enum: ["none", "answer", "skip", "meta", "unrelated"],\n    };\n  }\n  if (allowClarification !== false) return schema;'''
+          if text.count(old) != 1:
+              raise SystemExit('one-brain schema matcher failed')
+          text = text.replace(old, new, 1)
+          old = '''      const routing = finalModelRoutingForInputV2(input);\n      const model = stage === "tools" ? PLAN_MODEL : routing.model;\n      const reasoningEffort = stage === "tools" ? PLAN_REASONING : routing.reasoningEffort;'''
+          new = '''      const model = "gpt-5.6-terra";\n      const reasoningEffort = "medium";'''
+          if text.count(old) != 1:
+              raise SystemExit('one-brain routing matcher failed')
+          text = text.replace(old, new, 1)
+          old = '''      return stage === "tools" ? planEnvelope(raw, {...input, phase: "plan"}) :\n        finalEnvelope(raw, {...input, phase: "final"});'''
+          new = '''      if (stage === "tools") {\n        const envelope = planEnvelope(raw, {...input, phase: "plan"});\n        const disposition = ["none", "answer", "skip", "meta", "unrelated"].includes(raw?.pendingReplyDisposition) ?\n          raw.pendingReplyDisposition : "none";\n        return {...envelope, pendingReplyDisposition: disposition};\n      }\n      return finalEnvelope(raw, {...input, phase: "final"});'''
+          if text.count(old) != 1:
+              raise SystemExit('one-brain envelope matcher failed')
+          one.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
+      - name: Diff hygiene and syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --stat
+          node --check functions/stylist/v2/openai_stylist_model_port_v2.js
+          node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
+          node --check functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: One-Brain targeted regressions
+        run: node --test functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Full V2 non-emulator regression
+        run: >-
+          node --test
+          functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
+          functions/stylist/v2/stylist_v2_phase0_contracts.test.js
+          functions/stylist/v2/stylist_session_repository_v2.test.js
+          functions/stylist/v2/stylist_turn_engine_v2.test.js
+          functions/stylist/v2/stylist_grounding_policy_v2.test.js
+          functions/stylist/v2/stylist_v2_phase3_ports.test.js
+          functions/stylist/v2/stylist_production_bridge_v2.test.js
+          functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
+          functions/stylist/v2/stylist_pending_location_v2.test.js
+          functions/stylist/v2/stylist_help_first_contract_v2.test.js
+          functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
+          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
+          functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
+          functions/stylist/v2/stylist_release_gate_v2.test.js
+          functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
+          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Existing Stylist backend regression
+        run: node --test functions/stylist/*.test.js
+
+      - name: Guard refs and commit only product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_files=$(cat <<'EOF'
+          functions/stylist/v2/openai_one_brain_model_port_v2.js
+          functions/stylist/v2/openai_stylist_model_port_v2.js
+          functions/stylist/v2/stylist_one_brain_engine_v2.js
+          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+          functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          EOF
+          )
+          actual_files=$(git diff --name-only | sort)
+          test "$actual_files" = "$(printf '%s\n' "$expected_files" | sort)"
+          git fetch origin stylist-simple-agent brain-v1-experiment refactor/stylist-v2-context-tools-20260910 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "2e4a119eeac7c5422d585905a845333a8435b77e"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/refactor/stylist-v2-context-tools-20260910)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $expected_files
+          git diff --cached --check
+          git commit -m "refactor: make pending context safe and wardrobe-aware"
+          git push origin HEAD:refactor/stylist-v2-context-tools-20260910
