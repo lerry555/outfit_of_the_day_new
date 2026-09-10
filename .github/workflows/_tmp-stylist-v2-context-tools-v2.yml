@@ -32,7 +32,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$(git rev-parse origin/refactor/stylist-v2-context-tools-20260910)"
           git diff --exit-code
 
-      - name: Apply corrected product patch
+      - name: Apply product patch with whitespace-safe matcher
         shell: bash
         run: |
           python - <<'PY'
@@ -46,22 +46,38 @@ jobs:
           end = workflow.index(end_token, start)
           script = textwrap.dedent(workflow[start:end])
 
-          replacements = [
-              (
-                  "'''  if (raw.offerShopping === true) {\n  result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n}\nif (raw.offerShopping === true && needLabel) {'''",
-                  "'''  if (raw.offerShopping === true) {\n    result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);\n  }\n  if (raw.offerShopping === true && needLabel) {'''",
-                  'CTA matcher',
-              ),
-              (
-                  "'''      \"Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.\",\n    \"Ak má vzniknúť alebo zmeniť outfit, musíš si vyžiadať wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.\",'''",
-                  "'''      \"Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.\",\n      \"Ak má vzniknúť alebo zmeniť outfit, musíš si vyžiadať wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.\",'''",
-                  'One-Brain tool prompt matcher',
-              ),
-          ]
-          for bad, good, label in replacements:
-              if bad not in script:
-                  raise SystemExit(f'expected malformed {label} was not found in extracted patch script')
-              script = script.replace(bad, good, 1)
+          fn_start = script.index('def replace_once(path, old, new):')
+          fn_end = script.index('\n\nmodel =', fn_start)
+          robust_fn = r'''def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count == 1:
+                  p.write_text(text.replace(old, new, 1), encoding="utf-8")
+                  return
+              if count > 1:
+                  raise SystemExit(f"{path}: exact match is ambiguous ({count} matches)")
+
+              lines = text.splitlines()
+              old_lines = old.splitlines()
+              if not old_lines:
+                  raise SystemExit(f"{path}: empty replacement matcher")
+              candidates = []
+              for index in range(0, len(lines) - len(old_lines) + 1):
+                  window = lines[index:index + len(old_lines)]
+                  if all(actual.lstrip() == expected.lstrip()
+                         for actual, expected in zip(window, old_lines)):
+                      candidates.append(index)
+              if len(candidates) != 1:
+                  raise SystemExit(
+                      f"{path}: whitespace-safe matcher expected one candidate, got {len(candidates)}\n"
+                      f"--- OLD ---\n{old}"
+                  )
+              index = candidates[0]
+              updated_lines = lines[:index] + new.splitlines() + lines[index + len(old_lines):]
+              updated = "\n".join(updated_lines) + ("\n" if text.endswith("\n") else "")
+              p.write_text(updated, encoding="utf-8")'''
+          script = script[:fn_start] + robust_fn + script[fn_end:]
           exec(compile(script, '<context-tools-patch>', 'exec'))
           PY
 
