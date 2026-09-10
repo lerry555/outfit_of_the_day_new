@@ -47,9 +47,11 @@ jobs:
           start = text.index("old_cta = '''")
           marker = 'replace_once(path, old_cta, new_cta, "shopping CTA")'
           end = text.index(marker, start) + len(marker)
-          replacement = """replace_once(path, '    return \"Chceš, aby som ti vybral vhodnejšie turistické topánky?\";\\n', '    return \"Chceš, aby som ti pozrel vhodné topánky v obchodoch?\";\\n', 'shopping CTA hiking')
-replace_once(path, '    return \"Chceš, aby som ti vybral vhodnejšie topánky?\";\\n', '    return \"Chceš, aby som ti pozrel vhodné topánky v obchodoch?\";\\n', 'shopping CTA footwear')
-replace_once(path, '  return \"Chceš, aby som ti vybral vhodnejší kúsok do šatníka?\";\\n', '  return \"Chceš, aby som ti pozrel možnosti v obchodoch?\";\\n', 'shopping CTA generic')"""
+          replacement = "\n".join([
+              'replace_once(path, \'    return "Chceš, aby som ti vybral vhodnejšie turistické topánky?";\\n\', \'    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";\\n\', "shopping CTA hiking")',
+              'replace_once(path, \'    return "Chceš, aby som ti vybral vhodnejšie topánky?";\\n\', \'    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";\\n\', "shopping CTA footwear")',
+              'replace_once(path, \'  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";\\n\', \'  return "Chceš, aby som ti pozrel možnosti v obchodoch?";\\n\', "shopping CTA generic")',
+          ])
           p.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
           PY
 
