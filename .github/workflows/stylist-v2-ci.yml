@@ -60,6 +60,10 @@ jobs:
           node --check functions/stylist/v2/firestore_wardrobe_tool_v2.js
           node --check functions/stylist/v2/openai_stylist_model_port_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
+          node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
+          node --check functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
           node --check functions/stylist/v2/stylist_live_smoke_v2.js
           node --check functions/stylist/v2/stylist_production_smoke_v2.js
           node --check functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
@@ -81,6 +85,7 @@ jobs:
           functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
           functions/stylist/v2/stylist_release_gate_v2.test.js
           functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
+          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 
