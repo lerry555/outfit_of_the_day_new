@@ -52,6 +52,9 @@ jobs:
         working-directory: functions
         run: npm ci --ignore-scripts
 
+      - name: Generate deploy taxonomy artifacts
+        run: node functions/scripts/generate_deploy_taxonomy_artifacts.js
+
       - name: Syntax check One-Brain production seam
         run: |
           node --check functions/index_v2.js
