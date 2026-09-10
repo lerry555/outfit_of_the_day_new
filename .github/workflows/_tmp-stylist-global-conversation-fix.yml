@@ -1,0 +1,262 @@
+name: Temporary Stylist global conversation fix
+
+on:
+  push:
+    branches:
+      - fix/stylist-global-conversation-20260910
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    if: github.event.head_commit.message == 'chore: bootstrap Stylist global conversation fix'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard source refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-global-conversation-20260910
+          test "$(git rev-parse origin/stylist-simple-agent)" = "0dc7ea2c3096c100d1277b1d2a7fe5c22ce83533"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-global-conversation-20260910)" = "$(git rev-parse HEAD)"
+          test "$(git merge-base origin/stylist-simple-agent HEAD)" = "0dc7ea2c3096c100d1277b1d2a7fe5c22ce83533"
+
+      - name: Apply generalized conversation fixes
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one anchor, found {count}: {old[:100]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Neutral greeting in both the local first-turn fast path and authoritative V2.
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              "reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';",
+              "reply = 'Ahoj! Ako ti môžem pomôcť?';",
+          )
+          replace_once(
+              'functions/stylist/v2/stylist_turn_coordinator_v2.js',
+              'return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť s outfitom?", display: {kind: "none", itemIds: []}};',
+              'return {action: "chat", assistantText: "Ahoj! Ako ti môžem pomôcť?", display: {kind: "none", itemIds: []}};',
+          )
+
+          # Keep a broader conversational span without increasing the max character budget:
+          # 8 x 1200 chars -> 12 x 800 chars.
+          replace_once(
+              'functions/stylist/v2/stylist_production_bridge_v2.js',
+              '''  const recentHistory = (Array.isArray(data?.history) ? data.history : [])\n    .slice(-8)\n    .map((entry) => ({\n      role: entry?.role === "assistant" ? "assistant" : "user",\n      content: clean(entry?.content, 1200),\n    }))''',
+              '''  const recentHistory = (Array.isArray(data?.history) ? data.history : [])\n    .slice(-12)\n    .map((entry) => ({\n      role: entry?.role === "assistant" ? "assistant" : "user",\n      content: clean(entry?.content, 800),\n    }))''',
+          )
+
+          model = 'functions/stylist/v2/openai_stylist_model_port_v2.js'
+          replace_once(
+              model,
+              '''function shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {\n  const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);\n  if (/\\b(hiking|trekking|turist)/.test(normalized)) {\n    return "Chceš, aby som ti vybral vhodnejšie turistické topánky?";\n  }\n  if (/\\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {\n    return "Chceš, aby som ti vybral vhodnejšie topánky?";\n  }\n  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";\n}''',
+              '''function shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {\n  const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);\n  if (/\\b(hiking|trekking|turist|shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {\n    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";\n  }\n  return "Chceš, aby som pozrel možnosti v obchodoch?";\n}''',
+          )
+          replace_once(
+              model,
+              '    "Najnovšia správa má prioritu; starší kontext používaj ako pamäť, nie ako formulár, ktorý musíš znovu vypĺňať.",',
+              '''    "Najnovšia správa má prioritu; starší kontext používaj ako pamäť, nie ako formulár, ktorý musíš znovu vypĺňať.",\n    "Pred rozhodnutím sémanticky vyrieš, NA KTORÝ plán, udalosť alebo outfit používateľ odkazuje. Použi request.clientCapabilities.recentHistory aj session.replay.turns; zámená a odkazy ako ten/tá/to, predtým, na tú akciu či k tomu môžu cieliť aj na starší scenár, nie automaticky na posledný.",\n    "Ak je návrat k staršiemu scenáru jednoznačný, znovu použi už známe fakty o aktivite, dni, čase a mieste a nepýtaj ich druhýkrát. Ak je referent naozaj nejednoznačný a odpoveď by sa podstatne líšila, polož najviac jednu krátku objasňujúcu otázku.",\n    "session.currentOutfit je posledný materializovaný outfit, nie univerzálna pravda pre každý starší scenár. Pri jasnom odkaze na starší scenár ho potichu neaplikuj; použi zodpovedajúcu history/replay stopu a podľa potreby si vyžiadaj full_relevant wardrobe, aby si starší outfit poctivo zrekonštruoval.",''',
+          )
+          replace_once(
+              model,
+              '    "Počasie pri remote/event outfite musí používať destination/eventLocation. Pri jasne lokálnom rutinnom outfite môže používať currentLocationObservation.",',
+              '''    "Počasie pri remote/event outfite musí používať destination/eventLocation. Pri jasne lokálnom rutinnom outfite môže používať currentLocationObservation.",\n    "Pri indoor aktivite (napr. kino, divadlo, reštaurácia, kancelária, vnútorný koncert) je vonkajšia predpoveď relevantná iba na cestu, čakanie vonku a prípadnú vrchnú vrstvu. Nikdy z nej nevyvodzuj teplotu ani dážď vo vnútri; vnútorná teplota je neznáma, kým ju používateľ alebo event dáta výslovne neurčia, a klimatizácia je iba možnosť, nie fakt.",''',
+          )
+          replace_once(
+              model,
+              '    "Účel a bezpečnosť > počasie/tepelná vhodnosť > celkový štýl > dominantné farby > malé detaily.",',
+              '''    "Účel a bezpečnosť > počasie/tepelná vhodnosť > celkový štýl > dominantné farby > malé detaily.",\n    "Pri follow-upe najprv sémanticky urč referovaný scenár z request.clientCapabilities.recentHistory a session.replay.turns. Ak používateľ jasne vracia starší plán/outfit, neprepisuj ho novším session.currentOutfit a neopakuj otázky na fakty, ktoré už v danom scenári poznáš.",\n    "Pri indoor udalosti opisuj outdoor počasie výslovne ako podmienky vonku, na cestu alebo pri čakaní. Nikdy nepíš tak, akoby v kine, reštaurácii, kancelárii či inom interiéri bola vonkajšia teplota alebo zrážky; vnútorné podmienky bez dôkazu nepoznáš.",''',
+          )
+          replace_once(
+              model,
+              '  finalModelRoutingForInputV2,\n  finalReasoningForInputV2,\n  planEnvelope,',
+              '  finalModelRoutingForInputV2,\n  finalReasoningForInputV2,\n  finalPrompt,\n  plannerPrompt,\n  planEnvelope,',
+          )
+
+          # Export tiny pure helpers used by the regression suite.
+          replace_once(
+              'functions/stylist/v2/stylist_production_bridge_v2.js',
+              'module.exports = {\n  createStylistChatV2Handler,',
+              'module.exports = {\n  clientCapabilities,\n  createStylistChatV2Handler,',
+          )
+          replace_once(
+              'functions/stylist/v2/stylist_turn_coordinator_v2.js',
+              '  disableOptionalWeatherGroundingV2,\n  isFriendlyGreetingV2,',
+              '  disableOptionalWeatherGroundingV2,\n  greetingDecision,\n  isFriendlyGreetingV2,',
+          )
+
+          # UI fallback matches the server-owned generic shopping CTA. The V2 server already
+          # strips the CTA from assistantText and supplies quickReplyPrompt separately.
+          replace_once(
+              'lib/widgets/stylist_quick_reply_buttons.dart',
+              ": 'Chceš, aby som ti vybral vhodnejší kúsok do šatníka?',",
+              ": 'Chceš, aby som pozrel možnosti v obchodoch?',",
+          )
+
+          # Keep the lower-level SIMPLE AGENT policy consistent as a safety net.
+          simple = 'functions/stylist/simple_stylist_agent_v1.js'
+          replace_once(
+              simple,
+              '    "Vždy rešpektuj celú recent history. Pri follow-upe vychádzaj z exact current outfit.",',
+              '''    "Vždy rešpektuj celú recent history a najprv sémanticky urč, ku ktorému plánu, udalosti alebo outfitu sa aktuálna správa vracia.",\n    "Zámená a spätné odkazy môžu cieliť aj na starší scenár. exact current outfit používaj iba ak používateľ skutočne pokračuje v tom istom scenári; pri jasnom návrate k staršiemu scenáru ho nenechaj prepísať význam history.",\n    "Už známe fakty o aktivite, dni, čase a mieste z referovaného scenára znovu nepýtaj. Iba pri skutočnej nejednoznačnosti, ktorá materiálne mení radu, polož jednu krátku otázku.",''',
+          )
+          replace_once(
+              simple,
+              '    "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",',
+              '''    "weatherContextKey urči podľa celej konverzácie: today alebo tomorrow pre daný deň, current pre aktívny/event kontext, none ak počasie nie je relevantné.",\n    "Pri indoor aktivite je outdoor predpoveď iba kontext na cestu, čakanie vonku a vrchnú vrstvu. Nikdy netvrď, že vo vnútri je vonkajšia teplota alebo prší; vnútorná teplota je bez explicitného údaja neznáma a klimatizáciu môžeš uviesť len ako možnosť.",''',
+          )
+          replace_once(
+              simple,
+              "      \"Keď v NOVOM návrhu sám prvýkrát pomenuješ skutočne chýbajúci vhodný kúpiteľný kus, MUSÍ po obmedzení nasledovať presná záverečná otázka 'Chceš, aby som pozrel možnosti v obchodoch?' a quickReplyMode=yes_no. Platí to aj pri conditional kompromise, keď sám pomenuješ chýbajúci vhodnejší pár. Skráť opis outfitu, aby sa otázka zmestila do 500 znakov. Neopakuj ju, ak už zaznela alebo ju používateľ odmietol, a nepripájaj ju k nesúvisiacej otázke.\" :",
+              "      \"Keď v NOVOM návrhu sám prvýkrát pomenuješ skutočne chýbajúci vhodný kúpiteľný kus, MUSÍ po obmedzení nasledovať záverečná yes/no otázka a quickReplyMode=yes_no. Ak ide o chýbajúcu alebo conditional obuv, použi presne 'Chceš, aby som ti pozrel vhodné topánky v obchodoch?'; pri inom kúsku použi presne 'Chceš, aby som pozrel možnosti v obchodoch?'. Skráť opis outfitu, aby sa otázka zmestila do 500 znakov. Neopakuj ju, ak už zaznela alebo ju používateľ odmietol, a nepripájaj ju k nesúvisiacej otázke.\" :",
+          )
+
+          # Update any focused Dart expectation that intentionally checked the old local greeting.
+          for p in Path('test').rglob('*.dart'):
+              text = p.read_text(encoding='utf-8')
+              updated = text.replace("Ahoj! Ako ti môžem pomôcť s outfitom?", "Ahoj! Ako ti môžem pomôcť?")
+              if updated != text:
+                  p.write_text(updated, encoding='utf-8')
+
+          Path('functions/stylist/v2/stylist_global_conversation_v2.test.js').write_text(r'''"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const {
+  finalPrompt,
+  plannerPrompt,
+  shoppingQuickReplyPromptV2,
+  stripTrailingShoppingQuestionV2,
+} = require("./openai_stylist_model_port_v2");
+const {clientCapabilities} = require("./stylist_production_bridge_v2");
+const {greetingDecision} = require("./stylist_turn_coordinator_v2");
+
+test("neutral greeting does not force the outfit topic", () => {
+  assert.equal(greetingDecision().assistantText, "Ahoj! Ako ti môžem pomôcť?");
+});
+
+test("shopping CTA is footwear-specific and store-explicit", () => {
+  assert.equal(
+    shoppingQuickReplyPromptV2("turistická obuv", "hiking_shoes"),
+    "Chceš, aby som ti pozrel vhodné topánky v obchodoch?",
+  );
+  assert.equal(
+    shoppingQuickReplyPromptV2("ľahká bunda", "light_jacket"),
+    "Chceš, aby som pozrel možnosti v obchodoch?",
+  );
+});
+
+test("shopping question is not duplicated in the main assistant bubble", () => {
+  assert.equal(
+    stripTrailingShoppingQuestionV2("Tenisky sú použiteľný kompromis. Chceš, aby som ti pozrel vhodné topánky v obchodoch?"),
+    "Tenisky sú použiteľný kompromis.",
+  );
+});
+
+test("planner resolves semantic backreferences across older scenarios", () => {
+  const prompt = plannerPrompt();
+  assert.match(prompt, /NA KTORÝ plán, udalosť alebo outfit/);
+  assert.match(prompt, /request\.clientCapabilities\.recentHistory/);
+  assert.match(prompt, /session\.replay\.turns/);
+  assert.match(prompt, /starší scenár/);
+  assert.match(prompt, /nepýtaj ich druhýkrát/);
+});
+
+test("planner and final response scope outdoor weather correctly for indoor events", () => {
+  assert.match(plannerPrompt(), /Pri indoor aktivite/);
+  assert.match(plannerPrompt(), /vnútorná teplota je neznáma/);
+  assert.match(finalPrompt(), /Pri indoor udalosti/);
+  assert.match(finalPrompt(), /podmienky vonku, na cestu alebo pri čakaní/);
+});
+
+test("recent history spans more turns without increasing the old character ceiling", () => {
+  const history = Array.from({length: 14}, (_, i) => ({
+    role: i % 2 ? "assistant" : "user",
+    content: `${i}:` + "x".repeat(1200),
+  }));
+  const caps = clientCapabilities({history, clientContext: {}});
+  assert.equal(caps.recentHistory.length, 12);
+  assert.ok(caps.recentHistory[0].content.startsWith("2:"));
+  assert.ok(caps.recentHistory.every((entry) => entry.content.length <= 800));
+  assert.ok(caps.recentHistory.reduce((sum, entry) => sum + entry.content.length, 0) <= 9600);
+});
+
+test("lower-level simple agent carries the same scenario and indoor rules", () => {
+  const source = fs.readFileSync(path.join(__dirname, "..", "simple_stylist_agent_v1.js"), "utf8");
+  assert.match(source, /ku ktorému plánu, udalosti alebo outfitu/);
+  assert.match(source, /exact current outfit používaj iba ak/);
+  assert.match(source, /Pri indoor aktivite je outdoor predpoveď iba kontext/);
+  assert.match(source, /Chceš, aby som ti pozrel vhodné topánky v obchodoch\?/);
+});
+''', encoding='utf-8')
+          PY
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install backend dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Run focused and adjacent regressions
+        working-directory: functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test \
+            stylist/v2/stylist_global_conversation_v2.test.js \
+            stylist/v2/stylist_fast_chat_v2.test.js \
+            stylist/v2/stylist_production_bridge_v2.test.js \
+            stylist/v2/stylist_model_payload_efficiency_v2.test.js
+
+      - name: Static client checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq "reply = 'Ahoj! Ako ti môžem pomôcť?';" lib/Services/stylist_simple_agent_service_v1.dart
+          grep -Fq ": 'Chceš, aby som pozrel možnosti v obchodoch?'," lib/widgets/stylist_quick_reply_buttons.dart
+          ! grep -Fq "reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';" lib/Services/stylist_simple_agent_service_v1.dart
+
+      - name: Guard refs again and commit tested patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          START_HEAD="$(git rev-parse HEAD)"
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-global-conversation-20260910
+          test "$(git rev-parse origin/stylist-simple-agent)" = "0dc7ea2c3096c100d1277b1d2a7fe5c22ce83533"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-global-conversation-20260910)" = "$START_HEAD"
+          git status --short
+          git diff --check
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add functions/stylist/v2/openai_stylist_model_port_v2.js \
+                  functions/stylist/v2/stylist_production_bridge_v2.js \
+                  functions/stylist/v2/stylist_turn_coordinator_v2.js \
+                  functions/stylist/v2/stylist_global_conversation_v2.test.js \
+                  functions/stylist/simple_stylist_agent_v1.js \
+                  lib/Services/stylist_simple_agent_service_v1.dart \
+                  lib/widgets/stylist_quick_reply_buttons.dart \
+                  test
+          git commit -m "fix: make Stylist conversation context-aware"
+          git push origin HEAD:fix/stylist-global-conversation-20260910
