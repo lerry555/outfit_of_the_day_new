@@ -133,11 +133,20 @@ class StylistSimpleAgentServiceV1 {
     ).hasMatch(normalized);
   }
 
+  static bool _isGenericAdviceIntro(String normalized) => RegExp(
+        r'^(ahoj|čau|cau|čauko|cauko|nazdar|servus|hello|hi|hey)'
+        r'(?:\s+(divočák|divocak|kamo|kamarát|kamarat|stylista))?'
+        r'\s+(potrebujem|chcem|mohol by si|môžeš mi|mozes mi)'
+        r'\s+(poradiť|poradit|poradíš|poradis)$',
+      ).hasMatch(normalized);
+
   @visibleForTesting
   static Map<String, dynamic>? localFastReplyForMessage(String message) {
     final normalized = _normalizeLocalFastText(message);
     String? reply;
-    if (_isFriendlyLocalGreeting(normalized) ||
+    if (_isGenericAdviceIntro(normalized)) {
+      reply = 'Ahoj! Jasné 🙂 S čím ti môžem pomôcť?';
+    } else if (_isFriendlyLocalGreeting(normalized) ||
         (normalized.isEmpty && message.contains('👋'))) {
       reply = 'Ahoj! Ako ti môžem pomôcť?';
     } else if (_localThanksTexts.contains(normalized)) {

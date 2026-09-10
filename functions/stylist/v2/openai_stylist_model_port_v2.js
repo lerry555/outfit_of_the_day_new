@@ -23,6 +23,7 @@ const ENVIRONMENTS = ["unknown", "indoor", "outdoor", "mixed"];
 const SCENARIO_MODES = ["current", "new", "restore"];
 const WARDROBE_SCOPES = ["none", "current_outfit", "current_outfit_plus_category", "category", "full_relevant"];
 const ACTIONS = ["chat", "clarify", "generate_outfit", "edit_outfit", "explain_outfit", "show_items", "stop"];
+const CLARIFICATION_FIELDS = [null, "currentLocationObservation", "destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"];
 
 function nullableString() {
   return {type: ["string", "null"]};
@@ -69,7 +70,7 @@ const PLAN_SCHEMA = {
     kind: {type: "string", enum: ["final", "tool_request"]},
     action: {type: "string", enum: ["none", "chat", "clarify", "stop"]},
     assistantText: {type: "string"},
-    clarificationField: {type: ["string", "null"]},
+    clarificationField: {type: ["string", "null"], enum: CLARIFICATION_FIELDS},
     clarificationQuestion: {type: ["string", "null"]},
     scenarioMode: {type: "string", enum: SCENARIO_MODES},
     scenarioReferenceId: nullableString(),
@@ -118,7 +119,7 @@ const FINAL_SCHEMA = {
     editAllowedSlots: {type: "array", maxItems: 8, items: {type: "string"}},
     editAllowedCategories: {type: "array", maxItems: 8, items: {type: "string"}},
     editAllowRemovalOnly: {type: "boolean"},
-    clarificationField: {type: ["string", "null"]},
+    clarificationField: {type: ["string", "null"], enum: CLARIFICATION_FIELDS},
     clarificationQuestion: {type: ["string", "null"]},
     offerShopping: {type: "boolean"},
     shoppingNeedLabel: {type: ["string", "null"]},
@@ -167,24 +168,136 @@ function finalReasoningForInputV2(input) {
 
 function compactWardrobeItemForModelV2(raw) {
   const item = raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
-  const {
-    productImageUrl, cutoutImageUrl, cleanImageUrl, imageUrl, originalImageUrl,
-    storagePath, cleanStoragePath, productStoragePath, processing,
-    ...semantic
-  } = item;
-  return semantic;
+  const profile = item.colorProfile && typeof item.colorProfile === "object" ? item.colorProfile : {};
+  const primaryColor = clean(item.primaryColor || profile?.primary?.family || profile?.primary?.name, 80) || null;
+  const secondaryColor = clean(item.secondaryColor || profile?.secondary?.family || profile?.secondary?.name, 80) || null;
+  const accentColors = list(item.accentColors || (Array.isArray(profile?.accents) ? profile.accents.map((entry) => entry?.family || entry?.name) : []), 4);
+  const out = {
+    id: clean(item.id, 180),
+    name: clean(item.name, 160) || null,
+    category: clean(item.category, 80) || null,
+    subCategory: clean(item.subCategory, 80) || null,
+    mainGroup: clean(item.mainGroup, 80) || null,
+    canonicalType: clean(item.canonicalType, 100) || null,
+    canonicalFamily: clean(item.canonicalFamily, 100) || null,
+    bodySlots: list(item.bodySlots, 8),
+    layerPosition: clean(item.layerPosition, 80) || null,
+    colors: list(item.colors, 6),
+    primaryColor,
+    secondaryColor,
+    accentColors,
+    warmth: item.warmth != null && Number.isFinite(Number(item.warmth)) ? Number(item.warmth) : null,
+    formality: item.formality != null && Number.isFinite(Number(item.formality)) ? Number(item.formality) : null,
+    outfitFunctions: list(item.outfitFunctions, 8),
+    occasionFit: list(item.occasionFit, 8),
+    seasons: list(item.seasons, 6),
+    accessoryGroup: clean(item.accessoryGroup, 80) || null,
+    safety: item.safety && typeof item.safety === "object" ? item.safety : null,
+  };
+  return Object.fromEntries(Object.entries(out).filter(([, value]) => value != null && !(Array.isArray(value) && value.length === 0)));
 }
 
 function compactWardrobeForModelV2(items) {
-  return (Array.isArray(items) ? items : []).map(compactWardrobeItemForModelV2);
+  return (Array.isArray(items) ? items : []).map(compactWardrobeItemForModelV2).filter((item) => item.id);
+}
+
+function compactLocationForModelV2(value) {
+  if (!value || typeof value !== "object") return value ?? null;
+  return Object.fromEntries(Object.entries({
+    providerId: clean(value.providerId, 180) || null,
+    label: clean(value.label, 240) || null,
+    source: clean(value.source, 80) || null,
+    granularity: clean(value.granularity, 40) || null,
+    countryCode: clean(value.countryCode, 12) || null,
+  }).filter(([, item]) => item != null));
+}
+
+function compactWeatherForModelV2(value) {
+  if (!value || typeof value !== "object") return value ?? null;
+  const snapshot = value.snapshot && typeof value.snapshot === "object" ? value.snapshot : {};
+  return {
+    locationProviderId: clean(value.locationProviderId, 180) || null,
+    dateKey: clean(value.dateKey, 20) || null,
+    timeWindowKey: clean(value.timeWindowKey, 40) || null,
+    source: clean(value.source, 60) || null,
+    snapshot: Object.fromEntries(Object.entries({
+      representativeTempC: snapshot.representativeTempC ?? null,
+      minTempC: snapshot.minTempC ?? null,
+      maxTempC: snapshot.maxTempC ?? null,
+      willRain: snapshot.willRain ?? null,
+      willSnow: snapshot.willSnow ?? null,
+      isWindy: snapshot.isWindy ?? null,
+      maxWindKph: snapshot.maxWindKph ?? null,
+      precipitationProbabilityMax: snapshot.precipitationProbabilityMax ?? null,
+    }).filter(([, item]) => item != null)),
+  };
+}
+
+function compactContextForModelV2(context) {
+  const source = context && typeof context === "object" ? context : {};
+  return {
+    currentLocationObservation: compactLocationForModelV2(source.currentLocationObservation),
+    destination: compactLocationForModelV2(source.destination),
+    eventLocation: compactLocationForModelV2(source.eventLocation),
+    date: source.date || null,
+    timeWindow: source.timeWindow || null,
+    activity: source.activity || null,
+    environment: source.environment ?? null,
+    terrain: source.terrain || {surface: null, difficulty: null, condition: null},
+    weather: compactWeatherForModelV2(source.weather),
+    groundingRequirements: source.groundingRequirements || {weatherRequired: false, weatherLocationField: null, terrainRequiredFields: []},
+  };
+}
+
+function compactSessionForModelV2(session, phase) {
+  const source = session && typeof session === "object" ? session : {};
+  const memory = source.conversationMemory && typeof source.conversationMemory === "object" ? source.conversationMemory : {};
+  const compact = {
+    schemaVersion: source.schemaVersion || 2,
+    revision: source.revision || 0,
+    context: compactContextForModelV2(source.context),
+    currentOutfit: {
+      itemIds: list(source.currentOutfit?.itemIds, 12),
+      selectionReasonsByItemId: source.currentOutfit?.selectionReasonsByItemId || {},
+      compromises: list(source.currentOutfit?.compromises, 12),
+      missingWardrobeNeeds: list(source.currentOutfit?.missingWardrobeNeeds, 12),
+    },
+    conversationMemory: {
+      pendingQuestion: memory.pendingQuestion || null,
+      pendingAction: memory.pendingAction || null,
+      answeredClarificationFields: memory.answeredClarificationFields || {},
+      communicatedWarnings: list(memory.communicatedWarnings, 12),
+      userCorrections: list(memory.userCorrections, 12),
+      acceptedCompromises: list(memory.acceptedCompromises, 12),
+    },
+    shopping: source.shopping || null,
+  };
+  if (phase === "plan") {
+    compact.scenarioMemory = {
+      activeScenarioId: source.scenarioMemory?.activeScenarioId || null,
+      snapshots: (source.scenarioMemory?.snapshots || []).slice(-8).map((snapshot) => ({
+        id: snapshot.id,
+        label: clean(snapshot.label, 180) || null,
+        referenceSignals: list(snapshot.referenceSignals, 12),
+        context: compactContextForModelV2(snapshot.context),
+        outfit: {
+          itemIds: list(snapshot.outfit?.itemIds, 12),
+          selectionReasonsByItemId: snapshot.outfit?.selectionReasonsByItemId || {},
+        },
+      })),
+    };
+  }
+  return compact;
 }
 
 function shoppingQuickReplyPromptV2(needLabel, canonicalNeed) {
   const normalized = normalizeIntentTextV2(`${needLabel || ""} ${canonicalNeed || ""}`);
-  if (/\b(hiking|trekking|turist)/.test(normalized)) {
-    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";
+  const footwear = /\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)\w*/.test(normalized);
+  const bottoms = /\b(pant|pants|trouser|trousers|nohav|rifl|bottom|spodn)\w*/.test(normalized);
+  if (footwear && bottoms) {
+    return "Chceš, aby som ti pozrel vhodné turistické nohavice a topánky v obchodoch?";
   }
-  if (/\b(shoe|shoes|boot|boots|sneaker|footwear|topank|obuv)/.test(normalized)) {
+  if (/\b(hiking|trekking|turist)/.test(normalized) || footwear) {
     return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";
   }
   return "Chceš, aby som ti pozrel možnosti v obchodoch?";
@@ -259,9 +372,10 @@ function finalPrompt() {
     "Ak ide o bežnú turistiku a NIE JE známy mokrý, blatistý, zasnežený, ľadový, skalnatý, strmý alebo technický terén, absencia turistických topánok nesmie zablokovať outfit. Vyber najpraktickejšie vhodné tenisky, ktoré používateľ vlastní, otvorene ich označ ako kompromis a ponúkni doplnenie turistickej obuvi.",
     "Neznámy terén nie je dôkaz nebezpečného terénu. Zároveň nikdy netvrď, že tenisky sú bezpečné na explicitne mokrý/strmý/technický/snehový/ľadový terén.",
     "Zimnú obuv nevyberaj len preto, že ide o les alebo túru. Potrebuje mráz, sneh/ľad alebo iný skutočný dôvod. V teple je praktická teniska lepší fallback než zimná topánka.",
-    "Ak vhodný ideálny kus chýba, vyber najlepší prijateľný kus zo šatníka, vysvetli limit a offerShopping=true, ak by doplnenie šatníka bolo užitočné. Pri offerShopping vždy vyplň shoppingNeedLabel a shoppingNeedCanonicalType, ak ho poznáš.",
-    "Text píš ako 2 až 4 krátke, úplné a gramaticky prirodzené vety s normálnou interpunkciou. Nepíš surový inline zoznam oddelený pomlčkami; karty pod správou už zobrazia jednotlivé kúsky.",
-    "Najprv jednou vetou zhrň podmienky, potom jednou až dvoma vetami vysvetli kombináciu a prípadný kompromis. Neopakuj názov každého kúsku, ak to nepridáva užitočné vysvetlenie.",
+    "Ak vhodný ideálny kus chýba, stále dokonči najlepší outfit z dostupného šatníka. Slabší kus otvorene označ ako kompromis, stručne povedz prečo a offerShopping=true, ak by doplnenie šatníka pomohlo.",
+    "Pri bežnej túre bez explicitného safety red flagu: ak chýbajú turistické nohavice, vyber najpraktickejšie dostupné rifle/nohavice; ak chýba turistická obuv, vyber najpraktickejšie dostupné tenisky. Obe voľby vysvetli ako kompromis, nie ako ideál. Ak chýbajú obe kategórie, shoppingNeedLabel nastav na 'turistické nohavice a turistická obuv'.",
+    "Text píš ako 2 až 4 krátke, úplné a prirodzené vety. Začni konkrétnym odporúčaním, nie interným reportom o tom, čo nepoznáš. Nezačínaj formuláciami typu 'Keďže miesto/terén/počasie nie sú známe' ani nevypisuj metadata; chýbajúci kontext spomeň iba ak mení praktickú radu.",
+    "Karty pod správou ukážu jednotlivé kúsky, preto ich nevypisuj mechanicky. Pomenuj však konkrétny kompromis (napr. rifle alebo tenisky), keď je to pre používateľa užitočné.",
     "Ak ponúkneš nákup, assistantText NESMIE obsahovať otázku Áno/Nie ani vetu 'Chceš, aby som...'. UI zobrazí samostatnú nákupnú otázku až POD kartami outfitu. Nastav iba offerShopping=true a shoppingNeedLabel.",
     "Ak session.context.environment=indoor, vonkajšiu predpoveď formuluj výhradne ako 'Vonku...' alebo 'Na cestu...'. Nikdy nepripisuj vonkajšiu teplotu, dážď, vietor či sucho interiéru. Vnútornú teplotu nepoznáme. Klimatizáciu spomeň iba ako možnosť, nie ako istý fakt.",
     "Ak sa predchádzajúce odporúčanie ukáže ako zlé, pokojne to priznaj a oprav. Nevymýšľaj historický dôvod, ktorý nebol uložený.",
@@ -470,7 +584,7 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
       const modelWardrobe = compactWardrobeForModelV2(wardrobeV2);
       const payload = {
         request: input.request,
-        session: input.session,
+        session: compactSessionForModelV2(input.session, phase),
         preflightResolution: input.preflightResolution,
         toolResults: {
           ...(input.toolResults || {}),
@@ -489,7 +603,7 @@ function createOpenAiStylistModelPortV2({executeStructured, userStylePreferences
           reasoningEffort,
           schema: phase === "plan" ? PLAN_SCHEMA : FINAL_SCHEMA,
           schemaName: phase === "plan" ? "stylist_v2_plan" : "stylist_v2_final",
-          maxOutputTokens: phase === "plan" ? 1200 : 1400,
+          maxOutputTokens: phase === "plan" ? 850 : 1150,
           messages: [
             {role: "system", content: phase === "plan" ? plannerPrompt() : finalPrompt()},
             {role: "user", content: JSON.stringify(payload)},
@@ -521,6 +635,7 @@ module.exports = {
   PLAN_SCHEMA,
   REASONING,
   createOpenAiStylistModelPortV2,
+  compactSessionForModelV2,
   compactWardrobeForModelV2,
   enforceHighConfidenceGrounding,
   finalEnvelope,

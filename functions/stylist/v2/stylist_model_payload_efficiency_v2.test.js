@@ -120,3 +120,57 @@ test("shopping CTA is footwear-specific instead of anonymous yes/no buttons", ()
     "Chceš, aby som ti pozrel vhodné topánky v obchodoch?");
   assert.doesNotMatch(envelope.result.assistantText, /Chceš/i);
 });
+
+test("model payload excludes durable replay history and full weather arrays", async () => {
+  let call;
+  const input = baseInput();
+  input.session.replay = {turns: Array.from({length: 30}, (_, i) => ({turnId: `old-${i}`, result: {assistantText: "old"}}))};
+  input.session.wardrobePreferences = {retrievalCache: {huge: "x".repeat(5000)}};
+  input.session.context.weather = {
+    locationProviderId: "place:1", dateKey: "2026-09-11", timeWindowKey: "day", source: "open-meteo",
+    snapshot: {temperatureC: Array(24).fill(12), weatherCode: Array(24).fill(1), representativeTempC: 12, minTempC: 8, maxTempC: 15, willRain: false},
+  };
+  const port = createOpenAiStylistModelPortV2({executeStructured: async (request) => { call = request; return validChatRaw(); }});
+  await port.turn(input);
+  const payload = JSON.parse(call.messages[1].content);
+  assert.equal(Object.hasOwn(payload.session, "replay"), false);
+  assert.equal(Object.hasOwn(payload.session, "wardrobePreferences"), false);
+  assert.equal(Object.hasOwn(payload.session, "scenarioMemory"), false);
+  assert.equal(Object.hasOwn(payload.session.context.weather.snapshot, "temperatureC"), false);
+  assert.equal(payload.session.context.weather.snapshot.representativeTempC, 12);
+});
+
+test("wardrobe projection sent to model is semantic and intentionally lean", async () => {
+  let call;
+  const input = baseInput();
+  input.toolResults.wardrobeItems[0].debugBlob = "x".repeat(2000);
+  input.toolResults.wardrobeItems[0].colorProfile = {primary: {family: "blue", lab: [1, 2, 3]}, accents: [{family: "white", huge: "x".repeat(1000)}]};
+  const port = createOpenAiStylistModelPortV2({executeStructured: async (request) => { call = request; return validChatRaw(); }});
+  await port.turn(input);
+  const item = JSON.parse(call.messages[1].content).toolResults.wardrobeItems[0];
+  assert.equal(item.id, "shirt");
+  assert.equal(item.primaryColor, "blue");
+  assert.deepEqual(item.accentColors, ["white"]);
+  assert.equal(Object.hasOwn(item, "colorProfile"), false);
+  assert.equal(Object.hasOwn(item, "debugBlob"), false);
+});
+
+test("shopping CTA can offer both missing hiking pants and footwear", () => {
+  assert.equal(
+    shoppingQuickReplyPromptV2("turistické nohavice a turistická obuv", "hiking_pants_and_shoes"),
+    "Chceš, aby som ti pozrel vhodné turistické nohavice a topánky v obchodoch?",
+  );
+});
+
+
+test("absent warmth/formality stay absent instead of becoming zero", async () => {
+  let call;
+  const input = baseInput();
+  input.toolResults.wardrobeItems[0].warmth = null;
+  input.toolResults.wardrobeItems[0].formality = null;
+  const port = createOpenAiStylistModelPortV2({executeStructured: async (request) => { call = request; return validChatRaw(); }});
+  await port.turn(input);
+  const item = JSON.parse(call.messages[1].content).toolResults.wardrobeItems[0];
+  assert.equal(Object.hasOwn(item, "warmth"), false);
+  assert.equal(Object.hasOwn(item, "formality"), false);
+});

@@ -103,7 +103,8 @@ test("pending destination geocoder miss falls back once and continues instead of
   assert.notEqual(result.assistantText, "Kam presne ideš?");
 
   const saved = await h.sessionRepository.read("pending-region");
-  assert.equal(saved.context.destination, null);
+  assert.equal(saved.context.destination.label, "Tatier");
+  assert.equal(saved.context.destination.source, "user_text");
   assert.equal(saved.context.groundingRequirements.weatherRequired, false);
   assert.equal(saved.conversationMemory.pendingQuestion, null);
   assert.equal(h.ledger.calls("model", "plan").length, 0);

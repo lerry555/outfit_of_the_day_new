@@ -167,3 +167,27 @@ test("legacy bootstrap keeps exact outfit IDs and reasons before the first V2 tu
     shoes: "pohodlné na chôdzu",
   });
 });
+
+test("known canonical state removes redundant normal-turn repository reads", async () => {
+  const base = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  await base.ensure({uid: "user-a", chatId: "chat-known"});
+  const existing = await base.get({uid: "user-a", chatId: "chat-known"});
+  const calls = {ensure: 0, ensureFromLegacy: 0, get: 0, commitTurn: 0};
+  const repository = {
+    async ensure(args) { calls.ensure += 1; return base.ensure(args); },
+    async ensureFromLegacy(args) { calls.ensureFromLegacy += 1; return base.ensureFromLegacy(args); },
+    async get(args) { calls.get += 1; return base.get(args); },
+    async commitTurn(args) { calls.commitTurn += 1; return base.commitTurn(args); },
+  };
+  const h = harness({repository, modelResults: [finalChat("Rifle sú v poriadku.")]});
+  const result = await h.engine.resolveTurn({
+    uid: "user-a",
+    request: request("chat-known", "known-1", 0, "A rifle sú v poriadku?"),
+    knownCanonicalState: existing.state,
+  });
+  assert.equal(result.action, "chat");
+  assert.equal(calls.ensure, 0);
+  assert.equal(calls.ensureFromLegacy, 0);
+  assert.equal(calls.get, 0);
+  assert.equal(calls.commitTurn, 1);
+});

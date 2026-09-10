@@ -40,6 +40,15 @@ void main() {
     expect(result['displayItemIds'], isEmpty);
   });
 
+  test('generic advice intro is instant but real styling stays on the stylist path', () {
+    final result = StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj divočák potrebujem poradiť');
+    expect(result, isNotNull);
+    expect(result!['modelPath'], 'local_fast');
+    expect(result['reply'], 'Ahoj! Jasné 🙂 S čím ti môžem pomôcť?');
+
+    expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj divočák potrebujem poradiť s outfitom'), isNull);
+  });
+
   test('real stylist requests never get swallowed by local fast path', () {
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj, zajtra idem na koncert a potrebujem outfit'), isNull);
     expect(StylistSimpleAgentServiceV1.localFastReplyForMessage('čauko, potrebujem outfit na túru'), isNull);

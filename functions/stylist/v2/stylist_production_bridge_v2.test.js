@@ -129,3 +129,28 @@ test("production bridge routes generic fashion advice through fast chat before e
   assert.equal(calls.wardrobe, 0);
   assert.ok(calls.info.some((entry) => entry.message === "STYLIST_V2_TURN_LATENCY" && entry.data?.path === "fast_chat"));
 });
+
+test("server local advice intro bypasses every AI/tool path", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const calls = {model: 0, fast: 0, wardrobe: 0, location: 0, weather: 0};
+  const handler = createStylistChatV2Handler({
+    db: {}, admin: {}, logger: {warn() {}, info() {}}, resolveOpenAISecret: async () => "unused", clock: () => NOW,
+    sessionRepository: repository,
+    fastChatFactory: () => { calls.fast += 1; throw new Error("fast_chat_must_not_be_created"); },
+    modelFactory: () => { calls.model += 1; throw new Error("model_must_not_run"); },
+    wardrobeToolFactory: () => { calls.wardrobe += 1; throw new Error("wardrobe_must_not_run"); },
+    shoppingToolFactory: () => ({async search() { throw new Error("shopping_must_not_run"); }}),
+    locationResolver: {async resolve() { calls.location += 1; throw new Error("location_must_not_run"); }},
+    weatherTool: {async getForecast() { calls.weather += 1; throw new Error("weather_must_not_run"); }},
+  });
+
+  const response = await handler({
+    v2SessionId: "local_intro", turnId: "intro_1", message: "ahoj divočák potrebujem poradiť",
+    history: [], currentOutfitItemIds: [], currentSelectionReasons: [], shoppingEnabled: false, clientContext: {},
+  }, {auth: {uid: "user-local"}});
+
+  assert.equal(response.ok, true);
+  assert.equal(response.modelPath, "stylist_v2_local_chat");
+  assert.equal(response.reply, "Ahoj! Jasné 🙂 S čím ti môžem pomôcť?");
+  assert.deepEqual(calls, {model: 0, fast: 0, wardrobe: 0, location: 0, weather: 0});
+});

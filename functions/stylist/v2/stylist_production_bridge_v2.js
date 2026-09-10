@@ -28,6 +28,27 @@ function uniqueIds(value, max = 20) {
   return [...new Set((Array.isArray(value) ? value : []).map((x) => clean(String(x), 180)).filter(Boolean))].slice(0, max);
 }
 
+function normalizeLocalConversationTextV2(value) {
+  return clean(value, 500)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function localConversationReplyV2(message) {
+  const text = normalizeLocalConversationTextV2(message);
+  if (/^(ahoj|cau|cauko|nazdar|servus|hello|hi|hey)(?:\s+(divocak|kamo|kamarat|stylista))?$/.test(text)) {
+    return "Ahoj! Ako ti môžem pomôcť?";
+  }
+  if (/^(ahoj|cau|cauko|nazdar|servus|hello|hi|hey)(?:\s+(divocak|kamo|kamarat|stylista))?\s+(potrebujem|chcem|mohol by si|mozes mi)\s+(poradit|poradis)$/.test(text)) {
+    return "Ahoj! Jasné 🙂 S čím ti môžem pomôcť?";
+  }
+  return null;
+}
+
 function reasonsMap(raw) {
   const out = {};
   for (const entry of Array.isArray(raw) ? raw : []) {
@@ -57,10 +78,10 @@ function currentLocationObservation(clientContext, clock) {
 function clientCapabilities(data) {
   const context = safeMap(data?.clientContext);
   const recentHistory = (Array.isArray(data?.history) ? data.history : [])
-    .slice(-8)
+    .slice(-6)
     .map((entry) => ({
       role: entry?.role === "assistant" ? "assistant" : "user",
-      content: clean(entry?.content, 1200),
+      content: clean(entry?.content, 700),
     }))
     .filter((entry) => entry.content);
   return {
@@ -252,6 +273,20 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
         if (shoppingTurn.passThroughMessage) message = clean(shoppingTurn.passThroughMessage, 3000) || message;
       }
 
+      const localReply = !shoppingActive ? localConversationReplyV2(message) : null;
+      if (localReply) {
+        const response = {
+          ok: true, simpleAgent: true, v2: true, failClosed: false, contractVersion: 2,
+          modelPath: "stylist_v2_local_chat", sessionId, sessionRevision: existing?.state?.revision ?? 0,
+          reply: localReply, stylistComment: localReply,
+          resultingOutfitItemIds: [], displayItemIds: [], resultingOutfitItems: [], displayItems: [],
+          outfitChanged: false, quickReplyMode: "none", quickReplyPrompt: null, action: "chat",
+        };
+        logger?.info?.("STYLIST_V2_TURN_LATENCY", {path: "local_chat", totalMs: Date.now() - turnStartedAt});
+        await writeJobResult({db, admin, uid, notifyJobId, result: response});
+        return response;
+      }
+
       const executeStructured = modelFactory ? null : createOpenAiSimpleAgentExecutorV1({
         fetchImpl, resolveOpenAISecret, logger, feature: "stylist_v2", cacheScope: `${uid}:stylist-v2`,
         recordUsage: (event) => recordUsage({...event, userKey: hashValue(uid), requestKey: hashValue([uid, turnId, "v2"])}),
@@ -311,6 +346,7 @@ function createStylistChatV2Handler({db, admin, logger = console, fetchImpl = fe
       const result = await engine.resolveTurn({
         uid,
         request,
+        knownCanonicalState: existing?.state || null,
         bootstrapInput: existing ? null : {
           currentOutfitItemIds: currentIds,
           persistedSelectionReasonsByItemId: persistedReasonsByItemId,
@@ -347,5 +383,6 @@ module.exports = {
   extractCandidateIds,
   failClosedResponse,
   legacyCompatibleResponse,
+  localConversationReplyV2,
   migrateProvisionalSession,
 };
