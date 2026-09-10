@@ -1,0 +1,805 @@
+name: Temporary Stylist V2 context-tools refactor
+
+on:
+  push:
+    branches:
+      - refactor/stylist-v2-context-tools-20260910
+    paths:
+      - '.github/workflows/_tmp-stylist-v2-context-tools.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refactor-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: refactor/stylist-v2-context-tools-20260910
+          fetch-depth: 0
+
+      - name: Guard canonical and brain before patching
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment refactor/stylist-v2-context-tools-20260910 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "2e4a119eeac7c5422d585905a845333a8435b77e"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/refactor/stylist-v2-context-tools-20260910)"
+          git diff --exit-code
+
+      - name: Apply context, pending-reply and wardrobe patches
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, got {count}\n--- OLD ---\n{old}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          model = "functions/stylist/v2/openai_stylist_model_port_v2.js"
+          onebrain = "functions/stylist/v2/openai_one_brain_model_port_v2.js"
+          engine = "functions/stylist/v2/stylist_one_brain_engine_v2.js"
+          bridge = "functions/stylist/v2/stylist_production_bridge_one_brain_v2.js"
+          tests = "functions/stylist/v2/stylist_one_brain_runtime_v2.test.js"
+
+          replace_once(model,
+          '''const PLAN_MODEL = "gpt-5.6-luna";
+          const PLAN_REASONING = "low";
+          // Ordinary styling is latency-sensitive. Safety/formal turns automatically
+          // escalate to Terra medium.
+          const FINAL_MODEL = "gpt-5.6-luna";
+          const FINAL_REASONING = "low";''',
+          '''const PLAN_MODEL = "gpt-5.6-terra";
+          const PLAN_REASONING = "medium";
+          // Production One-Brain styling uses Terra medium as the quality baseline.
+          // Safety/formal turns remain on the same robust tier.
+          const FINAL_MODEL = "gpt-5.6-terra";
+          const FINAL_REASONING = "medium";''')
+
+          replace_once(model,
+          '''const ACTIONS = ["chat", "clarify", "generate_outfit", "edit_outfit", "explain_outfit", "show_items", "stop"];
+          const CLARIFICATION_FIELDS = [null, "currentLocationObservation", "destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"];''',
+          '''const ACTIONS = ["chat", "clarify", "generate_outfit", "edit_outfit", "explain_outfit", "show_items", "stop"];
+          const PENDING_REPLY_DISPOSITIONS = ["none", "answer", "skip", "meta", "unrelated"];
+          const CLARIFICATION_FIELDS = [null, "currentLocationObservation", "destination", "eventLocation", "date", "timeWindow", "terrain.surface", "terrain.difficulty", "terrain.condition"];''')
+
+          replace_once(model,
+          '''    "kind", "action", "assistantText", "clarificationField", "clarificationQuestion",''',
+          '''    "kind", "action", "assistantText", "pendingReplyDisposition", "clarificationField", "clarificationQuestion",''')
+
+          replace_once(model,
+          '''    action: {type: "string", enum: ["none", "chat", "clarify", "stop"]},
+              assistantText: {type: "string"},
+              clarificationField: {type: ["string", "null"], enum: CLARIFICATION_FIELDS},''',
+          '''    action: {type: "string", enum: ["none", "chat", "clarify", "stop"]},
+              assistantText: {type: "string"},
+              pendingReplyDisposition: {type: "string", enum: PENDING_REPLY_DISPOSITIONS},
+              clarificationField: {type: ["string", "null"], enum: CLARIFICATION_FIELDS},''')
+
+          replace_once(model,
+          '''    "pendingQuestion je iba kontext. Ak používateľ odpovie otázkou typu 'načo ti to je?', 'prečo?', povie 'neviem', 'je mi to jedno', 'preskoč to' alebo 'daj mi proste outfit', NESMIEŠ tú vetu interpretovať ako hodnotu pending poľa.",''',
+          '''    "pendingQuestion je iba kontext, NIE parser ďalšej správy. Keď pendingQuestion existuje, najprv klasifikuj najnovšiu správu do pendingReplyDisposition.",
+              "pendingReplyDisposition=answer iba ak správa naozaj odpovedá na položené pole; skip pri odmietnutí/neviem/nechaj tak; meta pri otázke typu 'načo ti to je?'; unrelated pri zmene témy alebo novom zámere.",
+              "Pri skip/meta/unrelated nikdy nepouži text správy ako hodnotu pôvodného pending poľa ani ako locationQuery pre pôvodné miesto.",
+              "Ak pendingQuestion neexistuje, pendingReplyDisposition musí byť none.",''')
+
+          replace_once(model,
+          '''function planEnvelope(raw, input) {
+            const statePatch = patchFromRaw(raw, input.session);''',
+          '''function planEnvelope(raw, input) {
+            const statePatch = patchFromRaw(raw, input.session);
+            const pendingReplyDisposition = PENDING_REPLY_DISPOSITIONS.includes(raw?.pendingReplyDisposition) ?
+              raw.pendingReplyDisposition : "none";''')
+
+          replace_once(model,
+          '''    return {kind: "final", result, statePatch};''',
+          '''    return {kind: "final", result, statePatch, pendingReplyDisposition};''')
+
+          replace_once(model,
+          '''    return {kind: "final", result: {action: "stop", assistantText: "Potrebujem ešte trochu kontextu, aby som ti poradil správne.", display: {kind: "none", itemIds: []}}, statePatch};''',
+          '''    return {kind: "final", result: {action: "stop", assistantText: "Potrebujem ešte trochu kontextu, aby som ti poradil správne.", display: {kind: "none", itemIds: []}}, statePatch, pendingReplyDisposition};''')
+
+          replace_once(model,
+          '''  return {kind: "tool_request", requests, statePatch};''',
+          '''  return {kind: "tool_request", requests, statePatch, pendingReplyDisposition};''')
+
+          replace_once(model,
+          '''  if (raw.offerShopping === true) {
+            result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
+          }
+          if (raw.offerShopping === true && needLabel) {''',
+          '''  const shouldOfferShopping = Boolean(needLabel) &&
+            (raw.offerShopping === true || ["generate_outfit", "edit_outfit"].includes(action));
+          if (shouldOfferShopping) {
+            result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
+          }
+          if (shouldOfferShopping) {''')
+
+          replace_once(onebrain,
+          '''    "Ak runtimeConstraints.allowClarification=false, NESMIEŠ položiť ďalšiu objasňujúcu otázku. Použi rozumný konzervatívny predpoklad a pomôž z toho, čo už vieš.",
+              "Ak používateľ povedal neviem/netuším/je mi to jedno/preskoč to/nerieš/daj mi proste outfit, ber to ako príkaz pokračovať bez daného detailu. Pole v cannotClarifyFields už nikdy v tomto pokračovaní nepýtaj.",''',
+          '''    "Ak runtimeConstraints.allowClarification=false, NESMIEŠ položiť ďalšiu objasňujúcu otázku. Použi rozumný konzervatívny predpoklad a pomôž z toho, čo už vieš.",
+              "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",
+              "answer znamená skutočnú odpoveď na položené pole. skip znamená neviem/nechaj tak/nerieš/preskoč. meta je otázka o tom, prečo údaj potrebuješ. unrelated je zmena témy alebo nový zámer.",
+              "Pri skip/meta/unrelated nesmieš text správy poslať ako locationQuery ani ho uložiť do pôvodného pending poľa. Pri unrelated môže nový scenár dostať vlastnú jednu potrebnú otázku.",
+              "Ak používateľ povedal neviem/netuším/je mi to jedno/preskoč to/nerieš/daj mi proste outfit, ber to ako príkaz pokračovať bez daného detailu. Pole v cannotClarifyFields už nikdy v tomto pokračovaní nepýtaj.",''')
+
+          replace_once(onebrain,
+          '''      "Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.",
+              "Ak má vzniknúť alebo zmeniť outfit, musíš si vyžiadať wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.",''',
+          '''      "Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.",
+              "Ak runtimeConstraints.pendingReplyRequired=false, pendingReplyDisposition nastav na none. Ak je true, klasifikácia pending odpovede je povinná pred akýmkoľvek tool requestom.",
+              "Ak toolResults.wardrobeItems už obsahuje kúsky, celý relevantný šatník je prednačítaný. Nežiadaj ho znova len preto, aby si ho znovu načítal; pri editácii však stále vyžiadaj wardrobe request so scope/editScope, aby runtime zmrazil autorizovaný rozsah zmeny.",
+              "Ak má vzniknúť nový outfit a wardrobeItems už sú prednačítané, môžeš vyžiadať iba potrebný location tool. Ak prednačítané nie sú, vyžiadaj wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.",''')
+
+          replace_once(engine,
+          '''const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
+          const {ONE_BRAIN_MAX_MODEL_CALLS} = require("./openai_one_brain_model_port_v2");''',
+          '''const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
+          const {categoryMatches} = require("./firestore_wardrobe_tool_v2");
+          const {ONE_BRAIN_MAX_MODEL_CALLS} = require("./openai_one_brain_model_port_v2");''')
+
+          replace_once(engine,
+          '''const SKIP_DIRECTIVE_RE = /\\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|bez pocasia|daj mi proste|proste mi daj|vyber proste)\\b/;''',
+          '''const SKIP_DIRECTIVE_RE = /\\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\\b/;
+          const PENDING_REPLY_DISPOSITIONS = new Set(["none", "answer", "skip", "meta", "unrelated"]);''')
+
+          replace_once(engine,
+          '''function userRequestsBestEffortV2(value) {
+            return SKIP_DIRECTIVE_RE.test(normalizeConversationTextV2(value));
+          }
+
+          function requirePort(value, label) {''',
+          '''function userRequestsBestEffortV2(value) {
+            return SKIP_DIRECTIVE_RE.test(normalizeConversationTextV2(value));
+          }
+
+          function pendingReplyDispositionV2(envelope, pendingQuestion) {
+            const raw = envelope?.pendingReplyDisposition;
+            if (!pendingQuestion) {
+              if (raw == null || raw === "none") return "none";
+              throw new RepairableStructuralTurnError("pending reply disposition exists without a pending question");
+            }
+            // Legacy injected test doubles from before this contract are interpreted
+            // as answer. Production structured output always supplies the field.
+            if (raw == null) return "answer";
+            if (!PENDING_REPLY_DISPOSITIONS.has(raw) || raw === "none") {
+              throw new RepairableStructuralTurnError("pending reply disposition is missing or invalid");
+            }
+            return raw;
+          }
+
+          function clearPendingQuestionV2(state) {
+            const next = clone(state);
+            next.conversationMemory.pendingQuestion = null;
+            return next;
+          }
+
+          function selectKnownWardrobeV2(items, request, currentIds) {
+            const all = clone(Array.isArray(items) ? items : []);
+            if (!request || request.scope === "full_relevant") return all;
+            if (request.scope === "current_outfit") {
+              return all.filter((item) => currentIds.includes(item.id));
+            }
+            if (request.scope === "category") {
+              return all.filter((item) => categoryMatches(item, request.category));
+            }
+            if (request.scope === "current_outfit_plus_category") {
+              return all.filter((item) => currentIds.includes(item.id) || categoryMatches(item, request.category));
+            }
+            return all;
+          }
+
+          function requirePort(value, label) {''')
+
+          replace_once(engine,
+          '''function applyAcceptedResultV2(state, result) {''',
+          '''function applyAcceptedResultV2(state, result, {preservePendingQuestion = false} = {}) {''')
+
+          replace_once(engine,
+          '''  } else {
+            next.conversationMemory.pendingQuestion = null;
+          }
+          if (result.action === "shop")''',
+          '''  } else if (!preservePendingQuestion) {
+            next.conversationMemory.pendingQuestion = null;
+          }
+          if (result.action === "shop")''')
+
+          replace_once(engine,
+          '''function validateToolDecisionEnvelopeV2(envelope, {allowClarification}) {
+            if (envelope?.kind === "final") {''',
+          '''function validateToolDecisionEnvelopeV2(envelope, {allowClarification, pendingQuestion = null}) {
+            const disposition = pendingReplyDispositionV2(envelope, pendingQuestion);
+            const pendingField = pendingQuestion?.field || null;
+            const locationRequests = Array.isArray(envelope?.requests) ?
+              envelope.requests.filter((entry) => entry?.tool === "location") : [];
+            if (disposition === "meta" &&
+                (envelope?.kind !== "final" || envelope.result?.action !== "chat" ||
+                 ![undefined, null, "current"].includes(envelope.statePatch?.scenarioMode))) {
+              throw new RepairableStructuralTurnError("meta reply must answer conversationally and preserve the pending question");
+            }
+            if (["skip", "meta"].includes(disposition) &&
+                locationRequests.some((entry) => entry.targetField === pendingField)) {
+              throw new RepairableStructuralTurnError("skipped or meta pending reply cannot be consumed as the pending location");
+            }
+            if (disposition === "unrelated" &&
+                locationRequests.some((entry) => entry.targetField === pendingField) &&
+                envelope.statePatch?.scenarioMode !== "new") {
+              throw new RepairableStructuralTurnError("unrelated reply cannot populate the old pending location");
+            }
+            if (disposition === "answer" && ["destination", "eventLocation"].includes(pendingField) &&
+                locationRequests.some((entry) => entry.targetField !== pendingField)) {
+              throw new RepairableStructuralTurnError("pending location answer targeted a different location field");
+            }
+            if (envelope?.kind === "final") {''')
+
+          replace_once(engine,
+          '''    if (!allowClarification && envelope.result?.action === "clarify") {
+              throw new RepairableStructuralTurnError("one-brain clarification budget already consumed");
+            }''',
+          '''    if (!allowClarification && envelope.result?.action === "clarify") {
+              throw new RepairableStructuralTurnError("one-brain clarification budget already consumed");
+            }
+            if (pendingQuestion && envelope.result?.action === "clarify" && disposition !== "unrelated") {
+              throw new RepairableStructuralTurnError("answered pending question cannot start another questionnaire round");
+            }
+            if (pendingQuestion && envelope.result?.action === "clarify" && disposition === "unrelated" &&
+                envelope.statePatch?.scenarioMode !== "new") {
+              throw new RepairableStructuralTurnError("new clarification after topic change requires a new scenario");
+            }''')
+
+          replace_once(engine,
+          '''async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool}) {
+            let workingState = applyBrainStatePatchV2(state, envelope.statePatch);
+            const toolResults = {
+              wardrobeItems: [],''',
+          '''async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool,
+            knownWardrobeItems = null}) {
+            let workingState = applyBrainStatePatchV2(state, envelope.statePatch);
+            const preloadedWardrobe = Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : null;
+            const toolResults = {
+              wardrobeItems: preloadedWardrobe || [],''')
+
+          replace_once(engine,
+          '''  let wardrobeItems = [];
+
+            const locationRequest''',
+          '''  let wardrobeItems = preloadedWardrobe || [];
+
+            const locationRequest''')
+
+          replace_once(engine,
+          '''  if (wardrobeRequest) {
+              wardrobeItems = await wardrobeTool.retrieve({
+                scope: wardrobeRequest.scope,
+                itemIds: workingState.currentOutfit.itemIds,
+                category: wardrobeRequest.category || null,
+              });
+              toolResults.wardrobeItems = clone(wardrobeItems);
+              toolResults.authorizedEditScope = clone(wardrobeRequest.editScope || null);
+            }''',
+          '''  if (wardrobeRequest) {
+              wardrobeItems = preloadedWardrobe ?
+                selectKnownWardrobeV2(preloadedWardrobe, wardrobeRequest, workingState.currentOutfit.itemIds) :
+                await wardrobeTool.retrieve({
+                  scope: wardrobeRequest.scope,
+                  itemIds: workingState.currentOutfit.itemIds,
+                  category: wardrobeRequest.category || null,
+                });
+              toolResults.wardrobeItems = clone(wardrobeItems);
+              toolResults.authorizedEditScope = clone(wardrobeRequest.editScope || null);
+            }''')
+
+          replace_once(engine,
+          '''async function commitResultV2({durableRepository, uid, request, originalState, workingState, decision,
+            wardrobeItems, authorizedEditScope}) {''',
+          '''async function commitResultV2({durableRepository, uid, request, originalState, workingState, decision,
+            wardrobeItems, authorizedEditScope, preservePendingQuestion = false}) {''')
+
+          replace_once(engine,
+          '''  const nextState = applyAcceptedResultV2(workingState, validatedResult);''',
+          '''  const nextState = applyAcceptedResultV2(workingState, validatedResult, {preservePendingQuestion});''')
+
+          replace_once(engine,
+          '''    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null}) {''',
+          '''    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null,
+              knownWardrobeItems = null}) {''')
+
+          replace_once(engine,
+          '''      if (hadPendingQuestion && bestEffortDirective) {
+                workingState = applySkipToPendingQuestionV2(workingState);
+              }
+
+              let preflight;''',
+          '''      if (hadPendingQuestion && bestEffortDirective) {
+                workingState = applySkipToPendingQuestionV2(workingState);
+              }
+              const pendingQuestionAtBrain = clone(workingState.conversationMemory.pendingQuestion);
+
+              let preflight;''')
+
+          replace_once(engine,
+          '''        allowClarification: !hadPendingQuestion && !bestEffortDirective,
+                cannotClarifyFields: cannotClarifyFieldsV2(workingState),
+                noAutomaticGroundingQuestions: true,
+                answerStageMayClarify: false,''',
+          '''        allowClarification: !bestEffortDirective,
+                cannotClarifyFields: cannotClarifyFieldsV2(workingState),
+                pendingReplyRequired: Boolean(pendingQuestionAtBrain),
+                pendingReplyField: pendingQuestionAtBrain?.field || null,
+                noAutomaticGroundingQuestions: true,
+                answerStageMayClarify: false,''')
+
+          replace_once(engine,
+          '''      const emptyToolResults = {
+                wardrobeItems: [],''',
+          '''      const emptyToolResults = {
+                wardrobeItems: Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : [],''')
+
+          replace_once(engine,
+          '''      validateToolDecisionEnvelopeV2(toolEnvelope, runtimeConstraints);
+              workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+
+              if (toolEnvelope.kind === "final") {
+                return commitResultV2({
+                  durableRepository, uid, request, originalState, workingState,
+                  decision: toolEnvelope.result, wardrobeItems: [], authorizedEditScope: null,
+                });
+              }''',
+          '''      validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
+              const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
+              let preservePendingQuestion = false;
+              if (pendingQuestionAtBrain) {
+                if (pendingDisposition === "skip") {
+                  workingState = applySkipToPendingQuestionV2(workingState);
+                } else if (["answer", "unrelated"].includes(pendingDisposition)) {
+                  workingState = clearPendingQuestionV2(workingState);
+                } else if (pendingDisposition === "meta") {
+                  preservePendingQuestion = true;
+                }
+              }
+              workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+
+              if (toolEnvelope.kind === "final") {
+                return commitResultV2({
+                  durableRepository, uid, request, originalState, workingState,
+                  decision: toolEnvelope.result,
+                  wardrobeItems: Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : [],
+                  authorizedEditScope: null,
+                  preservePendingQuestion,
+                });
+              }''')
+
+          replace_once(engine,
+          '''        weatherTool,
+              });''',
+          '''        weatherTool,
+                knownWardrobeItems,
+              });''')
+
+          replace_once(engine,
+          '''  executeRequestedToolsV2,
+            semanticLocationFallbackV2,''',
+          '''  executeRequestedToolsV2,
+            pendingReplyDispositionV2,
+            selectKnownWardrobeV2,
+            semanticLocationFallbackV2,''')
+
+          replace_once(bridge,
+          '''      const wardrobeTool = wardrobeToolFactory ?
+                wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
+              const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});''',
+          '''      const wardrobeTool = wardrobeToolFactory ?
+                wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
+              const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
+              const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
+              const canonicalCurrentIds = uniqueIds(existing?.state?.currentOutfit?.itemIds, 12);
+              let knownWardrobeItems = null;
+              if (canonicalCurrentIds.length || currentIds.length) {
+                try {
+                  knownWardrobeItems = await wardrobeTool.retrieve({
+                    scope: "full_relevant",
+                    itemIds: canonicalCurrentIds.length ? canonicalCurrentIds : currentIds,
+                    category: null,
+                  });
+                } catch (_) {
+                  knownWardrobeItems = null;
+                }
+              }
+              const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});''')
+
+          replace_once(bridge,
+          '''      const clientContext = safeMap(data?.clientContext);
+              const observation = currentLocationObservation(clientContext, clock);
+              const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
+              const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
+              const request = {''',
+          '''      const clientContext = safeMap(data?.clientContext);
+              const observation = currentLocationObservation(clientContext, clock);
+              const request = {''')
+
+          replace_once(bridge,
+          '''        knownCanonicalState: existing?.state || null,
+                bootstrapInput: existing ? null : {''',
+          '''        knownCanonicalState: existing?.state || null,
+                knownWardrobeItems,
+                bootstrapInput: existing ? null : {''')
+
+          replace_once(tests,
+          '''const {RepairableStructuralTurnError} = require("./stylist_turn_validator_v2");''',
+          '''const {RepairableStructuralTurnError} = require("./stylist_turn_validator_v2");
+          const {createOpenAiOneBrainModelPortV2} = require("./openai_one_brain_model_port_v2");
+          const {finalEnvelope} = require("./openai_stylist_model_port_v2");''')
+
+          replace_once(tests,
+          '''  assert.equal(secondTurnInputs[0].runtimeConstraints.allowClarification, false);
+            assert.equal(secondTurnInputs[1].stage, "answer");''',
+          '''  assert.equal(secondTurnInputs[0].runtimeConstraints.allowClarification, true);
+            assert.equal(secondTurnInputs[0].runtimeConstraints.pendingReplyRequired, true);
+            assert.equal(secondTurnInputs[1].stage, "answer");''')
+
+          marker = '''\ntest("production Firebase entrypoint is wired to the One-Brain bridge", () => {'''
+          p = Path(tests)
+          text = p.read_text(encoding="utf-8")
+          if marker not in text:
+              raise SystemExit("test insertion marker not found")
+          additions = r'''
+
+          function pendingDestinationClarifyEnvelope() {
+            return {
+              kind: "final",
+              statePatch: {
+                context: {
+                  activity: {id: "hiking", label: "túra", source: "user"},
+                  date: {dateKey: "2026-09-11", source: "user"},
+                  groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []},
+                },
+              },
+              result: {
+                action: "clarify",
+                assistantText: "Kam približne ideš?",
+                clarification: {field: "destination", question: "Kam približne ideš?", actionId: "clarify_destination"},
+                display: {kind: "none", itemIds: []},
+              },
+            };
+          }
+
+          function wardrobeToolRequestEnvelope(disposition = "none") {
+            return {
+              kind: "tool_request",
+              pendingReplyDisposition: disposition,
+              statePatch: {context: {groundingRequirements: {weatherRequired: false, weatherLocationField: null, terrainRequiredFields: []}}},
+              requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
+            };
+          }
+
+          function simpleOutfitEnvelope() {
+            return {
+              kind: "final",
+              statePatch: {},
+              result: {
+                action: "generate_outfit",
+                assistantText: "Vybral som najpraktickejší outfit z tvojho šatníka.",
+                resultingOutfit: {
+                  itemIds: ["tee", "pants", "shoes"],
+                  selectionReasonsByItemId: {tee: "vrch", pants: "spodok", shoes: "obuv"},
+                  compromises: [],
+                  missingWardrobeNeeds: [],
+                },
+                display: {kind: "outfit", itemIds: ["tee", "pants", "shoes"]},
+              },
+            };
+          }
+
+          test("One Brain: 'nechaj tak' can never be consumed as a pending destination", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brainInputs: []};
+            const scripts = [pendingDestinationClarifyEnvelope(), wardrobeToolRequestEnvelope("none"), simpleOutfitEnvelope()];
+            const ports = fakePorts({
+              calls,
+              brain: {async brainTurn(input) { calls.brainInputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }},
+            });
+            const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+            await engine.resolveTurn({
+              uid: "u_skip_phrase",
+              request: request({chatId: "skip_phrase", turnId: "p1", revision: 0, message: "zajtra túra, potrebujem outfit"}),
+              bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+            });
+            const result = await engine.resolveTurn({
+              uid: "u_skip_phrase",
+              request: request({chatId: "skip_phrase", turnId: "p2", revision: 1, message: "nechaj tak"}),
+            });
+            assert.equal(result.action, "generate_outfit");
+            assert.equal(calls.location || 0, 0);
+            assert.equal(calls.brainInputs[1].runtimeConstraints.pendingReplyRequired, false);
+            const stored = await repository.get({uid: "u_skip_phrase", chatId: "skip_phrase"});
+            assert.equal(stored.state.conversationMemory.answeredClarificationFields.destination.status, "unknown");
+            assert.equal(stored.state.context.destination, null);
+          });
+
+          test("One Brain: a meta question preserves the pending destination and never geocodes the meta text", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brainInputs: []};
+            const scripts = [
+              pendingDestinationClarifyEnvelope(),
+              {
+                kind: "final",
+                pendingReplyDisposition: "meta",
+                statePatch: {scenarioMode: "current"},
+                result: {action: "chat", assistantText: "Kvôli počasiu v oblasti, aby som vedel lepšie zvoliť vrstvy.", display: {kind: "none", itemIds: []}},
+              },
+            ];
+            const ports = fakePorts({
+              calls,
+              brain: {async brainTurn(input) { calls.brainInputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }},
+            });
+            const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+            await engine.resolveTurn({
+              uid: "u_meta",
+              request: request({chatId: "meta", turnId: "m1", revision: 0, message: "zajtra túra, potrebujem outfit"}),
+              bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+            });
+            const result = await engine.resolveTurn({
+              uid: "u_meta",
+              request: request({chatId: "meta", turnId: "m2", revision: 1, message: "načo ti to je?"}),
+            });
+            assert.equal(result.action, "chat");
+            assert.equal(calls.location || 0, 0);
+            const stored = await repository.get({uid: "u_meta", chatId: "meta"});
+            assert.equal(stored.state.conversationMemory.pendingQuestion.field, "destination");
+            assert.equal(stored.state.context.destination, null);
+          });
+
+          test("One Brain: unrelated topic abandons the old pending field instead of treating new text as its value", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brainInputs: []};
+            const scripts = [
+              pendingDestinationClarifyEnvelope(),
+              {
+                kind: "final",
+                pendingReplyDisposition: "unrelated",
+                statePatch: {scenarioMode: "new"},
+                result: {action: "chat", assistantText: "K modrej sa hodí biela, sivá aj béžová.", display: {kind: "none", itemIds: []}},
+              },
+            ];
+            const ports = fakePorts({
+              calls,
+              brain: {async brainTurn(input) { calls.brainInputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }},
+            });
+            const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+            await engine.resolveTurn({
+              uid: "u_topic",
+              request: request({chatId: "topic", turnId: "q1", revision: 0, message: "zajtra túra, potrebujem outfit"}),
+              bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+            });
+            const result = await engine.resolveTurn({
+              uid: "u_topic",
+              request: request({chatId: "topic", turnId: "q2", revision: 1, message: "inak aká farba sa hodí k modrej?"}),
+            });
+            assert.equal(result.action, "chat");
+            assert.equal(calls.location || 0, 0);
+            const stored = await repository.get({uid: "u_topic", chatId: "topic"});
+            assert.equal(stored.state.conversationMemory.pendingQuestion, null);
+            assert.equal(stored.state.context.destination, null);
+          });
+
+          test("One Brain: classified destination answer may resolve the pending location but cannot ask a second continuation question", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brainInputs: []};
+            const scripts = [
+              pendingDestinationClarifyEnvelope(),
+              {
+                kind: "tool_request",
+                pendingReplyDisposition: "answer",
+                statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []}}},
+                requests: [
+                  {tool: "location", query: "Alpy, Rakúsko", targetField: "destination"},
+                  {tool: "wardrobe", scope: "full_relevant", category: null, editScope: null},
+                ],
+              },
+              simpleOutfitEnvelope(),
+            ];
+            const ports = fakePorts({
+              calls,
+              location: {providerId: "openmeteo:alps", label: "Alpy, Rakúsko", lat: 47.2, lng: 12.2, source: "test", granularity: "region"},
+              brain: {async brainTurn(input) { calls.brainInputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }},
+            });
+            const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+            await engine.resolveTurn({
+              uid: "u_answer",
+              request: request({chatId: "answer", turnId: "a1", revision: 0, message: "zajtra túra, potrebujem outfit"}),
+              bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+            });
+            const result = await engine.resolveTurn({
+              uid: "u_answer",
+              request: request({chatId: "answer", turnId: "a2", revision: 1, message: "do Álp"}),
+            });
+            assert.equal(result.action, "generate_outfit");
+            assert.equal(calls.location, 1);
+            assert.equal(calls.lastLocationQuery, "Alpy, Rakúsko");
+            assert.equal(calls.brainInputs[1].runtimeConstraints.pendingReplyRequired, true);
+            assert.equal(calls.brainInputs[2].runtimeConstraints.allowClarification, false);
+          });
+
+          test("One Brain model contract classifies pending replies and uses Terra medium", async () => {
+            const specs = [];
+            const brain = createOpenAiOneBrainModelPortV2({
+              executeStructured: async (spec) => {
+                specs.push(spec);
+                return {
+                  kind: "final",
+                  action: "chat",
+                  assistantText: "Jasné.",
+                  pendingReplyDisposition: "unrelated",
+                  clarificationField: null,
+                  clarificationQuestion: null,
+                  scenarioMode: "new",
+                  scenarioReferenceId: null,
+                  locationQuery: null,
+                  locationTargetField: "none",
+                  wardrobeScope: "none",
+                  wardrobeCategory: null,
+                  replaceItemIds: [], retainItemIds: [], allowedSlots: [], allowedCategories: [], allowRemovalOnly: false,
+                  patch: {
+                    activityId: null, activityLabel: null, dateKey: null, timeWindowKey: null,
+                    environment: "unknown", terrainSurface: "unknown", terrainDifficulty: "unknown", terrainCondition: "unknown",
+                    replaceGroundingRequirements: false, weatherRequired: false, weatherLocationField: "none", terrainRequiredFields: [],
+                  },
+                };
+              },
+            });
+            const envelope = await brain.brainTurn({
+              stage: "tools",
+              request: {chatId: "c", turnId: "t", latestUserInput: "niečo iné", explicitUiActionId: null, clientCapabilities: {}},
+              session: {context: {}, currentOutfit: {itemIds: [], selectionReasonsByItemId: {}}, conversationMemory: {pendingQuestion: {field: "destination"}}},
+              toolResults: {wardrobeItems: []},
+              runtimeConstraints: {allowClarification: true, pendingReplyRequired: true, pendingReplyField: "destination"},
+            });
+            assert.equal(specs.length, 1);
+            assert.equal(specs[0].model, "gpt-5.6-terra");
+            assert.equal(specs[0].reasoningEffort, "medium");
+            assert.ok(specs[0].schema.required.includes("pendingReplyDisposition"));
+            assert.deepEqual(specs[0].schema.properties.pendingReplyDisposition.enum, ["none", "answer", "skip", "meta", "unrelated"]);
+            assert.equal(envelope.pendingReplyDisposition, "unrelated");
+          });
+
+          test("shopping need is the authoritative CTA signal even if offerShopping is false", () => {
+            const envelope = finalEnvelope({
+              action: "generate_outfit",
+              assistantText: "Tenisky sú tu najlepší dostupný kompromis.",
+              resultingOutfitItemIds: ["tee", "pants", "shoes"],
+              selectionReasons: [
+                {itemId: "tee", reason: "vrch"},
+                {itemId: "pants", reason: "spodok"},
+                {itemId: "shoes", reason: "obuv"},
+              ],
+              displayKind: "outfit",
+              displayItemIds: ["tee", "pants", "shoes"],
+              editReplaceItemIds: [], editRetainItemIds: [], editAllowedSlots: [], editAllowedCategories: [], editAllowRemovalOnly: false,
+              clarificationField: null, clarificationQuestion: null,
+              offerShopping: false,
+              shoppingNeedLabel: "turistická obuv",
+              shoppingNeedCanonicalType: "hiking_shoes",
+              shoppingHardConstraints: [], shoppingSoftPreferences: [],
+            }, {
+              request: {turnId: "cta_1"},
+              session: {context: {environment: "outdoor"}, currentOutfit: {itemIds: [], selectionReasonsByItemId: {}}},
+              toolResults: {},
+            });
+            assert.equal(envelope.result.quickReplies.length, 2);
+            assert.deepEqual(envelope.result.quickReplies.map((entry) => entry.label), ["Áno", "Nie"]);
+            assert.equal(envelope.statePatch.shopping.missingNeed.label, "turistická obuv");
+          });
+
+          test("preloaded full wardrobe is visible to the Brain and reused without another read", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brainInputs: [], wardrobe: 0};
+            const items = wardrobeItems();
+            const ports = fakePorts({
+              calls,
+              brain: {
+                async brainTurn(input) {
+                  calls.brainInputs.push(JSON.parse(JSON.stringify(input)));
+                  return {kind: "final", pendingReplyDisposition: "none", statePatch: {}, result: {action: "chat", assistantText: "Vidím celý šatník.", display: {kind: "none", itemIds: []}}};
+                },
+              },
+            });
+            const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+            const result = await engine.resolveTurn({
+              uid: "u_preload",
+              request: request({chatId: "preload", turnId: "w1", revision: 0, message: "daj mi iné tričko"}),
+              bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+              knownWardrobeItems: items,
+            });
+            assert.equal(result.action, "chat");
+            assert.equal(calls.wardrobe, 0);
+            assert.deepEqual(calls.brainInputs[0].toolResults.wardrobeItems.map((item) => item.id), ["tee", "pants", "shoes"]);
+          });
+          '''
+          p.write_text(text.replace(marker, additions + marker, 1), encoding="utf-8")
+          PY
+
+      - name: Show diff and syntax check
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          git diff --stat
+          node --check functions/stylist/v2/openai_stylist_model_port_v2.js
+          node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
+          node --check functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: One-Brain targeted regressions
+        run: node --test functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Full V2 non-emulator regression
+        run: >-
+          node --test
+          functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
+          functions/stylist/v2/stylist_v2_phase0_contracts.test.js
+          functions/stylist/v2/stylist_session_repository_v2.test.js
+          functions/stylist/v2/stylist_turn_engine_v2.test.js
+          functions/stylist/v2/stylist_grounding_policy_v2.test.js
+          functions/stylist/v2/stylist_v2_phase3_ports.test.js
+          functions/stylist/v2/stylist_production_bridge_v2.test.js
+          functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
+          functions/stylist/v2/stylist_pending_location_v2.test.js
+          functions/stylist/v2/stylist_help_first_contract_v2.test.js
+          functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
+          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
+          functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
+          functions/stylist/v2/stylist_release_gate_v2.test.js
+          functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
+          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Existing Stylist backend regression
+        run: node --test functions/stylist/*.test.js
+
+      - name: Guard refs and commit only product files
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected_files=$(cat <<'EOF'
+          functions/stylist/v2/openai_one_brain_model_port_v2.js
+          functions/stylist/v2/openai_stylist_model_port_v2.js
+          functions/stylist/v2/stylist_one_brain_engine_v2.js
+          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+          functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          EOF
+          )
+          actual_files=$(git diff --name-only | sort)
+          test "$actual_files" = "$(printf '%s\n' "$expected_files" | sort)"
+          git fetch origin stylist-simple-agent brain-v1-experiment refactor/stylist-v2-context-tools-20260910 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "2e4a119eeac7c5422d585905a845333a8435b77e"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/refactor/stylist-v2-context-tools-20260910)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add $expected_files
+          git diff --cached --check
+          git commit -m "refactor: make pending context safe and wardrobe-aware"
+          git push origin HEAD:refactor/stylist-v2-context-tools-20260910
