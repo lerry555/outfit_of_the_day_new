@@ -90,24 +90,9 @@ function engineHarness({modelResults, resolutions = {}, weatherSnapshots = {}}) 
 test("phone regression: Austria hike -> Alps proceeds to outfit and never asks terrain", async () => {
   const h = engineHarness({
     resolutions: {"Rakúska": austria, "do Álp": alps, "Álp": alps},
-    modelResults: [
-      toolEnvelope([
-        {tool: "location", query: "Rakúska", targetField: "destination"},
-      ], {
-        context: {
-          activity: {id: "hiking", label: "túra", source: "user"},
-          date: {dateKey: "2026-09-11", source: "user"},
-          timeWindow: {key: "day", label: "cez deň", source: "help_first_default"},
-          // Simulate the exact over-eager planner behavior that caused the bug.
-          groundingRequirements: {
-            weatherRequired: true,
-            weatherLocationField: "destination",
-            terrainRequiredFields: ["surface"],
-          },
-        },
-      }),
-      hikingOutfitEnvelope(),
-    ],
+    // The common remote-outfit grammar is deterministic: no planning model
+    // call is allowed before the one final stylist decision.
+    modelResults: [hikingOutfitEnvelope()],
   });
 
   const first = await h.engine.resolveTurn({
@@ -128,7 +113,7 @@ test("phone regression: Austria hike -> Alps proceeds to outfit and never asks t
   const saved = await h.repository.get({uid: "user-a", chatId: "chat-phone"});
   assert.equal(saved.state.context.destination.providerId, "place:alps");
   assert.deepEqual(saved.state.context.groundingRequirements.terrainRequiredFields, []);
-  assert.equal(h.ledger.calls("model", "plan").length, 1);
+  assert.equal(h.ledger.calls("model", "plan").length, 0);
   assert.equal(h.ledger.calls("model", "final").length, 1);
 });
 

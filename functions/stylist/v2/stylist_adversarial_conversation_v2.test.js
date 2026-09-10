@@ -226,7 +226,7 @@ test("adversarial: complete hike request with destination in one message never a
   healthy(response);
   assert.equal(response.action, "generate_outfit");
   assert.doesNotMatch(response.reply, /kam približne|ktorej časti dňa|presnú trasu/i);
-  assert.deepEqual(h.calls.model.map((entry) => entry.schemaName), ["stylist_v2_plan", "stylist_v2_final"]);
+  assert.deepEqual(h.calls.model.map((entry) => entry.schemaName), ["stylist_v2_final"]);
   assert.equal(h.calls.location.length, 1);
   assert.equal(h.calls.weather.length, 1);
   assert.equal(h.calls.wardrobe.length, 1);

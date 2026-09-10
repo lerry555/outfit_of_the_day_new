@@ -61,9 +61,13 @@ function createBoundCoordinatorRepository({durableRepository, uid, request, init
         throw error;
       }
 
+      if (!commitOutcome?.replayed) {
+        workingState = clone(validated);
+        return clone(workingState);
+      }
       const persisted = await durableRepository.get({uid, chatId: request.chatId});
       if (!persisted?.state) {
-        throw new StylistSessionRepositoryV2Error("SESSION_NOT_FOUND", "session disappeared after commit");
+        throw new StylistSessionRepositoryV2Error("SESSION_NOT_FOUND", "session disappeared after replay commit");
       }
       workingState = clone(persisted.state);
       return clone(workingState);
@@ -100,14 +104,15 @@ function createStylistTurnEngineV2({sessionRepository, wardrobeTool, locationRes
   };
 
   return Object.freeze({
-    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null}) {
+    async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null}) {
       const request = validateTurnRequestV2(untrustedRequest);
-      let initialState = await ensureCanonicalSession({
-        durableRepository,
-        uid,
-        request,
-        bootstrapInput,
-      });
+      let initialState = knownCanonicalState ? validateStylistSessionStateV2(knownCanonicalState) :
+        await ensureCanonicalSession({
+          durableRepository,
+          uid,
+          request,
+          bootstrapInput,
+        });
 
       const groundingPolicy = inferMandatoryGroundingV2({
         latestUserInput: request.latestUserInput,

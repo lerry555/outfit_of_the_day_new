@@ -117,11 +117,10 @@ function deferredPendingDecisionV2() {
 }
 
 function broadLocationClarificationDecision(field, latestUserInput) {
-  const candidate = cleanLocationAnswerFragmentV2(latestUserInput).slice(0, 120) || "toto miesto";
   const event = field === "eventLocation";
   const question = event ?
-    `„${candidate}“ je na spoľahlivé miestne počasie príliš široké. V ktorom meste, štáte alebo regióne sa podujatie koná?` :
-    `„${candidate}“ je na spoľahlivé miestne počasie príliš široké. Do ktorého mesta, štátu alebo regiónu ideš?`;
+    "Kde približne sa podujatie koná? Stačí mesto alebo oblasť." :
+    "Kam približne ideš? Stačí oblasť alebo najbližšie mesto.";
   const actionId = event ? "clarify_event_location" : "clarify_destination";
   return {action: "clarify", assistantText: question, clarification: {field, question, actionId}, display: {kind: "none", itemIds: []}};
 }
@@ -169,6 +168,75 @@ function deterministicRemoteOutfitClarificationV2(request, state) {
   return {
     state: applyHelpFirstDefaultsV2(next),
     decision: clarificationDecision("destination"),
+  };
+}
+
+function inferObviousActivityV2(value) {
+  const text = normalizeConversationTextV2(value);
+  const definitions = [
+    {id: "hiking", label: "túra", environment: "outdoor", event: false, pattern: /\b(tura|turu|turistika|hiking|hike|trek|treking)\b/},
+    {id: "concert", label: "koncert", environment: "mixed", event: true, pattern: /\b(koncert|concert|festival)\b/},
+    {id: "wedding", label: "svadba", environment: "mixed", event: true, pattern: /\b(svadba|svadbu|wedding)\b/},
+    {id: "interview", label: "pohovor", environment: "indoor", event: true, pattern: /\b(pohovor|interview)\b/},
+    {id: "dinner", label: "večera", environment: "indoor", event: true, pattern: /\b(vecera|dinner|restauracia|restaurant)\b/},
+    {id: "cinema", label: "kino", environment: "indoor", event: true, pattern: /\b(kino|cinema)\b/},
+    {id: "date", label: "rande", environment: "mixed", event: true, pattern: /\b(rande|date)\b/},
+    {id: "party", label: "oslava", environment: "mixed", event: true, pattern: /\b(oslava|party|ples)\b/},
+  ];
+  return definitions.find((entry) => entry.pattern.test(text)) || null;
+}
+
+function explicitTravelDestinationCandidateV2(value) {
+  const raw = String(value || "").trim().replace(/\s+/g, " ");
+  if (!raw) return "";
+  const match = raw.match(/\b(?:idem|ideme|pojdem|pojdeme|chystám\s+sa|chystam\s+sa|chystáme\s+sa|chystame\s+sa|cestujem|cestujeme|letím|letim|letíme|letime|vyrážam|vyrazam|vyrážame|vyrazame|chcem\s+(?:ísť|ist)|chcel\s+by\s+som\s+(?:ísť|ist))\s+(?:do|v|vo)\s+(.+?)(?=\s+(?:na|kvôli|kvoli)\s+|[,;.!?]|$)/iu);
+  if (!match) return "";
+  const candidate = match[1].trim().slice(0, 180);
+  const normalized = normalizeConversationTextV2(candidate);
+  if (/^(prace|skoly|fitka|posilnovne|kina|domu)$/.test(normalized)) return "";
+  return candidate;
+}
+
+function deterministicRemoteOutfitFastLaneV2(request, state) {
+  if (state.conversationMemory.pendingQuestion || state.conversationMemory.pendingAction) return null;
+  const text = normalizeConversationTextV2(request.latestUserInput);
+  const asksOutfit = /\b(outfit|oblecenie|obliect|co si mam dat|co mam na seba|vyber mi|navrhni mi|zostav mi)\b/.test(text);
+  if (!asksOutfit) return null;
+  const activity = inferObviousActivityV2(request.latestUserInput);
+  const locationQuery = explicitTravelDestinationCandidateV2(request.latestUserInput);
+  if (!activity || !locationQuery) return null;
+
+  let dateKey = null;
+  if (/\b(zajtra|tomorrow)\b/.test(text)) dateKey = request.clientCapabilities?.tomorrowDateKey || null;
+  else if (/\b(dnes|today)\b/.test(text)) dateKey = request.clientCapabilities?.todayDateKey || null;
+  if (!dateKey) return null;
+
+  const targetField = activity.event ? "eventLocation" : "destination";
+  const next = clone(state);
+  next.context.activity = {id: activity.id, label: activity.label, source: "user"};
+  next.context.environment = activity.environment;
+  next.context.date = {dateKey, source: "user"};
+  next.context.timeWindow = next.context.timeWindow || {key: "day", label: "cez deň", source: "help_first_default"};
+  next.context.weather = null;
+  next.context[targetField] = null;
+  if (targetField === "destination") next.context.eventLocation = null;
+  else next.context.destination = null;
+  next.context.groundingRequirements = {
+    weatherRequired: true,
+    weatherLocationField: targetField,
+    terrainRequiredFields: [],
+  };
+  return {state: next, targetField, locationQuery};
+}
+
+function semanticLocationFallbackV2(value, field) {
+  const label = cleanLocationAnswerFragmentV2(value).slice(0, 220) || "neupresnené miesto";
+  const slug = normalizeConversationTextV2(label).replace(/\s+/g, "-").slice(0, 80) || "unknown";
+  return {
+    providerId: `user-text:${field}:${slug}`,
+    label,
+    source: "user_text",
+    granularity: "region",
   };
 }
 
@@ -418,6 +486,39 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
       }
 
       if (!decision && preflight.kind === "continue") {
+        const fastLane = deterministicRemoteOutfitFastLaneV2(request, workingState);
+        if (fastLane) {
+          workingState = fastLane.state;
+          const resolved = await locationResolver.resolve(fastLane.locationQuery);
+          if (!resolved) {
+            const semantic = semanticLocationFallbackV2(fastLane.locationQuery, fastLane.targetField);
+            workingState.context[fastLane.targetField] = semantic;
+            workingState.conversationMemory.answeredClarificationFields[fastLane.targetField] = clone(semantic);
+            workingState = disableOptionalWeatherGroundingV2(workingState);
+            pendingLocationContinuation = true;
+          } else if (locationIsTooBroadForWeatherV2(resolved)) {
+            workingState.context[fastLane.targetField] = resolved;
+            workingState.conversationMemory.answeredClarificationFields[fastLane.targetField] = clone(resolved);
+            const broad = broadLocationClarificationDecision(fastLane.targetField, fastLane.locationQuery);
+            workingState.conversationMemory.pendingQuestion = {
+              type: "question",
+              actionId: broad.clarification.actionId,
+              field: fastLane.targetField,
+              question: broad.clarification.question,
+              acceptsYesNo: false,
+              attemptedAnswers: [fastLane.locationQuery],
+            };
+            decision = broad;
+          } else {
+            workingState.context[fastLane.targetField] = resolved;
+            workingState.conversationMemory.answeredClarificationFields[fastLane.targetField] = clone(resolved);
+            toolResults.resolvedLocations.push({targetField: fastLane.targetField, location: clone(resolved)});
+            pendingLocationContinuation = true;
+          }
+        }
+      }
+
+      if (!decision && preflight.kind === "continue") {
         const fastClarification = deterministicRemoteOutfitClarificationV2(request, workingState);
         if (fastClarification) {
           workingState = fastClarification.state;
@@ -456,10 +557,15 @@ function createStylistTurnCoordinatorV2({sessionRepository, wardrobeTool, locati
           const resolution = await resolvePendingLocationAnswerV2(locationResolver, pendingQuestion, request.latestUserInput);
           if (!resolution.resolved) {
             // Exact weather is optional after the user has already answered the
-            // one useful location question. A geocoder miss is a tool failure,
-            // not a reason to trap the conversation in another questionnaire.
+            // one useful location question. Preserve the user's semantic place
+            // (for natural final wording) but never turn a geocoder miss into a
+            // second questionnaire turn.
             rememberPendingLocationAttemptV2(workingState, pendingField, request.latestUserInput);
-            workingState = skipPendingClarificationV2(workingState, pendingField);
+            const semanticQuery = resolution.queries?.[0] || request.latestUserInput;
+            const semantic = semanticLocationFallbackV2(semanticQuery, pendingField);
+            workingState.context[pendingField] = semantic;
+            workingState.conversationMemory.answeredClarificationFields[pendingField] = clone(semantic);
+            workingState = disableOptionalWeatherGroundingV2(workingState);
             pendingLocationContinuation = true;
           } else if (locationIsTooBroadForWeatherV2(resolution.resolved)) {
             // One location clarification is enough. Keep the broad place as useful
@@ -588,7 +694,11 @@ module.exports = {
   cleanLocationAnswerFragmentV2,
   createStylistTurnCoordinatorV2,
   deterministicRemoteOutfitClarificationV2,
+  deterministicRemoteOutfitFastLaneV2,
   disableOptionalWeatherGroundingV2,
+  explicitTravelDestinationCandidateV2,
+  inferObviousActivityV2,
+  semanticLocationFallbackV2,
   greetingDecision,
   isFriendlyGreetingV2,
   isFreshLocationObservation,
