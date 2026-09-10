@@ -44,6 +44,7 @@ jobs:
 
           p = Path('.github/_tmp_apply_stylist_v2_fix.py')
           text = p.read_text(encoding='utf-8')
+
           start = text.index("old_cta = '''")
           marker = 'replace_once(path, old_cta, new_cta, "shopping CTA")'
           end = text.index(marker, start) + len(marker)
@@ -52,7 +53,20 @@ jobs:
               'replace_once(path, \'    return "Chceš, aby som ti vybral vhodnejšie topánky?";\\n\', \'    return "Chceš, aby som ti pozrel vhodné topánky v obchodoch?";\\n\', "shopping CTA footwear")',
               'replace_once(path, \'  return "Chceš, aby som ti vybral vhodnejší kúsok do šatníka?";\\n\', \'  return "Chceš, aby som ti pozrel možnosti v obchodoch?";\\n\', "shopping CTA generic")',
           ])
-          p.write_text(text[:start] + replacement + text[end:], encoding='utf-8')
+          text = text[:start] + replacement + text[end:]
+
+          old = "        'assistantText': 'Ahoj! Ako ti môžem pomôcť s outfitom?',"
+          new = "      reply = 'Ahoj! Ako ti môžem pomôcť s outfitom?';"
+          if text.count(old) != 1:
+              raise SystemExit(f"Flutter greeting old patch fragment mismatch: {text.count(old)}")
+          text = text.replace(old, new, 1)
+          old = "        'assistantText': 'Ahoj! Ako ti môžem pomôcť?',"
+          new = "      reply = 'Ahoj! Ako ti môžem pomôcť?';"
+          if text.count(old) != 1:
+              raise SystemExit(f"Flutter greeting new patch fragment mismatch: {text.count(old)}")
+          text = text.replace(old, new, 1)
+
+          p.write_text(text, encoding='utf-8')
           PY
 
           python3 .github/_tmp_apply_stylist_v2_fix.py
