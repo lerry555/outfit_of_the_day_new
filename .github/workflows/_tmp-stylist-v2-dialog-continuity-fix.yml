@@ -154,7 +154,7 @@ jobs:
         run: |
           flutter test test/stylist_simple_agent_fast_path_test.dart
           flutter test test/stylist_quick_reply_contract_test.dart
-          flutter test test/stylist_shopping_runtime_test.dart
+          flutter test --dart-define=SHOPPING_UI_ENABLED=false --dart-define=SHOPPING_FIXTURE_MODE=false test/stylist_shopping_runtime_test.dart
 
       - name: Diff hygiene
         shell: bash
