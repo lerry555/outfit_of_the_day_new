@@ -523,10 +523,12 @@ function finalEnvelope(raw, input) {
   const statePatch = {};
   const canonicalNeed = clean(raw.shoppingNeedCanonicalType, 100);
   const needLabel = clean(raw.shoppingNeedLabel, 180) || canonicalNeed.replace(/_/g, " ");
-  if (raw.offerShopping === true) {
+  const shouldOfferShopping = Boolean(needLabel) &&
+    (raw.offerShopping === true || ["generate_outfit", "edit_outfit"].includes(action));
+  if (shouldOfferShopping) {
     result.assistantText = stripTrailingShoppingQuestionV2(result.assistantText);
   }
-  if (raw.offerShopping === true && needLabel) {
+  if (shouldOfferShopping) {
     const actionId = `shop_${String(input.request.turnId).replace(/[^A-Za-z0-9_-]/g, "_").slice(0, 120)}`;
     statePatch.pendingAction = {type: "action", kind: "shopping", actionId};
     result.quickReplyPrompt = shoppingQuickReplyPromptV2(needLabel, canonicalNeed);
