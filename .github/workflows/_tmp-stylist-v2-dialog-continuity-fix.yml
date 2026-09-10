@@ -32,14 +32,33 @@ jobs:
           test "$(git rev-parse origin/fix/stylist-v2-dialog-continuity-20260909)" = "$expected_work"
           git merge-base --is-ancestor "$expected_target" HEAD
           changed="$(git diff --name-only "$expected_target"...HEAD)"
-          test "$changed" = ".github/workflows/_tmp-stylist-v2-dialog-continuity-fix.yml"
+          expected_changed="$(printf '%s\n%s' '.github/_tmp_apply_stylist_v2_fix.py' '.github/workflows/_tmp-stylist-v2-dialog-continuity-fix.yml')"
+          test "$changed" = "$expected_changed"
 
       - name: Apply global V2 scenario-memory fix
         shell: bash
         run: |
           set -euo pipefail
-          printf '%s' 'IyBUaGlzIGlzIGEgZHVtbXkgcGF0Y2ggc2NyaXB0IHBsYWNlaG9sZGVyLg==' | base64 -d > /tmp/apply_stylist_v2_fix.py
-          python3 /tmp/apply_stylist_v2_fix.py
+          python3 .github/_tmp_apply_stylist_v2_fix.py
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path("functions/stylist/v2/stylist_scenario_memory_v2.js")
+          text = p.read_text(encoding="utf-8")
+          old = "  next.scenarioMemory.activeScenarioId = null;"
+          new = "  next.scenarioMemory = next.scenarioMemory || {activeScenarioId: null, snapshots: []};\n  next.scenarioMemory.activeScenarioId = null;"
+          if text.count(old) != 1:
+              raise SystemExit("scenarioMemory bootstrap hotfix anchor mismatch")
+          p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          p = Path("functions/stylist/v2/openai_stylist_model_port_v2.js")
+          text = p.read_text(encoding="utf-8")
+          old = r"\bdazd|\bprsi|\bsneh|\bsnezi|\bvietor|\bfuka"
+          new = r"\bdazd|dážď|\bprsi|prší|\bsneh|\bsnezi|sneží|\bvietor|\bfuka|fúka"
+          if text.count(old) != 1:
+              raise SystemExit("indoor weather diacritics hotfix anchor mismatch")
+          p.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
 
       - name: Install Functions dependencies
         working-directory: functions
