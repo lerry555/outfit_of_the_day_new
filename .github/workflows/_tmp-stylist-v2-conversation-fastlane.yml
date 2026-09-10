@@ -1,0 +1,129 @@
+name: AI Stylist V2 conversation fastlane verification
+
+on:
+  push:
+    branches:
+      - fix/stylist-v2-conversation-fastlane-20260910
+    paths:
+      - .github/workflows/_tmp-stylist-v2-conversation-fastlane.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify-and-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout exact work branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard canonical refs before patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-v2-conversation-fastlane-20260910
+          test "$GITHUB_REF_NAME" = "fix/stylist-v2-conversation-fastlane-20260910"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "23fe0af569b87851b6652ff39f3cf99cce729fb3"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          changed="$(git diff --name-only origin/stylist-simple-agent HEAD | sort)"
+          expected="$(printf '%s\n' '.github/_tmp_apply_stylist_v2_fastlane.py' '.github/workflows/_tmp-stylist-v2-conversation-fastlane.yml' | sort)"
+          test "$changed" = "$expected"
+
+      - name: Apply product patch
+        run: python .github/_tmp_apply_stylist_v2_fastlane.py
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Syntax check changed backend
+        run: |
+          node --check functions/stylist/v2/stylist_turn_coordinator_v2.js
+          node --check functions/stylist/v2/stylist_turn_engine_v2.js
+          node --check functions/stylist/v2/stylist_production_bridge_v2.js
+          node --check functions/stylist/v2/openai_stylist_model_port_v2.js
+
+      - name: Full Stylist V2 backend regression
+        working-directory: functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          tests="$(find stylist/v2 -maxdepth 1 -name '*.test.js' ! -name 'stylist_session_firestore_emulator.test.js' -print | sort)"
+          node --test $tests
+
+      - name: Existing Stylist backend regression
+        run: node --test functions/stylist/*.test.js
+
+      - name: Use Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+
+      - name: Analyze changed client seam
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos lib/Services/stylist_simple_agent_service_v1.dart
+
+      - name: Flutter fast-path and CTA regressions
+        run: >-
+          flutter test
+          test/stylist_simple_agent_fast_path_test.dart
+          test/stylist_quick_reply_contract_test.dart
+          test/stylist_card_image_priority_test.dart
+
+      - name: Diff hygiene and exact product staging
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          product_files=(
+            functions/stylist/v2/stylist_turn_coordinator_v2.js
+            functions/stylist/v2/stylist_turn_engine_v2.js
+            functions/stylist/v2/stylist_production_bridge_v2.js
+            functions/stylist/v2/openai_stylist_model_port_v2.js
+            functions/stylist/v2/stylist_help_first_torture_v2.test.js
+            functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
+            functions/stylist/v2/stylist_production_bridge_v2.test.js
+            functions/stylist/v2/stylist_turn_engine_v2.test.js
+            lib/Services/stylist_simple_agent_service_v1.dart
+            test/stylist_simple_agent_fast_path_test.dart
+          )
+          git add -- "${product_files[@]}"
+          staged="$(git diff --cached --name-only | sort)"
+          expected="$(printf '%s\n' "${product_files[@]}" | sort)"
+          test "$staged" = "$expected"
+          if git diff --cached --name-only | grep -E '^\.github/'; then
+            echo 'Temporary helper unexpectedly staged' >&2
+            exit 1
+          fi
+
+      - name: Guard refs immediately before product commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-v2-conversation-fastlane-20260910
+          test "$(git rev-parse origin/stylist-simple-agent)" = "23fe0af569b87851b6652ff39f3cf99cce729fb3"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-v2-conversation-fastlane-20260910)" = "$GITHUB_SHA"
+
+      - name: Commit verified product changes only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git commit -m "refactor: make Stylist chat fast and help-first"
+          git push origin HEAD:fix/stylist-v2-conversation-fastlane-20260910
