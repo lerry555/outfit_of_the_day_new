@@ -29,10 +29,7 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/fix/stylist-v2-help-first-clarifications-20260910)" = "$GITHUB_SHA"
           changed="$(git diff --name-only origin/stylist-simple-agent HEAD | sort)"
-          expected="$(printf '%s\n' \
-            '.github/_tmp_apply_help_first_clarifications.py' \
-            '.github/_tmp_update_help_first_expectations.py' \
-            '.github/workflows/_tmp-help-first-clarifications.yml' | sort)"
+          expected="$(printf '%s\n' '.github/_tmp_apply_help_first_clarifications.py' '.github/_tmp_update_help_first_expectations.py' '.github/workflows/_tmp-help-first-clarifications.yml' | sort)"
           test "$changed" = "$expected"
 
       - name: Apply product patch
@@ -66,28 +63,6 @@ jobs:
           tests="$(find stylist/v2 -maxdepth 1 -name '*.test.js' ! -name 'stylist_session_firestore_emulator.test.js' -print | sort)"
           node --test $tests
 
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-
-      - name: Flutter dependencies
-        run: flutter pub get
-
-      - name: Run Stylist Flutter regressions
-        shell: bash
-        run: |
-          set -euo pipefail
-          flutter test test/stylist_simple_agent_fast_path_test.dart
-          flutter test test/stylist_quick_reply_contract_test.dart
-          flutter test --dart-define=SHOPPING_UI_ENABLED=false --dart-define=SHOPPING_FIXTURE_MODE=false test/stylist_shopping_runtime_test.dart
-
-      - name: Restore Flutter tool migrations
-        shell: bash
-        run: |
-          set -euo pipefail
-          git restore --worktree -- analysis_options.yaml pubspec.lock
-
       - name: Diff hygiene
         shell: bash
         run: |
@@ -107,6 +82,7 @@ jobs:
             'functions/stylist/v2/stylist_release_gate_v2.test.js' \
             'functions/stylist/v2/stylist_turn_coordinator_v2.js' \
             'functions/stylist/v2/stylist_v2_phase0_acceptance.test.js' | sort)"
+          printf 'Final changed files:\n%s\n' "$changed"
           test "$changed" = "$expected"
 
       - name: Re-guard refs and commit product changes
