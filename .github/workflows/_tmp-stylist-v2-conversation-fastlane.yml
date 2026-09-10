@@ -33,6 +33,20 @@ jobs:
           expected="$(printf '%s\n' '.github/_tmp_apply_stylist_v2_fastlane.py' '.github/workflows/_tmp-stylist-v2-conversation-fastlane.yml' | sort)"
           test "$changed" = "$expected"
 
+      - name: Make duplicate schema replacement explicit in temporary helper
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/_tmp_apply_stylist_v2_fastlane.py')
+          text = p.read_text(encoding='utf-8')
+          old = '''    count = text.count(old)\n    if count != 1:\n        raise RuntimeError(f"{path}: expected exactly one match, got {count}: {old[:120]!r}")\n    p.write_text(text.replace(old, new, 1), encoding="utf-8")\n'''
+          new = '''    count = text.count(old)\n    if count == 2 and path.endswith("openai_stylist_model_port_v2.js") and "clarificationField" in old:\n        p.write_text(text.replace(old, new, 1), encoding="utf-8")\n        return\n    if count != 1:\n        raise RuntimeError(f"{path}: expected exactly one match, got {count}: {old[:120]!r}")\n    p.write_text(text.replace(old, new, 1), encoding="utf-8")\n'''
+          if text.count(old) != 1:
+              raise SystemExit('temporary helper guard shape changed')
+          p.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply product patch
         run: python .github/_tmp_apply_stylist_v2_fastlane.py
 
