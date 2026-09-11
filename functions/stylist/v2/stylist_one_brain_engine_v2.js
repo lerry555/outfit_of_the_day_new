@@ -56,6 +56,20 @@ function userExplicitlyRequestsBestEffortV2(value) {
   return EXPLICIT_BEST_EFFORT_RE.test(normalizeConversationTextV2(value));
 }
 
+function explicitStylingDestinationCandidateV2(value) {
+  const raw = String(value || "").replace(/\s+/g, " ").trim();
+  if (!raw) return null;
+  const normalized = normalizeConversationTextV2(raw);
+  const stylingSignal = /\b(?:outfit|oblecen\w*|obliec\w*|na seba|tura|turistik\w*|hiking|trek\w*|vylet\w*|dovolen\w*|koncert\w*|festival\w*|svadb\w*|pohovor\w*|ples\w*|lyz\w*)\b/.test(normalized);
+  if (!stylingSignal) return null;
+
+  const travel = raw.match(/\b(?:idem|ideme|pojdem|pojdeme|chystam\s+sa|chystám\s+sa|chystame\s+sa|chystáme\s+sa|cestujem|cestujeme|letim|letím|letime|letíme|vyrazam|vyrážam|vyrazame|vyrážame)\s+(?:do|na|v|vo)\s+(.+?)(?=\s+(?:na|za)\s+(?:turu|túru|turistiku|vylet|výlet|vikend|víkend|dovolenku|koncert|festival|svadbu|pohovor|ples|lyzovacku|lyžovačku)\b|\s+(?:a\s+)?(?:ja\s+)?(?:neviem|netusim|netuším|chcem|potrebujem|co|čo)\b|[,!?]|$)/iu);
+  const query = String(travel?.[1] || "").trim().replace(/[.]+$/g, "");
+  if (!query || query.length > 160) return null;
+  const eventLike = /\b(?:koncert\w*|festival\w*|svadb\w*|pohovor\w*|ples\w*|ceremoni\w*|oslava\w*)\b/.test(normalized);
+  return {query, targetField: eventLike ? "eventLocation" : "destination"};
+}
+
 function pendingReplyDispositionV2(envelope, pendingQuestion) {
   const raw = envelope?.pendingReplyDisposition;
   if (!pendingQuestion) {
@@ -585,6 +599,38 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         }
       }
 
+      // Resolve an explicitly named travel destination before the model. This is
+      // deliberately semantic and country-agnostic: the geocoder decides whether
+      // the user's phrase is a country, region, city or POI. A country is too broad
+      // for weather-sensitive remote styling, so ask the single useful location
+      // question before spending a Brain call or reading the wardrobe.
+      if (!pendingQuestionAtBrain && !bestEffortDirective) {
+        const explicitDestination = explicitStylingDestinationCandidateV2(request.latestUserInput);
+        if (explicitDestination) {
+          let resolvedExplicitDestination = null;
+          try {
+            resolvedExplicitDestination = await locationResolver.resolve(explicitDestination.query);
+          } catch (_) {
+            resolvedExplicitDestination = null;
+          }
+          if (resolvedExplicitDestination) {
+            const field = explicitDestination.targetField;
+            workingState.context[field] = clone(resolvedExplicitDestination);
+            workingState.conversationMemory.answeredClarificationFields[field] = clone(resolvedExplicitDestination);
+            if (locationIsTooBroadForWeatherV2(resolvedExplicitDestination)) {
+              const decision = broadLocationClarificationDecisionV2(
+                {tool: "location", query: explicitDestination.query, targetField: field},
+                {resolvedLocations: [{targetField: field, location: resolvedExplicitDestination}]},
+              );
+              return commitResultV2({
+                durableRepository, uid, request, originalState, workingState, decision,
+                wardrobeItems: [], authorizedEditScope: null,
+              });
+            }
+          }
+        }
+      }
+
       const runtimeConstraints = {
         maxModelCalls: ONE_BRAIN_MAX_MODEL_CALLS,
         modelCallsRemaining: ONE_BRAIN_MAX_MODEL_CALLS,
@@ -686,6 +732,7 @@ module.exports = {
   createStylistOneBrainEngineV2,
   disableWeatherGroundingV2,
   executeRequestedToolsV2,
+  explicitStylingDestinationCandidateV2,
   pendingReplyDispositionV2,
   selectKnownWardrobeV2,
   semanticLocationFallbackV2,
