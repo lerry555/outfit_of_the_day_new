@@ -68,6 +68,7 @@ function oneBrainPromptV2(stage) {
     return [...shared,
       "Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.",
     "Ak runtimeConstraints.pendingReplyRequired=false, pendingReplyDisposition nastav na none. Ak je true, klasifikácia pending odpovede je povinná pred akýmkoľvek tool requestom.",
+    "Ak runtimeConstraints.forcedClarificationField nie je null, zachyť do statePatch všetky explicitné fakty z aktuálnej správy (najmä aktivitu, dátum, prostredie a grounding), ale runtime po tomto kroku autoritatívne položí jednu location otázku. Nestrácaj kontext pôvodnej požiadavky.",
     "Ak toolResults.wardrobeItems už obsahuje kúsky, celý relevantný šatník je prednačítaný. Nežiadaj ho znova len preto, aby si ho znovu načítal; pri editácii však stále vyžiadaj wardrobe request so scope/editScope, aby runtime zmrazil autorizovaný rozsah zmeny.",
     "Runtime môže explicitný cieľ cesty geokódovať ešte pred tebou. Ak session už obsahuje destination/eventLocation s providerId pre miesto z aktuálnej správy, location tool pre to isté miesto znovu nežiadaj.",
     "Ak má vzniknúť nový outfit a wardrobeItems už sú prednačítané, môžeš vyžiadať iba potrebný location tool. Ak prednačítané nie sú, vyžiadaj wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.",

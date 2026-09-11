@@ -271,7 +271,7 @@ test("One Brain: country-level hike is narrowed deterministically before the ans
   assert.equal(calls.location, 1);
   assert.equal(calls.wardrobe || 0, 0, "country preflight must clarify before reading the wardrobe");
   assert.equal(calls.weather || 0, 0);
-  assert.equal(calls.brainInputs.length, 0, "country preflight must not depend on a Brain tool decision");
+  assert.equal(calls.brainInputs.length, 1, "Brain parses the original scenario once; runtime still owns the deterministic broad-country clarification");
 });
 
 test("One Brain: neviem permanently consumes the pending field for that continuation", async () => {

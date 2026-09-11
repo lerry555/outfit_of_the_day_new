@@ -56,6 +56,14 @@ function userExplicitlyRequestsBestEffortV2(value) {
   return EXPLICIT_BEST_EFFORT_RE.test(normalizeConversationTextV2(value));
 }
 
+function pendingLocationQueryV2(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s*[:;]-?[dDpP)]+\s*$/u, "")
+    .trim()
+    .slice(0, 160);
+}
+
 function explicitStylingDestinationCandidateV2(value) {
   const raw = String(value || "").replace(/\s+/g, " ").trim();
   if (!raw) return null;
@@ -599,11 +607,12 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         }
       }
 
-      // Resolve an explicitly named travel destination before the model. This is
-      // deliberately semantic and country-agnostic: the geocoder decides whether
-      // the user's phrase is a country, region, city or POI. A country is too broad
-      // for weather-sensitive remote styling, so ask the single useful location
-      // question before spending a Brain call or reading the wardrobe.
+      // Resolve an explicitly named travel destination before the model. The
+      // geocoder still decides country/region/locality semantically, but a broad
+      // country clarification must not throw away the rest of the user's scenario.
+      // We therefore let the Brain parse explicit activity/date/environment into
+      // statePatch, then deterministically commit the one useful location question.
+      let forcedBroadClarification = null;
       if (!pendingQuestionAtBrain && !bestEffortDirective) {
         const explicitDestination = explicitStylingDestinationCandidateV2(request.latestUserInput);
         if (explicitDestination) {
@@ -618,14 +627,13 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
             workingState.context[field] = clone(resolvedExplicitDestination);
             workingState.conversationMemory.answeredClarificationFields[field] = clone(resolvedExplicitDestination);
             if (locationIsTooBroadForWeatherV2(resolvedExplicitDestination)) {
-              const decision = broadLocationClarificationDecisionV2(
-                {tool: "location", query: explicitDestination.query, targetField: field},
-                {resolvedLocations: [{targetField: field, location: resolvedExplicitDestination}]},
-              );
-              return commitResultV2({
-                durableRepository, uid, request, originalState, workingState, decision,
-                wardrobeItems: [], authorizedEditScope: null,
-              });
+              forcedBroadClarification = {
+                field,
+                decision: broadLocationClarificationDecisionV2(
+                  {tool: "location", query: explicitDestination.query, targetField: field},
+                  {resolvedLocations: [{targetField: field, location: resolvedExplicitDestination}]},
+                ),
+              };
             }
           }
         }
@@ -638,6 +646,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       cannotClarifyFields: cannotClarifyFieldsV2(workingState),
       pendingReplyRequired: Boolean(pendingQuestionAtBrain),
       pendingReplyField: pendingQuestionAtBrain?.field || null,
+      forcedClarificationField: forcedBroadClarification?.field || null,
       noAutomaticGroundingQuestions: true,
       answerStageMayClarify: false,
       };
@@ -655,6 +664,44 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       runtimeConstraints.modelCallsRemaining -= 1;
       validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
     const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
+
+    // A country preflight must preserve explicit scenario facts parsed from the
+    // original message before runtime stops for the one useful location question.
+    if (forcedBroadClarification) {
+      workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+      return commitResultV2({
+        durableRepository, uid, request, originalState, workingState,
+        decision: forcedBroadClarification.decision,
+        wardrobeItems: [], authorizedEditScope: null,
+      });
+    }
+
+    // If the Brain correctly classifies a pending destination reply as an answer
+    // but tries to finish with a bare acknowledgement (for example "Rozumiem."),
+    // runtime completes the missing location + wardrobe tool step instead of
+    // accepting the dead-end chat response. Classification remains semantic;
+    // runtime only guarantees continuation after an acknowledged location answer.
+    let effectiveToolEnvelope = toolEnvelope;
+    if (pendingQuestionAtBrain && pendingDisposition === "answer" &&
+        ["destination", "eventLocation"].includes(pendingQuestionAtBrain.field)) {
+      const requests = Array.isArray(toolEnvelope.requests) ? clone(toolEnvelope.requests) : [];
+      if (!requests.some((entry) => entry?.tool === "location" &&
+          entry.targetField === pendingQuestionAtBrain.field)) {
+        requests.push({
+          tool: "location",
+          query: pendingLocationQueryV2(request.latestUserInput),
+          targetField: pendingQuestionAtBrain.field,
+        });
+      }
+      if (!requests.some((entry) => entry?.tool === "wardrobe") && !Array.isArray(knownWardrobeItems)) {
+        requests.push({tool: "wardrobe", scope: "full_relevant", category: null, editScope: null});
+      }
+      effectiveToolEnvelope = {...toolEnvelope, kind: "tool_request", requests,
+        pendingReplyDisposition: pendingDisposition};
+      validateToolDecisionEnvelopeV2(effectiveToolEnvelope,
+        {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
+    }
+
     let preservePendingQuestion = false;
     if (pendingQuestionAtBrain) {
       if (pendingDisposition === "skip") {
@@ -665,12 +712,12 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         preservePendingQuestion = true;
       }
     }
-    workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+    workingState = applyBrainStatePatchV2(workingState, effectiveToolEnvelope.statePatch);
 
-    if (toolEnvelope.kind === "final") {
+    if (effectiveToolEnvelope.kind === "final") {
       return commitResultV2({
         durableRepository, uid, request, originalState, workingState,
-        decision: toolEnvelope.result,
+        decision: effectiveToolEnvelope.result,
         wardrobeItems: Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : [],
         authorizedEditScope: null,
         preservePendingQuestion,
@@ -678,7 +725,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
     }
 
       const executed = await executeRequestedToolsV2({
-        envelope: toolEnvelope,
+        envelope: effectiveToolEnvelope,
         state: workingState,
         wardrobeTool,
         locationResolver,
@@ -686,7 +733,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       knownWardrobeItems,
     });
       workingState = executed.workingState;
-      const broadLocationRequest = toolEnvelope.requests.find((entry) => entry?.tool === "location");
+      const broadLocationRequest = effectiveToolEnvelope.requests.find((entry) => entry?.tool === "location");
       if (!pendingQuestionAtBrain &&
           runtimeConstraints.allowClarification &&
           broadLocationRequest &&
@@ -733,6 +780,7 @@ module.exports = {
   disableWeatherGroundingV2,
   executeRequestedToolsV2,
   explicitStylingDestinationCandidateV2,
+  pendingLocationQueryV2,
   pendingReplyDispositionV2,
   selectKnownWardrobeV2,
   semanticLocationFallbackV2,
