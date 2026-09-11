@@ -54,6 +54,7 @@ import '../utils/stylist_weather_tip.dart';
 import '../utils/stylist_weather_adjustment.dart';
 import '../utils/stylist_chat_entitlement.dart';
 import '../utils/wardrobe_image_url_priority.dart';
+import '../utils/stylist_welcome_message.dart';
 import '../models/outfit_context_state.dart';
 import '../models/shopping_ui_feature_flags.dart';
 import '../models/stylist_shopping_runtime.dart';
@@ -227,9 +228,12 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
 
-  static const _greeting = StylistChatMessage(text: 'Ahoj :)', isUser: false);
+  final List<StylistChatMessage> _messages = <StylistChatMessage>[];
 
-  final List<StylistChatMessage> _messages = <StylistChatMessage>[_greeting];
+  StylistChatMessage _newWelcomeMessage() => StylistChatMessage(
+    text: pickStylistWelcomeMessage(),
+    isUser: false,
+  );
   StylistShoppingSessionState _shoppingState =
       const StylistShoppingSessionState();
 
@@ -312,6 +316,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   @override
   void initState() {
     super.initState();
+    _messages.add(_newWelcomeMessage());
     _loadPremiumState();
     unawaited(FcmService.instance.init());
     unawaited(_bootstrapChatContext());
@@ -626,6 +631,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
             .where(
               (m) =>
                   !m.ephemeral &&
+                  (m.isUser || !isStylistWelcomeMessage(m.text)) &&
                   (m.text.trim().isNotEmpty || m.imageUrl != null),
             )
             .map((m) => m.toMap())
@@ -672,7 +678,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
     setState(() {
       _messages
         ..clear()
-        ..add(_greeting);
+        ..add(_newWelcomeMessage());
       _activeChatId = null;
       _chatTitle = null;
       _chatTitleEdited = false;
@@ -728,7 +734,11 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
       setState(() {
         _messages
           ..clear()
-          ..addAll(loaded.isEmpty ? const [_greeting] : loaded);
+          ..addAll(
+            loaded.isEmpty
+                ? <StylistChatMessage>[_newWelcomeMessage()]
+                : loaded,
+          );
         _activeChatId = chatId;
         _chatTitle = (data?['title'] ?? '').toString();
         _chatTitleEdited = _chatTitle!.trim().isNotEmpty;
@@ -4215,10 +4225,16 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   }
 
   List<Map<String, String>> _buildHistoryForBackend() {
-    final start = _messages.length > _historyLimit
-        ? _messages.length - _historyLimit
+    final historyMessages = _messages
+        .where(
+          (message) =>
+              message.isUser || !isStylistWelcomeMessage(message.text),
+        )
+        .toList(growable: false);
+    final start = historyMessages.length > _historyLimit
+        ? historyMessages.length - _historyLimit
         : 0;
-    final recentMessages = _messages.sublist(start);
+    final recentMessages = historyMessages.sublist(start);
     return recentMessages
         .map(
           (message) => <String, String>{
