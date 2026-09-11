@@ -44,10 +44,26 @@ jobs:
         run: python tools/_tmp_fix_stylist_general_location_layering.py
 
       - name: Focused One-Brain regressions
+        id: focused_tests
+        continue-on-error: true
+        shell: bash
         run: |
+          set -o pipefail
           node --test \
             functions/stylist/v2/stylist_general_location_layering_v2.test.js \
-            functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+            functions/stylist/v2/stylist_one_brain_runtime_v2.test.js 2>&1 | tee focused-test-output.txt
+
+      - name: Upload focused test diagnostics
+        uses: actions/upload-artifact@v4
+        with:
+          name: stylist-general-location-layering-test-output
+          path: focused-test-output.txt
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Stop on regression failure
+        if: steps.focused_tests.outcome != 'success'
+        run: exit 1
 
       - name: Validate diff and remove helpers
         shell: bash
