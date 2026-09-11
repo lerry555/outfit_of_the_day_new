@@ -269,9 +269,9 @@ test("One Brain: country-level hike is narrowed deterministically before the ans
   assert.match(result.assistantText, /dosť široké/);
   assert.match(result.assistantText, /Kam približne/);
   assert.equal(calls.location, 1);
-  assert.equal(calls.wardrobe, 1);
+  assert.equal(calls.wardrobe || 0, 0, "country preflight must clarify before reading the wardrobe");
   assert.equal(calls.weather || 0, 0);
-  assert.equal(calls.brainInputs.length, 1, "broad country must not spend the answer-stage model call");
+  assert.equal(calls.brainInputs.length, 0, "country preflight must not depend on a Brain tool decision");
 });
 
 test("One Brain: neviem permanently consumes the pending field for that continuation", async () => {
