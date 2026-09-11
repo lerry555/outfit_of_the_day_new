@@ -209,6 +209,71 @@ test("One Brain: Austria hike -> Alps answer cannot trigger a second clarificati
   assert.equal(scripts.length, 0);
 });
 
+test("One Brain: country-level hike is narrowed deterministically before the answer stage", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const calls = {brainInputs: []};
+  const brain = {
+    async brainTurn(input) {
+      calls.brainInputs.push(JSON.parse(JSON.stringify(input)));
+      return {
+        kind: "tool_request",
+        statePatch: {
+          context: {
+            activity: {id: "hiking", label: "turistika", source: "user"},
+            date: {dateKey: "2026-09-17", source: "user"},
+            timeWindow: {key: "day", label: "cez deň", source: "one_brain_default"},
+            environment: "outdoor",
+            groundingRequirements: {
+              weatherRequired: true,
+              weatherLocationField: "destination",
+              terrainRequiredFields: [],
+            },
+          },
+        },
+        requests: [
+          {tool: "location", query: "Rakúsko", targetField: "destination"},
+          {tool: "wardrobe", scope: "full_relevant", category: null, editScope: null},
+        ],
+      };
+    },
+  };
+  const ports = fakePorts({
+    brain,
+    calls,
+    location: {
+      providerId: "openmeteo:austria",
+      label: "Rakúsko",
+      lat: 47.5,
+      lng: 14.5,
+      source: "fake-location",
+      granularity: "country",
+    },
+  });
+  const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+  const result = await engine.resolveTurn({
+    uid: "u_country",
+    request: request({
+      chatId: "chat_country_hike",
+      turnId: "t1",
+      revision: 0,
+      message: "budúci štvrtok ideme do Rakúska na turistiku a neviem čo si mám obliecť",
+    }),
+    bootstrapInput: {
+      currentOutfitItemIds: [],
+      persistedSelectionReasonsByItemId: {},
+      knownExplicitDurableChoices: {},
+    },
+  });
+  assert.equal(result.action, "clarify");
+  assert.equal(result.clarification.field, "destination");
+  assert.match(result.assistantText, /dosť široké/);
+  assert.match(result.assistantText, /Kam približne/);
+  assert.equal(calls.location, 1);
+  assert.equal(calls.wardrobe, 1);
+  assert.equal(calls.weather || 0, 0);
+  assert.equal(calls.brainInputs.length, 1, "broad country must not spend the answer-stage model call");
+});
+
 test("One Brain: neviem permanently consumes the pending field for that continuation", async () => {
   const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
   const calls = {brainInputs: []};
@@ -603,6 +668,7 @@ test("One Brain model contract classifies pending replies and uses Terra medium"
   assert.deepEqual(specs[0].schema.properties.pendingReplyDisposition.enum, ["none", "answer", "skip", "meta", "unrelated"]);
   const systemPrompt = specs[0].messages[0].content;
   assert.match(systemPrompt, /priateľský profesionál/);
+  assert.match(systemPrompt, /nezačínaj holým rozkazom/);
   assert.match(systemPrompt, /Emoji používaj striedmo/);
   assert.match(systemPrompt, /silno pokazený alebo preklepový/);
   assert.equal(envelope.pendingReplyDisposition, "unrelated");
