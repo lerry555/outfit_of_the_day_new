@@ -35,6 +35,7 @@ const TOOL_REQUEST_SCOPES = new Set([
   "full_relevant",
 ]);
 const SKIP_DIRECTIVE_RE = /\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
+const EXPLICIT_BEST_EFFORT_RE = /\b(je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
 const PENDING_REPLY_DISPOSITIONS = new Set(["none", "answer", "skip", "meta", "unrelated"]);
 
 function normalizeConversationTextV2(value) {
@@ -49,6 +50,10 @@ function normalizeConversationTextV2(value) {
 
 function userRequestsBestEffortV2(value) {
   return SKIP_DIRECTIVE_RE.test(normalizeConversationTextV2(value));
+}
+
+function userExplicitlyRequestsBestEffortV2(value) {
+  return EXPLICIT_BEST_EFFORT_RE.test(normalizeConversationTextV2(value));
 }
 
 function pendingReplyDispositionV2(envelope, pendingQuestion) {
@@ -367,6 +372,28 @@ function shoppingContextV2(state, pending) {
   };
 }
 
+function broadLocationClarificationDecisionV2(locationRequest, toolResults) {
+  const resolved = (toolResults?.resolvedLocations || [])
+    .find((entry) => entry?.targetField === locationRequest?.targetField)?.location;
+  const rawLabel = String(resolved?.label || locationRequest?.query || "").trim();
+  const label = rawLabel ? `„${rawLabel}“` : "Toto miesto";
+  const targetField = locationRequest?.targetField === "eventLocation" ? "eventLocation" : "destination";
+  const question = targetField === "eventLocation" ?
+    `Jasné 😊 ${label} je ešte dosť široké. Kde približne sa tá udalosť koná?` :
+    `Jasné 😊 ${label} je na takýto plán ešte dosť široké. Kam približne tam ideš? Stačí oblasť alebo pohorie.`;
+  return {
+    action: "clarify",
+    assistantText: question,
+    clarification: {
+      field: targetField,
+      question,
+      actionId: `clarify_${targetField}_narrow`,
+      acceptsYesNo: false,
+    },
+    display: {kind: "none", itemIds: []},
+  };
+}
+
 async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool,
   knownWardrobeItems = null}) {
   let workingState = applyBrainStatePatchV2(state, envelope.statePatch);
@@ -519,8 +546,10 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       workingState = applyDayDefaultV2(workingState);
 
       const hadPendingQuestion = Boolean(workingState.conversationMemory.pendingQuestion);
-      const bestEffortDirective = userRequestsBestEffortV2(request.latestUserInput);
-      if (hadPendingQuestion && bestEffortDirective) {
+      const pendingSkipDirective = hadPendingQuestion && userRequestsBestEffortV2(request.latestUserInput);
+      const bestEffortDirective = pendingSkipDirective ||
+        (!hadPendingQuestion && userExplicitlyRequestsBestEffortV2(request.latestUserInput));
+      if (pendingSkipDirective) {
       workingState = applySkipToPendingQuestionV2(workingState);
     }
     const pendingQuestionAtBrain = clone(workingState.conversationMemory.pendingQuestion);
@@ -611,6 +640,18 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       knownWardrobeItems,
     });
       workingState = executed.workingState;
+      const broadLocationRequest = toolEnvelope.requests.find((entry) => entry?.tool === "location");
+      if (!pendingQuestionAtBrain &&
+          runtimeConstraints.allowClarification &&
+          broadLocationRequest &&
+          executed.toolResults.locationStatus === "broad") {
+        const decision = broadLocationClarificationDecisionV2(broadLocationRequest, executed.toolResults);
+        return commitResultV2({
+          durableRepository, uid, request, originalState, workingState, decision,
+          wardrobeItems: executed.wardrobeItems,
+          authorizedEditScope: executed.toolResults.authorizedEditScope,
+        });
+      }
       const answerConstraints = {
         ...runtimeConstraints,
         modelCallsRemaining: 1,
