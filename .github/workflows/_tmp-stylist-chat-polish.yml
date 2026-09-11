@@ -1,0 +1,527 @@
+name: Temporary Stylist chat polish runner
+
+on:
+  push:
+    branches:
+      - fix/stylist-chat-polish-images-20260911
+    paths:
+      - .github/workflows/_tmp-stylist-chat-polish.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout guarded work branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/stylist-chat-polish-images-20260911
+          fetch-depth: 0
+
+      - name: Use Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Apply focused product patch
+        shell: bash
+        run: |
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, got {count} for {old[:80]!r}')
+              p.write_text(text.replace(old, new, 1), encoding='utf-8')
+
+          # Zero-token, rotating local welcome prompts. Legacy "Ahoj :)" is
+          # recognized only so old chats do not keep sending it back to Brain.
+          Path('lib/utils/stylist_welcome_message.dart').write_text(r'''import 'dart:math';
+
+const List<String> stylistWelcomeMessages = <String>[
+  'S čím dnes pomôžem? 😊 Môžeme vyskladať outfit na konkrétnu udalosť, zhodnotiť tvoj look alebo pozrieť nové kúsky.',
+  'Čo dnes riešime? 😄 Vyskladáme outfit, doladíme tvoj look alebo sa pozrieme, čo ti v šatníku chýba.',
+  'Kam sa dnes chystáš? 👕 Poďme vymyslieť, čo na seba.',
+  'Máš konkrétnu príležitosť alebo len chuť niečo zmeniť? 🙂 Pozrieme outfit, tvoj look aj nové kúsky.',
+  'Som pripravený 😄 Môžeme riešiť outfit na udalosť, zhodnotiť to, čo máš na sebe, alebo pozrieť obchody.',
+  'Čo dáme dnes? 😊 Outfit na konkrétnu akciu, rýchle hodnotenie looku alebo niečo nové do šatníka?',
+  'Povedz, kam ideš alebo čo chceš doladiť 🙂 Z tvojho šatníka skúsim vybrať najlepšiu možnosť.',
+  'Môžeme rovno k veci 😄 Kam ideš, čo máš na sebe alebo aký kúsok hľadáš?',
+  'S čím ti dnes pomôžem? 👌 Vyskladám outfit, pozriem tvoj aktuálny look alebo môžeme hľadať nový kúsok.',
+  'Čo dnes vymyslíme? 🙂 Stačí povedať príležitosť, poslať outfit na zhodnotenie alebo povedať, čo chceš dokúpiť.',
+  'Outfit, hodnotenie looku alebo shopping? 😄 Povedz, čo práve potrebuješ.',
+  'Poďme na to 🙂 Ak máš udalosť, plán alebo outfit na zhodnotenie, hoď ho sem.',
+];
+
+final Random _stylistWelcomeRandom = Random();
+
+String pickStylistWelcomeMessage({Random? random}) {
+  final source = random ?? _stylistWelcomeRandom;
+  return stylistWelcomeMessages[source.nextInt(stylistWelcomeMessages.length)];
+}
+
+bool isStylistWelcomeMessage(String text) {
+  final normalized = text.trim();
+  return normalized == 'Ahoj :)' || stylistWelcomeMessages.contains(normalized);
+}
+''', encoding='utf-8')
+
+          # Screen: welcome is UI-only: never persisted and never sent to Brain.
+          screen = Path('lib/screens/stylist_chat_screen.dart')
+          text = screen.read_text(encoding='utf-8')
+          old_import = "import '../utils/wardrobe_image_url_priority.dart';\n"
+          new_import = old_import + "import '../utils/stylist_welcome_message.dart';\n"
+          if text.count(old_import) != 1:
+              raise SystemExit('screen: wardrobe image import anchor mismatch')
+          text = text.replace(old_import, new_import, 1)
+
+          old_greeting = "  static const _greeting = StylistChatMessage(text: 'Ahoj :)', isUser: false);\n\n  final List<StylistChatMessage> _messages = <StylistChatMessage>[_greeting];"
+          new_greeting = "  final List<StylistChatMessage> _messages = <StylistChatMessage>[];\n\n  StylistChatMessage _newWelcomeMessage() => StylistChatMessage(\n    text: pickStylistWelcomeMessage(),\n    isUser: false,\n  );"
+          if text.count(old_greeting) != 1:
+              raise SystemExit('screen: greeting anchor mismatch')
+          text = text.replace(old_greeting, new_greeting, 1)
+
+          old_init = "  void initState() {\n    super.initState();\n    _loadPremiumState();"
+          new_init = "  void initState() {\n    super.initState();\n    _messages.add(_newWelcomeMessage());\n    _loadPremiumState();"
+          if text.count(old_init) != 1:
+              raise SystemExit('screen: initState anchor mismatch')
+          text = text.replace(old_init, new_init, 1)
+
+          if text.count('..add(_greeting);') != 1:
+              raise SystemExit(f"screen: reset greeting count={text.count('..add(_greeting);')}")
+          text = text.replace('..add(_greeting);', '..add(_newWelcomeMessage());', 1)
+
+          old_restore = '..addAll(loaded.isEmpty ? const [_greeting] : loaded);'
+          new_restore = '..addAll(\n            loaded.isEmpty\n                ? <StylistChatMessage>[_newWelcomeMessage()]\n                : loaded,\n          );'
+          if text.count(old_restore) != 1:
+              raise SystemExit('screen: restore greeting anchor mismatch')
+          text = text.replace(old_restore, new_restore, 1)
+
+          old_persist = "              (m) =>\n                  !m.ephemeral &&\n                  (m.text.trim().isNotEmpty || m.imageUrl != null),"
+          new_persist = "              (m) =>\n                  !m.ephemeral &&\n                  (m.isUser || !isStylistWelcomeMessage(m.text)) &&\n                  (m.text.trim().isNotEmpty || m.imageUrl != null),"
+          if text.count(old_persist) != 1:
+              raise SystemExit('screen: persistence filter anchor mismatch')
+          text = text.replace(old_persist, new_persist, 1)
+
+          old_history = """  List<Map<String, String>> _buildHistoryForBackend() {
+    final start = _messages.length > _historyLimit
+        ? _messages.length - _historyLimit
+        : 0;
+    final recentMessages = _messages.sublist(start);
+    return recentMessages
+"""
+          new_history = """  List<Map<String, String>> _buildHistoryForBackend() {
+    final historyMessages = _messages
+        .where(
+          (message) =>
+              message.isUser || !isStylistWelcomeMessage(message.text),
+        )
+        .toList(growable: false);
+    final start = historyMessages.length > _historyLimit
+        ? historyMessages.length - _historyLimit
+        : 0;
+    final recentMessages = historyMessages.sublist(start);
+    return recentMessages
+"""
+          if text.count(old_history) != 1:
+              raise SystemExit('screen: backend history anchor mismatch')
+          text = text.replace(old_history, new_history, 1)
+          screen.write_text(text, encoding='utf-8')
+
+          # Storage-backed wardrobe images: use Firebase SDK bytes first so
+          # App Check/auth headers are preserved. On failure, try the stored
+          # URL, then advance product -> cutout -> clean. Raw person photos
+          # remain excluded by stylist_card_image_priority.dart.
+          Path('lib/widgets/stylist_suggested_item_card.dart').write_text(r'''import 'dart:typed_data';
+
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/material.dart';
+
+import '../utils/stylist_card_image_priority.dart';
+
+class StylistSuggestedItemCard extends StatefulWidget {
+  const StylistSuggestedItemCard({super.key, required this.item});
+  final Map<String, dynamic> item;
+
+  @override
+  State<StylistSuggestedItemCard> createState() => _StylistSuggestedItemCardState();
+}
+
+class _ResolvedStylistCardImage {
+  const _ResolvedStylistCardImage.memory(this.bytes) : url = null;
+  const _ResolvedStylistCardImage.network(this.url) : bytes = null;
+
+  final Uint8List? bytes;
+  final String? url;
+}
+
+class _StylistSuggestedItemCardState extends State<StylistSuggestedItemCard> {
+  static const int _maxStorageImageBytes = 15 * 1024 * 1024;
+
+  late List<StylistCardImageCandidate> _candidates;
+  late Future<_ResolvedStylistCardImage?> _imageFuture;
+  int _index = 0;
+  final Set<int> _failed = <int>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _reset();
+  }
+
+  @override
+  void didUpdateWidget(covariant StylistSuggestedItemCard oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if ((oldWidget.item['id'] ?? '').toString() !=
+            (widget.item['id'] ?? '').toString() ||
+        oldWidget.item['productImageUrl'] != widget.item['productImageUrl'] ||
+        oldWidget.item['cleanImageUrl'] != widget.item['cleanImageUrl'] ||
+        oldWidget.item['cutoutImageUrl'] != widget.item['cutoutImageUrl']) {
+      _reset();
+    }
+  }
+
+  void _reset() {
+    _index = 0;
+    _failed.clear();
+    _candidates = stylistCardImageCandidates(widget.item);
+    _imageFuture = _resolveCurrentCandidate();
+  }
+
+  Future<_ResolvedStylistCardImage?> _resolveCurrentCandidate() async {
+    if (_index < 0 || _index >= _candidates.length) return null;
+    final candidate = _candidates[_index];
+    final path = candidate.storagePath?.trim() ?? '';
+
+    if (path.isNotEmpty) {
+      try {
+        final bytes = await FirebaseStorage.instance
+            .ref(path)
+            .getData(_maxStorageImageBytes)
+            .timeout(const Duration(seconds: 6));
+        if (bytes != null && bytes.isNotEmpty) {
+          return _ResolvedStylistCardImage.memory(bytes);
+        }
+      } catch (_) {
+        // A saved URL may still be valid (for example an external product
+        // image), so do not discard this candidate merely because Storage
+        // lookup failed. If it also fails, the widget advances to the next
+        // product-like derivative.
+      }
+    }
+
+    final url = candidate.url.trim();
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      return _ResolvedStylistCardImage.network(url);
+    }
+    return null;
+  }
+
+  void _advanceAfterFailure(int failedIndex) {
+    if (_failed.contains(failedIndex)) return;
+    _failed.add(failedIndex);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _index != failedIndex) return;
+      if (failedIndex + 1 < _candidates.length) {
+        setState(() {
+          _index = failedIndex + 1;
+          _imageFuture = _resolveCurrentCandidate();
+        });
+      }
+    });
+  }
+
+  Widget _placeholder(Color color) =>
+      Icon(Icons.checkroom, color: color, size: 24);
+
+  @override
+  Widget build(BuildContext context) {
+    const textPrimary = Color(0xFFF1F0EC);
+    const textSecondary = Color(0xFFAAA59B);
+    final label = (widget.item['name'] ??
+            widget.item['label'] ??
+            widget.item['category'] ??
+            'Kúsok')
+        .toString();
+    return SizedBox(
+      width: 96,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          SizedBox(
+            height: 78,
+            width: double.infinity,
+            child: FutureBuilder<_ResolvedStylistCardImage?>(
+              future: _imageFuture,
+              builder: (context, snapshot) {
+                if (_candidates.isEmpty || _index >= _candidates.length) {
+                  return _placeholder(textSecondary);
+                }
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox.shrink();
+                }
+                final currentIndex = _index;
+                final image = snapshot.data;
+                if (image == null) {
+                  _advanceAfterFailure(currentIndex);
+                  return _placeholder(textSecondary);
+                }
+                final bytes = image.bytes;
+                if (bytes != null) {
+                  return Image.memory(
+                    bytes,
+                    key: ValueKey(
+                      '${widget.item['id'] ?? label}:memory:$currentIndex',
+                    ),
+                    fit: BoxFit.contain,
+                    alignment: Alignment.center,
+                    gaplessPlayback: true,
+                    errorBuilder: (_, __, ___) {
+                      _advanceAfterFailure(currentIndex);
+                      return _placeholder(textSecondary);
+                    },
+                  );
+                }
+                final url = image.url;
+                if (url == null || url.isEmpty) {
+                  _advanceAfterFailure(currentIndex);
+                  return _placeholder(textSecondary);
+                }
+                return Image.network(
+                  url,
+                  key: ValueKey('${widget.item['id'] ?? label}:$url'),
+                  fit: BoxFit.contain,
+                  alignment: Alignment.center,
+                  errorBuilder: (_, __, ___) {
+                    _advanceAfterFailure(currentIndex);
+                    return _placeholder(textSecondary);
+                  },
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: textPrimary,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              height: 1.2,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+''', encoding='utf-8')
+
+          # Local no-token greetings should feel welcoming, not bureaucratic.
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              "reply = 'Ahoj! Jasné 🙂 S čím ti môžem pomôcť?';",
+              "reply = 'Jasné 😄 Čo dnes riešime?';",
+          )
+          replace_once(
+              'lib/Services/stylist_simple_agent_service_v1.dart',
+              "reply = 'Ahoj! Ako ti môžem pomôcť?';",
+              "reply = 'Ahoj 😊 Som tu. Čo dnes vymyslíme?';",
+          )
+
+          # One-Brain tone contract: warm professional, sparse emoji, light
+          # humor when the user sets that tone, graceful recovery from garble.
+          prompt = Path('functions/stylist/v2/openai_one_brain_model_port_v2.js')
+          ptext = prompt.read_text(encoding='utf-8')
+          anchor = '    "Odpoveď má znieť ako normálny schopný stylista, nie ako log, validator, state machine alebo technický report.",\n'
+          addition = (
+              '    "Tón: priateľský profesionál — teplý, nenútený a ľudský, ale stále kompetentný. Jemne zrkadli energiu používateľa a nepreháňaj familiárnosť, ak ju používateľ sám nenastaví.",\n'
+              '    "Emoji používaj striedmo a prirodzene, zvyčajne najviac jedno v odpovedi. Nemusí byť v každej správe a pri vážnom bezpečnostnom upozornení ho radšej vynechaj.",\n'
+              '    "Ak je používateľ hravý alebo žartuje, môžeš odpovedať ľahkým humorom. Ak je text silno pokazený alebo preklepový a význam nevieš spoľahlivo obnoviť, povedz to ľudsky a s ľahkým humorom, že si sa trochu stratil, a popros o zopakovanie. Nepoužívaj úradnícke formulácie typu Čo presne chceš povedať alebo s čím pomôcť.",\n'
+          )
+          if ptext.count(anchor) != 1:
+              raise SystemExit('one-brain prompt anchor mismatch')
+          prompt.write_text(ptext.replace(anchor, addition + anchor, 1), encoding='utf-8')
+
+          # Flutter regression updates + welcome contract checks.
+          fast_test = Path('test/stylist_simple_agent_fast_path_test.dart')
+          ftext = fast_test.read_text(encoding='utf-8')
+          if "import 'dart:io';" not in ftext:
+              ftext = "import 'dart:io';\n\n" + ftext
+          import_anchor = "import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';\n"
+          if ftext.count(import_anchor) != 1:
+              raise SystemExit('fast path test import anchor mismatch')
+          ftext = ftext.replace(
+              import_anchor,
+              import_anchor + "import 'package:outfitofTheDay/utils/stylist_welcome_message.dart';\n",
+              1,
+          )
+          ftext = ftext.replace("expect(result['reply'], 'Ahoj! Ako ti môžem pomôcť?');", "expect(result['reply'], 'Ahoj 😊 Som tu. Čo dnes vymyslíme?');")
+          ftext = ftext.replace("expect(result['reply'], 'Ahoj! Jasné 🙂 S čím ti môžem pomôcť?');", "expect(result['reply'], 'Jasné 😄 Čo dnes riešime?');")
+          marker = "  testWidgets('shopping follow-up renders server prompt directly above yes-no buttons', (tester) async {"
+          welcome_test = r'''  test('new chat welcome is varied, useful and kept out of model history', () {
+    expect(stylistWelcomeMessages.length, greaterThanOrEqualTo(10));
+    expect(stylistWelcomeMessages.toSet().length, stylistWelcomeMessages.length);
+    expect(stylistWelcomeMessages, isNot(contains('Ahoj :)')));
+    expect(isStylistWelcomeMessage('Ahoj :)'), isTrue);
+    expect(
+      stylistWelcomeMessages.any((message) => message.toLowerCase().contains('outfit')),
+      isTrue,
+    );
+    expect(
+      stylistWelcomeMessages.any(
+        (message) =>
+            message.toLowerCase().contains('obchod') ||
+            message.toLowerCase().contains('shopping'),
+      ),
+      isTrue,
+    );
+
+    final screenSource = File('lib/screens/stylist_chat_screen.dart').readAsStringSync();
+    expect(screenSource, contains('_newWelcomeMessage()'));
+    expect(screenSource, contains('isStylistWelcomeMessage(message.text)'));
+    expect(
+      screenSource,
+      isNot(contains("StylistChatMessage(text: 'Ahoj :)'")),
+    );
+  });
+
+'''
+          if ftext.count(marker) != 1:
+              raise SystemExit('fast path test insertion anchor mismatch')
+          ftext = ftext.replace(marker, welcome_test + marker, 1)
+          fast_test.write_text(ftext, encoding='utf-8')
+
+          # Renderer contract regression: Storage SDK bytes first, then URL
+          # fallback, while raw-person URLs remain excluded by priority tests.
+          image_test = Path('test/stylist_card_image_priority_test.dart')
+          itext = image_test.read_text(encoding='utf-8')
+          if "import 'dart:io';" not in itext:
+              itext = "import 'dart:io';\n\n" + itext
+          end_marker = "}\n"
+          renderer_test = r'''
+  test('Stylist card renderer uses App Check-aware Storage bytes before URL fallback', () {
+    final source = File('lib/widgets/stylist_suggested_item_card.dart').readAsStringSync();
+    expect(source, contains('.getData(_maxStorageImageBytes)'));
+    expect(source, contains('Image.memory('));
+    expect(source, contains('Image.network('));
+    expect(source, contains('_advanceAfterFailure'));
+  });
+'''
+          pos = itext.rfind(end_marker)
+          if pos < 0:
+              raise SystemExit('image test closing brace not found')
+          itext = itext[:pos] + renderer_test + itext[pos:]
+          image_test.write_text(itext, encoding='utf-8')
+
+          # Backend contract regression for warm-professional behavior.
+          runtime_test = Path('functions/stylist/v2/stylist_one_brain_runtime_v2.test.js')
+          rtext = runtime_test.read_text(encoding='utf-8')
+          enum_assert = '  assert.deepEqual(specs[0].schema.properties.pendingReplyDisposition.enum, ["none", "answer", "skip", "meta", "unrelated"]);\n'
+          tone_assert = (
+              '  const systemPrompt = specs[0].messages[0].content;\n'
+              '  assert.match(systemPrompt, /priateľský profesionál/);\n'
+              '  assert.match(systemPrompt, /Emoji používaj striedmo/);\n'
+              '  assert.match(systemPrompt, /silno pokazený alebo preklepový/);\n'
+          )
+          if rtext.count(enum_assert) != 1:
+              raise SystemExit('runtime test enum anchor mismatch')
+          runtime_test.write_text(rtext.replace(enum_assert, enum_assert + tone_assert, 1), encoding='utf-8')
+          PY
+
+      - name: Format focused Dart files
+        run: >-
+          dart format
+          lib/utils/stylist_welcome_message.dart
+          lib/widgets/stylist_suggested_item_card.dart
+          lib/Services/stylist_simple_agent_service_v1.dart
+          test/stylist_simple_agent_fast_path_test.dart
+          test/stylist_card_image_priority_test.dart
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Install function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Static checks
+        run: |
+          git diff --check
+          node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+          flutter analyze --no-fatal-warnings --no-fatal-infos \
+            lib/Services/stylist_simple_agent_service_v1.dart \
+            lib/screens/stylist_chat_screen.dart \
+            lib/widgets/stylist_suggested_item_card.dart \
+            lib/utils/stylist_card_image_priority.dart \
+            lib/utils/stylist_welcome_message.dart
+
+      - name: Targeted Flutter regressions
+        run: >-
+          flutter test
+          test/stylist_simple_agent_fast_path_test.dart
+          test/stylist_card_image_priority_test.dart
+          test/stylist_quick_reply_contract_test.dart
+          test/stylist_chat_progress_test.dart
+
+      - name: One-Brain regression
+        run: node --test functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Guard canonical heads immediately before push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-chat-polish-images-20260911
+          PROD="$(git rev-parse origin/stylist-simple-agent)"
+          BRAIN="$(git rev-parse origin/brain-v1-experiment)"
+          WORK="$(git rev-parse origin/fix/stylist-chat-polish-images-20260911)"
+          echo "production=$PROD"
+          echo "brain=$BRAIN"
+          echo "work=$WORK"
+          test "$PROD" = "eaae833afdc0fd9f9b166467c2e002c5050c5045"
+          test "$BRAIN" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$WORK" = "$GITHUB_SHA"
+
+      - name: Commit product only and remove temporary runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_tmp-stylist-chat-polish.yml
+          git add \
+            lib/utils/stylist_welcome_message.dart \
+            lib/screens/stylist_chat_screen.dart \
+            lib/widgets/stylist_suggested_item_card.dart \
+            lib/Services/stylist_simple_agent_service_v1.dart \
+            functions/stylist/v2/openai_one_brain_model_port_v2.js \
+            functions/stylist/v2/stylist_one_brain_runtime_v2.test.js \
+            test/stylist_simple_agent_fast_path_test.dart \
+            test/stylist_card_image_priority_test.dart
+          git diff --cached --check
+          git commit -m "feat: polish Stylist welcome tone and wardrobe images"
+          # Fresh three-head guard again immediately before the GitHub write.
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-chat-polish-images-20260911
+          test "$(git rev-parse origin/stylist-simple-agent)" = "eaae833afdc0fd9f9b166467c2e002c5050c5045"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-chat-polish-images-20260911)" = "$GITHUB_SHA"
+          git push origin HEAD:fix/stylist-chat-polish-images-20260911
