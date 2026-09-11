@@ -90,11 +90,13 @@ jobs:
           git diff --cached --check
           mapfile -t changed < <(git diff --cached --name-only | sort)
           printf '%s\n' "${changed[@]}"
-          test "${#changed[@]}" -eq 4
-          test "${changed[0]}" = "functions/stylist/v2/openai_one_brain_model_port_v2.js"
-          test "${changed[1]}" = "functions/stylist/v2/stylist_general_location_layering_v2.test.js"
-          test "${changed[2]}" = "functions/stylist/v2/stylist_one_brain_engine_v2.js"
-          test "${changed[3]}" = "functions/stylist/v2/stylist_one_brain_runtime_v2.test.js"
+          test "${#changed[@]}" -eq 6
+          test "${changed[0]}" = ".github/workflows/_tmp-stylist-general-location-layering.yml"
+          test "${changed[1]}" = "functions/stylist/v2/openai_one_brain_model_port_v2.js"
+          test "${changed[2]}" = "functions/stylist/v2/stylist_general_location_layering_v2.test.js"
+          test "${changed[3]}" = "functions/stylist/v2/stylist_one_brain_engine_v2.js"
+          test "${changed[4]}" = "functions/stylist/v2/stylist_one_brain_runtime_v2.test.js"
+          test "${changed[5]}" = "tools/_tmp_fix_stylist_general_location_layering.py"
 
       - name: Fresh write guard and commit tested product diff
         shell: bash
