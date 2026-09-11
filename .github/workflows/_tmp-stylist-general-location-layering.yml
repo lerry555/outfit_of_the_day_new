@@ -1,0 +1,78 @@
+name: Stylist general location and layering patch
+
+on:
+  push:
+    branches:
+      - fix/stylist-general-location-layering-20260911
+    paths:
+      - .github/workflows/_tmp-stylist-general-location-layering.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact work branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard canonical, brain and clean helper-only branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-general-location-layering-20260911 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "9c336d3c92b4bac7fe6b920f231bf570d51766ab"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/fix/stylist-general-location-layering-20260911)"
+          test "$(git merge-base origin/stylist-simple-agent HEAD)" = "9c336d3c92b4bac7fe6b920f231bf570d51766ab"
+          mapfile -t changed < <(git diff --name-only origin/stylist-simple-agent...HEAD | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 2
+          test "${changed[0]}" = ".github/workflows/_tmp-stylist-general-location-layering.yml"
+          test "${changed[1]}" = "tools/_tmp_fix_stylist_general_location_layering.py"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Apply product patch
+        run: python tools/_tmp_fix_stylist_general_location_layering.py
+
+      - name: Focused One-Brain regressions
+        run: |
+          node --test \
+            functions/stylist/v2/stylist_general_location_layering_v2.test.js \
+            functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Validate diff and remove helpers
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm tools/_tmp_fix_stylist_general_location_layering.py
+          rm .github/workflows/_tmp-stylist-general-location-layering.yml
+          git add -A
+          git diff --cached --check
+          mapfile -t changed < <(git diff --cached --name-only | sort)
+          printf '%s\n' "${changed[@]}"
+          test "${#changed[@]}" -eq 3
+          test "${changed[0]}" = "functions/stylist/v2/openai_one_brain_model_port_v2.js"
+          test "${changed[1]}" = "functions/stylist/v2/stylist_general_location_layering_v2.test.js"
+          test "${changed[2]}" = "functions/stylist/v2/stylist_one_brain_engine_v2.js"
+
+      - name: Fresh write guard and commit tested product diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-general-location-layering-20260911 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "9c336d3c92b4bac7fe6b920f231bf570d51766ab"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-general-location-layering-20260911)" = "$GITHUB_SHA"
+          git config user.name "lerry555"
+          git config user.email "132705754+lerry555@users.noreply.github.com"
+          git commit -m "fix: generalize Stylist location preflight and layering"
+          git push origin HEAD:fix/stylist-general-location-layering-20260911
