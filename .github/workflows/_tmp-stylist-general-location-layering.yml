@@ -83,6 +83,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          rm -f focused-test-output.txt
           rm tools/_tmp_fix_stylist_general_location_layering.py
           rm .github/workflows/_tmp-stylist-general-location-layering.yml
           git add -A
