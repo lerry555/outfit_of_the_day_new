@@ -601,6 +601,10 @@ test("One Brain model contract classifies pending replies and uses Terra medium"
   assert.equal(specs[0].reasoningEffort, "medium");
   assert.ok(specs[0].schema.required.includes("pendingReplyDisposition"));
   assert.deepEqual(specs[0].schema.properties.pendingReplyDisposition.enum, ["none", "answer", "skip", "meta", "unrelated"]);
+  const systemPrompt = specs[0].messages[0].content;
+  assert.match(systemPrompt, /priateľský profesionál/);
+  assert.match(systemPrompt, /Emoji používaj striedmo/);
+  assert.match(systemPrompt, /silno pokazený alebo preklepový/);
   assert.equal(envelope.pendingReplyDisposition, "unrelated");
 });
 
