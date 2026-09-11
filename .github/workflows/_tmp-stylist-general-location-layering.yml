@@ -43,6 +43,20 @@ jobs:
       - name: Apply product patch
         run: python tools/_tmp_fix_stylist_general_location_layering.py
 
+      - name: Update superseded country-location regression expectations
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('functions/stylist/v2/stylist_one_brain_runtime_v2.test.js')
+          text = path.read_text(encoding='utf-8')
+          old = '''  assert.equal(calls.location, 1);\n  assert.equal(calls.wardrobe, 1);\n  assert.equal(calls.weather || 0, 0);\n  assert.equal(calls.brainInputs.length, 1, "broad country must not spend the answer-stage model call");\n'''
+          new = '''  assert.equal(calls.location, 1);\n  assert.equal(calls.wardrobe || 0, 0, "country preflight must clarify before reading the wardrobe");\n  assert.equal(calls.weather || 0, 0);\n  assert.equal(calls.brainInputs.length, 0, "country preflight must not depend on a Brain tool decision");\n'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one superseded assertion block, found {text.count(old)}')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Focused One-Brain regressions
         id: focused_tests
         continue-on-error: true
@@ -75,10 +89,11 @@ jobs:
           git diff --cached --check
           mapfile -t changed < <(git diff --cached --name-only | sort)
           printf '%s\n' "${changed[@]}"
-          test "${#changed[@]}" -eq 3
+          test "${#changed[@]}" -eq 4
           test "${changed[0]}" = "functions/stylist/v2/openai_one_brain_model_port_v2.js"
           test "${changed[1]}" = "functions/stylist/v2/stylist_general_location_layering_v2.test.js"
           test "${changed[2]}" = "functions/stylist/v2/stylist_one_brain_engine_v2.js"
+          test "${changed[3]}" = "functions/stylist/v2/stylist_one_brain_runtime_v2.test.js"
 
       - name: Fresh write guard and commit tested product diff
         shell: bash
