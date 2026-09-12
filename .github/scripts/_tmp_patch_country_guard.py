@@ -187,3 +187,14 @@ old_pending = '  assert.equal(calls.location, 2);\n  assert.equal(calls.queries[
 assert old_pending in tests, "pending assertion anchor missing"
 tests = tests.replace(old_pending, '  assert.equal(calls.location, 1, "only the specific Alps follow-up needs network geocoding");\n  assert.equal(calls.queries[0], "do alp");', 1)
 test_path.write_text(tests, encoding="utf-8")
+
+runtime_test_path = Path("functions/stylist/v2/stylist_one_brain_runtime_v2.test.js")
+runtime_tests = runtime_test_path.read_text(encoding="utf-8")
+runtime_test_start = runtime_tests.index('test("One Brain: country-level hike is narrowed deterministically before the answer stage"')
+runtime_test_end = runtime_tests.index('test("One Brain: neviem permanently consumes the pending field', runtime_test_start)
+runtime_block = runtime_tests[runtime_test_start:runtime_test_end]
+old_runtime_assert = '  assert.equal(calls.location, 1);'
+assert old_runtime_assert in runtime_block, "runtime country location assertion missing"
+runtime_block = runtime_block.replace(old_runtime_assert, '  assert.equal(calls.location || 0, 0, "broad-country guard must not depend on external geocoder");', 1)
+runtime_tests = runtime_tests[:runtime_test_start] + runtime_block + runtime_tests[runtime_test_end:]
+runtime_test_path.write_text(runtime_tests, encoding="utf-8")
