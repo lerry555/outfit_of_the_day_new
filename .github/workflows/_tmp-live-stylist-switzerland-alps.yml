@@ -1,0 +1,60 @@
+name: Live Stylist Switzerland Alps one-shot
+
+on:
+  push:
+    branches:
+      - qa/live-stylist-structural-repair-20260912
+    paths:
+      - .github/workflows/_tmp-live-stylist-switzerland-alps.yml
+
+permissions:
+  contents: read
+
+jobs:
+  live-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact QA branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard production brain and QA diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment qa/live-stylist-structural-repair-20260912 --no-tags
+          test "$GITHUB_REF_NAME" = "qa/live-stylist-structural-repair-20260912"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "4f4aa19edb1ed415d660e23ab85bfdb804d31718"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/qa/live-stylist-structural-repair-20260912)"
+          test "$(git merge-base origin/stylist-simple-agent HEAD)" = "4f4aa19edb1ed415d660e23ab85bfdb804d31718"
+          expected="$(printf '%s\n%s' '.github/workflows/_tmp-live-stylist-switzerland-alps.yml' 'functions/stylist/v2/_tmp_live_switzerland_alps_smoke_v2.js')"
+          test "$(git diff --name-only origin/stylist-simple-agent...HEAD)" = "$expected"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Run exact live Switzerland to Alps flow against deployed callable
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIREBASE_WEB_API_KEY="$(node -e "const j=require('./android/app/google-services.json');process.stdout.write(j.client[0].api_key[0].current_key)")"
+          echo "::add-mask::$FIREBASE_WEB_API_KEY"
+          export FIREBASE_WEB_API_KEY
+          export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
+          node functions/stylist/v2/_tmp_live_switzerland_alps_smoke_v2.js
