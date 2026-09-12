@@ -665,10 +665,27 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         authorizedEditScope: null,
       };
 
-      const toolEnvelope = await callBrainV2(stylistBrain,
+      let toolEnvelope = await callBrainV2(stylistBrain,
         brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));
       runtimeConstraints.modelCallsRemaining -= 1;
-      validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
+      try {
+        validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
+      } catch (error) {
+        if (!(error instanceof RepairableStructuralTurnError) ||
+            Number(error.maxFutureCorrectionAttempts || 0) < 1) throw error;
+        const repairConstraints = {
+          ...runtimeConstraints,
+          structuralRepair: {
+            attempt: 1,
+            code: error.code,
+            message: String(error.message || "repairable structural contract error").slice(0, 300),
+          },
+        };
+        toolEnvelope = await callBrainV2(stylistBrain,
+          brainInputV2(request, workingState, "tools", emptyToolResults, repairConstraints));
+        runtimeConstraints.modelCallsRemaining -= 1;
+        validateToolDecisionEnvelopeV2(toolEnvelope, {...repairConstraints, pendingQuestion: pendingQuestionAtBrain});
+      }
     const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
 
     // A country preflight must preserve explicit scenario facts parsed from the

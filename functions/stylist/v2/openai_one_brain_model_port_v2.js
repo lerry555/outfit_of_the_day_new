@@ -42,6 +42,7 @@ function oneBrainPromptV2(stage) {
     "HELP FIRST. Pýtaj sa iba vtedy, keď chýbajúci fakt materiálne mení výsledok alebo bezpečnosť. Nikdy nerob z rozhovoru formulár.",
     "Ak runtimeConstraints.allowClarification=false, NESMIEŠ položiť ďalšiu objasňujúcu otázku. Použi rozumný konzervatívny predpoklad a pomôž z toho, čo už vieš.",
     "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",
+    "Ak runtimeConstraints.structuralRepair existuje, predchádzajúci TOOL-DECISION výstup porušil uvedený štrukturálny kontrakt. Oprav presne túto chybu, zachovaj zámer používateľa a session fakty a neotváraj novú otázku navyše.",
     "answer znamená skutočnú odpoveď na položené pole. skip znamená neviem/nechaj tak/nerieš/preskoč. meta je otázka o tom, prečo údaj potrebuješ. unrelated je zmena témy alebo nový zámer.",
     "Pri skip/meta/unrelated nesmieš text správy poslať ako locationQuery ani ho uložiť do pôvodného pending poľa. Pri unrelated môže nový scenár dostať vlastnú jednu potrebnú otázku.",
     "Ak používateľ povedal neviem/netuším/je mi to jedno/preskoč to/nerieš/daj mi proste outfit, ber to ako príkaz pokračovať bez daného detailu. Pole v cannotClarifyFields už nikdy v tomto pokračovaní nepýtaj.",
