@@ -26,36 +26,48 @@ jobs:
         with:
           project_id: outfitoftheday-4d401
 
-      - name: Fetch recent stylistChatV2 structured logs
+      - name: Describe deployed Stylist function
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud functions describe stylistChatV2 \
+            --gen2 --region=us-east1 --project=outfitoftheday-4d401 \
+            --format='value(name,state,serviceConfig.service,serviceConfig.uri)' || true
+
+      - name: Fetch real fail-closed entries
         shell: bash
         run: |
           set -euo pipefail
           gcloud logging read \
-            'resource.type="cloud_run_revision" AND resource.labels.service_name="stylistchatv2" AND timestamp>="2026-09-12T12:00:00Z"' \
+            '"STYLIST_V2_ONE_BRAIN_FAIL_CLOSED" AND timestamp>="2026-09-12T12:40:00Z"' \
             --project=outfitoftheday-4d401 \
-            --limit=300 \
-            --order=desc \
-            --format=json > "$RUNNER_TEMP/stylist-logs.json"
+            --limit=50 --order=asc --format=json > "$RUNNER_TEMP/fails.json"
 
           python - <<'PY'
           import json, os
-          path = os.path.join(os.environ['RUNNER_TEMP'], 'stylist-logs.json')
+          path = os.path.join(os.environ['RUNNER_TEMP'], 'fails.json')
           data = json.load(open(path, encoding='utf-8'))
-          needles = (
-              'STYLIST_V2_ONE_BRAIN_FAIL_CLOSED',
-              'STYLIST_V2_ONE_BRAIN_MODEL_LATENCY',
-              'STYLIST_V2_TURN_LATENCY',
-              'SESSION_',
-              'Repairable',
-              'Stale',
-          )
-          matched = 0
-          for entry in reversed(data):
-              text = json.dumps(entry, ensure_ascii=False, sort_keys=True)
-              if any(n in text for n in needles):
-                  print(text)
-                  matched += 1
-          print(f'DIAGNOSTIC_MATCHED={matched}')
-          if matched == 0:
-              print('NO_MATCHING_STYLIST_DIAGNOSTIC_LOGS')
+          print(f'FAIL_ENTRY_COUNT={len(data)}')
+          for e in data:
+              jp = e.get('jsonPayload') or {}
+              tp = e.get('textPayload') or ''
+              labels = (e.get('resource') or {}).get('labels') or {}
+              print(json.dumps({
+                  'timestamp': e.get('timestamp'),
+                  'message': jp.get('message') or tp,
+                  'code': jp.get('code'),
+                  'error': jp.get('error'),
+                  'service_name': labels.get('service_name'),
+                  'function_name': labels.get('function_name'),
+                  'revision_name': labels.get('revision_name'),
+              }, ensure_ascii=False, sort_keys=True))
           PY
+
+      - name: Fetch nearby One-Brain latency markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud logging read \
+            '"STYLIST_V2_ONE_BRAIN_MODEL_LATENCY" AND timestamp>="2026-09-12T12:40:00Z"' \
+            --project=outfitoftheday-4d401 \
+            --limit=80 --order=asc --format='value(timestamp,jsonPayload.stage,jsonPayload.durationMs,jsonPayload.model,jsonPayload.message,textPayload)' || true
