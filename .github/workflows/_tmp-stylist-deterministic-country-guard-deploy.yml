@@ -1,0 +1,92 @@
+name: Stylist deterministic-country guard deploy one-shot
+
+on:
+  push:
+    branches:
+      - deploy/stylist-deterministic-country-guard-20260912
+    paths:
+      - .github/workflows/_tmp-stylist-deterministic-country-guard-deploy.yml
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/deploy/stylist-deterministic-country-guard-20260912'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact deploy branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard production brain and deploy diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment deploy/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$GITHUB_REF_NAME" = "deploy/stylist-deterministic-country-guard-20260912"
+          test "$(git rev-parse origin/stylist-simple-agent)" = "d029135093d870779de1a27c73e2c555b58348ec"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/deploy/stylist-deterministic-country-guard-20260912)"
+          test "$(git merge-base origin/stylist-simple-agent HEAD)" = "d029135093d870779de1a27c73e2c555b58348ec"
+          test "$(git diff --name-only origin/stylist-simple-agent...HEAD)" = ".github/workflows/_tmp-stylist-deterministic-country-guard-deploy.yml"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Generate required deploy taxonomy artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const g = require('./functions/scripts/generate_deploy_taxonomy_artifacts');
+          const family = g.generateFamilyRegistry();
+          const structured = g.generateStructuredTaxonomy();
+          console.log(JSON.stringify({ok: true, family, structured}));
+          NODE
+          test -s functions/artifacts/vision_canonical_family_registry_v1.json
+          test -s functions/artifacts/vision_canonical_family_registry_v1.manifest.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.json
+          test -s functions/artifacts/canonical_resolver_structured_taxonomy_v1.manifest.json
+
+      - name: Narrow Firebase discovery to stylistChatV2
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp functions/index_v2.js functions/index_v2.full.js
+          cat > functions/index_v2.js <<'NODE'
+          "use strict";
+          const full = require("./index_v2.full");
+          if (!full || !full.stylistChatV2) {
+            throw new Error("stylistChatV2_export_missing");
+          }
+          exports.stylistChatV2 = full.stylistChatV2;
+          NODE
+          node -e 'const x=require("./functions/index_v2"); if (!x.stylistChatV2) process.exit(1)'
+
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools@latest
+
+      - name: Deploy stylistChatV2 only
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase deploy \
+            --only functions:stylistChatV2 \
+            --project outfitoftheday-4d401 \
+            --non-interactive
