@@ -110,8 +110,21 @@ class StylistSimpleAgentServiceV1 {
 
   FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
 
+  static int _provisionalV2SessionSerial = 0;
+
   static String _newProvisionalSessionId() =>
-      'v2_${DateTime.now().microsecondsSinceEpoch}';
+      'v2_${DateTime.now().microsecondsSinceEpoch}_${_provisionalV2SessionSerial++}';
+
+  /// Starts a clean backend conversation boundary for a visually new chat.
+  void startNewConversation() {
+    _provisionalV2SessionId = _newProvisionalSessionId();
+    _lastV2SessionId = null;
+    _boundRealChatId = null;
+    _turnCounter = 0;
+  }
+
+  @visibleForTesting
+  String get debugProvisionalV2SessionId => _provisionalV2SessionId;
 
   static const Set<String> _localGreetingTexts = <String>{
     'ahoj', 'čau', 'cau', 'čauko', 'cauko', 'nazdar', 'dobrý deň', 'dobry den', 'servus', 'hello', 'hi', 'hey',

@@ -675,6 +675,7 @@ class _StylistChatScreenState extends State<StylistChatScreen> {
   /// zmazaní aktívneho chatu.
   void _resetChatState() {
     if (!mounted) return;
+    _stylistSimpleAgentService.startNewConversation();
     setState(() {
       _messages
         ..clear()

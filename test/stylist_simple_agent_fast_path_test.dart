@@ -1,9 +1,32 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:outfitofTheDay/Services/stylist_simple_agent_service_v1.dart';
 import 'package:outfitofTheDay/widgets/stylist_quick_reply_buttons.dart';
 
 void main() {
+  test('new chat rotates provisional V2 session and screen reset enforces boundary', () {
+    final service = StylistSimpleAgentServiceV1();
+    final firstSession = service.debugProvisionalV2SessionId;
+
+    service.startNewConversation();
+    final secondSession = service.debugProvisionalV2SessionId;
+    expect(secondSession, isNot(firstSession));
+
+    service.startNewConversation();
+    expect(service.debugProvisionalV2SessionId, isNot(secondSession));
+
+    final screenSource = File('lib/screens/stylist_chat_screen.dart').readAsStringSync();
+    final resetContract = RegExp(
+      r'void _resetChatState\(\) \{\s*'
+      r'if \(!mounted\) return;\s*'
+      r'_stylistSimpleAgentService\.startNewConversation\(\);\s*'
+      r'setState',
+    );
+    expect(resetContract.hasMatch(screenSource), isTrue);
+  });
+
   test('emoji greeting uses local fast path', () {
     final result = StylistSimpleAgentServiceV1.localFastReplyForMessage('ahoj 💪');
     expect(result, isNotNull);
