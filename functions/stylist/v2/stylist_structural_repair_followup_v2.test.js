@@ -1,23 +1,4 @@
-from pathlib import Path
-
-engine = Path('functions/stylist/v2/stylist_one_brain_engine_v2.js')
-text = engine.read_text(encoding='utf-8')
-old = '''      const toolEnvelope = await callBrainV2(stylistBrain,\n        brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));\n      runtimeConstraints.modelCallsRemaining -= 1;\n      validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});\n    const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);\n'''
-new = '''      let toolEnvelope = await callBrainV2(stylistBrain,\n        brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));\n      runtimeConstraints.modelCallsRemaining -= 1;\n      try {\n        validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});\n      } catch (error) {\n        if (!(error instanceof RepairableStructuralTurnError) ||\n            Number(error.maxFutureCorrectionAttempts || 0) < 1) throw error;\n        const repairConstraints = {\n          ...runtimeConstraints,\n          structuralRepair: {\n            attempt: 1,\n            code: error.code,\n            message: String(error.message || "repairable structural contract error").slice(0, 300),\n          },\n        };\n        toolEnvelope = await callBrainV2(stylistBrain,\n          brainInputV2(request, workingState, "tools", emptyToolResults, repairConstraints));\n        runtimeConstraints.modelCallsRemaining -= 1;\n        validateToolDecisionEnvelopeV2(toolEnvelope, {...repairConstraints, pendingQuestion: pendingQuestionAtBrain});\n      }\n    const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);\n'''
-if old not in text:
-    raise SystemExit('engine anchor not found')
-engine.write_text(text.replace(old, new, 1), encoding='utf-8')
-
-port = Path('functions/stylist/v2/openai_one_brain_model_port_v2.js')
-text = port.read_text(encoding='utf-8')
-anchor = '    "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",\n'
-addition = anchor + '    "Ak runtimeConstraints.structuralRepair existuje, predchádzajúci TOOL-DECISION výstup porušil uvedený štrukturálny kontrakt. Oprav presne túto chybu, zachovaj zámer používateľa a session fakty a neotváraj novú otázku navyše.",\n'
-if anchor not in text:
-    raise SystemExit('prompt anchor not found')
-port.write_text(text.replace(anchor, addition, 1), encoding='utf-8')
-
-test = Path('functions/stylist/v2/stylist_structural_repair_followup_v2.test.js')
-test.write_text(r'''"use strict";
+"use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
@@ -57,4 +38,3 @@ test("a second invalid structural output still fail-closes",async()=>{
  const first=await handler({...common,v2SessionId:"bad",turnId:"b1",message:"zajtra idem do švajčiarska na turu potrebujem outfit"},auth); assert.equal(first.action,"clarify");
  const second=await handler({...common,v2SessionId:"bad",turnId:"b2",message:"do Alp"},auth); assert.equal(second.failClosed,true); assert.equal(scripts.length,0);
 });
-''', encoding='utf-8')
