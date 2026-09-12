@@ -45,8 +45,8 @@ const common={history:[],currentOutfitItemIds:[],currentSelectionReasons:[],shop
 const auth={auth:{uid:"u"}};
 test("real Switzerland -> Alps flow repairs one structural tools-stage error",async()=>{
  const scripts=[firstEnvelope(),badPending(),repairedTools(),finalOutfit()]; const inputs=[]; const handler=makeHandler(scripts,inputs);
- const first=await handler({...common,v2SessionId:"real",turnId:"t1",message:"ahoj za dva dni idem do svajciarska na turu a neviem co si mam obliect"},auth);
- assert.equal(first.failClosed,false); assert.equal(first.action,"clarify"); assert.equal(first.clarification.field,"destination");
+ const first=await handler({...common,v2SessionId:"real",turnId:"t1",message:"ahoj za dva dni idem do švajčiarska na turu a neviem co si mam obliect"},auth);
+ assert.equal(first.failClosed,false); assert.equal(first.action,"clarify"); assert.match(first.reply,/Kam približne/i);
  const second=await handler({...common,v2SessionId:"real",turnId:"t2",message:"do Alp"},auth);
  assert.notEqual(second.failClosed,true); assert.equal(second.modelPath,"stylist_v2_one_brain"); assert.equal(second.action,"generate_outfit");
  assert.deepEqual(second.resultingOutfitItemIds,["tee","pants","shoes"]); assert.equal(inputs.length,4);
@@ -54,7 +54,7 @@ test("real Switzerland -> Alps flow repairs one structural tools-stage error",as
 });
 test("a second invalid structural output still fail-closes",async()=>{
  const scripts=[firstEnvelope(),badPending(),badPending()]; const handler=makeHandler(scripts);
- const first=await handler({...common,v2SessionId:"bad",turnId:"b1",message:"zajtra idem do svajciarska na turu potrebujem outfit"},auth); assert.equal(first.action,"clarify");
+ const first=await handler({...common,v2SessionId:"bad",turnId:"b1",message:"zajtra idem do švajčiarska na turu potrebujem outfit"},auth); assert.equal(first.action,"clarify");
  const second=await handler({...common,v2SessionId:"bad",turnId:"b2",message:"do Alp"},auth); assert.equal(second.failClosed,true); assert.equal(scripts.length,0);
 });
 ''', encoding='utf-8')
