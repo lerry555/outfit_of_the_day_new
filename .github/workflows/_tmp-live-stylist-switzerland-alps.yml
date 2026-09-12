@@ -58,3 +58,5 @@ jobs:
           export FIREBASE_WEB_API_KEY
           export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
           node functions/stylist/v2/_tmp_live_switzerland_alps_smoke_v2.js
+
+# rerun: client-authenticated Firestore fixture setup
