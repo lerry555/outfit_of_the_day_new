@@ -2,7 +2,6 @@
 
 const assert = require("node:assert/strict");
 const admin = require("firebase-admin");
-const {hashValue} = require("../../costs/ai_usage_v1");
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "outfitoftheday-4d401";
 const API_KEY = String(process.env.FIREBASE_WEB_API_KEY || "").trim();
@@ -37,6 +36,73 @@ async function exchangeCustomToken(customToken) {
   return json.idToken;
 }
 
+function firestoreValue(value) {
+  if (value === null || value === undefined) return {nullValue: null};
+  if (value instanceof Date) return {timestampValue: value.toISOString()};
+  if (typeof value === "string") return {stringValue: value};
+  if (typeof value === "boolean") return {booleanValue: value};
+  if (typeof value === "number") {
+    return Number.isInteger(value) ? {integerValue: String(value)} : {doubleValue: value};
+  }
+  if (Array.isArray(value)) {
+    return {arrayValue: {values: value.map(firestoreValue)}};
+  }
+  if (typeof value === "object") {
+    return {
+      mapValue: {
+        fields: Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, firestoreValue(entry)])),
+      },
+    };
+  }
+  throw new TypeError(`unsupported_firestore_value:${typeof value}`);
+}
+
+function firestoreFields(value) {
+  return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, firestoreValue(entry)]));
+}
+
+function firestoreDocumentUrl(path) {
+  return `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(PROJECT_ID)}/databases/(default)/documents/${path}`;
+}
+
+async function clientWriteDocument(idToken, path, value) {
+  const response = await fetch(firestoreDocumentUrl(path), {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json", Authorization: `Bearer ${idToken}`},
+    body: JSON.stringify({fields: firestoreFields(value)}),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(`client_firestore_write_failed:${path}:${response.status}:${text.slice(0, 600)}`);
+  }
+}
+
+async function clientDeleteDocument(idToken, path) {
+  const response = await fetch(firestoreDocumentUrl(path), {
+    method: "DELETE",
+    headers: {Authorization: `Bearer ${idToken}`},
+  });
+  if (!response.ok && response.status !== 404) {
+    const text = await response.text();
+    console.warn(`QA_CLIENT_DELETE_FAILED ${path} ${response.status} ${text.slice(0, 300)}`);
+  }
+}
+
+async function deleteFirebaseUser(idToken) {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:delete?key=${encodeURIComponent(API_KEY)}`,
+    {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({idToken}),
+    },
+  );
+  if (!response.ok) {
+    const text = await response.text();
+    console.warn(`QA_AUTH_DELETE_FAILED ${response.status} ${text.slice(0, 300)}`);
+  }
+}
+
 async function callCallable(idToken, data) {
   const response = await fetch(`https://us-east1-${PROJECT_ID}.cloudfunctions.net/stylistChatV2`, {
     method: "POST",
@@ -63,21 +129,12 @@ function visible(result) {
   };
 }
 
-async function deleteQueryDocs(query) {
-  const snap = await query.get().catch(() => null);
-  if (!snap) return;
-  for (const doc of snap.docs) await doc.ref.delete().catch(() => {});
-}
-
 async function main() {
   if (!admin.apps.length) admin.initializeApp({projectId: PROJECT_ID});
-  const db = admin.firestore();
   const auth = admin.auth();
   const stamp = Date.now();
   const uid = `stylist_live_alps_${stamp}`;
   const chatId = `live_alps_${stamp}`;
-  const userRef = db.collection("users").doc(uid);
-  const serverRootRef = db.collection("stylistSessionsV2Server").doc(uid);
   const dates = bratislavaDateKeys();
 
   const wardrobe = [
@@ -108,20 +165,23 @@ async function main() {
     }],
   ];
 
+  let idToken = null;
   try {
-    await userRef.set({_qaStylistSmoke: true, createdAt: admin.firestore.FieldValue.serverTimestamp()});
-    const batch = db.batch();
+    const customToken = await auth.createCustomToken(uid);
+    idToken = await exchangeCustomToken(customToken);
+
+    await clientWriteDocument(idToken, `users/${uid}`, {
+      _qaStylistSmoke: true,
+      createdAt: new Date(),
+    });
     for (const [id, item] of wardrobe) {
-      batch.set(userRef.collection("wardrobe").doc(id), {
+      await clientWriteDocument(idToken, `users/${uid}/wardrobe/${id}`, {
         ...item,
-        updatedAt: admin.firestore.Timestamp.now(),
+        updatedAt: new Date(),
         wardrobeItemRevision: 1,
       });
     }
-    await batch.commit();
 
-    const customToken = await auth.createCustomToken(uid);
-    const idToken = await exchangeCustomToken(customToken);
     const base = (turnId, message) => ({
       v2SessionId: chatId,
       turnId,
@@ -162,26 +222,16 @@ async function main() {
 
     console.log("LIVE_SWITZERLAND_ALPS_SMOKE_OK");
   } finally {
-    await deleteQueryDocs(db.collection("aiUsageEventsV1").where("userKey", "==", hashValue(uid)));
-    if (typeof db.recursiveDelete === "function") {
-      await db.recursiveDelete(userRef).catch(() => {});
-      await db.recursiveDelete(serverRootRef).catch(() => {});
-    } else {
+    if (idToken) {
       for (const [id] of wardrobe) {
-        await userRef.collection("wardrobe").doc(id).delete().catch(() => {});
+        await clientDeleteDocument(idToken, `users/${uid}/wardrobe/${id}`);
       }
-      const sessions = await serverRootRef.collection("sessions").get().catch(() => null);
-      if (sessions) {
-        for (const session of sessions.docs) {
-          const turns = await session.ref.collection("turns").get().catch(() => null);
-          if (turns) for (const turn of turns.docs) await turn.ref.delete().catch(() => {});
-          await session.ref.delete().catch(() => {});
-        }
-      }
-      await serverRootRef.delete().catch(() => {});
-      await userRef.delete().catch(() => {});
+      await clientDeleteDocument(idToken, `users/${uid}`);
+      await deleteFirebaseUser(idToken);
     }
-    await auth.deleteUser(uid).catch(() => {});
+    // stylistSessionsV2Server is intentionally inaccessible to clients. This
+    // one-shot QA leaves only its tiny timestamped server-only session receipt;
+    // user-visible profile/wardrobe/Auth data is removed above.
   }
 }
 
