@@ -268,7 +268,7 @@ test("One Brain: country-level hike is narrowed deterministically before the ans
   assert.equal(result.clarification.field, "destination");
   assert.match(result.assistantText, /dosť široké/);
   assert.match(result.assistantText, /Kam približne/);
-  assert.equal(calls.location, 1);
+  assert.equal(calls.location || 0, 0, "broad-country guard must not depend on external geocoder");
   assert.equal(calls.wardrobe || 0, 0, "country preflight must clarify before reading the wardrobe");
   assert.equal(calls.weather || 0, 0);
   assert.equal(calls.brainInputs.length, 1, "Brain parses the original scenario once; runtime still owns the deterministic broad-country clarification");

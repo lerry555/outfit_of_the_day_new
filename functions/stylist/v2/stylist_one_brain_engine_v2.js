@@ -24,7 +24,7 @@ const {
   restoreScenarioSnapshotV2,
   upsertScenarioSnapshotV2,
 } = require("./stylist_scenario_memory_v2");
-const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
+const {locationIsTooBroadForWeatherV2, localCountryLocationHintV2} = require("./open_meteo_ports_v2");
 const {categoryMatches} = require("./firestore_wardrobe_tool_v2");
 const {ONE_BRAIN_MAX_MODEL_CALLS} = require("./openai_one_brain_model_port_v2");
 
@@ -616,11 +616,17 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       if (!pendingQuestionAtBrain && !bestEffortDirective) {
         const explicitDestination = explicitStylingDestinationCandidateV2(request.latestUserInput);
         if (explicitDestination) {
-          let resolvedExplicitDestination = null;
-          try {
-            resolvedExplicitDestination = await locationResolver.resolve(explicitDestination.query);
-          } catch (_) {
-            resolvedExplicitDestination = null;
+          // Country-level destinations must be deterministic even when the
+          // external geocoder is unavailable or cannot understand an inflected
+          // Slovak form such as "Švajčiarska". Resolve a local ISO/ICU country
+          // hint first; use the network resolver only for more specific places.
+          let resolvedExplicitDestination = localCountryLocationHintV2(explicitDestination.query);
+          if (!resolvedExplicitDestination) {
+            try {
+              resolvedExplicitDestination = await locationResolver.resolve(explicitDestination.query);
+            } catch (_) {
+              resolvedExplicitDestination = null;
+            }
           }
           if (resolvedExplicitDestination) {
             const field = explicitDestination.targetField;

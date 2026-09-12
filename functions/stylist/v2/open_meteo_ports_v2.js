@@ -24,6 +24,86 @@ const LOCATION_ALIASES_V2 = new Map(Object.entries({
   "mnichova": "Mníchov",
 }));
 
+// ISO codes are stable data, while localized country names come from the
+// Node/ICU locale database. This keeps broad-country detection generic:
+// no runtime list of country spellings is maintained.
+const ISO_COUNTRY_CODES_V2 = `
+AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP
+KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT
+MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW
+SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG
+UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+`.trim().split(/\s+/);
+
+let LOCAL_COUNTRY_INDEX_V2 = null;
+
+function normalizeCountryNameV2(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countryNameVariantsV2(label) {
+  const normalized = normalizeCountryNameV2(label);
+  if (!normalized) return [];
+  const variants = new Set([normalized]);
+  if (normalized.length > 3 && normalized.endsWith("o")) {
+    const stem = normalized.slice(0, -1);
+    for (const suffix of ["a", "u", "e", "om"]) variants.add(stem + suffix);
+  }
+  if (normalized.length > 3 && normalized.endsWith("a")) {
+    const stem = normalized.slice(0, -1);
+    for (const suffix of ["y", "e", "u", "ou"]) variants.add(stem + suffix);
+  }
+  return [...variants];
+}
+
+function localCountryIndexV2() {
+  if (LOCAL_COUNTRY_INDEX_V2) return LOCAL_COUNTRY_INDEX_V2;
+  const index = new Map();
+  const skNames = new Intl.DisplayNames(["sk"], {type: "region"});
+  const enNames = new Intl.DisplayNames(["en"], {type: "region"});
+  for (const countryCode of ISO_COUNTRY_CODES_V2) {
+    const skLabel = String(skNames.of(countryCode) || "").trim();
+    const enLabel = String(enNames.of(countryCode) || "").trim();
+    if (skLabel && skLabel !== countryCode) {
+      for (const variant of countryNameVariantsV2(skLabel)) {
+        if (!index.has(variant)) index.set(variant, {countryCode, label: skLabel});
+      }
+    }
+    if (enLabel && enLabel !== countryCode) {
+      const normalizedEnglish = normalizeCountryNameV2(enLabel);
+      if (normalizedEnglish && !index.has(normalizedEnglish)) {
+        index.set(normalizedEnglish, {countryCode, label: skLabel || enLabel});
+      }
+    }
+    index.set(countryCode.toLowerCase(), {countryCode, label: skLabel || enLabel || countryCode});
+  }
+  LOCAL_COUNTRY_INDEX_V2 = index;
+  return index;
+}
+
+function localCountryLocationHintV2(query) {
+  const normalized = normalizeCountryNameV2(query);
+  if (!normalized) return null;
+  const match = localCountryIndexV2().get(normalized);
+  if (!match) return null;
+  return {
+    providerId: `local-country:${match.countryCode}`,
+    label: match.label,
+    source: "local-country-index",
+    granularity: "country",
+    countryCode: match.countryCode,
+  };
+}
+
+
 function finiteNumbers(values) {
   return Array.isArray(values) ? values.map(Number).filter(Number.isFinite) : [];
 }
@@ -271,7 +351,9 @@ module.exports = {
   createOpenMeteoWeatherToolV2,
   foldLocationAliasKeyV2,
   locationIsTooBroadForWeatherV2,
+  localCountryLocationHintV2,
   locationQueryCandidatesV2,
+  normalizeCountryNameV2,
   nominatimGranularityV2,
   nominatimLocationFromJsonV2,
   normalizeLocationQueryTextV2,
