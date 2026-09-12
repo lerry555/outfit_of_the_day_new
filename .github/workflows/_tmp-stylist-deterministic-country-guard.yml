@@ -1,0 +1,349 @@
+name: Stylist deterministic country guard one-shot
+
+on:
+  push:
+    branches:
+      - fix/stylist-deterministic-country-guard-20260912
+    paths:
+      - .github/workflows/_tmp-stylist-deterministic-country-guard.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-test-commit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact work branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/stylist-deterministic-country-guard-20260912
+          fetch-depth: 0
+
+      - name: Guard production brain and work HEAD
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "054dfca610edec0eaac5836e6628b47b8a3e248f"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/fix/stylist-deterministic-country-guard-20260912)"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Apply deterministic country guard patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          ports_path = Path("functions/stylist/v2/open_meteo_ports_v2.js")
+          ports = ports_path.read_text(encoding="utf-8")
+          alias_anchor = '''const LOCATION_ALIASES_V2 = new Map(Object.entries({
+            "tatier": "Tatry",
+            "vysokych tatier": "Vysoké Tatry",
+            "nizkych tatier": "Nízke Tatry",
+            "kosic": "Košice",
+            "ziliny": "Žilina",
+            "martina": "Martin",
+            "prahy": "Praha",
+            "viedne": "Viedeň",
+            "budapesti": "Budapešť",
+            "alp": "Alpy",
+            "alpy": "Alpy",
+            "alpach": "Alpy",
+            "brna": "Brno",
+            "londyna": "London",
+            "pariza": "Paríž",
+            "rima": "Rím",
+            "milana": "Miláno",
+            "mnichova": "Mníchov",
+          }));
+          '''
+          assert alias_anchor in ports, "location alias anchor missing"
+          country_block = alias_anchor + '''
+          // ISO codes are stable data, while localized country names come from the
+          // Node/ICU locale database. This keeps broad-country detection generic:
+          // no runtime list of Slovakia-specific country spellings is maintained.
+          const ISO_COUNTRY_CODES_V2 = `
+          AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ
+          CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR
+          GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP
+          KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT
+          MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW
+          SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ UA UG
+          UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
+          `.trim().split(/\\s+/);
+
+          let LOCAL_COUNTRY_INDEX_V2 = null;
+
+          function normalizeCountryNameV2(value) {
+            return String(value || "")
+              .normalize("NFD")
+              .replace(/[\\u0300-\\u036f]/g, "")
+              .toLowerCase()
+              .replace(/[^a-z0-9\\s]/g, " ")
+              .replace(/\\s+/g, " ")
+              .trim();
+          }
+
+          function countryNameVariantsV2(label) {
+            const normalized = normalizeCountryNameV2(label);
+            if (!normalized) return [];
+            const variants = new Set([normalized]);
+            // Common Slovak case forms are derived mechanically from the ICU
+            // nominative. This is morphology, not a country-by-country alias list.
+            if (normalized.length > 3 && normalized.endsWith("o")) {
+              const stem = normalized.slice(0, -1);
+              for (const suffix of ["a", "u", "e", "om"]) variants.add(stem + suffix);
+            }
+            if (normalized.length > 3 && normalized.endsWith("a")) {
+              const stem = normalized.slice(0, -1);
+              for (const suffix of ["y", "e", "u", "ou"]) variants.add(stem + suffix);
+            }
+            return [...variants];
+          }
+
+          function localCountryIndexV2() {
+            if (LOCAL_COUNTRY_INDEX_V2) return LOCAL_COUNTRY_INDEX_V2;
+            const index = new Map();
+            const skNames = new Intl.DisplayNames(["sk"], {type: "region"});
+            const enNames = new Intl.DisplayNames(["en"], {type: "region"});
+            for (const countryCode of ISO_COUNTRY_CODES_V2) {
+              const skLabel = String(skNames.of(countryCode) || "").trim();
+              const enLabel = String(enNames.of(countryCode) || "").trim();
+              if (skLabel && skLabel !== countryCode) {
+                for (const variant of countryNameVariantsV2(skLabel)) {
+                  if (!index.has(variant)) index.set(variant, {countryCode, label: skLabel});
+                }
+              }
+              if (enLabel && enLabel !== countryCode) {
+                const normalizedEnglish = normalizeCountryNameV2(enLabel);
+                if (normalizedEnglish && !index.has(normalizedEnglish)) {
+                  index.set(normalizedEnglish, {countryCode, label: skLabel || enLabel});
+                }
+              }
+              index.set(countryCode.toLowerCase(), {countryCode, label: skLabel || enLabel || countryCode});
+            }
+            LOCAL_COUNTRY_INDEX_V2 = index;
+            return index;
+          }
+
+          function localCountryLocationHintV2(query) {
+            const normalized = normalizeCountryNameV2(query);
+            if (!normalized) return null;
+            const match = localCountryIndexV2().get(normalized);
+            if (!match) return null;
+            return {
+              providerId: `local-country:${match.countryCode}`,
+              label: match.label,
+              source: "local-country-index",
+              granularity: "country",
+              countryCode: match.countryCode,
+            };
+          }
+          '''
+          ports = ports.replace(alias_anchor, country_block, 1)
+          export_anchor = '''  locationIsTooBroadForWeatherV2,
+            locationQueryCandidatesV2,
+          '''
+          assert export_anchor in ports, "ports export anchor missing"
+          ports = ports.replace(export_anchor, '''  locationIsTooBroadForWeatherV2,
+            localCountryLocationHintV2,
+            locationQueryCandidatesV2,
+            normalizeCountryNameV2,
+          ''', 1)
+          ports_path.write_text(ports, encoding="utf-8")
+
+          engine_path = Path("functions/stylist/v2/stylist_one_brain_engine_v2.js")
+          engine = engine_path.read_text(encoding="utf-8")
+          import_old = 'const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");'
+          import_new = 'const {locationIsTooBroadForWeatherV2, localCountryLocationHintV2} = require("./open_meteo_ports_v2");'
+          assert import_old in engine, "engine import anchor missing"
+          engine = engine.replace(import_old, import_new, 1)
+          resolve_old = '''          let resolvedExplicitDestination = null;
+            try {
+              resolvedExplicitDestination = await locationResolver.resolve(explicitDestination.query);
+            } catch (_) {
+              resolvedExplicitDestination = null;
+            }
+          '''
+          resolve_new = '''          // Country-level destinations must be deterministic even when the
+            // external geocoder is unavailable or cannot understand an inflected
+            // Slovak form such as "Švajčiarska". Resolve a local ISO/ICU country
+            // hint first; use the network resolver only for more specific places.
+            let resolvedExplicitDestination = localCountryLocationHintV2(explicitDestination.query);
+            if (!resolvedExplicitDestination) {
+              try {
+                resolvedExplicitDestination = await locationResolver.resolve(explicitDestination.query);
+              } catch (_) {
+                resolvedExplicitDestination = null;
+              }
+            }
+          '''
+          assert resolve_old in engine, "engine destination resolver anchor missing"
+          engine = engine.replace(resolve_old, resolve_new, 1)
+          engine_path.write_text(engine, encoding="utf-8")
+
+          test_path = Path("functions/stylist/v2/stylist_general_location_layering_v2.test.js")
+          tests = test_path.read_text(encoding="utf-8")
+          import_test_old = 'const {oneBrainPromptV2} = require("./openai_one_brain_model_port_v2");\n'
+          import_test_new = 'const {oneBrainPromptV2} = require("./openai_one_brain_model_port_v2");\nconst {localCountryLocationHintV2} = require("./open_meteo_ports_v2");\n'
+          assert import_test_old in tests, "test import anchor missing"
+          tests = tests.replace(import_test_old, import_test_new, 1)
+
+          first_test_anchor = '''test("general destination extractor finds Poland without country hard-coding", () => {
+          '''
+          assert first_test_anchor in tests, "first test anchor missing"
+          local_tests = '''test("local country hint recognizes inflected Slovak country forms without network geocoding", () => {
+            assert.equal(localCountryLocationHintV2("Svajciarska")?.countryCode, "CH");
+            assert.equal(localCountryLocationHintV2("polska")?.countryCode, "PL");
+            assert.equal(localCountryLocationHintV2("Rakuska")?.countryCode, "AT");
+            assert.equal(localCountryLocationHintV2("Francuzska")?.countryCode, "FR");
+            assert.equal(localCountryLocationHintV2("Viedne"), null, "a city must not be promoted to country");
+          });
+
+          test("exact real Swiss hiking prompt clarifies even when external geocoder is unavailable", async () => {
+            const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+            const calls = {brain: 0, location: 0, wardrobe: 0, weather: 0, shopping: 0, query: null};
+            const engine = createStylistOneBrainEngineV2({
+              sessionRepository: repository,
+              ...enginePorts({calls, resolvedLocation: null}),
+              clock: () => NOW,
+            });
+
+            const result = await engine.resolveTurn({
+              uid: "u_exact_swiss_country",
+              request: request("nazdar divocak zajtra ideme do Svajciarska na turu a ja neviem co si mam obliect"),
+              bootstrapInput: {
+                currentOutfitItemIds: [],
+                persistedSelectionReasonsByItemId: {},
+                knownExplicitDurableChoices: {},
+              },
+            });
+
+            assert.equal(result.action, "clarify");
+            assert.equal(result.clarification.field, "destination");
+            assert.match(result.assistantText, /Kam približne/);
+            assert.equal(calls.location, 0, "country recognition must not depend on external geocoder availability");
+            assert.equal(calls.brain, 1, "Brain may parse scenario facts but cannot bypass the runtime country guard");
+            assert.equal(calls.wardrobe, 0);
+            assert.equal(calls.weather, 0);
+          });
+
+          '''
+          tests = tests.replace(first_test_anchor, local_tests + first_test_anchor, 1)
+
+          old_expectations = '''  assert.equal(calls.query, "polska");
+            assert.equal(calls.location, 1);
+          '''
+          new_expectations = '''  assert.equal(calls.query, null);
+            assert.equal(calls.location, 0, "known country must be classified locally, without network geocoding");
+          '''
+          assert old_expectations in tests, "country expectation anchor missing"
+          tests = tests.replace(old_expectations, new_expectations, 1)
+
+          old_pending_resolver = '''    locationResolver: {
+              async resolve(query) {
+                calls.location += 1;
+                calls.queries.push(query);
+                if (calls.location === 1) {
+                  return {providerId: "geo:ch", label: "Švajčiarsko", lat: 46.8, lng: 8.2,
+                    source: "fake-geocoder", granularity: "country", countryCode: "CH"};
+                }
+                return {providerId: "geo:alps", label: "Alpy", lat: 46.5, lng: 10.0,
+                  source: "fake-geocoder", granularity: "region", countryCode: "CH"};
+              },
+            },
+          '''
+          new_pending_resolver = '''    locationResolver: {
+              async resolve(query) {
+                calls.location += 1;
+                calls.queries.push(query);
+                return {providerId: "geo:alps", label: "Alpy", lat: 46.5, lng: 10.0,
+                  source: "fake-geocoder", granularity: "region", countryCode: "CH"};
+              },
+            },
+          '''
+          assert old_pending_resolver in tests, "pending resolver anchor missing"
+          tests = tests.replace(old_pending_resolver, new_pending_resolver, 1)
+          old_pending_assertions = '''  assert.equal(calls.location, 2);
+            assert.equal(calls.queries[1], "do alp");
+          '''
+          new_pending_assertions = '''  assert.equal(calls.location, 1, "only the specific Alps follow-up needs network geocoding");
+            assert.equal(calls.queries[0], "do alp");
+          '''
+          assert old_pending_assertions in tests, "pending assertion anchor missing"
+          tests = tests.replace(old_pending_assertions, new_pending_assertions, 1)
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+
+      - name: Syntax and focused regression tests
+        working-directory: functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check stylist/v2/open_meteo_ports_v2.js
+          node --check stylist/v2/stylist_one_brain_engine_v2.js
+          node --test stylist/v2/stylist_general_location_layering_v2.test.js stylist/v2/stylist_one_brain_runtime_v2.test.js
+
+      - name: Commit tested product fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' \
+            functions/stylist/v2/open_meteo_ports_v2.js \
+            functions/stylist/v2/stylist_general_location_layering_v2.test.js \
+            functions/stylist/v2/stylist_one_brain_engine_v2.js | sort)
+          actual=$(git diff --name-only | sort)
+          test "$actual" = "$expected"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "054dfca610edec0eaac5836e6628b47b8a3e248f"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          remote_before=$(git rev-parse origin/fix/stylist-deterministic-country-guard-20260912)
+          test "$(git rev-parse HEAD)" = "$remote_before"
+
+          git add functions/stylist/v2/open_meteo_ports_v2.js functions/stylist/v2/stylist_general_location_layering_v2.test.js functions/stylist/v2/stylist_one_brain_engine_v2.js
+          git commit -m "fix: make broad-country Stylist clarification deterministic"
+
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "054dfca610edec0eaac5836e6628b47b8a3e248f"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-deterministic-country-guard-20260912)" = "$remote_before"
+          git push origin HEAD:fix/stylist-deterministic-country-guard-20260912
+
+      - name: Remove temporary workflow and push cleanup
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "054dfca610edec0eaac5836e6628b47b8a3e248f"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          remote_product=$(git rev-parse origin/fix/stylist-deterministic-country-guard-20260912)
+          test "$(git rev-parse HEAD)" = "$remote_product"
+
+          git rm .github/workflows/_tmp-stylist-deterministic-country-guard.yml
+          git commit -m "chore: remove temporary country-guard workflow"
+
+          git fetch origin stylist-simple-agent brain-v1-experiment fix/stylist-deterministic-country-guard-20260912 --no-tags
+          test "$(git rev-parse origin/stylist-simple-agent)" = "054dfca610edec0eaac5836e6628b47b8a3e248f"
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/fix/stylist-deterministic-country-guard-20260912)" = "$remote_product"
+          git push origin HEAD:fix/stylist-deterministic-country-guard-20260912
+
+          test "$(git diff --name-only origin/stylist-simple-agent...HEAD | sort)" = "$(printf '%s\n' functions/stylist/v2/open_meteo_ports_v2.js functions/stylist/v2/stylist_general_location_layering_v2.test.js functions/stylist/v2/stylist_one_brain_engine_v2.js | sort)"
