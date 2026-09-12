@@ -21,179 +21,31 @@ jobs:
         with:
           node-version: '20'
       - name: Apply focused patch
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          engine = Path('functions/stylist/v2/stylist_one_brain_engine_v2.js')
-          text = engine.read_text()
-          old = '''      const toolEnvelope = await callBrainV2(stylistBrain,
-        brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));
-      runtimeConstraints.modelCallsRemaining -= 1;
-      validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
-    const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
-'''
-          new = '''      let toolEnvelope = await callBrainV2(stylistBrain,
-        brainInputV2(request, workingState, "tools", emptyToolResults, runtimeConstraints));
-      runtimeConstraints.modelCallsRemaining -= 1;
-      try {
-        validateToolDecisionEnvelopeV2(toolEnvelope, {...runtimeConstraints, pendingQuestion: pendingQuestionAtBrain});
-      } catch (error) {
-        if (!(error instanceof RepairableStructuralTurnError) ||
-            Number(error.maxFutureCorrectionAttempts || 0) < 1) throw error;
-        const repairConstraints = {
-          ...runtimeConstraints,
-          structuralRepair: {
-            attempt: 1,
-            code: error.code,
-            message: String(error.message || "repairable structural contract error").slice(0, 300),
-          },
-        };
-        toolEnvelope = await callBrainV2(stylistBrain,
-          brainInputV2(request, workingState, "tools", emptyToolResults, repairConstraints));
-        runtimeConstraints.modelCallsRemaining -= 1;
-        validateToolDecisionEnvelopeV2(toolEnvelope, {...repairConstraints, pendingQuestion: pendingQuestionAtBrain});
-      }
-    const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
-'''
-          if old not in text:
-              raise SystemExit('engine anchor not found')
-          engine.write_text(text.replace(old, new, 1))
-
-          port = Path('functions/stylist/v2/openai_one_brain_model_port_v2.js')
-          text = port.read_text()
-          anchor = '    "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",\n'
-          addition = anchor + '    "Ak runtimeConstraints.structuralRepair existuje, predchádzajúci TOOL-DECISION výstup porušil uvedený štrukturálny kontrakt. Oprav presne túto chybu, zachovaj zámer používateľa a session fakty a neotváraj novú otázku navyše.",\n'
-          if anchor not in text:
-              raise SystemExit('prompt anchor not found')
-          port.write_text(text.replace(anchor, addition, 1))
-
-          test = Path('functions/stylist/v2/stylist_one_brain_runtime_v2.test.js')
-          text = test.read_text()
-          addition = r'''
-
-test("production bridge repairs one structural tools-stage error in Switzerland -> Alps follow-up", async () => {
-  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
-  const inputs = [];
-  const scripts = [
-    {
-      kind: "final", pendingReplyDisposition: "none",
-      statePatch: {context: {
-        activity: {id: "hiking", label: "túra", source: "user"},
-        date: {dateKey: "2026-09-12", source: "user"},
-        environment: "outdoor",
-        groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []},
-      }},
-      result: {action: "chat", assistantText: "Poďme na to.", display: {kind: "none", itemIds: []}},
-    },
-    {
-      kind: "final", pendingReplyDisposition: "none", statePatch: {},
-      result: {action: "chat", assistantText: "Rozumiem.", display: {kind: "none", itemIds: []}},
-    },
-    {
-      kind: "tool_request", pendingReplyDisposition: "answer",
-      statePatch: {context: {groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []}}},
-      requests: [
-        {tool: "location", query: "Alpy", targetField: "destination"},
-        {tool: "wardrobe", scope: "full_relevant", category: null, editScope: null},
-      ],
-    },
-    {
-      kind: "final", statePatch: {},
-      result: {
-        action: "generate_outfit",
-        assistantText: "Jasné 😊 Do Álp by som išiel v praktických vrstvách z tvojho šatníka.",
-        resultingOutfit: {
-          itemIds: ["tee", "pants", "shoes"],
-          selectionReasonsByItemId: {tee: "vrch", pants: "spodok", shoes: "obuv"},
-          compromises: [], missingWardrobeNeeds: [],
-        },
-        display: {kind: "outfit", itemIds: ["tee", "pants", "shoes"]},
-      },
-    },
-  ];
-  const handler = createStylistChatV2Handler({
-    db: {}, admin: {}, logger: {warn() {}, info() {}}, resolveOpenAISecret: async () => "unused", clock: () => NOW,
-    sessionRepository: repository,
-    brainFactory: () => ({async brainTurn(input) { inputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }}),
-    wardrobeToolFactory: () => ({
-      async retrieve() { return wardrobeItems(); },
-      async materialize(ids, reasons = {}) { return ids.map((id) => ({id, selectionReason: reasons[id] || null})); },
-    }),
-    locationResolver: {async resolve() { return {providerId: "openmeteo:alps", label: "Alpy, Švajčiarsko", lat: 46.8, lng: 8.2, source: "fake", granularity: "region"}; }},
-    weatherTool: {async getForecast({location, date, timeWindow}) { return {locationProviderId: location.providerId, dateKey: date.dateKey, timeWindowKey: timeWindow.key, fetchedAt: "2026-09-12T08:00:00.000Z", source: "fake", snapshot: {representativeTempC: 12}}; }},
-    shoppingToolFactory: () => ({async search() { return {candidateIds: [], appliedHardConstraints: [], reply: ""}; }}),
-  });
-
-  const context = {auth: {uid: "u_real_followup"}};
-  const common = {history: [], currentOutfitItemIds: [], currentSelectionReasons: [], shoppingEnabled: false, clientContext: {}};
-  const first = await handler({...common, v2SessionId: "real_followup", turnId: "rf1", message: "ahoj za dva dni idem do svajciarska na turu a neviem co si mam obliect"}, context);
-  assert.equal(first.failClosed, false);
-  assert.equal(first.action, "clarify");
-  assert.equal(first.clarification.field, "destination");
-
-  const second = await handler({...common, v2SessionId: "real_followup", turnId: "rf2", message: "do Alp"}, context);
-  assert.notEqual(second.failClosed, true);
-  assert.equal(second.modelPath, "stylist_v2_one_brain");
-  assert.equal(second.action, "generate_outfit");
-  assert.deepEqual(second.resultingOutfitItemIds, ["tee", "pants", "shoes"]);
-  assert.equal(inputs.length, 4);
-  assert.equal(inputs[2].stage, "tools");
-  assert.equal(inputs[2].runtimeConstraints.structuralRepair.code, "REPAIRABLE_STRUCTURAL");
-  assert.equal(inputs[2].runtimeConstraints.structuralRepair.attempt, 1);
-  assert.equal(inputs[3].stage, "answer");
-  assert.equal(scripts.length, 0);
-});
-
-test("production bridge still fail-closes when the single structural repair is also invalid", async () => {
-  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
-  const scripts = [
-    {kind: "final", pendingReplyDisposition: "none", statePatch: {context: {activity: {id: "hiking", label: "túra", source: "user"}, date: {dateKey: "2026-09-12", source: "user"}, environment: "outdoor", groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []}}}, result: {action: "chat", assistantText: "Poďme.", display: {kind: "none", itemIds: []}}},
-    {kind: "final", pendingReplyDisposition: "none", statePatch: {}, result: {action: "chat", assistantText: "Rozumiem.", display: {kind: "none", itemIds: []}}},
-    {kind: "final", pendingReplyDisposition: "none", statePatch: {}, result: {action: "chat", assistantText: "Stále zle.", display: {kind: "none", itemIds: []}}},
-  ];
-  const handler = createStylistChatV2Handler({
-    db: {}, admin: {}, logger: {warn() {}, info() {}}, resolveOpenAISecret: async () => "unused", clock: () => NOW,
-    sessionRepository: repository,
-    brainFactory: () => ({async brainTurn() { return scripts.shift(); }}),
-    wardrobeToolFactory: () => ({async retrieve() { return wardrobeItems(); }, async materialize() { return []; }}),
-    locationResolver: {async resolve() { return null; }}, weatherTool: {async getForecast() { return null; }},
-    shoppingToolFactory: () => ({async search() { return {candidateIds: [], appliedHardConstraints: [], reply: ""}; }}),
-  });
-  const context = {auth: {uid: "u_bad_repair"}};
-  const common = {history: [], currentOutfitItemIds: [], currentSelectionReasons: [], shoppingEnabled: false, clientContext: {}};
-  const first = await handler({...common, v2SessionId: "bad_repair", turnId: "b1", message: "zajtra idem do svajciarska na turu potrebujem outfit"}, context);
-  assert.equal(first.action, "clarify");
-  const second = await handler({...common, v2SessionId: "bad_repair", turnId: "b2", message: "do Alp"}, context);
-  assert.equal(second.failClosed, true);
-  assert.equal(scripts.length, 0);
-});
-'''
-          if 'production bridge repairs one structural tools-stage error' in text:
-              raise SystemExit('test already present')
-          test.write_text(text + addition)
-          PY
+        run: python tools/_tmp_structural_repair_patch.py
       - name: Syntax checks
         run: |
           node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
           node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
-          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
-      - name: Exact One-Brain runtime regressions
+          node --check functions/stylist/v2/stylist_structural_repair_followup_v2.test.js
+      - name: Exact real-flow regression
+        run: node --test functions/stylist/v2/stylist_structural_repair_followup_v2.test.js
+      - name: One-Brain runtime regression
         run: node --test functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
-      - name: Related location and contract regressions
+      - name: Related location regressions
         run: |
           node --test functions/stylist/v2/stylist_pending_location_v2.test.js
           node --test functions/stylist/v2/stylist_general_location_layering_v2.test.js
           node --test functions/stylist/v2/stylist_help_first_contract_v2.test.js
-      - name: Commit product-only diff and self-clean
+      - name: Commit tested product patch
         shell: bash
         run: |
           set -euo pipefail
-          git rm .github/workflows/_tmp-stylist-structural-repair.yml
-          changed="$(git diff --name-only HEAD^ -- . ':!.github/workflows/_tmp-stylist-structural-repair.yml' || true)"
-          git add functions/stylist/v2/stylist_one_brain_engine_v2.js functions/stylist/v2/openai_one_brain_model_port_v2.js functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add functions/stylist/v2/stylist_one_brain_engine_v2.js
+          git add functions/stylist/v2/openai_one_brain_model_port_v2.js
+          git add functions/stylist/v2/stylist_structural_repair_followup_v2.test.js
+          git rm .github/workflows/_tmp-stylist-structural-repair.yml
+          git rm tools/_tmp_structural_repair_patch.py
           git commit -m 'fix: repair one structural One-Brain tool decision'
           git push origin HEAD:fix/stylist-v2-structural-repair-20260912
