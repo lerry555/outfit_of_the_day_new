@@ -9,6 +9,7 @@ const {
 } = require("./stylist_one_brain_engine_v2");
 const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
 const {oneBrainPromptV2} = require("./openai_one_brain_model_port_v2");
+const {localCountryLocationHintV2} = require("./open_meteo_ports_v2");
 
 const NOW = Date.parse("2026-09-11T12:00:00.000Z");
 
@@ -85,6 +86,42 @@ function enginePorts({resolvedLocation, calls}) {
   };
 }
 
+test("local country hint recognizes inflected Slovak country forms without network geocoding", () => {
+  assert.equal(localCountryLocationHintV2("Svajciarska")?.countryCode, "CH");
+  assert.equal(localCountryLocationHintV2("polska")?.countryCode, "PL");
+  assert.equal(localCountryLocationHintV2("Rakuska")?.countryCode, "AT");
+  assert.equal(localCountryLocationHintV2("Francuzska")?.countryCode, "FR");
+  assert.equal(localCountryLocationHintV2("Viedne"), null, "a city must not be promoted to country");
+});
+
+test("exact real Swiss hiking prompt clarifies even when external geocoder is unavailable", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const calls = {brain: 0, location: 0, wardrobe: 0, weather: 0, shopping: 0, query: null};
+  const engine = createStylistOneBrainEngineV2({
+    sessionRepository: repository,
+    ...enginePorts({calls, resolvedLocation: null}),
+    clock: () => NOW,
+  });
+
+  const result = await engine.resolveTurn({
+    uid: "u_exact_swiss_country",
+    request: request("nazdar divocak zajtra ideme do Svajciarska na turu a ja neviem co si mam obliect"),
+    bootstrapInput: {
+      currentOutfitItemIds: [],
+      persistedSelectionReasonsByItemId: {},
+      knownExplicitDurableChoices: {},
+    },
+  });
+
+  assert.equal(result.action, "clarify");
+  assert.equal(result.clarification.field, "destination");
+  assert.match(result.assistantText, /Kam približne/);
+  assert.equal(calls.location, 0, "country recognition must not depend on external geocoder availability");
+  assert.equal(calls.brain, 1, "Brain may parse scenario facts but cannot bypass the runtime country guard");
+  assert.equal(calls.wardrobe, 0);
+  assert.equal(calls.weather, 0);
+});
+
 test("general destination extractor finds Poland without country hard-coding", () => {
   assert.deepEqual(
     explicitStylingDestinationCandidateV2("buduci stvrtok ideme do polska na turu a ja neviem co na seba"),
@@ -144,8 +181,8 @@ test("country-level explicit destination preserves scenario context before clari
   assert.equal(result.clarification.field, "destination");
   assert.match(result.assistantText, /dosť široké/);
   assert.match(result.assistantText, /Kam približne/);
-  assert.equal(calls.query, "polska");
-  assert.equal(calls.location, 1);
+  assert.equal(calls.query, null);
+  assert.equal(calls.location, 0, "known country must be classified locally, without network geocoding");
   assert.equal(calls.brain, 1, "Brain parses the original scenario before runtime commits the location clarification");
   assert.equal(calls.wardrobe, 0, "do not read the wardrobe before the one useful location answer");
   assert.equal(calls.weather, 0);
@@ -170,10 +207,6 @@ test("pending location answer cannot dead-end as bare acknowledgement", async ()
       async resolve(query) {
         calls.location += 1;
         calls.queries.push(query);
-        if (calls.location === 1) {
-          return {providerId: "geo:ch", label: "Švajčiarsko", lat: 46.8, lng: 8.2,
-            source: "fake-geocoder", granularity: "country", countryCode: "CH"};
-        }
         return {providerId: "geo:alps", label: "Alpy", lat: 46.5, lng: 10.0,
           source: "fake-geocoder", granularity: "region", countryCode: "CH"};
       },
@@ -239,8 +272,8 @@ test("pending location answer cannot dead-end as bare acknowledgement", async ()
   assert.equal(second.assistantText, "Pokračujem po location a wardrobe tooloch.");
   assert.notEqual(second.assistantText, "Rozumiem.");
   assert.equal(calls.brain, 3);
-  assert.equal(calls.location, 2);
-  assert.equal(calls.queries[1], "do alp");
+  assert.equal(calls.location, 1, "only the specific Alps follow-up needs network geocoding");
+  assert.equal(calls.queries[0], "do alp");
   assert.equal(calls.wardrobe, 1);
 });
 
