@@ -27,6 +27,10 @@ const {
 const {locationIsTooBroadForWeatherV2, localCountryLocationHintV2} = require("./open_meteo_ports_v2");
 const {categoryMatches} = require("./firestore_wardrobe_tool_v2");
 const {ONE_BRAIN_MAX_MODEL_CALLS} = require("./openai_one_brain_model_port_v2");
+const {
+  applyDeterministicDateFromTextV2,
+  detectDeterministicEditScopeV2,
+} = require("./stylist_deterministic_shell_v2");
 
 const TOOL_REQUEST_SCOPES = new Set([
   "current_outfit",
@@ -195,7 +199,9 @@ function applyBrainStatePatchV2(state, statePatch = {}) {
 
   const context = statePatch.context || {};
   for (const key of ["activity", "date", "timeWindow", "terrain", "environment"]) {
-    if (Object.prototype.hasOwnProperty.call(context, key)) next.context[key] = clone(context[key]);
+    if (!Object.prototype.hasOwnProperty.call(context, key)) continue;
+    if (key === "date" && next.context.date?.source === "deterministic_user_text") continue;
+    next.context[key] = clone(context[key]);
   }
   if (Object.prototype.hasOwnProperty.call(context, "groundingRequirements")) {
     const incoming = clone(context.groundingRequirements || {});
@@ -481,13 +487,32 @@ async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationR
   }
 
   workingState = applyDayDefaultV2(workingState);
+  const specificWeatherField = ["eventLocation", "destination"].find((field) => {
+    const location = workingState.context[field];
+    return location && !locationIsTooBroadForWeatherV2(location) &&
+      Number.isFinite(Number(location.lat)) && Number.isFinite(Number(location.lng));
+  }) || null;
+  if (workingState.context.date && workingState.context.timeWindow && specificWeatherField) {
+    workingState.context.groundingRequirements = {
+      ...(workingState.context.groundingRequirements || {}),
+      weatherRequired: true,
+      weatherLocationField: specificWeatherField,
+      terrainRequiredFields: [],
+    };
+  }
   const grounding = workingState.context.groundingRequirements || {};
   if (grounding.weatherRequired) {
     const location = grounding.weatherLocationField ? workingState.context[grounding.weatherLocationField] : null;
     const usableLocation = location && !locationIsTooBroadForWeatherV2(location) &&
       Number.isFinite(Number(location.lat)) && Number.isFinite(Number(location.lng));
     if (usableLocation && workingState.context.date && workingState.context.timeWindow) {
-      try {
+      const cached = workingState.context.weather;
+      if (cached && cached.locationProviderId === location.providerId &&
+          cached.dateKey === workingState.context.date.dateKey &&
+          cached.timeWindowKey === workingState.context.timeWindow.key) {
+        toolResults.weather = clone(cached);
+        toolResults.weatherStatus = "cached";
+      } else try {
         const forecast = await weatherTool.getForecast({
           location,
           date: workingState.context.date,
@@ -576,6 +601,11 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
           workingState.context.currentLocationObservation = clone(observation);
         }
       }
+      workingState = applyDeterministicDateFromTextV2(
+        workingState,
+        request.latestUserInput,
+        request.clientCapabilities?.todayDateKey,
+      );
       workingState = applyDayDefaultV2(workingState);
 
       const hadPendingQuestion = Boolean(workingState.conversationMemory.pendingQuestion);
@@ -616,6 +646,58 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
             wardrobeItems: [], authorizedEditScope: null,
           });
         }
+      }
+
+      const deterministicEdit = !pendingQuestionAtBrain && !bestEffortDirective ?
+        detectDeterministicEditScopeV2(request.latestUserInput, workingState, knownWardrobeItems) : null;
+      if (deterministicEdit) {
+        const editEnvelope = {
+          kind: "tool_request",
+          statePatch: {},
+          requests: [{
+            tool: "wardrobe",
+            scope: "current_outfit_plus_category",
+            category: deterministicEdit.category,
+            editScope: deterministicEdit.editScope,
+          }],
+        };
+        const executed = await executeRequestedToolsV2({
+          envelope: editEnvelope,
+          state: workingState,
+          wardrobeTool,
+          locationResolver,
+          weatherTool,
+          knownWardrobeItems,
+        });
+        workingState = executed.workingState;
+        const answerConstraints = {
+          maxModelCalls: ONE_BRAIN_MAX_MODEL_CALLS,
+          modelCallsRemaining: 1,
+          allowClarification: false,
+          cannotClarifyFields: cannotClarifyFieldsV2(workingState),
+          pendingReplyRequired: false,
+          pendingReplyField: null,
+          pendingResumeAction: null,
+          forcedClarificationField: null,
+          noAutomaticGroundingQuestions: true,
+          answerStageMayClarify: false,
+          requiredAnswerAction: "edit_outfit",
+          deterministicEdit: true,
+        };
+        const answerEnvelope = await callBrainV2(stylistBrain,
+          brainInputV2(request, workingState, "answer", executed.toolResults, answerConstraints));
+        validateAnswerEnvelopeV2(answerEnvelope, {requiredAction: "edit_outfit"});
+        workingState = applyBrainStatePatchV2(workingState, answerEnvelope.statePatch);
+        return commitResultV2({
+          durableRepository,
+          uid,
+          request,
+          originalState,
+          workingState,
+          decision: answerEnvelope.result,
+          wardrobeItems: executed.wardrobeItems,
+          authorizedEditScope: executed.toolResults.authorizedEditScope,
+        });
       }
 
       // Resolve an explicitly named travel destination before the model. The

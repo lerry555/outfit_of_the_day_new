@@ -753,3 +753,184 @@ test("production Firebase entrypoint is wired to the One-Brain bridge", () => {
   assert.match(source, /stylist_production_bridge_one_brain_v2/);
   assert.doesNotMatch(source, /require\("\.\/stylist\/v2\/stylist_production_bridge_v2"\)/);
 });
+
+
+test("hardening: deterministic relative date survives Brain patch and grounds weather to the exact day", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const calls = {brainInputs: []};
+  const scripts = [
+    {
+      kind: "tool_request",
+      statePatch: {
+        context: {
+          activity: {id: "city_walk", label: "výlet", source: "user"},
+          date: {dateKey: "2026-09-30", source: "model_wrong_on_purpose"},
+          timeWindow: {key: "day", label: "cez deň", source: "one_brain_default"},
+          environment: "outdoor",
+          groundingRequirements: {weatherRequired: true, weatherLocationField: "destination", terrainRequiredFields: []},
+        },
+      },
+      requests: [
+        {tool: "location", query: "Paríž", targetField: "destination"},
+        {tool: "wardrobe", scope: "full_relevant", category: null, editScope: null},
+      ],
+    },
+    {
+      kind: "final",
+      statePatch: {context: {date: {dateKey: "2026-09-29", source: "model_wrong_again"}}},
+      result: {
+        action: "generate_outfit",
+        assistantText: "Na výlet beriem ľahké tričko, nohavice a tenisky podľa počasia.",
+        resultingOutfit: {
+          itemIds: ["tee", "pants", "shoes"],
+          selectionReasonsByItemId: {tee: "ľahký vrch", pants: "praktické nohavice", shoes: "pohodlná obuv"},
+          compromises: [], missingWardrobeNeeds: [],
+        },
+        display: {kind: "outfit", itemIds: ["tee", "pants", "shoes"]},
+      },
+    },
+  ];
+  const brain = {async brainTurn(input) { calls.brainInputs.push(JSON.parse(JSON.stringify(input))); return scripts.shift(); }};
+  const ports = fakePorts({
+    brain,
+    calls,
+    location: {providerId: "openmeteo:paris", label: "Paríž, Francúzsko", lat: 48.8566, lng: 2.3522,
+      source: "fake-location", granularity: "locality", countryCode: "FR"},
+  });
+  const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+  const result = await engine.resolveTurn({
+    uid: "u_date_hardening",
+    request: request({chatId: "chat_date_hardening", turnId: "t1", revision: 0,
+      message: "o dva dni idem do Pariza na vylet a potrebujem outfit"}),
+    bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {}, knownExplicitDurableChoices: {}},
+  });
+  assert.equal(result.action, "generate_outfit");
+  const stored = await repository.get({uid: "u_date_hardening", chatId: "chat_date_hardening"});
+  assert.equal(stored.state.context.date.dateKey, "2026-09-12");
+  assert.equal(stored.state.context.date.source, "deterministic_user_text");
+  assert.equal(stored.state.context.weather.dateKey, "2026-09-12");
+  assert.equal(calls.weather, 1);
+  assert.equal(scripts.length, 0);
+});
+
+test("hardening: clear replace-one-item request bypasses free-form planning and preserves every other item", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const allItems = [
+    {id: "hoodie", name: "Čierna mikina", category: "tops", bodySlots: ["upper_body"], layerPosition: "mid", canonicalType: "hoodie"},
+    {id: "hoodie2", name: "Modrá mikina", category: "tops", bodySlots: ["upper_body"], layerPosition: "mid", canonicalType: "hoodie"},
+    {id: "tee", name: "Sivé tričko", category: "tops", bodySlots: ["upper_body"], layerPosition: "base", canonicalType: "t_shirt"},
+    {id: "pants", name: "Tepláky", category: "bottoms", bodySlots: ["lower_body"], canonicalType: "sweatpants"},
+    {id: "shoes", name: "Tenisky", category: "footwear", bodySlots: ["feet"], canonicalType: "sneakers"},
+  ];
+  const expectedScope = {
+    replaceItemIds: ["hoodie"], retainItemIds: [], allowedSlots: ["upper_body"],
+    allowedCategories: ["tops"], allowRemovalOnly: false,
+  };
+  const calls = {brainInputs: []};
+  const brain = {
+    async brainTurn(input) {
+      calls.brainInputs.push(JSON.parse(JSON.stringify(input)));
+      assert.equal(input.stage, "answer");
+      assert.equal(input.runtimeConstraints.requiredAnswerAction, "edit_outfit");
+      assert.deepEqual(input.toolResults.authorizedEditScope, expectedScope);
+      return {
+        kind: "final", statePatch: {},
+        result: {
+          action: "edit_outfit",
+          assistantText: "Jasné, čiernu mikinu mením za modrú a zvyšok nechávam.",
+          resultingOutfit: {
+            itemIds: ["hoodie2", "tee", "pants", "shoes"],
+            selectionReasonsByItemId: {
+              hoodie2: "vhodná náhradná vrstva", tee: "pôvodný dôvod trička",
+              pants: "pôvodný dôvod nohavíc", shoes: "pôvodný dôvod obuvi",
+            }, compromises: [], missingWardrobeNeeds: [],
+          },
+          editScope: expectedScope,
+          display: {kind: "outfit", itemIds: ["hoodie2", "tee", "pants", "shoes"]},
+        },
+      };
+    },
+  };
+  const ports = fakePorts({brain, calls});
+  const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+  const result = await engine.resolveTurn({
+    uid: "u_edit_hardening",
+    request: request({chatId: "chat_edit_hardening", turnId: "t1", revision: 0,
+      message: "mohol by si mi zmenit mikinu za nieco ine?"}),
+    knownWardrobeItems: allItems,
+    bootstrapInput: {
+      currentOutfitItemIds: ["hoodie", "tee", "pants", "shoes"],
+      persistedSelectionReasonsByItemId: {
+        hoodie: "pôvodný dôvod mikiny", tee: "pôvodný dôvod trička",
+        pants: "pôvodný dôvod nohavíc", shoes: "pôvodný dôvod obuvi",
+      },
+      knownExplicitDurableChoices: {},
+    },
+  });
+  assert.equal(result.action, "edit_outfit");
+  assert.deepEqual(result.resultingOutfit.itemIds, ["hoodie2", "tee", "pants", "shoes"]);
+  assert.deepEqual(result.editScope, expectedScope);
+  assert.equal(calls.brainInputs.length, 1);
+});
+
+
+test("hardening review: hoodie edit stays isolated when current outfit also contains a jacket", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  const allItems = [
+    {id: "jacket", name: "Čierna bunda", category: "tops", bodySlots: ["upper_body"], layerPosition: "outer", canonicalType: "jacket"},
+    {id: "jacket2", name: "Modrá bunda", category: "tops", bodySlots: ["upper_body"], layerPosition: "outer", canonicalType: "jacket"},
+    {id: "hoodie", name: "Čierna mikina", category: "tops", bodySlots: ["upper_body"], layerPosition: "mid", canonicalType: "hoodie"},
+    {id: "hoodie2", name: "Modrá mikina", category: "tops", bodySlots: ["upper_body"], layerPosition: "mid", canonicalType: "hoodie"},
+    {id: "tee", name: "Sivé tričko", category: "tops", bodySlots: ["upper_body"], layerPosition: "base", canonicalType: "t_shirt"},
+    {id: "pants", name: "Nohavice", category: "bottoms", bodySlots: ["lower_body"], canonicalType: "pants"},
+    {id: "shoes", name: "Tenisky", category: "footwear", bodySlots: ["feet"], canonicalType: "sneakers"},
+  ];
+  const expectedScope = {
+    replaceItemIds: ["hoodie"], retainItemIds: [], allowedSlots: ["upper_body"],
+    allowedCategories: ["tops"], allowRemovalOnly: false,
+  };
+  const brain = {
+    async brainTurn(input) {
+      assert.equal(input.stage, "answer");
+      const ids = input.toolResults.wardrobeItems.map((item) => item.id);
+      assert.ok(ids.includes("jacket"), "current jacket must remain visible as preserved context");
+      assert.ok(ids.includes("hoodie2"), "same-type hoodie alternative must be visible");
+      assert.ok(!ids.includes("jacket2"), "unrequested jacket alternative must not enter the edit candidate scope");
+      assert.deepEqual(input.toolResults.authorizedEditScope, expectedScope);
+      return {
+        kind: "final", statePatch: {},
+        result: {
+          action: "edit_outfit",
+          assistantText: "Jasné, mikinu mením za modrú a bundu nechávam.",
+          resultingOutfit: {
+            itemIds: ["jacket", "hoodie2", "tee", "pants", "shoes"],
+            selectionReasonsByItemId: {
+              jacket: "pôvodný dôvod bundy", hoodie2: "náhradná mikina", tee: "pôvodný dôvod trička",
+              pants: "pôvodný dôvod nohavíc", shoes: "pôvodný dôvod obuvi",
+            }, compromises: [], missingWardrobeNeeds: [],
+          },
+          editScope: expectedScope,
+          display: {kind: "outfit", itemIds: ["jacket", "hoodie2", "tee", "pants", "shoes"]},
+        },
+      };
+    },
+  };
+  const calls = {brainInputs: []};
+  const ports = fakePorts({brain, calls});
+  const engine = createStylistOneBrainEngineV2({sessionRepository: repository, ...ports, clock: () => NOW});
+  const result = await engine.resolveTurn({
+    uid: "u_edit_layer_isolation",
+    request: request({chatId: "chat_edit_layer_isolation", turnId: "t1", revision: 0, message: "zmen mikinu"}),
+    knownWardrobeItems: allItems,
+    bootstrapInput: {
+      currentOutfitItemIds: ["jacket", "hoodie", "tee", "pants", "shoes"],
+      persistedSelectionReasonsByItemId: {
+        jacket: "pôvodný dôvod bundy", hoodie: "pôvodný dôvod mikiny", tee: "pôvodný dôvod trička",
+        pants: "pôvodný dôvod nohavíc", shoes: "pôvodný dôvod obuvi",
+      },
+      knownExplicitDurableChoices: {},
+    },
+  });
+  assert.equal(result.action, "edit_outfit");
+  assert.deepEqual(result.resultingOutfit.itemIds, ["jacket", "hoodie2", "tee", "pants", "shoes"]);
+});

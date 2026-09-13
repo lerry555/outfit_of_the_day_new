@@ -274,8 +274,39 @@ function createStylistChatV2Handler({
       const engineMs = Date.now() - engineStartedAt;
       const materializeStartedAt = Date.now();
       const materialized = await legacyCompatibleResponse({result, sessionId, wardrobeTool});
-      const response = {...materialized, modelPath: "stylist_v2_one_brain"};
+      let finalState = null;
+      try { finalState = (await repository.get({uid, chatId: sessionId}))?.state || null; } catch (_) {}
+      const weather = finalState?.context?.weather || null;
+      const weatherField = finalState?.context?.groundingRequirements?.weatherLocationField || null;
+      const weatherLocation = weatherField ? finalState?.context?.[weatherField] : null;
+      const resolvedContext = {
+        targetDateKey: finalState?.context?.date?.dateKey || null,
+        dateSource: finalState?.context?.date?.source || null,
+        weatherAvailable: Boolean(weather),
+        weatherDateKey: weather?.dateKey || null,
+        weatherSource: weather?.source || null,
+        weatherLocationLabel: weatherLocation?.label || null,
+        weatherSummary: weather?.snapshot ? {
+          representativeTempC: weather.snapshot.representativeTempC ?? null,
+          minTempC: weather.snapshot.minTempC ?? null,
+          maxTempC: weather.snapshot.maxTempC ?? null,
+          willRain: weather.snapshot.willRain ?? null,
+          willSnow: weather.snapshot.willSnow ?? null,
+          isWindy: weather.snapshot.isWindy ?? null,
+          maxWindKph: weather.snapshot.maxWindKph ?? null,
+        } : null,
+      };
+      const response = {...materialized, modelPath: "stylist_v2_one_brain", resolvedContext};
 
+      logger?.info?.("STYLIST_V2_RESOLVED_CONTEXT", {
+        action: result.action,
+        targetDateKey: resolvedContext.targetDateKey,
+        dateSource: resolvedContext.dateSource,
+        weatherAvailable: resolvedContext.weatherAvailable,
+        weatherDateKey: resolvedContext.weatherDateKey,
+        weatherSource: resolvedContext.weatherSource,
+        weatherLocationLabel: resolvedContext.weatherLocationLabel,
+      });
       logger?.info?.("STYLIST_V2_TURN_LATENCY", {
         path: "one_brain",
         totalMs: Date.now() - turnStartedAt,
