@@ -272,6 +272,8 @@ test("One Brain: country-level hike is narrowed deterministically before the ans
   assert.equal(calls.wardrobe || 0, 0, "country preflight must clarify before reading the wardrobe");
   assert.equal(calls.weather || 0, 0);
   assert.equal(calls.brainInputs.length, 1, "Brain parses the original scenario once; runtime still owns the deterministic broad-country clarification");
+  const stored = await repository.get({uid: "u_country", chatId: "chat_country_hike"});
+  assert.equal(stored.state.conversationMemory.pendingQuestion.resumeAction, "generate_outfit");
 });
 
 test("One Brain: neviem permanently consumes the pending field for that continuation", async () => {
@@ -464,7 +466,10 @@ function pendingDestinationClarifyEnvelope() {
     result: {
       action: "clarify",
       assistantText: "Kam približne ideš?",
-      clarification: {field: "destination", question: "Kam približne ideš?", actionId: "clarify_destination"},
+      clarification: {
+        field: "destination", question: "Kam približne ideš?", actionId: "clarify_destination",
+        resumeAction: "generate_outfit",
+      },
       display: {kind: "none", itemIds: []},
     },
   };
@@ -625,6 +630,7 @@ test("One Brain: classified destination answer may resolve the pending location 
   assert.equal(calls.lastLocationQuery, "Alpy, Rakúsko");
   assert.equal(calls.brainInputs[1].runtimeConstraints.pendingReplyRequired, true);
   assert.equal(calls.brainInputs[2].runtimeConstraints.allowClarification, false);
+  assert.equal(calls.brainInputs[2].runtimeConstraints.requiredAnswerAction, "generate_outfit");
 });
 
 test("One Brain model contract classifies pending replies and uses Terra medium", async () => {
@@ -672,6 +678,21 @@ test("One Brain model contract classifies pending replies and uses Terra medium"
   assert.match(systemPrompt, /Emoji používaj striedmo/);
   assert.match(systemPrompt, /silno pokazený alebo preklepový/);
   assert.equal(envelope.pendingReplyDisposition, "unrelated");
+
+  await brain.brainTurn({
+    stage: "answer",
+    request: {chatId: "c", turnId: "t2", latestUserInput: "do Alp", explicitUiActionId: null, clientCapabilities: {}},
+    session: {
+      context: {terrain: {surface: null, difficulty: null, condition: null}},
+      currentOutfit: {itemIds: [], selectionReasonsByItemId: {}},
+      conversationMemory: {},
+    },
+    toolResults: {wardrobeItems: wardrobeItems(), authorizedEditScope: null},
+    runtimeConstraints: {allowClarification: false, requiredAnswerAction: "generate_outfit"},
+  });
+  assert.deepEqual(specs[1].schema.properties.action.enum, ["generate_outfit"]);
+  assert.match(specs[1].messages[0].content, /MUSÍŠ dokončiť pôvodnú požiadavku/);
+  assert.match(specs[1].messages[0].content, /absencia turistických topánok safety hard-stop/);
 });
 
 test("shopping need is the authoritative CTA signal even if offerShopping is false", () => {

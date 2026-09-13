@@ -18,7 +18,7 @@ function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function schemaForStageV2(stage, allowClarification) {
+function schemaForStageV2(stage, allowClarification, requiredAnswerAction = null) {
   const schema = clone(stage === "answer" ? FINAL_SCHEMA : PLAN_SCHEMA);
   if (stage !== "answer") {
     schema.required = [...schema.required, "pendingReplyDisposition"];
@@ -27,10 +27,13 @@ function schemaForStageV2(stage, allowClarification) {
       enum: ["none", "answer", "skip", "meta", "unrelated"],
     };
   }
-  if (allowClarification !== false) return schema;
   const action = schema?.properties?.action;
-  if (Array.isArray(action?.enum)) {
+  if (allowClarification === false && Array.isArray(action?.enum)) {
     action.enum = action.enum.filter((value) => value !== "clarify");
+  }
+  if (stage === "answer" && ["generate_outfit", "edit_outfit"].includes(requiredAnswerAction) &&
+      Array.isArray(action?.enum) && action.enum.includes(requiredAnswerAction)) {
+    action.enum = [requiredAnswerAction];
   }
   return schema;
 }
@@ -43,6 +46,7 @@ function oneBrainPromptV2(stage) {
     "Ak runtimeConstraints.allowClarification=false, NESMIEŠ položiť ďalšiu objasňujúcu otázku. Použi rozumný konzervatívny predpoklad a pomôž z toho, čo už vieš.",
     "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",
     "Ak runtimeConstraints.structuralRepair existuje, predchádzajúci TOOL-DECISION výstup porušil uvedený štrukturálny kontrakt. Oprav presne túto chybu, zachovaj zámer používateľa a session fakty a neotváraj novú otázku navyše.",
+    "Ak runtimeConstraints.requiredAnswerAction je generate_outfit alebo edit_outfit, odpovedáš už po jedinej potrebnej clarification a MUSÍŠ dokončiť pôvodnú požiadavku touto akciou. Obyčajný chat alebo stop nie je platné dokončenie.",
     "answer znamená skutočnú odpoveď na položené pole. skip znamená neviem/nechaj tak/nerieš/preskoč. meta je otázka o tom, prečo údaj potrebuješ. unrelated je zmena témy alebo nový zámer.",
     "Pri skip/meta/unrelated nesmieš text správy poslať ako locationQuery ani ho uložiť do pôvodného pending poľa. Pri unrelated môže nový scenár dostať vlastnú jednu potrebnú otázku.",
     "Ak používateľ povedal neviem/netuším/je mi to jedno/preskoč to/nerieš/daj mi proste outfit, ber to ako príkaz pokračovať bez daného detailu. Pole v cannotClarifyFields už nikdy v tomto pokračovaní nepýtaj.",
@@ -57,6 +61,7 @@ function oneBrainPromptV2(stage) {
     "Vrstvenie horných dielov musí mať funkčný zmysel. Rešpektuj layerPosition, warmth, canonicalType a outfitFunctions; viac vrstiev automaticky neznamená lepší alebo teplejší outfit.",
     "Ak vyberieš mid vrstvu (napr. mikinu alebo sveter) aj outer vrstvu, ľahší outer s nižším warmth smie ísť cez teplejší mid iba keď dáta explicitne ukazujú shell, vetruodolnú, dažďovú alebo inú ochrannú funkciu. Ľahká športová/tréningová/track bunda bez takej funkcie cez hrubšiu mikinu NIE JE ďalšia teplá vrstva; zvoľ jednu z nich alebo skutočný funkčný shell. Nikdy netvrď, že tenšia bunda pridáva teplo bez dôkazu v dátach.",
     "Ak ideálny kus chýba a nejde o objektívny safety hard-stop, dokonči najlepší dostupný outfit, označ kompromis a môžeš ponúknuť shopping.",
+    "Pri bežnej turistike bez explicitne mokrého, blatistého, zasneženého, ľadového, skalnatého, strmého alebo technického terénu NIE JE absencia turistických topánok safety hard-stop. Vyber najpraktickejšie dostupné tenisky ako otvorene pomenovaný kompromis a ponúkni doplnenie turistickej obuvi namiesto odmietnutia outfitu.",
     "Nákupnú Áno/Nie otázku nevkladaj do assistantText; na to slúžia offerShopping a shopping polia, ktoré UI zobrazí samostatne.",
     "Tón: priateľský profesionál — teplý, nenútený a ľudský, ale stále kompetentný. Jemne zrkadli energiu používateľa a nepreháňaj familiárnosť, ak ju používateľ sám nenastaví.",
     "Pri prvom vecnom turne s prosbou o radu nezačínaj holým rozkazom typu Na túru si daj. Najprv krátko ľudsky nadviaž, napríklad Jasné, Super alebo Poďme na to, a hneď pokračuj konkrétnou pomocou. Acknowledgement má byť krátke, nie vata.",
@@ -109,7 +114,11 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
       };
       const model = "gpt-5.6-terra";
       const reasoningEffort = "medium";
-      const schema = schemaForStageV2(stage, allowClarification);
+      const schema = schemaForStageV2(
+        stage,
+        allowClarification,
+        input?.runtimeConstraints?.requiredAnswerAction || null,
+      );
       const startedAt = Date.now();
       let raw;
       try {
