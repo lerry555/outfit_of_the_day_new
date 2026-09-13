@@ -70,12 +70,17 @@ function explicitStylingDestinationCandidateV2(value) {
   const normalized = normalizeConversationTextV2(raw);
   const stylingSignal = /\b(?:outfit|oblecen\w*|obliec\w*|na seba|tura|turistik\w*|hiking|trek\w*|vylet\w*|dovolen\w*|koncert\w*|festival\w*|svadb\w*|pohovor\w*|ples\w*|lyz\w*)\b/.test(normalized);
   if (!stylingSignal) return null;
+  const outfitRequestSignal = /\b(?:outfit|oblecen\w*|obliec\w*|na seba|vyber mi|navrhni mi|zostav mi)\b/.test(normalized);
 
   const travel = raw.match(/\b(?:idem|ideme|pojdem|pojdeme|chystam\s+sa|chystám\s+sa|chystame\s+sa|chystáme\s+sa|cestujem|cestujeme|letim|letím|letime|letíme|vyrazam|vyrážam|vyrazame|vyrážame)\s+(?:do|na|v|vo)\s+(.+?)(?=\s+(?:na|za)\s+(?:turu|túru|turistiku|vylet|výlet|vikend|víkend|dovolenku|koncert|festival|svadbu|pohovor|ples|lyzovacku|lyžovačku)\b|\s+(?:a\s+)?(?:ja\s+)?(?:neviem|netusim|netuším|chcem|potrebujem|co|čo)\b|[,!?]|$)/iu);
   const query = String(travel?.[1] || "").trim().replace(/[.]+$/g, "");
   if (!query || query.length > 160) return null;
   const eventLike = /\b(?:koncert\w*|festival\w*|svadb\w*|pohovor\w*|ples\w*|ceremoni\w*|oslava\w*)\b/.test(normalized);
-  return {query, targetField: eventLike ? "eventLocation" : "destination"};
+  return {
+    query,
+    targetField: eventLike ? "eventLocation" : "destination",
+    resumeAction: outfitRequestSignal ? "generate_outfit" : null,
+  };
 }
 
 function pendingReplyDispositionV2(envelope, pendingQuestion) {
@@ -269,6 +274,8 @@ function applyAcceptedResultV2(state, result, {preservePendingQuestion = false} 
       field: result.clarification.field,
       question: result.clarification.question,
       acceptsYesNo: Boolean(result.clarification.acceptsYesNo),
+      resumeAction: ["generate_outfit", "edit_outfit"].includes(result.clarification.resumeAction) ?
+        result.clarification.resumeAction : null,
     };
   } else if (!preservePendingQuestion) {
   next.conversationMemory.pendingQuestion = null;
@@ -339,12 +346,15 @@ function validateToolDecisionEnvelopeV2(envelope, {allowClarification, pendingQu
   }
 }
 
-function validateAnswerEnvelopeV2(envelope) {
+function validateAnswerEnvelopeV2(envelope, {requiredAction = null} = {}) {
   if (envelope?.kind !== "final" || !envelope.result) {
     throw new RepairableStructuralTurnError("one-brain answer stage must return one final result");
   }
   if (envelope.result.action === "clarify") {
     throw new RepairableStructuralTurnError("one-brain answer stage cannot start another questionnaire round");
+  }
+  if (requiredAction && envelope.result.action !== requiredAction) {
+    throw new RepairableStructuralTurnError(`one-brain answer must complete pending continuation with ${requiredAction}`);
   }
 }
 
@@ -394,7 +404,7 @@ function shoppingContextV2(state, pending) {
   };
 }
 
-function broadLocationClarificationDecisionV2(locationRequest, toolResults) {
+function broadLocationClarificationDecisionV2(locationRequest, toolResults, resumeAction = null) {
   const resolved = (toolResults?.resolvedLocations || [])
     .find((entry) => entry?.targetField === locationRequest?.targetField)?.location;
   const rawLabel = String(resolved?.label || locationRequest?.query || "").trim();
@@ -411,6 +421,7 @@ function broadLocationClarificationDecisionV2(locationRequest, toolResults) {
       question,
       actionId: `clarify_${targetField}_narrow`,
       acceptsYesNo: false,
+      resumeAction: ["generate_outfit", "edit_outfit"].includes(resumeAction) ? resumeAction : null,
     },
     display: {kind: "none", itemIds: []},
   };
@@ -638,6 +649,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
                 decision: broadLocationClarificationDecisionV2(
                   {tool: "location", query: explicitDestination.query, targetField: field},
                   {resolvedLocations: [{targetField: field, location: resolvedExplicitDestination}]},
+                  explicitDestination.resumeAction,
                 ),
               };
             }
@@ -652,6 +664,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       cannotClarifyFields: cannotClarifyFieldsV2(workingState),
       pendingReplyRequired: Boolean(pendingQuestionAtBrain),
       pendingReplyField: pendingQuestionAtBrain?.field || null,
+      pendingResumeAction: pendingQuestionAtBrain?.resumeAction || null,
       forcedClarificationField: forcedBroadClarification?.field || null,
       noAutomaticGroundingQuestions: true,
       answerStageMayClarify: false,
@@ -768,15 +781,25 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
           authorizedEditScope: executed.toolResults.authorizedEditScope,
         });
       }
+      const terrain = workingState.context.terrain || {};
+      const explicitSafetyTerrain = ["wet", "muddy", "snow", "ice"].includes(terrain.condition) ||
+        ["steep", "technical"].includes(terrain.difficulty) || terrain.surface === "rock";
+      const requiredAnswerAction = runtimeConstraints.pendingResumeAction === "generate_outfit" &&
+        !explicitSafetyTerrain && Array.isArray(executed.toolResults.wardrobeItems) &&
+        executed.toolResults.wardrobeItems.length > 0 ? "generate_outfit" :
+        runtimeConstraints.pendingResumeAction === "edit_outfit" &&
+        executed.toolResults.authorizedEditScope && Array.isArray(executed.toolResults.wardrobeItems) &&
+        executed.toolResults.wardrobeItems.length > 0 ? "edit_outfit" : null;
       const answerConstraints = {
         ...runtimeConstraints,
         modelCallsRemaining: 1,
         allowClarification: false,
         cannotClarifyFields: cannotClarifyFieldsV2(workingState),
+        requiredAnswerAction,
       };
       const answerEnvelope = await callBrainV2(stylistBrain,
         brainInputV2(request, workingState, "answer", executed.toolResults, answerConstraints));
-      validateAnswerEnvelopeV2(answerEnvelope);
+      validateAnswerEnvelopeV2(answerEnvelope, {requiredAction: requiredAnswerAction});
       workingState = applyBrainStatePatchV2(workingState, answerEnvelope.statePatch);
 
       return commitResultV2({
