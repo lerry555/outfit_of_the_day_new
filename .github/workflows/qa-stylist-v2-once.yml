@@ -76,7 +76,7 @@ jobs:
           grep -n "createDeterministicShellBrainV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
           grep -n "deterministicRemoteOutfitClarificationV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
 
-      - name: Instrument safe first-turn smoke output
+      - name: Instrument safe smoke output
         shell: bash
         run: |
           set -euo pipefail
@@ -84,10 +84,15 @@ jobs:
           const fs = require('fs');
           const path = 'functions/stylist/v2/stylist_production_smoke_v2.js';
           let source = fs.readFileSync(path, 'utf8');
-          const needle = '    const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));\n';
-          if (!source.includes(needle)) throw new Error('production smoke first turn not found');
-          const diagnostic = needle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      modelPath: first.result.modelPath || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n      resultingOutfitItemIds: Array.isArray(first.result.resultingOutfitItemIds) ? first.result.resultingOutfitItemIds : [],\n    }));\n`;
-          source = source.replace(needle, diagnostic);
+          const firstNeedle = '    const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));\n';
+          if (!source.includes(firstNeedle)) throw new Error('production smoke first turn not found');
+          const firstDiagnostic = firstNeedle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      modelPath: first.result.modelPath || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n      resultingOutfitItemIds: Array.isArray(first.result.resultingOutfitItemIds) ? first.result.resultingOutfitItemIds : [],\n    }));\n`;
+          source = source.replace(firstNeedle, firstDiagnostic);
+
+          const outfitNeedle = '    const outfit = await callCallable(idToken, base(`t3_${stamp}`, "do Tatier"));\n';
+          if (!source.includes(outfitNeedle)) throw new Error('production smoke outfit turn not found');
+          const outfitDiagnostic = outfitNeedle + `    console.log("STYLIST_PRODUCTION_OUTFIT_TURN " + JSON.stringify({\n      action: outfit.result.action || null,\n      modelPath: outfit.result.modelPath || null,\n      sessionRevision: outfit.result.sessionRevision ?? null,\n      failClosed: outfit.result.failClosed ?? null,\n      stylistComment: String(outfit.result.stylistComment || "").slice(0, 500),\n      resultingOutfitItemIds: Array.isArray(outfit.result.resultingOutfitItemIds) ? outfit.result.resultingOutfitItemIds : [],\n      resultingOutfitItems: (Array.isArray(outfit.result.resultingOutfitItems) ? outfit.result.resultingOutfitItems : []).map((item) => ({\n        id: item.id || null,\n        name: item.name || null,\n        canonicalType: item.canonicalType || null,\n        canonicalFamily: item.canonicalFamily || null,\n        stylistSelectionReason: item.stylistSelectionReason || null,\n      })),\n      quickReplyMode: outfit.result.quickReplyMode || null,\n      quickReplyPrompt: outfit.result.quickReplyPrompt || null,\n      resolvedContext: outfit.result.resolvedContext || null,\n    }));\n`;
+          source = source.replace(outfitNeedle, outfitDiagnostic);
           fs.writeFileSync(path, source);
           NODE
 
