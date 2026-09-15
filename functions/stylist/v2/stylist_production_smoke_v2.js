@@ -113,8 +113,11 @@ async function main() {
 
     const why = await callCallable(idToken, base(`t2_${stamp}`, "načo ti to je"));
     assert.equal(why.result.failClosed, false);
-    assert.equal(why.result.action, "clarify");
+    assert.equal(why.result.action, "chat");
+    assert.equal(why.result.outfitChanged, false);
+    assert.deepEqual(why.result.displayItemIds, []);
     assert.match(why.result.reply, /počas/i);
+    qualityCheck(why.result.reply);
 
     const outfit = await callCallable(idToken, base(`t3_${stamp}`, "do Tatier"));
     assert.equal(outfit.result.failClosed, false);
