@@ -1,4 +1,4 @@
-name: Deploy and QA Stylist V2 once
+name: QA Stylist V2 once
 
 on:
   push:
@@ -12,16 +12,16 @@ permissions:
   id-token: write
 
 jobs:
-  deploy-and-production-smoke:
+  production-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout trigger commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Guard frozen refs and canonical production merge
+      - name: Guard frozen refs and production merge
         shell: bash
         run: |
           set -euo pipefail
@@ -32,49 +32,16 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor 9593993d76d3399b51ebf1a21fd7e3482ff8df32 "${GITHUB_SHA}"
+          git merge-base --is-ancestor d5bb3e82845d98ffd80fd54149b93ad3934fac8c "${GITHUB_SHA}"
 
-      - name: Checkout canonical merge for deploy and QA
+      - name: Checkout corrected production smoke
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach 9593993d76d3399b51ebf1a21fd7e3482ff8df32
-          test "$(git rev-parse HEAD)" = "9593993d76d3399b51ebf1a21fd7e3482ff8df32"
-
-      - name: Isolate V2 entrypoint for Firebase analysis
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require('fs');
-          const path = 'functions/index_v2.js';
-          let source = fs.readFileSync(path, 'utf8');
-          const legacyImport = 'const legacy = require("./index");\nmodule.exports = legacy;\n';
-          if (!source.includes(legacyImport)) {
-            throw new Error('expected legacy bridge not found in canonical index_v2.js');
-          }
-          source = source.replace(legacyImport, '');
-          fs.writeFileSync(path, source);
-          NODE
-          ! grep -q 'require("./index")' functions/index_v2.js
-          grep -q 'module.exports.stylistChatV2' functions/index_v2.js
-          grep -q 'createGuardedOpenMeteoLocationResolverV2' functions/index_v2.js
-
-      - name: Fingerprint canonical runtime source
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "CANONICAL_MERGE=$(git rev-parse HEAD)"
-          sha256sum \
-            functions/index_v2.js \
-            functions/stylist/v2/guarded_location_resolver_v2.js \
-            functions/stylist/v2/stylist_production_bridge_one_brain_v2.js \
-            functions/stylist/v2/stylist_one_brain_engine_v2.js \
-            functions/stylist/v2/stylist_turn_coordinator_v2.js
-          grep -n "createGuardedOpenMeteoLocationResolverV2" functions/index_v2.js
-          grep -n "isActivityOnlyLocationQueryV2" functions/stylist/v2/guarded_location_resolver_v2.js
-          grep -n "createDeterministicShellBrainV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
-          grep -n "deterministicRemoteOutfitClarificationV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          git checkout --detach d5bb3e82845d98ffd80fd54149b93ad3934fac8c
+          test "$(git rev-parse HEAD)" = "d5bb3e82845d98ffd80fd54149b93ad3934fac8c"
+          grep -q 'hashValue(\[uid, turnId, "one_brain"\])' functions/stylist/v2/stylist_production_smoke_v2.js
+          echo "SMOKE_SOURCE=$(git rev-parse HEAD)"
 
       - name: Instrument safe smoke output
         shell: bash
@@ -84,15 +51,19 @@ jobs:
           const fs = require('fs');
           const path = 'functions/stylist/v2/stylist_production_smoke_v2.js';
           let source = fs.readFileSync(path, 'utf8');
+
           const firstNeedle = '    const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));\n';
           if (!source.includes(firstNeedle)) throw new Error('production smoke first turn not found');
-          const firstDiagnostic = firstNeedle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      modelPath: first.result.modelPath || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n      resultingOutfitItemIds: Array.isArray(first.result.resultingOutfitItemIds) ? first.result.resultingOutfitItemIds : [],\n    }));\n`;
-          source = source.replace(firstNeedle, firstDiagnostic);
+          source = source.replace(firstNeedle, firstNeedle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n    }));\n`);
 
           const outfitNeedle = '    const outfit = await callCallable(idToken, base(`t3_${stamp}`, "do Tatier"));\n';
           if (!source.includes(outfitNeedle)) throw new Error('production smoke outfit turn not found');
-          const outfitDiagnostic = outfitNeedle + `    console.log("STYLIST_PRODUCTION_OUTFIT_TURN " + JSON.stringify({\n      action: outfit.result.action || null,\n      modelPath: outfit.result.modelPath || null,\n      sessionRevision: outfit.result.sessionRevision ?? null,\n      failClosed: outfit.result.failClosed ?? null,\n      stylistComment: String(outfit.result.stylistComment || "").slice(0, 500),\n      resultingOutfitItemIds: Array.isArray(outfit.result.resultingOutfitItemIds) ? outfit.result.resultingOutfitItemIds : [],\n      resultingOutfitItems: (Array.isArray(outfit.result.resultingOutfitItems) ? outfit.result.resultingOutfitItems : []).map((item) => ({\n        id: item.id || null,\n        name: item.name || null,\n        canonicalType: item.canonicalType || null,\n        canonicalFamily: item.canonicalFamily || null,\n        stylistSelectionReason: item.stylistSelectionReason || null,\n      })),\n      quickReplyMode: outfit.result.quickReplyMode || null,\n      quickReplyPrompt: outfit.result.quickReplyPrompt || null,\n      resolvedContext: outfit.result.resolvedContext || null,\n    }));\n`;
-          source = source.replace(outfitNeedle, outfitDiagnostic);
+          source = source.replace(outfitNeedle, outfitNeedle + `    console.log("STYLIST_PRODUCTION_OUTFIT_TURN " + JSON.stringify({\n      action: outfit.result.action || null,\n      sessionRevision: outfit.result.sessionRevision ?? null,\n      failClosed: outfit.result.failClosed ?? null,\n      stylistComment: String(outfit.result.stylistComment || "").slice(0, 500),\n      resultingOutfitItemIds: Array.isArray(outfit.result.resultingOutfitItemIds) ? outfit.result.resultingOutfitItemIds : [],\n      quickReplyMode: outfit.result.quickReplyMode || null,\n      quickReplyPrompt: outfit.result.quickReplyPrompt || null,\n      resolvedContext: outfit.result.resolvedContext || null,\n    }));\n`);
+
+          const opinionNeedle = '    assert.equal(opinion.result.failClosed, false);\n';
+          if (!source.includes(opinionNeedle)) throw new Error('production smoke opinion assertion not found');
+          source = source.replace(opinionNeedle, `    console.log("STYLIST_PRODUCTION_OPINION_TURN " + JSON.stringify({\n      action: opinion.result.action || null,\n      sessionRevision: opinion.result.sessionRevision ?? null,\n      failClosed: opinion.result.failClosed ?? null,\n      outfitChanged: opinion.result.outfitChanged ?? null,\n      displayItemIds: Array.isArray(opinion.result.displayItemIds) ? opinion.result.displayItemIds : [],\n      stylistComment: String(opinion.result.stylistComment || "").slice(0, 400),\n    }));\n` + opinionNeedle);
+
           fs.writeFileSync(path, source);
           NODE
 
@@ -118,19 +89,7 @@ jobs:
         working-directory: functions
         run: npm ci
 
-      - name: Install Firebase CLI
-        run: npm install --global firebase-tools
-
-      - name: Deploy only stylistChatV2
-        run: firebase deploy --only functions:stylistChatV2 --project outfitoftheday-4d401 --non-interactive
-
-      - name: Describe deployed Firebase functions
-        shell: bash
-        run: |
-          set -euo pipefail
-          firebase functions:list --project outfitoftheday-4d401
-
-      - name: Run production callable smoke
+      - name: Run production callable smoke only
         shell: bash
         run: |
           set -euo pipefail
