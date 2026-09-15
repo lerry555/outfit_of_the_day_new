@@ -13,6 +13,9 @@ const {
   resolveOpenAISecret,
 } = require("./stylist/ai_stylist_role_secret_binding_v1");
 const {
+  createStylistChatV2Handler,
+} = require("./stylist/v2/stylist_production_bridge_one_brain_v2");
+const {
   createGroundedStylistChatV2Handler,
 } = require("./stylist/v2/stylist_production_grounding_guard_v2");
 const {
@@ -33,6 +36,7 @@ module.exports.stylistChatV2 = functions
     secrets: [OPENAI_API_KEY_SECRET],
   })
   .https.onCall(createGroundedStylistChatV2Handler({
+    handlerFactory: createStylistChatV2Handler,
     db,
     admin,
     logger,
