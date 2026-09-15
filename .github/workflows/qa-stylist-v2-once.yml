@@ -1,4 +1,4 @@
-name: QA Stylist V2 once
+name: Deploy and QA Stylist V2 once
 
 on:
   push:
@@ -12,16 +12,16 @@ permissions:
   id-token: write
 
 jobs:
-  production-smoke:
+  deploy-and-production-smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - name: Checkout trigger commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Guard frozen refs and current production ancestry
+      - name: Guard frozen refs and canonical production merge
         shell: bash
         run: |
           set -euo pipefail
@@ -32,7 +32,32 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor cd88bc0e135721064698ad0c7eb52e6e732af939 "${GITHUB_SHA}"
+          git merge-base --is-ancestor 136a6f0960662dc8954bdd12d2619b35163f8f5e "${GITHUB_SHA}"
+
+      - name: Checkout canonical merge for deploy and QA
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach 136a6f0960662dc8954bdd12d2619b35163f8f5e
+          test "$(git rev-parse HEAD)" = "136a6f0960662dc8954bdd12d2619b35163f8f5e"
+
+      - name: Isolate V2 entrypoint for Firebase analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'functions/index_v2.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const legacyImport = 'const legacy = require("./index");\nmodule.exports = legacy;\n';
+          if (!source.includes(legacyImport)) {
+            throw new Error('expected legacy bridge not found in canonical index_v2.js');
+          }
+          source = source.replace(legacyImport, '');
+          fs.writeFileSync(path, source);
+          NODE
+          ! grep -q 'require("./index")' functions/index_v2.js
+          grep -q 'module.exports.stylistChatV2' functions/index_v2.js
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -54,9 +79,15 @@ jobs:
 
       - name: Install Function dependencies
         working-directory: functions
-        run: npm ci --ignore-scripts
+        run: npm ci
 
-      - name: Run current production callable smoke
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools
+
+      - name: Deploy only stylistChatV2
+        run: firebase deploy --only functions:stylistChatV2 --project outfitoftheday-4d401 --non-interactive
+
+      - name: Run production callable smoke
         shell: bash
         run: |
           set -euo pipefail
