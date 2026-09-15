@@ -11,6 +11,7 @@ const {
   finalModelRoutingForInputV2,
   planEnvelope,
 } = require("./openai_stylist_model_port_v2");
+const {applyHikingShoppingNeedGuardV2} = require("./hiking_shopping_guard_v2");
 
 const ONE_BRAIN_MAX_MODEL_CALLS = 2;
 
@@ -150,7 +151,8 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
           raw.pendingReplyDisposition : "none";
         return {...envelope, pendingReplyDisposition: disposition};
       }
-      return finalEnvelope(raw, {...input, phase: "final"});
+      const guardedRaw = applyHikingShoppingNeedGuardV2(raw, input);
+      return finalEnvelope(guardedRaw, {...input, phase: "final"});
     },
   });
 }
