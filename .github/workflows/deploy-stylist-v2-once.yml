@@ -41,6 +41,24 @@ jobs:
           git checkout --detach 5e1960221b2ba5779316f96035be07d232cdd547
           test "$(git rev-parse HEAD)" = "5e1960221b2ba5779316f96035be07d232cdd547"
 
+      - name: Isolate V2 entrypoint for Firebase analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'functions/index_v2.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const legacyImport = 'const legacy = require("./index");\nmodule.exports = legacy;\n';
+          if (!source.includes(legacyImport)) {
+            throw new Error('expected legacy bridge not found in canonical index_v2.js');
+          }
+          source = source.replace(legacyImport, '');
+          fs.writeFileSync(path, source);
+          NODE
+          ! grep -q 'require("./index")' functions/index_v2.js
+          grep -q 'module.exports.stylistChatV2' functions/index_v2.js
+
       - name: Set up Node 20
         uses: actions/setup-node@v4
         with:
