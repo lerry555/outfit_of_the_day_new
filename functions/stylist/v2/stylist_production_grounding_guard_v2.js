@@ -2,7 +2,10 @@
 
 const {AsyncLocalStorage} = require("node:async_hooks");
 const {scopedLocationQueryV2} = require("./guarded_location_resolver_v2");
-const {locationIsTooBroadForWeatherV2} = require("./open_meteo_ports_v2");
+const {
+  localCountryLocationHintV2,
+  locationIsTooBroadForWeatherV2,
+} = require("./open_meteo_ports_v2");
 const {
   createStylistChatV2Handler,
 } = require("./stylist_production_bridge_one_brain_v2");
@@ -71,6 +74,11 @@ function createGroundedStylistChatV2Handler({
           const contextual = await locationResolver.resolve(contextualQuery);
           if (contextual) return contextual;
         } catch (_) {}
+        // A refinement of a broad parent country must never silently escape
+        // that country just because the scoped provider lookup returned no hit.
+        // Only an explicit new country (for example "Kanada") may fall back to
+        // an unscoped lookup and replace the previous country context.
+        if (!localCountryLocationHintV2(query)) return null;
       }
       return locationResolver.resolve(query);
     },
