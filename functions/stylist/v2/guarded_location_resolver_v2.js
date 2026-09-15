@@ -107,16 +107,19 @@ function bestOpenMeteoResultV2(json, query, countryCode = null) {
 }
 
 async function resolveRankedOpenMeteoLocationV2(fetchImpl, query, countryCode = null) {
-  const url = "https://geocoding-api.open-meteo.com/v1/search?" + new URLSearchParams({
+  const expectedCountryCode = String(countryCode || "").trim().toUpperCase();
+  const params = {
     name: query,
-    count: countryCode ? "10" : "5",
+    count: expectedCountryCode ? "10" : "5",
     language: "sk",
     format: "json",
-  }).toString();
+  };
+  if (/^[A-Z]{2}$/.test(expectedCountryCode)) params.countryCode = expectedCountryCode;
+  const url = "https://geocoding-api.open-meteo.com/v1/search?" + new URLSearchParams(params).toString();
   const response = await fetchImpl(url, {headers: {Accept: "application/json"}});
   if (!response.ok) throw new Error(`open_meteo_geocoding_http_${response.status}`);
   const json = await response.json();
-  const best = bestOpenMeteoResultV2(json, query, countryCode);
+  const best = bestOpenMeteoResultV2(json, query, expectedCountryCode);
   return best ? openMeteoLocationFromJsonV2({results: [best]}) : null;
 }
 
