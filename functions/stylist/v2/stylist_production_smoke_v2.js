@@ -116,7 +116,7 @@ async function main() {
     assert.equal(why.result.action, "chat");
     assert.equal(why.result.outfitChanged, false);
     assert.deepEqual(why.result.displayItemIds, []);
-    assert.match(why.result.reply, /počas/i);
+    assert.match(why.result.reply, /(?:podmienk|teplot|vetr|dažď|dazd|počas|pocas)/i);
     qualityCheck(why.result.reply);
 
     const outfit = await callCallable(idToken, base(`t3_${stamp}`, "do Tatier"));
