@@ -1,4 +1,4 @@
-name: Deploy and QA Stylist V2 country-scope fix once
+name: Diagnose Stylist V2 country-scope session once
 
 on:
   push:
@@ -12,16 +12,16 @@ permissions:
   id-token: write
 
 jobs:
-  deploy-smoke-focused-and-broad-qa:
+  diagnose-country-scope-session:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 20
     steps:
       - name: Checkout trigger commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Guard production frozen refs and validated QA harness
+      - name: Guard deployed runtime and frozen refs
         shell: bash
         run: |
           set -euo pipefail
@@ -36,47 +36,26 @@ jobs:
           test "$(git rev-parse origin/qa/stylist-production-matrix-20260915)" = "f4ac28d65dee20c00572b89745fe72aae0ebc427"
           git merge-base --is-ancestor de9c99d04aeaf21c2f17c823483d2b5e878137e1 "${GITHUB_SHA}"
 
-      - name: Checkout exact canonical runtime merge
+      - name: Materialize and instrument focused QA harness
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach de9c99d04aeaf21c2f17c823483d2b5e878137e1
-          test "$(git rev-parse HEAD)" = "de9c99d04aeaf21c2f17c823483d2b5e878137e1"
-          grep -q 'preserveNonMutatingOutfitV2' functions/stylist/v2/openai_one_brain_model_port_v2.js
-          grep -q 'const model = "gpt-5.6-terra"' functions/stylist/v2/openai_one_brain_model_port_v2.js
-          grep -q 'const reasoningEffort = "medium"' functions/stylist/v2/openai_one_brain_model_port_v2.js
-          grep -q 'params.countryCode = expectedCountryCode' functions/stylist/v2/guarded_location_resolver_v2.js
-          grep -q 'localCountryLocationHintV2(query)' functions/stylist/v2/stylist_production_grounding_guard_v2.js
-
-      - name: Isolate V2 entrypoint for Firebase analysis
-        shell: bash
-        run: |
-          set -euo pipefail
+          git show f4ac28d65dee20c00572b89745fe72aae0ebc427:functions/stylist/v2/stylist_production_location_ambiguity_v2.js > functions/stylist/v2/stylist_production_location_ambiguity_v2.js
           node <<'NODE'
           const fs = require('fs');
-          const path = 'functions/index_v2.js';
+          const path = 'functions/stylist/v2/stylist_production_location_ambiguity_v2.js';
           let source = fs.readFileSync(path, 'utf8');
-          const legacyImport = 'const legacy = require("./index");\nmodule.exports = legacy;\n';
-          if (!source.includes(legacyImport)) {
-            throw new Error('expected legacy bridge not found in canonical index_v2.js');
-          }
-          source = source.replace(legacyImport, '');
+          const firstNeedle = '      assert.equal(first.resolvedContext?.weatherAvailable, false);\n\n      const second = await turn(chatId, place);';
+          const firstInsert = `      assert.equal(first.resolvedContext?.weatherAvailable, false);\n\n      const beforeSecondSnap = await db.collection("stylistSessionsV2Server").doc(uid).collection("sessions").doc(chatId).get();\n      const beforeSecondState = beforeSecondSnap.data()?.state || null;\n      console.log(\`STYLIST_AMBIGUITY_SESSION_BEFORE_SECOND ${'${'}chatId} ${'${'}JSON.stringify({revision: beforeSecondState?.revision ?? null, destination: beforeSecondState?.context?.destination || null, eventLocation: beforeSecondState?.context?.eventLocation || null, pendingQuestion: beforeSecondState?.conversationMemory?.pendingQuestion || null})}\`);\n\n      const second = await turn(chatId, place);`;
+          if (!source.includes(firstNeedle)) throw new Error('first diagnostic injection point missing');
+          source = source.replace(firstNeedle, firstInsert);
+          const secondNeedle = '      const second = await turn(chatId, place);\n      assertUnitedStatesWeather(second, place);';
+          const secondInsert = `      const second = await turn(chatId, place);\n      const afterSecondSnap = await db.collection("stylistSessionsV2Server").doc(uid).collection("sessions").doc(chatId).get();\n      const afterSecondState = afterSecondSnap.data()?.state || null;\n      console.log(\`STYLIST_AMBIGUITY_SESSION_AFTER_SECOND ${'${'}chatId} ${'${'}JSON.stringify({revision: afterSecondState?.revision ?? null, destination: afterSecondState?.context?.destination || null, eventLocation: afterSecondState?.context?.eventLocation || null, pendingQuestion: afterSecondState?.conversationMemory?.pendingQuestion || null, weather: afterSecondState?.context?.weather ? {locationProviderId: afterSecondState.context.weather.locationProviderId, source: afterSecondState.context.weather.source} : null})}\`);\n      assertUnitedStatesWeather(second, place);`;
+          if (!source.includes(secondNeedle)) throw new Error('second diagnostic injection point missing');
+          source = source.replace(secondNeedle, secondInsert);
           fs.writeFileSync(path, source);
           NODE
-          ! grep -q 'require("./index")' functions/index_v2.js
-          grep -q 'module.exports.stylistChatV2' functions/index_v2.js
-          grep -q 'createGroundedStylistChatV2Handler' functions/index_v2.js
-
-      - name: Fingerprint canonical runtime
-        shell: bash
-        run: |
-          set -euo pipefail
-          echo "CANONICAL_COUNTRY_SCOPE_MERGE=$(git rev-parse HEAD)"
-          sha256sum \
-            functions/index_v2.js \
-            functions/stylist/v2/guarded_location_resolver_v2.js \
-            functions/stylist/v2/stylist_production_grounding_guard_v2.js \
-            functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/stylist_production_location_ambiguity_v2.js
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -90,51 +69,11 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
-      - name: Show active deploy principal
-        shell: bash
-        run: |
-          set -euo pipefail
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8'));console.log('DEPLOY_GCP_PRINCIPAL=' + (j.client_email || 'unknown'))"
-
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci
 
-      - name: Install Firebase CLI
-        run: npm install --global firebase-tools
-
-      - name: Deploy only stylistChatV2
-        run: firebase deploy --only functions:stylistChatV2 --project outfitoftheday-4d401 --non-interactive
-
-      - name: Describe deployed Firebase function
-        shell: bash
-        run: |
-          set -euo pipefail
-          firebase functions:list --project outfitoftheday-4d401 | grep stylistChatV2
-
-      - name: Run baseline production callable smoke
-        shell: bash
-        run: |
-          set -euo pipefail
-          FIREBASE_WEB_API_KEY="$(node -e "const j=require('./android/app/google-services.json');process.stdout.write(j.client[0].api_key[0].current_key)")"
-          echo "::add-mask::$FIREBASE_WEB_API_KEY"
-          export FIREBASE_WEB_API_KEY
-          export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
-          export STYLIST_PROD_SMOKE_MAX_CALL_MS=30000
-          export STYLIST_PROD_SMOKE_MAX_COST_USD=0.05
-          node functions/stylist/v2/stylist_production_smoke_v2.js
-
-      - name: Materialize CI-validated QA harness without switching branches
-        shell: bash
-        run: |
-          set -euo pipefail
-          git show f4ac28d65dee20c00572b89745fe72aae0ebc427:functions/stylist/v2/stylist_production_location_ambiguity_v2.js > functions/stylist/v2/stylist_production_location_ambiguity_v2.js
-          git show f4ac28d65dee20c00572b89745fe72aae0ebc427:functions/stylist/v2/stylist_production_matrix_v2.js > functions/stylist/v2/stylist_production_matrix_v2.js
-          node --check functions/stylist/v2/stylist_production_location_ambiguity_v2.js
-          node --check functions/stylist/v2/stylist_production_matrix_v2.js
-          echo "QA_HARNESS_SOURCE=f4ac28d65dee20c00572b89745fe72aae0ebc427"
-
-      - name: Run focused ambiguous-location production QA
+      - name: Run instrumented focused production QA
         shell: bash
         run: |
           set -euo pipefail
@@ -144,14 +83,3 @@ jobs:
           export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
           export STYLIST_MATRIX_CALL_TIMEOUT_MS=45000
           node functions/stylist/v2/stylist_production_location_ambiguity_v2.js
-
-      - name: Run broad production callable matrix
-        shell: bash
-        run: |
-          set -euo pipefail
-          FIREBASE_WEB_API_KEY="$(node -e "const j=require('./android/app/google-services.json');process.stdout.write(j.client[0].api_key[0].current_key)")"
-          echo "::add-mask::$FIREBASE_WEB_API_KEY"
-          export FIREBASE_WEB_API_KEY
-          export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
-          export STYLIST_MATRIX_CALL_TIMEOUT_MS=45000
-          node functions/stylist/v2/stylist_production_matrix_v2.js
