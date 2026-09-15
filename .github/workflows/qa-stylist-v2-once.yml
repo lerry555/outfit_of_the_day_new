@@ -1,4 +1,4 @@
-name: QA Stylist V2 once
+name: QA Stylist V2 matrix once
 
 on:
   push:
@@ -12,60 +12,40 @@ permissions:
   id-token: write
 
 jobs:
-  production-smoke:
+  production-matrix:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout trigger commit
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Guard frozen refs and production merge
+      - name: Guard frozen refs and matrix source
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin \
             stylist-simple-agent \
             brain-v1-experiment \
-            hardening/stylist-deterministic-shell-20260913
+            hardening/stylist-deterministic-shell-20260913 \
+            qa/stylist-production-matrix-20260915
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor d5bb3e82845d98ffd80fd54149b93ad3934fac8c "${GITHUB_SHA}"
+          test "$(git rev-parse origin/qa/stylist-production-matrix-20260915)" = "c406ea07803ff9d36761dca86588b4dbf755543a"
+          git merge-base --is-ancestor c76c74ddad5c7d25b34a640cec853893e3017c8d "${GITHUB_SHA}"
+          git merge-base --is-ancestor c76c74ddad5c7d25b34a640cec853893e3017c8d c406ea07803ff9d36761dca86588b4dbf755543a
+          test "$(git diff --name-only c76c74ddad5c7d25b34a640cec853893e3017c8d c406ea07803ff9d36761dca86588b4dbf755543a)" = "functions/stylist/v2/stylist_production_matrix_v2.js"
 
-      - name: Checkout corrected production smoke
+      - name: Checkout validated matrix harness
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach d5bb3e82845d98ffd80fd54149b93ad3934fac8c
-          test "$(git rev-parse HEAD)" = "d5bb3e82845d98ffd80fd54149b93ad3934fac8c"
-          grep -q 'hashValue(\[uid, turnId, "one_brain"\])' functions/stylist/v2/stylist_production_smoke_v2.js
-          echo "SMOKE_SOURCE=$(git rev-parse HEAD)"
-
-      - name: Instrument safe smoke output
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require('fs');
-          const path = 'functions/stylist/v2/stylist_production_smoke_v2.js';
-          let source = fs.readFileSync(path, 'utf8');
-
-          const firstNeedle = '    const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));\n';
-          if (!source.includes(firstNeedle)) throw new Error('production smoke first turn not found');
-          source = source.replace(firstNeedle, firstNeedle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n    }));\n`);
-
-          const outfitNeedle = '    const outfit = await callCallable(idToken, base(`t3_${stamp}`, "do Tatier"));\n';
-          if (!source.includes(outfitNeedle)) throw new Error('production smoke outfit turn not found');
-          source = source.replace(outfitNeedle, outfitNeedle + `    console.log("STYLIST_PRODUCTION_OUTFIT_TURN " + JSON.stringify({\n      action: outfit.result.action || null,\n      sessionRevision: outfit.result.sessionRevision ?? null,\n      failClosed: outfit.result.failClosed ?? null,\n      stylistComment: String(outfit.result.stylistComment || "").slice(0, 500),\n      resultingOutfitItemIds: Array.isArray(outfit.result.resultingOutfitItemIds) ? outfit.result.resultingOutfitItemIds : [],\n      quickReplyMode: outfit.result.quickReplyMode || null,\n      quickReplyPrompt: outfit.result.quickReplyPrompt || null,\n      resolvedContext: outfit.result.resolvedContext || null,\n    }));\n`);
-
-          const opinionNeedle = '    assert.equal(opinion.result.failClosed, false);\n';
-          if (!source.includes(opinionNeedle)) throw new Error('production smoke opinion assertion not found');
-          source = source.replace(opinionNeedle, `    console.log("STYLIST_PRODUCTION_OPINION_TURN " + JSON.stringify({\n      action: opinion.result.action || null,\n      sessionRevision: opinion.result.sessionRevision ?? null,\n      failClosed: opinion.result.failClosed ?? null,\n      outfitChanged: opinion.result.outfitChanged ?? null,\n      displayItemIds: Array.isArray(opinion.result.displayItemIds) ? opinion.result.displayItemIds : [],\n      stylistComment: String(opinion.result.stylistComment || "").slice(0, 400),\n    }));\n` + opinionNeedle);
-
-          fs.writeFileSync(path, source);
-          NODE
+          git checkout --detach c406ea07803ff9d36761dca86588b4dbf755543a
+          test "$(git rev-parse HEAD)" = "c406ea07803ff9d36761dca86588b4dbf755543a"
+          node --check functions/stylist/v2/stylist_production_matrix_v2.js
+          echo "MATRIX_SOURCE=$(git rev-parse HEAD)"
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -89,7 +69,7 @@ jobs:
         working-directory: functions
         run: npm ci
 
-      - name: Run production callable smoke only
+      - name: Run broad production callable matrix
         shell: bash
         run: |
           set -euo pipefail
@@ -97,6 +77,5 @@ jobs:
           echo "::add-mask::$FIREBASE_WEB_API_KEY"
           export FIREBASE_WEB_API_KEY
           export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
-          export STYLIST_PROD_SMOKE_MAX_CALL_MS=30000
-          export STYLIST_PROD_SMOKE_MAX_COST_USD=0.05
-          node functions/stylist/v2/stylist_production_smoke_v2.js
+          export STYLIST_MATRIX_CALL_TIMEOUT_MS=45000
+          node functions/stylist/v2/stylist_production_matrix_v2.js
