@@ -1,6 +1,7 @@
 "use strict";
 
 const {
+  localCountryLocationHintV2,
   locationQueryCandidatesV2,
   nominatimLocationFromJsonV2,
   openMeteoLocationFromJsonV2,
@@ -42,6 +43,38 @@ function parseCountryScopedLocationQueryV2(value) {
   const query = rest.slice(splitAt + 1).trim();
   if (!query || !/^[A-Z]{2}$/.test(countryCode)) return {query: raw, countryCode: null};
   return {query, countryCode};
+}
+
+function embeddedCountryLocationScopeV2(value) {
+  const raw = String(value || "").trim().replace(/\s+/g, " ").slice(0, 320);
+  if (!raw) return {query: raw, countryCode: null};
+  const separators = [...raw.matchAll(/\s+(?:do|v|vo)\s+/giu)];
+  for (let index = separators.length - 1; index >= 0; index -= 1) {
+    const separator = separators[index];
+    const place = raw.slice(0, separator.index).trim();
+    const countryText = raw.slice(separator.index + separator[0].length).trim();
+    if (!place || !countryText) continue;
+    const country = localCountryLocationHintV2(countryText);
+    const countryCode = String(country?.countryCode || "").trim().toUpperCase();
+    if (/^[A-Z]{2}$/.test(countryCode)) return {query: place, countryCode};
+  }
+  return {query: raw, countryCode: null};
+}
+
+function effectiveCountryLocationScopeV2(value) {
+  const prefixed = parseCountryScopedLocationQueryV2(value);
+  const embedded = embeddedCountryLocationScopeV2(prefixed.query);
+  if (embedded.countryCode) return embedded;
+  return prefixed;
+}
+
+function countryScopedLocativeFallbackQueriesV2(query, countryCode) {
+  const raw = String(query || "").trim().replace(/\s+/g, " ");
+  const code = String(countryCode || "").trim().toUpperCase();
+  if (!/^[A-Z]{2}$/.test(code) || !raw || /\s/.test(raw)) return [];
+  if (!/^[\p{L}\p{M}'’.\-]{4,}$/u.test(raw) || !/e$/iu.test(raw)) return [];
+  const withoutLocativeE = raw.slice(0, -1).trim();
+  return withoutLocativeE.length >= 3 ? [withoutLocativeE] : [];
 }
 
 function semanticLocationQueryCandidatesV2(query) {
@@ -147,9 +180,15 @@ async function resolveCountryScopedNominatimLocationV2(fetchImpl, query, country
 function createGuardedOpenMeteoLocationResolverV2({fetchImpl = fetch} = {}) {
   return Object.freeze({
     async resolve(query) {
-      const scoped = parseCountryScopedLocationQueryV2(query);
+      const scoped = effectiveCountryLocationScopeV2(query);
       if (isActivityOnlyLocationQueryV2(scoped.query)) return null;
-      for (const candidate of semanticLocationQueryCandidatesV2(scoped.query)) {
+      const candidates = semanticLocationQueryCandidatesV2(scoped.query);
+      for (const fallbackQuery of countryScopedLocativeFallbackQueriesV2(scoped.query, scoped.countryCode)) {
+        for (const fallbackCandidate of semanticLocationQueryCandidatesV2(fallbackQuery)) {
+          if (!candidates.includes(fallbackCandidate)) candidates.push(fallbackCandidate);
+        }
+      }
+      for (const candidate of candidates) {
         const openMeteo = await resolveRankedOpenMeteoLocationV2(fetchImpl, candidate, scoped.countryCode);
         if (openMeteo) return openMeteo;
         const nominatim = scoped.countryCode ?
@@ -164,7 +203,10 @@ function createGuardedOpenMeteoLocationResolverV2({fetchImpl = fetch} = {}) {
 
 module.exports = {
   bestOpenMeteoResultV2,
+  countryScopedLocativeFallbackQueriesV2,
   createGuardedOpenMeteoLocationResolverV2,
+  effectiveCountryLocationScopeV2,
+  embeddedCountryLocationScopeV2,
   isActivityOnlyLocationQueryV2,
   locationResultScoreV2,
   normalizeLocationIntentTextV2,
