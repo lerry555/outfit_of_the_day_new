@@ -95,26 +95,16 @@ test("Open-Meteo ranking hard-filters a contextual parent country", () => {
   assert.equal(bestOpenMeteoResultV2({results: [brazil]}, "Colorado", "US"), null);
 });
 
-test("guarded resolver resolves Colorado inside US even when Brazil is ranked first by provider", async () => {
+test("guarded resolver sends the parent country filter to Open-Meteo", async () => {
   const fetchImpl = async (url) => {
     const parsed = new URL(url);
     assert.match(parsed.hostname, /open-meteo/);
     assert.equal(parsed.searchParams.get("name"), "Colorado");
+    assert.equal(parsed.searchParams.get("countryCode"), "US");
     return {
       ok: true,
       async json() {
         return {results: [
-          {
-            id: 10,
-            name: "Colorado",
-            admin1: "Paraná",
-            country: "Brazília",
-            country_code: "BR",
-            latitude: -22.84,
-            longitude: -51.97,
-            population: 250000,
-            feature_code: "PPL",
-          },
           {
             id: 11,
             name: "Colorado",
@@ -143,18 +133,11 @@ test("country-scoped Nominatim fallback also receives a hard countrycodes filter
     const parsed = new URL(url);
     calls.push(parsed);
     if (parsed.hostname.includes("open-meteo")) {
+      assert.equal(parsed.searchParams.get("countryCode"), "US");
       return {
         ok: true,
         async json() {
-          return {results: [{
-            id: 20,
-            name: "Colorado",
-            country: "Brazília",
-            country_code: "BR",
-            latitude: -22.84,
-            longitude: -51.97,
-            feature_code: "PPL",
-          }]};
+          return {results: []};
         },
       };
     }
@@ -182,7 +165,7 @@ test("country-scoped Nominatim fallback also receives a hard countrycodes filter
   assert.equal(calls.length, 2);
 });
 
-test("production grounding wrapper prefers parent country and falls back to a new country only when needed", async () => {
+test("production grounding wrapper prefers parent country and falls back to a new country only when explicitly named", async () => {
   const resolverCalls = [];
   const locationResolver = {
     async resolve(query) {
@@ -218,6 +201,34 @@ test("production grounding wrapper prefers parent country and falls back to a ne
   assert.deepEqual(resolverCalls.slice(1).map((entry) => parseCountryScopedLocationQueryV2(entry)), [
     {query: "Kanada", countryCode: "US"},
     {query: "Kanada", countryCode: null},
+  ]);
+});
+
+test("pending refinement never escapes parent country to a global same-name result", async () => {
+  const resolverCalls = [];
+  const locationResolver = {
+    async resolve(query) {
+      resolverCalls.push(query);
+      const parsed = parseCountryScopedLocationQueryV2(query);
+      if (parsed.countryCode === "US" && parsed.query === "Colorado") return null;
+      if (query === "Colorado") {
+        return {label: "Colorado, Paraná, Brazília", granularity: "locality", countryCode: "BR", lat: -22.84, lng: -51.97};
+      }
+      return null;
+    },
+  };
+  const sessionRepository = {
+    async get() { return {state: broadPendingState("US")}; },
+  };
+  const handlerFactory = ({locationResolver: contextualResolver}) => async (data) => ({
+    resolved: await contextualResolver.resolve(data.message),
+  });
+  const handler = createGroundedStylistChatV2Handler({handlerFactory, locationResolver, sessionRepository});
+
+  const colorado = await handler({chatId: "us-chat", message: "Colorado"}, {auth: {uid: "u"}});
+  assert.equal(colorado.resolved, null);
+  assert.deepEqual(resolverCalls.map(parseCountryScopedLocationQueryV2), [
+    {query: "Colorado", countryCode: "US"},
   ]);
 });
 
