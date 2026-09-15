@@ -21,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Guard refs and checkout canonical QA code
+      - name: Guard frozen refs and current production ancestry
         shell: bash
         run: |
           set -euo pipefail
@@ -32,9 +32,7 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor 5e1960221b2ba5779316f96035be07d232cdd547 "${GITHUB_SHA}"
-          git checkout --detach 5e1960221b2ba5779316f96035be07d232cdd547
-          test "$(git rev-parse HEAD)" = "5e1960221b2ba5779316f96035be07d232cdd547"
+          git merge-base --is-ancestor cd88bc0e135721064698ad0c7eb52e6e732af939 "${GITHUB_SHA}"
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -48,11 +46,17 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
+      - name: Show active QA principal
+        shell: bash
+        run: |
+          set -euo pipefail
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8'));console.log('QA_GCP_PRINCIPAL=' + (j.client_email || 'unknown'))"
+
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci --ignore-scripts
 
-      - name: Run production callable smoke
+      - name: Run current production callable smoke
         shell: bash
         run: |
           set -euo pipefail
