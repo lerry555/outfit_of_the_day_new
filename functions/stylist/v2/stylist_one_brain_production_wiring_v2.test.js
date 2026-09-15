@@ -5,7 +5,10 @@ const assert = require("node:assert/strict");
 
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
 const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
-const {createDeterministicShellBrainV2} = require("./stylist_production_bridge_one_brain_v2");
+const {
+  createDeterministicShellBrainV2,
+  createStylistChatV2Handler,
+} = require("./stylist_production_bridge_one_brain_v2");
 
 const NOW = Date.parse("2026-09-15T12:00:00.000Z");
 
@@ -89,4 +92,62 @@ test("production One-Brain wiring clarifies missing hiking destination without a
   assert.equal(result.clarification.field, "destination");
   assert.equal(result.clarification.resumeAction, "generate_outfit");
   assert.equal(result.resultingSessionRevision, 1);
+});
+
+test("production callable handler preserves deterministic missing-location clarification", async () => {
+  const repository = createMemoryStylistSessionRepositoryV2({now: () => NOW});
+  let delegatedBrainCalls = 0;
+  const rawBrain = {
+    async brainTurn() {
+      delegatedBrainCalls += 1;
+      throw new Error("callable deterministic clarification must not reach the model");
+    },
+  };
+  const wardrobeTool = {
+    async retrieve() { return []; },
+    async materialize() { return []; },
+  };
+  const handler = createStylistChatV2Handler({
+    db: {},
+    admin: null,
+    logger: {info() {}, warn() {}},
+    resolveOpenAISecret: async () => "unused-test-secret",
+    clock: () => NOW,
+    sessionRepository: repository,
+    brainFactory: () => rawBrain,
+    wardrobeToolFactory: () => wardrobeTool,
+    locationResolver: {
+      async resolve() { throw new Error("location resolver must not be queried"); },
+    },
+    weatherTool: {
+      async getForecast() { throw new Error("weather must not be queried"); },
+    },
+    shoppingToolFactory: () => ({
+      async search() { throw new Error("shopping must not be queried"); },
+    }),
+  });
+
+  const response = await handler({
+    v2SessionId: "callable-prod-wire",
+    turnId: "turn-1",
+    message: "zajtra idem na túru potrebujem outfit",
+    history: [],
+    currentOutfitItemIds: [],
+    clientContext: {
+      todayDateKey: "2026-09-15",
+      tomorrowDateKey: "2026-09-16",
+      timezoneOffsetMinutes: 120,
+    },
+  }, {auth: {uid: "qa-handler-user"}});
+
+  assert.equal(delegatedBrainCalls, 0);
+  assert.equal(response.failClosed, false);
+  assert.equal(response.action, "clarify");
+  assert.equal(response.reply, "Kam približne ideš?");
+  assert.equal(response.sessionRevision, 1);
+
+  const stored = await repository.get({uid: "qa-handler-user", chatId: "callable-prod-wire"});
+  assert.equal(stored.state.revision, 1);
+  assert.equal(stored.state.conversationMemory.pendingQuestion?.field, "destination");
+  assert.equal(stored.state.conversationMemory.pendingQuestion?.resumeAction, "generate_outfit");
 });
