@@ -67,7 +67,7 @@ test("production shell delegates when the same hiking request already contains a
 
 test("production shell does not replace an already grounded destination", async () => {
   let delegated = 0;
-  const session = createEmptySessionStateV2("grounded-shell");
+  const session = JSON.parse(JSON.stringify(createEmptySessionStateV2("grounded-shell")));
   session.context.destination = {
     providerId: "place:tatras",
     label: "Vysoké Tatry",
