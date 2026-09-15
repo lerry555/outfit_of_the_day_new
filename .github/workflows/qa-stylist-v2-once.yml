@@ -32,14 +32,14 @@ jobs:
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor 02f194c54c44d4b63a99dafe61c409112d8accef "${GITHUB_SHA}"
+          git merge-base --is-ancestor 9593993d76d3399b51ebf1a21fd7e3482ff8df32 "${GITHUB_SHA}"
 
       - name: Checkout canonical merge for deploy and QA
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach 02f194c54c44d4b63a99dafe61c409112d8accef
-          test "$(git rev-parse HEAD)" = "02f194c54c44d4b63a99dafe61c409112d8accef"
+          git checkout --detach 9593993d76d3399b51ebf1a21fd7e3482ff8df32
+          test "$(git rev-parse HEAD)" = "9593993d76d3399b51ebf1a21fd7e3482ff8df32"
 
       - name: Isolate V2 entrypoint for Firebase analysis
         shell: bash
