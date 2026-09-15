@@ -123,9 +123,16 @@ async function main() {
     assert.equal(outfit.result.failClosed, false);
     assert.equal(outfit.result.action, "generate_outfit");
     assert.ok(Array.isArray(outfit.result.resultingOutfitItemIds) && outfit.result.resultingOutfitItemIds.length >= 3);
+    assert.ok(outfit.result.resultingOutfitItemIds.includes("sneakers"), "hiking_best_effort_sneakers_missing");
     qualityCheck(outfit.result.stylistComment);
+    assert.match(outfit.result.stylistComment, /kompromis/i);
     assert.equal(outfit.result.quickReplyMode, "yes_no");
-    assert.match(String(outfit.result.quickReplyPrompt || ""), /turistick.*topán/i);
+    assert.match(String(outfit.result.quickReplyPrompt || ""), /topán/i);
+    assert.equal(outfit.result.resolvedContext?.weatherAvailable, true);
+    assert.equal(outfit.result.resolvedContext?.weatherSource, "open-meteo");
+    assert.equal(outfit.result.resolvedContext?.weatherDateKey, dates.tomorrowDateKey);
+    assert.match(String(outfit.result.resolvedContext?.weatherLocationLabel || ""), /Vysok[eé]\s+Tatry/i);
+    assert.match(String(outfit.result.resolvedContext?.weatherLocationLabel || ""), /Slovensko/i);
 
     const opinion = await callCallable(idToken, {
       ...base(`t4_${stamp}`, "a sú tie tepláky v pohode?"),
