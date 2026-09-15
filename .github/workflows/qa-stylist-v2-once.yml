@@ -1,0 +1,65 @@
+name: QA Stylist V2 once
+
+on:
+  push:
+    branches:
+      - stylist-simple-agent
+    paths:
+      - .github/workflows/qa-stylist-v2-once.yml
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout trigger commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard refs and checkout canonical QA code
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin \
+            stylist-simple-agent \
+            brain-v1-experiment \
+            hardening/stylist-deterministic-shell-20260913
+          test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
+          test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git merge-base --is-ancestor 5e1960221b2ba5779316f96035be07d232cdd547 "${GITHUB_SHA}"
+          git checkout --detach 5e1960221b2ba5779316f96035be07d232cdd547
+          test "$(git rev-parse HEAD)" = "5e1960221b2ba5779316f96035be07d232cdd547"
+
+      - name: Use Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
+
+      - name: Install Function dependencies
+        working-directory: functions
+        run: npm ci --ignore-scripts
+
+      - name: Run production callable smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          FIREBASE_WEB_API_KEY="$(node -e "const j=require('./android/app/google-services.json');process.stdout.write(j.client[0].api_key[0].current_key)")"
+          echo "::add-mask::$FIREBASE_WEB_API_KEY"
+          export FIREBASE_WEB_API_KEY
+          export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
+          export STYLIST_PROD_SMOKE_MAX_CALL_MS=30000
+          export STYLIST_PROD_SMOKE_MAX_COST_USD=0.05
+          node functions/stylist/v2/stylist_production_smoke_v2.js
