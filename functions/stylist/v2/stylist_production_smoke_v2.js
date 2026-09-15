@@ -95,7 +95,7 @@ async function main() {
     const customToken = await auth.createCustomToken(uid);
     const idToken = await exchangeCustomToken(customToken);
     const base = (turnId, message) => {
-      requestKeys.push(hashValue([uid, turnId, "v2"]));
+      requestKeys.push(hashValue([uid, turnId, "one_brain"]));
       return {
         v2SessionId: chatId,
         turnId,
