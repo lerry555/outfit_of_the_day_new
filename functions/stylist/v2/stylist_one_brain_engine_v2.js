@@ -240,6 +240,36 @@ function restoreTrustedBroadLocationV2(state, forcedBroadClarification) {
   return next;
 }
 
+function restoreTrustedExplicitLocationV2(state, trustedExplicitLocation) {
+  const field = trustedExplicitLocation?.field;
+  const location = trustedExplicitLocation?.location;
+  const specific = ["destination", "eventLocation"].includes(field) && location &&
+    !locationIsTooBroadForWeatherV2(location) &&
+    Number.isFinite(Number(location.lat)) && Number.isFinite(Number(location.lng));
+  if (!specific) return state;
+
+  const next = clone(state);
+  next.context[field] = clone(location);
+  next.conversationMemory.answeredClarificationFields[field] = clone(location);
+
+  const candidateWeather = next.context.weather || trustedExplicitLocation?.weather || null;
+  const weatherMatches = candidateWeather &&
+    candidateWeather.locationProviderId === location.providerId &&
+    (!next.context.date || candidateWeather.dateKey === next.context.date.dateKey) &&
+    (!next.context.timeWindow || candidateWeather.timeWindowKey === next.context.timeWindow.key);
+  next.context.weather = weatherMatches ? clone(candidateWeather) : null;
+
+  if (next.context.date && next.context.timeWindow) {
+    next.context.groundingRequirements = {
+      ...(next.context.groundingRequirements || {}),
+      weatherRequired: true,
+      weatherLocationField: field,
+      terrainRequiredFields: [],
+    };
+  }
+  return next;
+}
+
 function semanticLocationFallbackV2(query, targetField) {
   const label = String(query || "").trim().replace(/\s+/g, " ").slice(0, 240);
   if (!label) return null;
@@ -454,8 +484,9 @@ function broadLocationClarificationDecisionV2(locationRequest, toolResults, resu
 }
 
 async function executeRequestedToolsV2({envelope, state, wardrobeTool, locationResolver, weatherTool,
-  knownWardrobeItems = null}) {
+  knownWardrobeItems = null, trustedExplicitLocation = null}) {
   let workingState = applyBrainStatePatchV2(state, envelope.statePatch);
+  workingState = restoreTrustedExplicitLocationV2(workingState, trustedExplicitLocation);
   const preloadedWardrobe = Array.isArray(knownWardrobeItems) ? clone(knownWardrobeItems) : null;
   const toolResults = {
     wardrobeItems: preloadedWardrobe || [],
@@ -726,6 +757,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       // We therefore let the Brain parse explicit activity/date/environment into
       // statePatch, then deterministically commit the one useful location question.
       let forcedBroadClarification = null;
+      let trustedExplicitLocation = null;
       if (!pendingQuestionAtBrain && !bestEffortDirective) {
         const explicitDestination = explicitStylingDestinationCandidateV2(request.latestUserInput);
         if (explicitDestination) {
@@ -745,6 +777,11 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
             const field = explicitDestination.targetField;
             workingState.context[field] = clone(resolvedExplicitDestination);
             workingState.conversationMemory.answeredClarificationFields[field] = clone(resolvedExplicitDestination);
+            if (!locationIsTooBroadForWeatherV2(resolvedExplicitDestination) &&
+                Number.isFinite(Number(resolvedExplicitDestination.lat)) &&
+                Number.isFinite(Number(resolvedExplicitDestination.lng))) {
+              trustedExplicitLocation = {field, location: clone(resolvedExplicitDestination)};
+            }
             if (locationIsTooBroadForWeatherV2(resolvedExplicitDestination)) {
               forcedBroadClarification = {
                 field,
@@ -853,6 +890,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
       }
     }
     workingState = applyBrainStatePatchV2(workingState, effectiveToolEnvelope.statePatch);
+    workingState = restoreTrustedExplicitLocationV2(workingState, trustedExplicitLocation);
 
     if (effectiveToolEnvelope.kind === "final") {
       return commitResultV2({
@@ -870,9 +908,16 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         wardrobeTool,
         locationResolver,
         weatherTool,
-      knownWardrobeItems,
-    });
+        knownWardrobeItems,
+        trustedExplicitLocation,
+      });
       workingState = executed.workingState;
+      if (trustedExplicitLocation && workingState.context.weather) {
+        trustedExplicitLocation = {
+          ...trustedExplicitLocation,
+          weather: clone(workingState.context.weather),
+        };
+      }
       const broadLocationRequest = effectiveToolEnvelope.requests.find((entry) => entry?.tool === "location");
       if (!pendingQuestionAtBrain &&
           runtimeConstraints.allowClarification &&
@@ -905,6 +950,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         brainInputV2(request, workingState, "answer", executed.toolResults, answerConstraints));
       validateAnswerEnvelopeV2(answerEnvelope, {requiredAction: requiredAnswerAction});
       workingState = applyBrainStatePatchV2(workingState, answerEnvelope.statePatch);
+      workingState = restoreTrustedExplicitLocationV2(workingState, trustedExplicitLocation);
 
       return commitResultV2({
         durableRepository,
@@ -933,6 +979,7 @@ module.exports = {
   pendingLocationQueryV2,
   pendingReplyDispositionV2,
   restoreTrustedBroadLocationV2,
+  restoreTrustedExplicitLocationV2,
   selectKnownWardrobeV2,
   semanticLocationFallbackV2,
   userRequestsBestEffortV2,
