@@ -220,6 +220,26 @@ function applyBrainStatePatchV2(state, statePatch = {}) {
   return applyDayDefaultV2(next);
 }
 
+function restoreTrustedBroadLocationV2(state, forcedBroadClarification) {
+  const field = forcedBroadClarification?.field;
+  const location = forcedBroadClarification?.location;
+  if (!["destination", "eventLocation"].includes(field) ||
+      !location || !locationIsTooBroadForWeatherV2(location)) {
+    return state;
+  }
+  const next = clone(state);
+  next.context[field] = clone(location);
+  next.context.weather = null;
+  next.conversationMemory.answeredClarificationFields[field] = clone(location);
+  next.context.groundingRequirements = {
+    ...(next.context.groundingRequirements || {}),
+    weatherRequired: true,
+    weatherLocationField: field,
+    terrainRequiredFields: [],
+  };
+  return next;
+}
+
 function semanticLocationFallbackV2(query, targetField) {
   const label = String(query || "").trim().replace(/\s+/g, " ").slice(0, 240);
   if (!label) return null;
@@ -728,6 +748,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
             if (locationIsTooBroadForWeatherV2(resolvedExplicitDestination)) {
               forcedBroadClarification = {
                 field,
+                location: clone(resolvedExplicitDestination),
                 decision: broadLocationClarificationDecisionV2(
                   {tool: "location", query: explicitDestination.query, targetField: field},
                   {resolvedLocations: [{targetField: field, location: resolvedExplicitDestination}]},
@@ -787,6 +808,7 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
     // original message before runtime stops for the one useful location question.
     if (forcedBroadClarification) {
       workingState = applyBrainStatePatchV2(workingState, toolEnvelope.statePatch);
+      workingState = restoreTrustedBroadLocationV2(workingState, forcedBroadClarification);
       return commitResultV2({
         durableRepository, uid, request, originalState, workingState,
         decision: forcedBroadClarification.decision,
@@ -910,6 +932,7 @@ module.exports = {
   explicitStylingDestinationCandidateV2,
   pendingLocationQueryV2,
   pendingReplyDispositionV2,
+  restoreTrustedBroadLocationV2,
   selectKnownWardrobeV2,
   semanticLocationFallbackV2,
   userRequestsBestEffortV2,
