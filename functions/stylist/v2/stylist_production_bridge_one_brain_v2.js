@@ -17,6 +17,7 @@ const {
 } = require("./open_meteo_ports_v2");
 const {createOpenAiOneBrainModelPortV2} = require("./openai_one_brain_model_port_v2");
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
+const {deterministicRemoteOutfitClarificationV2} = require("./stylist_turn_coordinator_v2");
 const {createOpenAiSimpleAgentExecutorV1} = require("../simple_stylist_agent_v1");
 const {createFirestoreCatalogSearchRepository} = require("../../shopping/catalog_search_repository");
 const {createFirestoreShoppingSessionStore} = require("../../shopping/shopping_session_store");
@@ -50,6 +51,43 @@ function reasonsMap(raw) {
     if (id && reason) out[id] = reason;
   }
   return out;
+}
+
+function createDeterministicShellBrainV2(stylistBrain) {
+  if (!stylistBrain || typeof stylistBrain.brainTurn !== "function") return stylistBrain;
+  return Object.freeze({
+    async brainTurn(input) {
+      const session = input?.session || null;
+      const canOwnMissingDestination = input?.stage === "tools" && session &&
+        !session.context?.destination && !session.context?.eventLocation;
+      if (canOwnMissingDestination) {
+        const fastClarification = deterministicRemoteOutfitClarificationV2(input.request || {}, session);
+        if (fastClarification) {
+          const fastState = fastClarification.state;
+          return {
+            kind: "final",
+            pendingReplyDisposition: "none",
+            result: {
+              ...fastClarification.decision,
+              clarification: {
+                ...fastClarification.decision.clarification,
+                resumeAction: "generate_outfit",
+              },
+            },
+            statePatch: {
+              context: {
+                activity: fastState.context.activity,
+                date: fastState.context.date,
+                timeWindow: fastState.context.timeWindow,
+                groundingRequirements: fastState.context.groundingRequirements,
+              },
+            },
+          };
+        }
+      }
+      return stylistBrain.brainTurn(input);
+    },
+  });
 }
 
 async function writeJobResult({db, admin, uid, notifyJobId, result}) {
@@ -167,7 +205,8 @@ function createStylistChatV2Handler({
 
       // A deterministic greeting is a zero-intelligence latency shortcut, not
       // a competing conversational brain. Every substantive stylist turn below
-      // is owned by the One-Brain model.
+      // is owned by the One-Brain model except product-shell clarifications that
+      // deterministically protect date/location/session grounding.
       const localReply = !shoppingActive ? localConversationReplyV2(message) : null;
       if (localReply) {
         const response = {
@@ -210,30 +249,31 @@ function createStylistChatV2Handler({
           requestKey: hashValue([uid, turnId, "one_brain"]),
         }),
       });
-      const stylistBrain = brainFactory ? brainFactory({uid, turnId, data}) :
+      const rawStylistBrain = brainFactory ? brainFactory({uid, turnId, data}) :
         createOpenAiOneBrainModelPortV2({
           userStylePreferences: safeMap(data?.userStylePreferences),
           executeStructured,
         });
+      const stylistBrain = createDeterministicShellBrainV2(rawStylistBrain);
 
       const wardrobeTool = wardrobeToolFactory ?
-      wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
-    const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
-    const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
-    const canonicalCurrentIds = uniqueIds(existing?.state?.currentOutfit?.itemIds, 12);
-    let knownWardrobeItems = null;
-    if (canonicalCurrentIds.length || currentIds.length) {
-      try {
-        knownWardrobeItems = await wardrobeTool.retrieve({
-          scope: "full_relevant",
-          itemIds: canonicalCurrentIds.length ? canonicalCurrentIds : currentIds,
-          category: null,
-        });
-      } catch (_) {
-        knownWardrobeItems = null;
+        wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
+      const currentIds = uniqueIds(data?.currentOutfitItemIds, 12);
+      const persistedReasonsByItemId = reasonsMap(data?.currentSelectionReasons);
+      const canonicalCurrentIds = uniqueIds(existing?.state?.currentOutfit?.itemIds, 12);
+      let knownWardrobeItems = null;
+      if (canonicalCurrentIds.length || currentIds.length) {
+        try {
+          knownWardrobeItems = await wardrobeTool.retrieve({
+            scope: "full_relevant",
+            itemIds: canonicalCurrentIds.length ? canonicalCurrentIds : currentIds,
+            category: null,
+          });
+        } catch (_) {
+          knownWardrobeItems = null;
+        }
       }
-    }
-    const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});
+      const locationResolver = locationOverride || createOpenMeteoLocationResolverV2({fetchImpl});
       const weatherTool = weatherOverride || createOpenMeteoWeatherToolV2({fetchImpl, clock});
       const shoppingTool = shoppingToolFactory ?
         shoppingToolFactory({uid}) : createShoppingToolV2({uid, orchestrator: catalogOrchestrator});
@@ -248,8 +288,8 @@ function createStylistChatV2Handler({
       });
 
       const clientContext = safeMap(data?.clientContext);
-    const observation = currentLocationObservation(clientContext, clock);
-    const request = {
+      const observation = currentLocationObservation(clientContext, clock);
+      const request = {
         chatId: sessionId,
         turnId,
         expectedSessionRevision: existing?.state?.revision ?? 0,
@@ -264,8 +304,8 @@ function createStylistChatV2Handler({
         uid,
         request,
         knownCanonicalState: existing?.state || null,
-      knownWardrobeItems,
-      bootstrapInput: existing ? null : {
+        knownWardrobeItems,
+        bootstrapInput: existing ? null : {
           currentOutfitItemIds: currentIds,
           persistedSelectionReasonsByItemId: persistedReasonsByItemId,
           knownExplicitDurableChoices: {},
@@ -337,6 +377,7 @@ function createStylistChatV2Handler({
 }
 
 module.exports = {
+  createDeterministicShellBrainV2,
   createStylistChatV2Handler,
   reasonsMap,
   safeId,
