@@ -1,4 +1,4 @@
-name: QA Stylist V2 matrix once
+name: Deploy and QA Stylist V2 grounding fix once
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   id-token: write
 
 jobs:
-  production-matrix:
+  deploy-and-production-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -21,31 +21,61 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Guard frozen refs and matrix source
+      - name: Guard frozen refs and canonical grounding merge
         shell: bash
         run: |
           set -euo pipefail
           git fetch origin \
             stylist-simple-agent \
             brain-v1-experiment \
-            hardening/stylist-deterministic-shell-20260913 \
-            qa/stylist-production-matrix-20260915
+            hardening/stylist-deterministic-shell-20260913
           test "$(git rev-parse origin/brain-v1-experiment)" = "7a465683ea20bfb6c5feab2dd1c645f82ff5f754"
           test "$(git rev-parse origin/hardening/stylist-deterministic-shell-20260913)" = "035a65f45b782bf4cac023e3ff960f1fb1113bcf"
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          test "$(git rev-parse origin/qa/stylist-production-matrix-20260915)" = "c406ea07803ff9d36761dca86588b4dbf755543a"
-          git merge-base --is-ancestor c76c74ddad5c7d25b34a640cec853893e3017c8d "${GITHUB_SHA}"
-          git merge-base --is-ancestor c76c74ddad5c7d25b34a640cec853893e3017c8d c406ea07803ff9d36761dca86588b4dbf755543a
-          test "$(git diff --name-only c76c74ddad5c7d25b34a640cec853893e3017c8d c406ea07803ff9d36761dca86588b4dbf755543a)" = "functions/stylist/v2/stylist_production_matrix_v2.js"
+          git merge-base --is-ancestor 3b57a62eba2c07885c6b38f6e7d41c870558f9bf "${GITHUB_SHA}"
 
-      - name: Checkout validated matrix harness
+      - name: Checkout canonical grounding merge for deploy and QA
         shell: bash
         run: |
           set -euo pipefail
-          git checkout --detach c406ea07803ff9d36761dca86588b4dbf755543a
-          test "$(git rev-parse HEAD)" = "c406ea07803ff9d36761dca86588b4dbf755543a"
-          node --check functions/stylist/v2/stylist_production_matrix_v2.js
-          echo "MATRIX_SOURCE=$(git rev-parse HEAD)"
+          git checkout --detach 3b57a62eba2c07885c6b38f6e7d41c870558f9bf
+          test "$(git rev-parse HEAD)" = "3b57a62eba2c07885c6b38f6e7d41c870558f9bf"
+
+      - name: Isolate V2 entrypoint for Firebase analysis
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'functions/index_v2.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const legacyImport = 'const legacy = require("./index");\nmodule.exports = legacy;\n';
+          if (!source.includes(legacyImport)) {
+            throw new Error('expected legacy bridge not found in canonical index_v2.js');
+          }
+          source = source.replace(legacyImport, '');
+          fs.writeFileSync(path, source);
+          NODE
+          ! grep -q 'require("./index")' functions/index_v2.js
+          grep -q 'module.exports.stylistChatV2' functions/index_v2.js
+          grep -q 'createGroundedStylistChatV2Handler' functions/index_v2.js
+          grep -q 'handlerFactory: createStylistChatV2Handler' functions/index_v2.js
+
+      - name: Fingerprint canonical grounding runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CANONICAL_GROUNDING_MERGE=$(git rev-parse HEAD)"
+          sha256sum \
+            functions/index_v2.js \
+            functions/stylist/v2/guarded_location_resolver_v2.js \
+            functions/stylist/v2/stylist_production_grounding_guard_v2.js \
+            functions/stylist/v2/stylist_production_bridge_one_brain_v2.js \
+            functions/stylist/v2/stylist_one_brain_engine_v2.js
+          grep -n "createGroundedStylistChatV2Handler" functions/index_v2.js
+          grep -n "COUNTRY_SCOPE_PREFIX_V2" functions/stylist/v2/guarded_location_resolver_v2.js
+          grep -n "AsyncLocalStorage" functions/stylist/v2/stylist_production_grounding_guard_v2.js
+          grep -n "handlerFactory: createStylistChatV2Handler" functions/index_v2.js
 
       - name: Use Node 20
         uses: actions/setup-node@v4
@@ -59,17 +89,29 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY_BRAIN_V1 }}
 
-      - name: Show active QA principal
+      - name: Show active deploy principal
         shell: bash
         run: |
           set -euo pipefail
-          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8'));console.log('QA_GCP_PRINCIPAL=' + (j.client_email || 'unknown'))"
+          node -e "const fs=require('fs');const j=JSON.parse(fs.readFileSync(process.env.GOOGLE_APPLICATION_CREDENTIALS,'utf8'));console.log('DEPLOY_GCP_PRINCIPAL=' + (j.client_email || 'unknown'))"
 
       - name: Install Function dependencies
         working-directory: functions
         run: npm ci
 
-      - name: Run broad production callable matrix
+      - name: Install Firebase CLI
+        run: npm install --global firebase-tools
+
+      - name: Deploy only stylistChatV2
+        run: firebase deploy --only functions:stylistChatV2 --project outfitoftheday-4d401 --non-interactive
+
+      - name: Describe deployed Firebase functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase functions:list --project outfitoftheday-4d401
+
+      - name: Run production callable smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -77,5 +119,6 @@ jobs:
           echo "::add-mask::$FIREBASE_WEB_API_KEY"
           export FIREBASE_WEB_API_KEY
           export GOOGLE_CLOUD_PROJECT=outfitoftheday-4d401
-          export STYLIST_MATRIX_CALL_TIMEOUT_MS=45000
-          node functions/stylist/v2/stylist_production_matrix_v2.js
+          export STYLIST_PROD_SMOKE_MAX_CALL_MS=30000
+          export STYLIST_PROD_SMOKE_MAX_COST_USD=0.05
+          node functions/stylist/v2/stylist_production_smoke_v2.js
