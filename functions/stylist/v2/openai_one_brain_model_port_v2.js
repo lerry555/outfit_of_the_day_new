@@ -14,9 +14,41 @@ const {
 const {applyHikingShoppingNeedGuardV2} = require("./hiking_shopping_guard_v2");
 
 const ONE_BRAIN_MAX_MODEL_CALLS = 2;
+const MUTATING_ACTIONS_V2 = new Set(["generate_outfit", "edit_outfit"]);
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
+}
+
+function preserveNonMutatingOutfitV2(envelope, input) {
+  if (!envelope || envelope.kind !== "final" || !envelope.result ||
+      MUTATING_ACTIONS_V2.has(envelope.result.action)) {
+    return envelope;
+  }
+
+  const current = input?.session?.currentOutfit || {};
+  const itemIds = Array.isArray(current.itemIds) ? [...current.itemIds] : [];
+  const previousReasons = current.selectionReasonsByItemId &&
+    typeof current.selectionReasonsByItemId === "object" ? current.selectionReasonsByItemId : {};
+  const selectionReasonsByItemId = {};
+  for (const id of itemIds) {
+    if (Object.prototype.hasOwnProperty.call(previousReasons, id)) {
+      selectionReasonsByItemId[id] = clone(previousReasons[id]);
+    }
+  }
+
+  return {
+    ...envelope,
+    result: {
+      ...envelope.result,
+      resultingOutfit: {
+        itemIds,
+        selectionReasonsByItemId,
+        compromises: Array.isArray(current.compromises) ? clone(current.compromises) : [],
+        missingWardrobeNeeds: Array.isArray(current.missingWardrobeNeeds) ? clone(current.missingWardrobeNeeds) : [],
+      },
+    },
+  };
 }
 
 function schemaForStageV2(stage, allowClarification, requiredAnswerAction = null) {
@@ -152,7 +184,8 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
         return {...envelope, pendingReplyDisposition: disposition};
       }
       const guardedRaw = applyHikingShoppingNeedGuardV2(raw, input);
-      return finalEnvelope(guardedRaw, {...input, phase: "final"});
+      const envelope = finalEnvelope(guardedRaw, {...input, phase: "final"});
+      return preserveNonMutatingOutfitV2(envelope, input);
     },
   });
 }
@@ -161,5 +194,6 @@ module.exports = {
   ONE_BRAIN_MAX_MODEL_CALLS,
   createOpenAiOneBrainModelPortV2,
   oneBrainPromptV2,
+  preserveNonMutatingOutfitV2,
   schemaForStageV2,
 };
