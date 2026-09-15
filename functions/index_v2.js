@@ -18,6 +18,9 @@ const {
 const {
   createServerOnlyFirestoreStylistSessionRepositoryV2,
 } = require("./stylist/v2/server_only_stylist_session_repository_v2");
+const {
+  createGuardedOpenMeteoLocationResolverV2,
+} = require("./stylist/v2/guarded_location_resolver_v2");
 
 if (!admin.apps.length) admin.initializeApp();
 const db = admin.firestore();
@@ -35,6 +38,7 @@ module.exports.stylistChatV2 = functions
     logger,
     fetchImpl: fetch,
     resolveOpenAISecret,
+    locationResolver: createGuardedOpenMeteoLocationResolverV2({fetchImpl: fetch}),
     // Production canonical memory lives outside /users/**. The currently
     // deployed legacy Firestore rules allow owner writes to most user
     // subcollections, so this top-level Admin-only path is fail-closed even
