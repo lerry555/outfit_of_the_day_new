@@ -14,6 +14,7 @@ const {createFirestoreWardrobeToolV2} = require("./firestore_wardrobe_tool_v2");
 const {
   createOpenMeteoLocationResolverV2,
   createOpenMeteoWeatherToolV2,
+  locationIsTooBroadForWeatherV2,
 } = require("./open_meteo_ports_v2");
 const {createOpenAiOneBrainModelPortV2} = require("./openai_one_brain_model_port_v2");
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
@@ -53,6 +54,17 @@ function reasonsMap(raw) {
   return out;
 }
 
+function specificWeatherLocationFieldV2(session) {
+  const context = session?.context || {};
+  if (!context.date || !context.timeWindow || context.weather) return null;
+  for (const field of ["eventLocation", "destination"]) {
+    const location = context[field];
+    if (!location || locationIsTooBroadForWeatherV2(location)) continue;
+    if (Number.isFinite(Number(location.lat)) && Number.isFinite(Number(location.lng))) return field;
+  }
+  return null;
+}
+
 function createDeterministicShellBrainV2(stylistBrain) {
   if (!stylistBrain || typeof stylistBrain.brainTurn !== "function") return stylistBrain;
   return Object.freeze({
@@ -85,7 +97,19 @@ function createDeterministicShellBrainV2(stylistBrain) {
           };
         }
       }
-      return stylistBrain.brainTurn(input);
+
+      const result = await stylistBrain.brainTurn(input);
+      const weatherLocationField = input?.stage === "tools" ? specificWeatherLocationFieldV2(session) : null;
+      const finalAction = result?.kind === "final" ? result.result?.action : null;
+      if (weatherLocationField && ["generate_outfit", "edit_outfit"].includes(finalAction)) {
+        return {
+          kind: "tool_request",
+          pendingReplyDisposition: result.pendingReplyDisposition ?? "none",
+          statePatch: result.statePatch || {},
+          requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
+        };
+      }
+      return result;
     },
   });
 }
@@ -382,5 +406,6 @@ module.exports = {
   reasonsMap,
   safeId,
   safeMap,
+  specificWeatherLocationFieldV2,
   uniqueIds,
 };
