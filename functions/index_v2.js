@@ -13,8 +13,8 @@ const {
   resolveOpenAISecret,
 } = require("./stylist/ai_stylist_role_secret_binding_v1");
 const {
-  createStylistChatV2Handler,
-} = require("./stylist/v2/stylist_production_bridge_one_brain_v2");
+  createGroundedStylistChatV2Handler,
+} = require("./stylist/v2/stylist_production_grounding_guard_v2");
 const {
   createServerOnlyFirestoreStylistSessionRepositoryV2,
 } = require("./stylist/v2/server_only_stylist_session_repository_v2");
@@ -32,7 +32,7 @@ module.exports.stylistChatV2 = functions
     memory: "512MB",
     secrets: [OPENAI_API_KEY_SECRET],
   })
-  .https.onCall(createStylistChatV2Handler({
+  .https.onCall(createGroundedStylistChatV2Handler({
     db,
     admin,
     logger,
