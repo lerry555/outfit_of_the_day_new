@@ -19,6 +19,8 @@ const {
   createServerOnlyFirestoreStylistSessionRepositoryV2,
   serverOnlySessionPathV2,
 } = require("./server_only_stylist_session_repository_v2");
+const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
+const {createDeterministicShellBrainV2} = require("./stylist_production_bridge_one_brain_v2");
 
 const PROJECT_ID = "demo-ootd-rules-9cr";
 const RULES_PATH = path.resolve(__dirname, "../../../firestore.rules");
@@ -141,6 +143,74 @@ test("two different turns at the same revision serialize with one conflict", asy
   assert.equal(rejected.reason.code, "SESSION_CONFLICT");
   const finalState = await fixture.repository.get({uid: "owner", chatId: "chat-race"});
   assert.equal(finalState.state.revision, 1);
+
+  await deleteApp(fixture.app);
+});
+
+test("server-only Firestore One-Brain wiring asks for a missing hiking destination before any model call", async () => {
+  const fixture = adminRepository();
+  let delegatedBrainCalls = 0;
+  const rawBrain = {
+    async brainTurn() {
+      delegatedBrainCalls += 1;
+      throw new Error("deterministic missing-destination turn must not reach the model");
+    },
+  };
+  const stylistBrain = createDeterministicShellBrainV2(rawBrain);
+  const engine = createStylistOneBrainEngineV2({
+    sessionRepository: fixture.repository,
+    wardrobeTool: {
+      async retrieve() { throw new Error("wardrobe must not be queried"); },
+    },
+    locationResolver: {
+      async resolve() { throw new Error("location resolver must not be queried"); },
+    },
+    weatherTool: {
+      async getForecast() { throw new Error("weather must not be queried"); },
+    },
+    shoppingTool: {
+      async search() { throw new Error("shopping must not be queried"); },
+    },
+    stylistBrain,
+    clock: () => Date.parse("2026-09-15T12:00:00.000Z"),
+  });
+
+  const result = await engine.resolveTurn({
+    uid: "qa-owner",
+    request: {
+      chatId: "chat-prod-wire",
+      turnId: "turn-1",
+      expectedSessionRevision: 0,
+      latestUserInput: "zajtra idem na túru potrebujem outfit",
+      explicitUiActionId: null,
+      freshClientObservations: {},
+      clientCapabilities: {
+        shoppingEnabled: false,
+        supportsProgress: true,
+        todayDateKey: "2026-09-15",
+        tomorrowDateKey: "2026-09-16",
+        timezoneOffsetMinutes: 120,
+        recentHistory: [],
+      },
+    },
+    bootstrapInput: {
+      currentOutfitItemIds: [],
+      persistedSelectionReasonsByItemId: {},
+      knownExplicitDurableChoices: {},
+    },
+  });
+
+  assert.equal(delegatedBrainCalls, 0);
+  assert.equal(result.action, "clarify");
+  assert.equal(result.assistantText, "Kam približne ideš?");
+  assert.equal(result.clarification.field, "destination");
+  assert.equal(result.clarification.resumeAction, "generate_outfit");
+  assert.equal(result.resultingSessionRevision, 1);
+
+  const stored = await fixture.repository.get({uid: "qa-owner", chatId: "chat-prod-wire"});
+  assert.equal(stored.state.revision, 1);
+  assert.equal(stored.state.conversationMemory.pendingQuestion?.field, "destination");
+  assert.equal(stored.state.conversationMemory.pendingQuestion?.resumeAction, "generate_outfit");
 
   await deleteApp(fixture.app);
 });
