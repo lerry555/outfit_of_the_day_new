@@ -59,6 +59,34 @@ jobs:
           ! grep -q 'require("./index")' functions/index_v2.js
           grep -q 'module.exports.stylistChatV2' functions/index_v2.js
 
+      - name: Fingerprint canonical runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "CANONICAL_MERGE=$(git rev-parse HEAD)"
+          sha256sum \
+            functions/index_v2.js \
+            functions/stylist/v2/stylist_production_bridge_one_brain_v2.js \
+            functions/stylist/v2/stylist_one_brain_engine_v2.js \
+            functions/stylist/v2/stylist_turn_coordinator_v2.js
+          grep -n "createDeterministicShellBrainV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          grep -n "deterministicRemoteOutfitClarificationV2" functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+
+      - name: Instrument safe first-turn smoke output
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const path = 'functions/stylist/v2/stylist_production_smoke_v2.js';
+          let source = fs.readFileSync(path, 'utf8');
+          const needle = '    const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));\n';
+          if (!source.includes(needle)) throw new Error('production smoke first turn not found');
+          const diagnostic = needle + `    console.log("STYLIST_PRODUCTION_FIRST_TURN " + JSON.stringify({\n      action: first.result.action || null,\n      modelPath: first.result.modelPath || null,\n      sessionRevision: first.result.sessionRevision ?? null,\n      failClosed: first.result.failClosed ?? null,\n      reply: String(first.result.reply || "").slice(0, 240),\n      resolvedContext: first.result.resolvedContext || null,\n      resultingOutfitItemIds: Array.isArray(first.result.resultingOutfitItemIds) ? first.result.resultingOutfitItemIds : [],\n    }));\n`;
+          source = source.replace(needle, diagnostic);
+          fs.writeFileSync(path, source);
+          NODE
+
       - name: Use Node 20
         uses: actions/setup-node@v4
         with:
@@ -86,6 +114,12 @@ jobs:
 
       - name: Deploy only stylistChatV2
         run: firebase deploy --only functions:stylistChatV2 --project outfitoftheday-4d401 --non-interactive
+
+      - name: Describe deployed Firebase functions
+        shell: bash
+        run: |
+          set -euo pipefail
+          firebase functions:list --project outfitoftheday-4d401
 
       - name: Run production callable smoke
         shell: bash
