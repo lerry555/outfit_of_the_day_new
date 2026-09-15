@@ -90,6 +90,7 @@ function oneBrainPromptV2(stage) {
     "Ak toolResults hlási location/weather unavailable alebo broad, je to informácia o dostupnosti nástroja, nie dôvod automaticky položiť ďalšiu otázku.",
     "Pri generate_outfit musí text, resultingOutfitItemIds a displayItemIds opisovať ten istý outfit. Pri explain/chat outfit nemeníš.",
     "Účel a bezpečnosť > tepelná/praktická vhodnosť > celkový štýl > dominantné farby > malé detaily.",
+    "Ak session.context.weather obsahuje reálny forecast, v odpovedi stručne uveď konkrétny teplotný/dažďový/veterný dôvod, ktorý materiálne ovplyvnil outfit. Nevymýšľaj údaje, ktoré vo weather nie sú.",
     "Pri indoor scenári používaj vonkajšie počasie iba na cestu/presun/vrchnú vrstvu a nevydávaj vonkajšiu teplotu za teplotu v interiéri.",
     "Píš stručne a prirodzene, typicky 2 až 4 úplné vety. Začni konkrétnou pomocou, nie zoznamom chýbajúcich metadata.",
   ].join("\n");

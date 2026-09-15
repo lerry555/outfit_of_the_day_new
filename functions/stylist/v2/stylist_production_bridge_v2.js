@@ -1,6 +1,7 @@
 "use strict";
 
 const {clone} = require("./stylist_session_state_v2");
+const {sortStylistItemIdsV2, sortStylistItemsV2} = require("./stylist_outfit_order_v2");
 const {createFirestoreStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
 const {createStylistTurnEngineV2} = require("./stylist_turn_engine_v2");
 const {createFirestoreWardrobeToolV2} = require("./firestore_wardrobe_tool_v2");
@@ -189,10 +190,12 @@ function legacyCompatibleResponse({result, sessionId, wardrobeTool}) {
       if (result.action === "shop" && result.shoppingResult?.legacyResponse) {
         return {...clone(result.shoppingResult.legacyResponse), v2: true, sessionId, sessionRevision: result.resultingSessionRevision};
       }
-      const byId = new Map(resultingItems.map((item) => [item.id, item]));
-      const displayIds = ["outfit", "items"].includes(result.display?.kind) ? uniqueIds(result.display.itemIds, 12) : [];
+      const orderedResultingItems = sortStylistItemsV2(resultingItems);
+      const byId = new Map(orderedResultingItems.map((item) => [item.id, item]));
+      const rawDisplayIds = ["outfit", "items"].includes(result.display?.kind) ? uniqueIds(result.display.itemIds, 12) : [];
+      const displayIds = sortStylistItemIdsV2(rawDisplayIds, orderedResultingItems);
       const displayItems = displayIds.map((id) => byId.get(id)).filter(Boolean);
-      const currentIds = result.resultingOutfit?.itemIds || [];
+      const currentIds = sortStylistItemIdsV2(result.resultingOutfit?.itemIds || [], orderedResultingItems);
       const quickLabels = (result.quickReplies || []).map((entry) => String(entry.label || "").toLocaleLowerCase("sk-SK"));
       const yesNo = quickLabels.includes("áno") && quickLabels.includes("nie");
       return {
@@ -211,7 +214,7 @@ function legacyCompatibleResponse({result, sessionId, wardrobeTool}) {
         outfitChanged: ["generate_outfit", "edit_outfit"].includes(result.action),
         quickReplyMode: yesNo ? "yes_no" : "none",
         quickReplyPrompt: yesNo ? clean(result.quickReplyPrompt, 240) || null : null,
-        resultingOutfitItems: resultingItems,
+        resultingOutfitItems: orderedResultingItems,
         displayItems,
         action: result.action,
       };

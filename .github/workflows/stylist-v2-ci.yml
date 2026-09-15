@@ -17,6 +17,7 @@ on:
       - 'lib/widgets/stylist_quick_reply_buttons.dart'
       - 'lib/widgets/stylist_suggested_item_card.dart'
       - 'lib/utils/stylist_card_image_priority.dart'
+      - 'test/stylist_simple_agent_v1_test.dart'
       - 'test/stylist_simple_agent_fast_path_test.dart'
       - 'test/stylist_quick_reply_contract_test.dart'
       - 'test/stylist_card_image_priority_test.dart'
@@ -63,29 +64,25 @@ jobs:
           node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
           node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
-          node --check functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+          node --check functions/stylist/v2/stylist_deterministic_shell_v2.js
+          node --check functions/stylist/v2/stylist_outfit_order_v2.js
           node --check functions/stylist/v2/stylist_live_smoke_v2.js
           node --check functions/stylist/v2/stylist_production_smoke_v2.js
-          node --check functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
-      - name: V2 contract, persistence, engine, grounding, release-gate, cache, and production-port tests
-        run: >-
-          node --test
-          functions/stylist/v2/stylist_v2_phase0_acceptance.test.js
-          functions/stylist/v2/stylist_v2_phase0_contracts.test.js
-          functions/stylist/v2/stylist_session_repository_v2.test.js
-          functions/stylist/v2/stylist_turn_engine_v2.test.js
-          functions/stylist/v2/stylist_grounding_policy_v2.test.js
-          functions/stylist/v2/stylist_v2_phase3_ports.test.js
-          functions/stylist/v2/stylist_production_bridge_v2.test.js
-          functions/stylist/v2/stylist_openai_schema_subset_v2.test.js
-          functions/stylist/v2/stylist_pending_location_v2.test.js
-          functions/stylist/v2/stylist_help_first_contract_v2.test.js
-          functions/stylist/v2/stylist_wardrobe_cache_v2.test.js
-          functions/stylist/v2/stylist_location_wardrobe_plan_efficiency_v2.test.js
-          functions/stylist/v2/stylist_model_payload_efficiency_v2.test.js
-          functions/stylist/v2/stylist_release_gate_v2.test.js
-          functions/stylist/v2/stylist_adversarial_conversation_v2.test.js
-          functions/stylist/v2/stylist_one_brain_runtime_v2.test.js
+      - name: Run every non-emulator Stylist V2 test
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=()
+          for f in functions/stylist/v2/*.test.js; do
+            case "$f" in
+              *firestore_emulator.test.js) ;;
+              *) files+=("$f") ;;
+            esac
+          done
+          test "${#files[@]}" -gt 0
+          echo "Running ${#files[@]} non-emulator V2 test files"
+          node --test "${files[@]}"
       - name: Existing Stylist backend regression
         run: node --test functions/stylist/*.test.js
 
@@ -111,8 +108,11 @@ jobs:
           lib/widgets/stylist_quick_reply_buttons.dart
           lib/widgets/stylist_suggested_item_card.dart
           lib/utils/stylist_card_image_priority.dart
-      - name: V2 client fast-path regression
-        run: flutter test test/stylist_simple_agent_fast_path_test.dart
+      - name: V2 client service regressions
+        run: >-
+          flutter test
+          test/stylist_simple_agent_v1_test.dart
+          test/stylist_simple_agent_fast_path_test.dart
       - name: V2 CTA and product-card image regressions
         run: >-
           flutter test

@@ -125,25 +125,25 @@ test("exact real Swiss hiking prompt clarifies even when external geocoder is un
 test("general destination extractor finds Poland without country hard-coding", () => {
   assert.deepEqual(
     explicitStylingDestinationCandidateV2("buduci stvrtok ideme do polska na turu a ja neviem co na seba"),
-    {query: "polska", targetField: "destination"},
+    {query: "polska", targetField: "destination", resumeAction: "generate_outfit"},
   );
 });
 
 test("general destination extractor is not Austria-specific", () => {
   assert.deepEqual(
     explicitStylingDestinationCandidateV2("v sobotu ideme do Francuzska na vylet a potrebujem outfit"),
-    {query: "Francuzska", targetField: "destination"},
+    {query: "Francuzska", targetField: "destination", resumeAction: "generate_outfit"},
   );
   assert.deepEqual(
     explicitStylingDestinationCandidateV2("zajtra ideme do USA na turu, co si mam obliect"),
-    {query: "USA", targetField: "destination"},
+    {query: "USA", targetField: "destination", resumeAction: "generate_outfit"},
   );
 });
 
 test("event trip targets eventLocation while hiking targets destination", () => {
   assert.deepEqual(
     explicitStylingDestinationCandidateV2("ideme do Berlina na koncert a neviem co na seba"),
-    {query: "Berlina", targetField: "eventLocation"},
+    {query: "Berlina", targetField: "eventLocation", resumeAction: "generate_outfit"},
   );
 });
 

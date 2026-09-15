@@ -39,6 +39,14 @@ UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW
 
 let LOCAL_COUNTRY_INDEX_V2 = null;
 
+const COUNTRY_INPUT_ALIASES_V2 = new Map(Object.entries({
+  "usa": "US", "u s a": "US", "america": "US", "amerika": "US", "ameriky": "US",
+  "united states of america": "US", "spojene staty americke": "US",
+  "uk": "GB", "u k": "GB", "britain": "GB", "great britain": "GB",
+  "velka britania": "GB", "spojene kralovstvo": "GB",
+  "uae": "AE", "u a e": "AE", "emiraty": "AE", "spojene arabske emiraty": "AE",
+}));
+
 function normalizeCountryNameV2(value) {
   return String(value || "")
     .normalize("NFD")
@@ -92,7 +100,9 @@ function localCountryIndexV2() {
 function localCountryLocationHintV2(query) {
   const normalized = normalizeCountryNameV2(query);
   if (!normalized) return null;
-  const match = localCountryIndexV2().get(normalized);
+  const compact = normalized.replace(/\s+/g, "");
+  const aliasCode = COUNTRY_INPUT_ALIASES_V2.get(normalized) || COUNTRY_INPUT_ALIASES_V2.get(compact) || null;
+  const match = aliasCode ? localCountryIndexV2().get(aliasCode.toLowerCase()) : localCountryIndexV2().get(normalized);
   if (!match) return null;
   return {
     providerId: `local-country:${match.countryCode}`,
