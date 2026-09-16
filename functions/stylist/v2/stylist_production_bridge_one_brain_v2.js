@@ -17,7 +17,11 @@ const {
   locationIsTooBroadForWeatherV2,
 } = require("./open_meteo_ports_v2");
 const {createOpenAiOneBrainModelPortV2} = require("./openai_one_brain_model_port_v2");
+const {createOpenAiOutfitSelectorV2} = require("./openai_outfit_selector_v2");
+const {createOpenAiOutfitQualityJudgeV2} = require("./openai_outfit_quality_judge_v2");
+const {createOpenAiStylistLanguageV2} = require("./openai_stylist_language_v2");
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
+const {createStylistSelectionPipelineV2} = require("./stylist_selection_pipeline_v2");
 const {deterministicRemoteOutfitClarificationV2} = require("./stylist_turn_coordinator_v2");
 const {createOpenAiSimpleAgentExecutorV1} = require("../simple_stylist_agent_v1");
 const {createFirestoreCatalogSearchRepository} = require("../../shopping/catalog_search_repository");
@@ -107,6 +111,10 @@ function createDeterministicShellBrainV2(stylistBrain) {
           pendingReplyDisposition: result.pendingReplyDisposition ?? "none",
           statePatch: result.statePatch || {},
           requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
+          selectionHandoffIntent: finalAction,
+          selectionAction: finalAction,
+          selectionIntentSummary: clean(input?.request?.latestUserInput, 800) || null,
+          selectionConstraints: [],
         };
       }
       return result;
@@ -159,6 +167,9 @@ function createStylistChatV2Handler({
   locationResolver: locationOverride = null,
   weatherTool: weatherOverride = null,
   brainFactory = null,
+  selectorFactory = null,
+  judgeFactory = null,
+  languageFactory = null,
   wardrobeToolFactory = null,
   shoppingToolFactory = null,
 } = {}) {
@@ -261,24 +272,42 @@ function createStylistChatV2Handler({
         return response;
       }
 
-      const executeStructured = brainFactory ? null : createOpenAiSimpleAgentExecutorV1({
+      const executeForStage = (feature) => createOpenAiSimpleAgentExecutorV1({
         fetchImpl,
         resolveOpenAISecret,
         logger,
-        feature: "stylist_v2_one_brain",
-        cacheScope: `${uid}:stylist-v2-one-brain`,
-        recordUsage: (event) => recordUsage({
+        feature,
+        cacheScope: `${uid}:${feature}`,
+        recordUsage: (event) => recordUsage?.({
           ...event,
           userKey: hashValue(uid),
-          requestKey: hashValue([uid, turnId, "one_brain"]),
+          requestKey: hashValue([uid, turnId, feature]),
         }),
       });
+      const executeStructured = brainFactory ? null : executeForStage("stylist_v2_one_brain");
       const rawStylistBrain = brainFactory ? brainFactory({uid, turnId, data}) :
         createOpenAiOneBrainModelPortV2({
           userStylePreferences: safeMap(data?.userStylePreferences),
           executeStructured,
         });
       const stylistBrain = createDeterministicShellBrainV2(rawStylistBrain);
+      const useSelectionArchitecture = !brainFactory ||
+        Boolean(selectorFactory && judgeFactory && languageFactory);
+      const selector = useSelectionArchitecture ? (selectorFactory ?
+        selectorFactory({uid, turnId, data}) : createOpenAiOutfitSelectorV2({
+          executeStructured: executeForStage("stylist_v2_selector"), logger,
+        })) : null;
+      const judge = useSelectionArchitecture ? (judgeFactory ?
+        judgeFactory({uid, turnId, data}) : createOpenAiOutfitQualityJudgeV2({
+          executeStructured: executeForStage("stylist_v2_quality_judge"), logger,
+        })) : null;
+      const languageGenerator = useSelectionArchitecture ? (languageFactory ?
+        languageFactory({uid, turnId, data}) : createOpenAiStylistLanguageV2({
+          executeStructured: executeForStage("stylist_v2_language"), logger,
+        })) : null;
+      const selectionPipeline = useSelectionArchitecture ? createStylistSelectionPipelineV2({
+        selector, judge, logger,
+      }) : null;
 
       const wardrobeTool = wardrobeToolFactory ?
         wardrobeToolFactory({uid}) : createFirestoreWardrobeToolV2({db, uid});
@@ -308,7 +337,11 @@ function createStylistChatV2Handler({
         weatherTool,
         shoppingTool,
         stylistBrain,
+        selectionPipeline,
+        languageGenerator,
+        userStylePreferences: safeMap(data?.userStylePreferences),
         clock,
+        logger,
       });
 
       const clientContext = safeMap(data?.clientContext);

@@ -870,7 +870,8 @@ function createOpenAiSimpleAgentExecutorV1({
   return async function executeModel(input, {modelAttempt = 1} = {}) {
     const requestBody = JSON.stringify({
       model: input.model,
-      ...buildCachedSimpleAgentInputV1(input, cacheScope),
+      ...(Array.isArray(input.input) ? {input: input.input} :
+        buildCachedSimpleAgentInputV1(input, cacheScope)),
       reasoning: {effort: input.reasoningEffort},
       // Includes reasoning as well as JSON. Live QA exhausted 2400 (1779
       // reasoning), truncating the result and paying for a preventable repair.

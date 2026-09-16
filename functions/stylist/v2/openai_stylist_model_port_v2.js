@@ -64,6 +64,7 @@ const PLAN_SCHEMA = {
     "scenarioMode", "scenarioReferenceId",
     "locationQuery", "locationTargetField", "wardrobeScope", "wardrobeCategory",
     "replaceItemIds", "retainItemIds", "allowedSlots", "allowedCategories", "allowRemovalOnly",
+    "selectionAction", "selectionIntentSummary", "selectionConstraints",
     "patch",
   ],
   properties: {
@@ -83,6 +84,9 @@ const PLAN_SCHEMA = {
     allowedSlots: {type: "array", maxItems: 8, items: {type: "string"}},
     allowedCategories: {type: "array", maxItems: 8, items: {type: "string"}},
     allowRemovalOnly: {type: "boolean"},
+    selectionAction: {type: "string", enum: ["none", "generate_outfit", "edit_outfit"]},
+    selectionIntentSummary: {type: ["string", "null"]},
+    selectionConstraints: {type: "array", maxItems: 16, items: {type: "string"}},
     patch: PATCH_SCHEMA,
   },
 };
@@ -638,6 +642,7 @@ module.exports = {
   REASONING,
   createOpenAiStylistModelPortV2,
   compactSessionForModelV2,
+  compactContextForModelV2,
   compactWardrobeForModelV2,
   enforceHighConfidenceGrounding,
   finalEnvelope,

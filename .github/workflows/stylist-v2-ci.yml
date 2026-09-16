@@ -62,8 +62,14 @@ jobs:
           node --check functions/stylist/v2/openai_stylist_model_port_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_v2.js
           node --check functions/stylist/v2/openai_one_brain_model_port_v2.js
+          node --check functions/stylist/v2/openai_outfit_selector_v2.js
+          node --check functions/stylist/v2/openai_outfit_quality_judge_v2.js
+          node --check functions/stylist/v2/openai_stylist_language_v2.js
           node --check functions/stylist/v2/stylist_one_brain_engine_v2.js
+          node --check functions/stylist/v2/stylist_selection_context_v2.js
+          node --check functions/stylist/v2/stylist_selection_pipeline_v2.js
           node --check functions/stylist/v2/stylist_production_bridge_one_brain_v2.js
+          node --check functions/stylist/v2/wardrobe_integrity_projection_v2.js
           node --check functions/stylist/v2/stylist_deterministic_shell_v2.js
           node --check functions/stylist/v2/stylist_outfit_order_v2.js
           node --check functions/stylist/v2/stylist_live_smoke_v2.js
