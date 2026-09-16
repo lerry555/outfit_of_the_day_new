@@ -1,5 +1,7 @@
 "use strict";
 
+const {balancedVisualEvidenceV2, imageUrlV2} = require("./stylist_selection_context_v2");
+
 const JUDGE_MODEL = "gpt-5.6-terra";
 const JUDGE_REASONING_EFFORT = "medium";
 const JUDGE_VISUAL_EVIDENCE_LIMIT = 16;
@@ -27,11 +29,40 @@ function judgePromptV2() {
   ].join("\n");
 }
 
+function judgeVisualEvidenceV2(selectionContext, selection, limit = JUDGE_VISUAL_EVIDENCE_LIMIT) {
+  const boundedLimit = Number.isSafeInteger(limit) && limit >= 0 ?
+    Math.min(limit, JUDGE_VISUAL_EVIDENCE_LIMIT) : JUDGE_VISUAL_EVIDENCE_LIMIT;
+  const selectedIds = [...new Set(Array.isArray(selection?.selectedItemIds) ?
+    selection.selectedItemIds.filter((id) => typeof id === "string" && id) : [])];
+  const candidateItems = Array.isArray(selectionContext?.candidateItems) ? selectionContext.candidateItems : [];
+  const candidateById = new Map(candidateItems.map((item) => [item?.id, item]));
+  const evidence = [];
+  const seen = new Set();
+  const add = (id, imageUrl) => {
+    if (!id || !imageUrl || seen.has(id) || evidence.length >= boundedLimit) return;
+    seen.add(id);
+    evidence.push({id, imageUrl});
+  };
+
+  // The Selector can choose any metadata candidate, including one outside its
+  // bounded image sample. Re-resolve selected images from the raw candidate
+  // lineage so every available selected visual reaches the Judge first.
+  for (const id of selectedIds) add(id, imageUrlV2(candidateById.get(id)));
+
+  // The Selector's balanced sample is the best existing pool of alternatives.
+  for (const entry of selectionContext?.visualEvidence || []) add(entry?.id, entry?.imageUrl);
+
+  // Keep a bounded structural fallback for contexts built with a smaller or
+  // empty Selector visual budget.
+  for (const entry of balancedVisualEvidenceV2(candidateItems, [], boundedLimit)) {
+    add(entry.id, entry.imageUrl);
+  }
+  return evidence;
+}
+
 function judgeInputV2(selectionContext, selection) {
   const selected = new Set(Array.isArray(selection?.selectedItemIds) ? selection.selectedItemIds : []);
-  const orderedEvidence = [...(selectionContext.visualEvidence || [])]
-    .sort((left, right) => Number(selected.has(right.id)) - Number(selected.has(left.id)))
-    .slice(0, JUDGE_VISUAL_EVIDENCE_LIMIT);
+  const orderedEvidence = judgeVisualEvidenceV2(selectionContext, selection);
   const imageContent = [];
   for (const evidence of orderedEvidence) {
     imageContent.push({type: "input_text", text:
@@ -81,4 +112,5 @@ module.exports = {
   createOpenAiOutfitQualityJudgeV2,
   judgeInputV2,
   judgePromptV2,
+  judgeVisualEvidenceV2,
 };

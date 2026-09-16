@@ -111,6 +111,10 @@ function createDeterministicShellBrainV2(stylistBrain) {
           pendingReplyDisposition: result.pendingReplyDisposition ?? "none",
           statePatch: result.statePatch || {},
           requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
+          selectionHandoffIntent: finalAction,
+          selectionAction: finalAction,
+          selectionIntentSummary: clean(input?.request?.latestUserInput, 800) || null,
+          selectionConstraints: [],
         };
       }
       return result;

@@ -39,20 +39,28 @@ function containsForbiddenLanguageV2(value) {
     /\b(by som|vybral som|vybrala som|zvolil som|zvolila som|volím|vyberám|myslím si|za mňa)\b/iu.test(text);
 }
 
+function naturalListSkV2(values) {
+  const items = values.filter(Boolean);
+  if (items.length < 2) return items[0] || "";
+  if (items.length === 2) return `${items[0]} a ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} a ${items.at(-1)}`;
+}
+
+function sentenceFragmentV2(value) {
+  return clean(value, 180).replace(/[.!?;:]+$/u, "");
+}
+
 function deterministicLanguageFallbackV2(selectionContext, frozenSelection) {
   const byId = new Map((selectionContext.candidateItems || []).map((item) => [item.id, item]));
   const names = frozenSelection.selectedItemIds.map((id) => clean(byId.get(id)?.name, 100)).filter(Boolean);
-  const first = names.length ? `Hotový outfit tvorí ${names.join(", ")}.` :
-    "Outfit je pripravený z dostupných kúskov v šatníku.";
-  const reasons = (frozenSelection.selectionReasons || []).map((entry) => clean(entry.reason, 180)).filter(Boolean);
-  const second = reasons.length ? `Kúsky spolu fungujú, pretože ${reasons.slice(0, 2)
-    .map((reason) => reason.replace(/[.!?]+$/u, "")).join("; ")}.` :
-    "Kúsky spolu rešpektujú zadaný účel a aktuálny kontext.";
+  const recommendation = names.length ? `Zvoľ ${naturalListSkV2(names)}.` :
+    "Zvoľ najvhodnejšie dostupné kúsky zo svojho šatníka.";
   const weather = selectionContext.selection?.context?.weather?.snapshot || {};
   const range = formatTemperatureRangeSkV2(weather.minTempC, weather.maxTempC);
-  const weatherSentence = range ? `Počítané je aj s vonkajším rozsahom ${range}.` : "";
-  const compromise = clean(frozenSelection.compromises?.[0], 180);
-  return clean([first, second, weatherSentence, compromise ? `Kompromis: ${compromise}.` : ""]
+  const weatherSentence = range ? `Vonku má byť približne ${range}.` : "";
+  const compromise = sentenceFragmentV2(frozenSelection.compromises?.[0]);
+  return clean([recommendation, weatherSentence,
+    compromise ? `Najväčší kompromis: ${compromise}.` : ""]
     .filter(Boolean).join(" "));
 }
 
@@ -113,4 +121,5 @@ module.exports = {
   deterministicLanguageFallbackV2,
   formatTemperatureRangeSkV2,
   languagePromptV2,
+  naturalListSkV2,
 };

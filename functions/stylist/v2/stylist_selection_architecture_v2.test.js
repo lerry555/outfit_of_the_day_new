@@ -6,12 +6,13 @@ const {enrichIdentity} = require("../../wardrobe_ontology_v2");
 const {createOpenAiSimpleAgentExecutorV1} = require("../simple_stylist_agent_v1");
 const {SELECTOR_MODEL, SELECTOR_REASONING_EFFORT, selectorPromptV2} =
   require("./openai_outfit_selector_v2");
-const {JUDGE_MODEL, JUDGE_REASONING_EFFORT, judgePromptV2} =
+const {JUDGE_MODEL, JUDGE_REASONING_EFFORT, judgeInputV2, judgePromptV2, judgeVisualEvidenceV2} =
   require("./openai_outfit_quality_judge_v2");
 const {
   LANGUAGE_MODEL,
   LANGUAGE_REASONING_EFFORT,
   containsForbiddenLanguageV2,
+  createOpenAiStylistLanguageV2,
   deterministicLanguageFallbackV2,
   formatTemperatureRangeSkV2,
   languagePromptV2,
@@ -21,6 +22,7 @@ const {createStylistSelectionPipelineV2} = require("./stylist_selection_pipeline
 const {projectWardrobeItemForStylistV2} = require("./wardrobe_integrity_projection_v2");
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
 const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
+const {createEmptySessionStateV2} = require("./stylist_session_state_v2");
 const {schemaForStageV2} = require("./openai_one_brain_model_port_v2");
 const {createStylistChatV2Handler} = require("./stylist_production_bridge_one_brain_v2");
 
@@ -159,23 +161,132 @@ test("H: an item edit cannot drop retained pieces or expand authorization", asyn
   assert.equal(result.selection.selectionReasons.find((entry) => entry.itemId === "top").reason, "retained top");
 });
 
-test("I and J: non-mutating Brain actions do not enter the selection architecture", () => {
-  assert.ok(!["chat", "show_items", "explain_outfit"].includes("generate_outfit"));
-  assert.match(selectorPromptV2(), /Nevlastníš konverzáciu/);
+test("I and J: production-enabled non-mutating turns bypass every selection stage and preserve outfit", async (t) => {
+  const cases = [
+    {name: "chat", action: "chat", message: "Ako spolu fungujú farby v tomto outfite?", tool: false},
+    {name: "show_items", action: "show_items", message: "Ukáž mi kúsky z aktuálneho outfitu.",
+      scope: "current_outfit", displayIds: ["top", "bottom", "shoes"]},
+    {name: "explain_outfit", action: "explain_outfit", message: "Vysvetli mi tento outfit.",
+      scope: "current_outfit"},
+    {name: "alternatives question", action: "show_items", message: "Aké alternatívy mám k týmto topánkam?",
+      scope: "full_relevant", displayIds: ["alt-shoes"]},
+    {name: "current outfit explanation", action: "explain_outfit",
+      message: "Prečo presne tieto kúsky spolu fungujú?", scope: "current_outfit"},
+  ];
+
+  for (const scenario of cases) {
+    await t.test(scenario.name, async () => {
+      const repository = createMemoryStylistSessionRepositoryV2({now: () => 1_789_000_000_000});
+      const wardrobe = [
+        item("top", "t_shirt"), item("bottom", "jeans"),
+        item("shoes", "sneakers"), item("alt-shoes", "sneakers"),
+      ];
+      const currentIds = ["top", "bottom", "shoes"];
+      const reasons = {top: "Pôvodný vrch.", bottom: "Pôvodný spodok.", shoes: "Pôvodná obuv."};
+      const calls = {selector: 0, judge: 0, language: 0};
+      const handler = createStylistChatV2Handler({
+        db: {}, admin: {}, logger: {warn() {}, info() {}}, resolveOpenAISecret: () => "unused",
+        sessionRepository: repository,
+        brainFactory: () => ({async brainTurn(input) {
+          if (!scenario.scope) {
+            return {kind: "final", pendingReplyDisposition: "none", statePatch: {},
+              selectionHandoffIntent: "non_mutating", selectionAction: null,
+              result: {action: scenario.action, assistantText: "Jasné, outfit nemením.",
+                display: {kind: "none", itemIds: []}}};
+          }
+          if (input.stage === "tools") {
+            return {kind: "tool_request", pendingReplyDisposition: "none", statePatch: {},
+              requests: [{tool: "wardrobe", scope: scenario.scope, category: null, editScope: null}],
+              selectionHandoffIntent: "non_mutating", selectionAction: null,
+              selectionIntentSummary: null, selectionConstraints: []};
+          }
+          return {kind: "final", statePatch: {}, result: {
+            action: scenario.action,
+            assistantText: "Tu je odpoveď bez zmeny outfitu.",
+            display: {kind: scenario.displayIds ? "items" : "none", itemIds: scenario.displayIds || []},
+          }};
+        }}),
+        selectorFactory: () => ({async select() { calls.selector += 1; throw new Error("unexpected_selector"); }}),
+        judgeFactory: () => ({async judge() { calls.judge += 1; throw new Error("unexpected_judge"); }}),
+        languageFactory: () => ({async render() { calls.language += 1; throw new Error("unexpected_language"); }}),
+        wardrobeToolFactory: () => ({
+          async retrieve() { return structuredClone(wardrobe); },
+          async materialize(ids, reasonMap) {
+            const byId = new Map(wardrobe.map((entry) => [entry.id, entry]));
+            return ids.map((id) => ({...byId.get(id), stylistSelectionReason: reasonMap[id]}));
+          },
+        }),
+        locationResolver: {async resolve() { return null; }},
+        weatherTool: {async getForecast() { return null; }},
+        shoppingToolFactory: () => ({async search() { return {candidateIds: [], appliedHardConstraints: []}; }}),
+      });
+      const response = await handler({
+        v2SessionId: `non-mutating-${scenario.name.replace(/\s+/g, "-")}`,
+        turnId: "turn-1", message: scenario.message,
+        currentOutfitItemIds: currentIds,
+        currentSelectionReasons: Object.entries(reasons).map(([itemId, reason]) => ({itemId, reason})),
+        shoppingEnabled: false,
+        clientContext: {todayDateKey: "2026-09-16", tomorrowDateKey: "2026-09-17",
+          timezoneOffsetMinutes: 120},
+      }, {auth: {uid: "user"}});
+      const stored = await repository.get({uid: "user", chatId: response.sessionId});
+      assert.equal(["generate_outfit", "edit_outfit"].includes(response.action), false);
+      assert.deepEqual(new Set(response.resultingOutfitItemIds), new Set(currentIds));
+      assert.deepEqual(stored.state.currentOutfit.itemIds, currentIds);
+      assert.deepEqual(stored.state.currentOutfit.selectionReasonsByItemId, reasons);
+      assert.deepEqual(calls, {selector: 0, judge: 0, language: 0});
+    });
+  }
 });
 
-test("K and L: Slovak language contract preserves negative temperatures and avoids stylist self-talk", () => {
+test("K and L: deterministic Slovak fallback is direct for weather, negatives, compromises and missing weather", () => {
   assert.equal(formatTemperatureRangeSkV2(-5, 1), "-5 až 1 °C");
   assert.equal(containsForbiddenLanguageV2("Jasné — vybral som túto bundu."), true);
   assert.doesNotMatch(languagePromptV2(), /Jasné —/u);
+  const wardrobe = [
+    item("top", "t_shirt"), item("bottom", "jeans"), item("shoes", "sneakers"),
+  ];
+  const ordinary = buildSelectionContextV2(inputFor(wardrobe, {
+    session: {...inputFor([]).session, context: {...inputFor([]).session.context,
+      weather: {snapshot: {minTempC: 11, maxTempC: 16}}}},
+  }));
+  const negative = buildSelectionContextV2(inputFor(wardrobe, {
+    session: {...inputFor([]).session, context: {...inputFor([]).session.context,
+    weather: {snapshot: {minTempC: -5, maxTempC: 1}}}}}));
+  const withoutWeather = buildSelectionContextV2(inputFor(wardrobe));
+  const selection = output(["top", "bottom", "shoes"]);
+  assert.equal(deterministicLanguageFallbackV2(ordinary, selection),
+    "Zvoľ top, bottom a shoes. Vonku má byť približne 11 až 16 °C.");
+  assert.equal(deterministicLanguageFallbackV2(negative, selection),
+    "Zvoľ top, bottom a shoes. Vonku má byť približne -5 až 1 °C.");
+  assert.equal(deterministicLanguageFallbackV2(withoutWeather, selection),
+    "Zvoľ top, bottom a shoes.");
+  assert.equal(deterministicLanguageFallbackV2(withoutWeather,
+    output(["top", "bottom", "shoes"], null, ["Dostupná obuv je menej formálna."])),
+  "Zvoľ top, bottom a shoes. Najväčší kompromis: Dostupná obuv je menej formálna.");
+  for (const text of [deterministicLanguageFallbackV2(ordinary, selection),
+    deterministicLanguageFallbackV2(negative, selection)]) {
+    assert.doesNotMatch(text, /[—–]|by som zvolil|ja by som si dal/iu);
+  }
+});
+
+test("Language provider failure and forbidden generated prose use the exact human fallback", async () => {
   const context = buildSelectionContextV2(inputFor([
     item("top", "t_shirt"), item("bottom", "jeans"), item("shoes", "sneakers"),
   ], {session: {...inputFor([]).session, context: {...inputFor([]).session.context,
-    weather: {snapshot: {minTempC: -5, maxTempC: 1}}}}}));
-  const text = deterministicLanguageFallbackV2(context,
-    output(["top", "bottom", "shoes"]));
-  assert.match(text, /-5 až 1 °C/);
-  assert.doesNotMatch(text, /[—–]|by som zvolil|ja by som si dal/iu);
+    weather: {snapshot: {minTempC: 11, maxTempC: 16}}}}}));
+  const selection = output(["top", "bottom", "shoes"]);
+  const expected = "Zvoľ top, bottom a shoes. Vonku má byť približne 11 až 16 °C.";
+  const failed = createOpenAiStylistLanguageV2({
+    executeStructured: async () => { throw new Error("provider_unavailable"); },
+    logger: {warn() {}, info() {}},
+  });
+  const forbidden = createOpenAiStylistLanguageV2({
+    executeStructured: async () => ({assistantText: "Jasné — ja by som zvolil tento outfit."}),
+    logger: {warn() {}, info() {}},
+  });
+  assert.equal(await failed.render(context, selection), expected);
+  assert.equal(await forbidden.render(context, selection), expected);
 });
 
 test("M: ontology contradiction is diagnosed and only the in-memory projection changes", () => {
@@ -252,6 +363,10 @@ test("production routing is explicit and keeps quality-critical stages on Terra 
   const actions = schemaForStageV2("answer", false, "non_mutating").properties.action.enum;
   assert.equal(actions.includes("generate_outfit"), false);
   assert.equal(actions.includes("edit_outfit"), false);
+  const toolsSchema = schemaForStageV2("tools", true);
+  assert.ok(toolsSchema.required.includes("selectionHandoffIntent"));
+  assert.deepEqual(toolsSchema.properties.selectionHandoffIntent.enum,
+    ["non_mutating", "generate_outfit", "edit_outfit"]);
 });
 
 test("51 candidates remain selectable while visual evidence is bounded to 24", () => {
@@ -261,6 +376,142 @@ test("51 candidates remain selectable while visual evidence is bounded to 24", (
   assert.equal(context.selection.candidateItems.length, 51);
   assert.equal(context.visualEvidence.length, 24);
   assert.equal(new Set(context.visualEvidence.map((entry) => entry.id)).size, 24);
+});
+
+test("Judge receives a selected image outside the Selector 24-image sample and stays bounded to 16", () => {
+  const wardrobe = Array.from({length: 30}, (_value, index) =>
+    item(`candidate-${index}`, index % 2 ? "sneakers" : "t_shirt", {
+      imageUrl: `https://images.invalid/item-${index}.png`,
+    }));
+  const context = buildSelectionContextV2(inputFor(wardrobe));
+  const selectedId = "candidate-29";
+  assert.equal(context.visualEvidence.some((entry) => entry.id === selectedId), false);
+  const selection = output([selectedId]);
+  const evidence = judgeVisualEvidenceV2(context, selection);
+  assert.equal(evidence.length, 16);
+  assert.equal(evidence[0].id, selectedId);
+  assert.equal(evidence[0].imageUrl, "https://images.invalid/item-29.png");
+  const input = judgeInputV2(context, selection);
+  const content = input[1].content;
+  const selectedLabelIndex = content.findIndex((entry) => entry.type === "input_text" &&
+    entry.text.includes(`Vybraný vizuálny dôkaz pre itemId ${selectedId}`));
+  assert.ok(selectedLabelIndex > 0);
+  assert.equal(content[selectedLabelIndex + 1].image_url, "https://images.invalid/item-29.png");
+  assert.equal(content.filter((entry) => entry.type === "input_image").length, 16);
+});
+
+test("typed selection handoff preserves generate/edit continuations and blocks answer-stage ranking", async (t) => {
+  const requestFor = (chatId, message) => ({
+    chatId, turnId: "turn-1", expectedSessionRevision: 0,
+    latestUserInput: message, explicitUiActionId: null,
+    freshClientObservations: {},
+    clientCapabilities: {shoppingEnabled: false, supportsProgress: false,
+      todayDateKey: "2026-09-16", tomorrowDateKey: "2026-09-17", timezoneOffsetMinutes: 120,
+      recentHistory: []},
+  });
+  const basePorts = (wardrobe) => ({
+    wardrobeTool: {async retrieve() { return structuredClone(wardrobe); }},
+    locationResolver: {async resolve() { return null; }},
+    weatherTool: {async getForecast() { return null; }},
+    shoppingTool: {async search() { return {candidateIds: [], appliedHardConstraints: []}; }},
+  });
+
+  for (const action of ["generate_outfit", "edit_outfit"]) {
+    await t.test(`${action} pendingResumeAction wins when tool selectionAction is missing`, async () => {
+      const chatId = `pending-${action}`;
+      const repository = createMemoryStylistSessionRepositoryV2({now: () => 1_789_000_000_000});
+      const state = structuredClone(createEmptySessionStateV2(chatId));
+      const wardrobe = [item("top", "t_shirt"), item("bottom", "jeans"),
+        item("old-shoes", "sneakers"), item("new-shoes", "sneakers")];
+      if (action === "edit_outfit") {
+        state.currentOutfit.itemIds = ["top", "bottom", "old-shoes"];
+        state.currentOutfit.selectionReasonsByItemId = {
+          top: "Pôvodný vrch.", bottom: "Pôvodný spodok.", "old-shoes": "Pôvodná obuv.",
+        };
+        state.currentOutfit.revision = 1;
+      } else {
+        state.context.terrain.condition = "wet";
+      }
+      state.conversationMemory.pendingQuestion = {
+        type: "question", field: "date", question: "Na ktorý deň?", actionId: "clarify_date",
+        acceptsYesNo: false, resumeAction: action,
+      };
+      await repository.ensure({uid: "user", chatId, bootstrapState: state});
+      let selectorCalls = 0;
+      const engine = createStylistOneBrainEngineV2({
+        sessionRepository: repository,
+        ...basePorts(wardrobe),
+        stylistBrain: {async brainTurn() {
+          return {kind: "tool_request", pendingReplyDisposition: "answer", statePatch: {},
+            requests: [{tool: "wardrobe",
+              scope: action === "edit_outfit" ? "current_outfit_plus_category" : "full_relevant",
+              category: action === "edit_outfit" ? "sneakers" : null,
+              editScope: action === "edit_outfit" ? {
+                replaceItemIds: ["old-shoes"], retainItemIds: [],
+                allowedSlots: ["feet"], allowedCategories: ["sneakers"], allowRemovalOnly: false,
+              } : null}],
+            selectionHandoffIntent: "non_mutating",
+            selectionAction: null,
+            selectionIntentSummary: null,
+            selectionConstraints: [],
+          };
+        }},
+        selectionPipeline: {async resolve(args) {
+          selectorCalls += 1;
+          assert.equal(args.action, action);
+          const ids = action === "edit_outfit" ? ["top", "bottom", "new-shoes"] :
+            ["top", "bottom", "new-shoes"];
+          const reasons = action === "edit_outfit" ? {
+            top: "Pôvodný vrch.", bottom: "Pôvodný spodok.", "new-shoes": "Nová obuv.",
+          } : null;
+          return {selection: Object.freeze(output(ids, reasons)),
+            context: {candidateItems: wardrobe, selection: {action, context: {}}}};
+        }},
+        languageGenerator: {async render() { return "Zvoľ pripravenú kombináciu."; }},
+      });
+      const result = await engine.resolveTurn({
+        uid: "user", request: requestFor(chatId, "Budúci týždeň."),
+      });
+      assert.equal(result.action, action);
+      assert.equal(selectorCalls, 1);
+      assert.deepEqual(result.resultingOutfit.itemIds, ["top", "bottom", "new-shoes"]);
+    });
+  }
+
+  await t.test("answer-stage Brain IDs never become authoritative", async () => {
+    const repository = createMemoryStylistSessionRepositoryV2({now: () => 1_789_000_000_000});
+    const wardrobe = [item("top", "t_shirt"), item("bottom", "jeans"), item("shoes", "sneakers")];
+    let calls = 0;
+    const engine = createStylistOneBrainEngineV2({
+      sessionRepository: repository,
+      ...basePorts(wardrobe),
+      stylistBrain: {async brainTurn(input) {
+        calls += 1;
+        if (input.stage === "tools") {
+          return {kind: "tool_request", pendingReplyDisposition: "none", statePatch: {},
+            requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
+            selectionHandoffIntent: "non_mutating", selectionAction: null,
+            selectionIntentSummary: null, selectionConstraints: []};
+        }
+        return {kind: "final", statePatch: {}, result: {
+          action: "generate_outfit", assistantText: "Toto nemá byť autoritatívne.",
+          resultingOutfit: {itemIds: ["top", "bottom", "shoes"],
+            selectionReasonsByItemId: {top: "x", bottom: "x", shoes: "x"},
+            compromises: [], missingWardrobeNeeds: []},
+          display: {kind: "outfit", itemIds: ["top", "bottom", "shoes"]},
+        }};
+      }},
+      selectionPipeline: {async resolve() { throw new Error("selector_must_not_run"); }},
+      languageGenerator: {async render() { throw new Error("language_must_not_run"); }},
+    });
+    await assert.rejects(engine.resolveTurn({
+      uid: "user",
+      request: requestFor("answer-ranking", "Ukáž mi dostupné kúsky."),
+      bootstrapInput: {currentOutfitItemIds: [], persistedSelectionReasonsByItemId: {},
+        knownExplicitDurableChoices: {}},
+    }), /one-brain answer cannot rank outfit IDs/);
+    assert.equal(calls, 2);
+  });
 });
 
 test("Brain hands generate selection to the bounded pipeline and never makes an answer-stage ranking", async () => {
@@ -281,7 +532,8 @@ test("Brain hands generate selection to the bounded pipeline and never makes an 
         kind: "tool_request",
         statePatch: {},
         requests: [{tool: "wardrobe", scope: "full_relevant", category: null, editScope: null}],
-        selectionAction: "generate_outfit",
+        selectionHandoffIntent: "generate_outfit",
+        selectionAction: null,
         selectionIntentSummary: "Kompletný outfit.",
         selectionConstraints: [],
       };

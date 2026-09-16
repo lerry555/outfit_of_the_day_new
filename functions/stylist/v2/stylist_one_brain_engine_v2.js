@@ -41,6 +41,7 @@ const TOOL_REQUEST_SCOPES = new Set([
 const SKIP_DIRECTIVE_RE = /\b(neviem|netusim|je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
 const EXPLICIT_BEST_EFFORT_RE = /\b(je mi to jedno|preskoc|preskocme|neries|nechaj tak|nechajme to|kasli na to|zrus to|zabudni na to|bez pocasia|daj mi proste|proste mi daj|vyber proste)\b/;
 const PENDING_REPLY_DISPOSITIONS = new Set(["none", "answer", "skip", "meta", "unrelated"]);
+const SELECTION_ACTIONS = new Set(["generate_outfit", "edit_outfit"]);
 
 function normalizeConversationTextV2(value) {
   return String(value || "")
@@ -100,6 +101,24 @@ function pendingReplyDispositionV2(envelope, pendingQuestion) {
     throw new RepairableStructuralTurnError("pending reply disposition is missing or invalid");
   }
   return raw;
+}
+
+function resolveSelectionHandoffV2(envelope, pendingResumeAction = null) {
+  const pending = SELECTION_ACTIONS.has(pendingResumeAction) ? pendingResumeAction : null;
+  const handoff = SELECTION_ACTIONS.has(envelope?.selectionHandoffIntent) ?
+    envelope.selectionHandoffIntent : null;
+  const action = SELECTION_ACTIONS.has(envelope?.selectionAction) ? envelope.selectionAction : null;
+  const mutatingSignals = [...new Set([pending, handoff, action].filter(Boolean))];
+  if (mutatingSignals.length > 1) {
+    throw new RepairableStructuralTurnError("selection handoff contains conflicting mutating actions");
+  }
+  if (!pending && envelope?.selectionHandoffIntent === "non_mutating" && action) {
+    throw new RepairableStructuralTurnError("non-mutating handoff cannot request outfit selection");
+  }
+  // The deterministic pending continuation has first authority. The typed
+  // handoff then repairs a missing selectionAction. The legacy action signal
+  // remains only for older injected ports and tests.
+  return pending || handoff || action || null;
 }
 
 function clearPendingQuestionV2(state) {
@@ -370,6 +389,9 @@ function validateToolDecisionEnvelopeV2(envelope, {allowClarification, pendingQu
     throw new RepairableStructuralTurnError("pending location answer targeted a different location field");
   }
   if (envelope?.kind === "final") {
+    if (resolveSelectionHandoffV2(envelope, null)) {
+      throw new RepairableStructuralTurnError("final tool decision cannot request outfit selection");
+    }
     if (!["chat", "clarify", "stop"].includes(envelope.result?.action)) {
       throw new RepairableStructuralTurnError("one-brain tool stage may finalize only chat, clarify, or stop");
     }
@@ -400,6 +422,7 @@ function validateToolDecisionEnvelopeV2(envelope, {allowClarification, pendingQu
   if (location.some((entry) => !entry.query || !["destination", "eventLocation"].includes(entry.targetField))) {
     throw new RepairableStructuralTurnError("invalid one-brain location request");
   }
+  resolveSelectionHandoffV2(envelope, pendingQuestion?.resumeAction || null);
 }
 
 function validateAnswerEnvelopeV2(envelope, {requiredAction = null} = {}) {
@@ -1004,9 +1027,17 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         runtimeConstraints.pendingResumeAction === "edit_outfit" &&
         executed.toolResults.authorizedEditScope && Array.isArray(executed.toolResults.wardrobeItems) &&
         executed.toolResults.wardrobeItems.length > 0 ? "edit_outfit" : null;
-      const requestedSelectionAction = ["generate_outfit", "edit_outfit"].includes(
-        effectiveToolEnvelope.selectionAction,
-      ) ? effectiveToolEnvelope.selectionAction : requiredAnswerAction;
+      const selectionResumeAction = selectionPipeline &&
+        runtimeConstraints.pendingResumeAction === "generate_outfit" &&
+        Array.isArray(executed.toolResults.wardrobeItems) &&
+        executed.toolResults.wardrobeItems.length > 0 ? "generate_outfit" : selectionPipeline &&
+        runtimeConstraints.pendingResumeAction === "edit_outfit" &&
+        executed.toolResults.authorizedEditScope && Array.isArray(executed.toolResults.wardrobeItems) &&
+        executed.toolResults.wardrobeItems.length > 0 ? "edit_outfit" : null;
+      const requestedSelectionAction = resolveSelectionHandoffV2(
+        effectiveToolEnvelope,
+        selectionResumeAction || requiredAnswerAction,
+      );
       const answerConstraints = {
         ...runtimeConstraints,
         modelCallsRemaining: 1,
@@ -1076,6 +1107,7 @@ module.exports = {
   explicitStylingDestinationCandidateV2,
   pendingLocationQueryV2,
   pendingReplyDispositionV2,
+  resolveSelectionHandoffV2,
   selectionDecisionV2,
   restoreTrustedBroadLocationV2,
   restoreTrustedExplicitLocationV2,
