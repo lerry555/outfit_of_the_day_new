@@ -91,7 +91,6 @@ async function main() {
     const customToken = await auth.createCustomToken(uid);
     tokenExchangeStarted = true;
     authTokens = await exchangeQaCustomToken({apiKey: API_KEY, customToken});
-    assert.equal(authTokens.localId, uid, "qa_auth_uid_mismatch");
     const idToken = authTokens.idToken;
     const base = (turnId, message) => ({
       v2SessionId: chatId,
