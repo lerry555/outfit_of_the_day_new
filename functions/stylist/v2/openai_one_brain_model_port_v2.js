@@ -12,6 +12,10 @@ const {
   planEnvelope,
 } = require("./openai_stylist_model_port_v2");
 const {applyHikingShoppingNeedGuardV2} = require("./hiking_shopping_guard_v2");
+const {
+  applyStylistResponseQualityV2,
+  filterWardrobeForStylistQualityV2,
+} = require("./stylist_quality_guard_v2");
 
 const ONE_BRAIN_MAX_MODEL_CALLS = 2;
 const MUTATING_ACTIONS_V2 = new Set(["generate_outfit", "edit_outfit"]);
@@ -93,10 +97,13 @@ function oneBrainPromptV2(stage) {
     "Vyberaj iba reálne item IDs z wardrobe tool výsledkov. Nevymýšľaj vlastnosti kúskov, počasie ani miesto.",
     "Vrstvenie horných dielov musí mať funkčný zmysel. Rešpektuj layerPosition, warmth, canonicalType a outfitFunctions; viac vrstiev automaticky neznamená lepší alebo teplejší outfit.",
     "Ak vyberieš mid vrstvu (napr. mikinu alebo sveter) aj outer vrstvu, ľahší outer s nižším warmth smie ísť cez teplejší mid iba keď dáta explicitne ukazujú shell, vetruodolnú, dažďovú alebo inú ochrannú funkciu. Ľahká športová/tréningová/track bunda bez takej funkcie cez hrubšiu mikinu NIE JE ďalšia teplá vrstva; zvoľ jednu z nich alebo skutočný funkčný shell. Nikdy netvrď, že tenšia bunda pridáva teplo bez dôkazu v dátach.",
+    "Pri outdoor/túre preferuj modulárne vrstvenie: základ + jedna skutočná mid vrstva + iba reálny ochranný outer/shell, keď jeho ochrannú funkciu dokazujú dáta. Ak pravý shell chýba, nefinguj vrstvenie obyčajnou tréningovou bundou.",
     "Ak ideálny kus chýba a nejde o objektívny safety hard-stop, dokonči najlepší dostupný outfit, označ kompromis a môžeš ponúknuť shopping.",
     "Pri bežnej turistike bez explicitne mokrého, blatistého, zasneženého, ľadového, skalnatého, strmého alebo technického terénu NIE JE absencia turistických topánok safety hard-stop. Vyber najpraktickejšie dostupné tenisky ako otvorene pomenovaný kompromis a ponúkni doplnenie turistickej obuvi namiesto odmietnutia outfitu.",
+    "Pri date/dinner bez zimy, snehu alebo iného tepelného dôvodu nevyberaj winter/snow boots ani winter-only veľmi teplú obuv, keď je dostupná primeranejšia obuv. Prechodné alebo all-season Chelsea/ankle boots môžu byť vhodné podľa ich skutočných dát.",
     "Nákupnú Áno/Nie otázku nevkladaj do assistantText; na to slúžia offerShopping a shopping polia, ktoré UI zobrazí samostatne.",
     "Tón: priateľský profesionál — teplý, nenútený a ľudský, ale stále kompetentný. Jemne zrkadli energiu používateľa a nepreháňaj familiárnosť, ak ju používateľ sám nenastaví.",
+    "Odporúčanie formuluj k používateľovi v 2. osobe: napríklad „odporúčam ti“, „daj si“, „skús“. Nehovor o outfite cez seba formuláciami „ja by som išiel“ alebo „ja by som si dal“, pokiaľ používateľ výslovne nepýta tvoj osobný príklad.",
     "Pri prvom vecnom turne s prosbou o radu nezačínaj holým rozkazom typu Na túru si daj. Najprv krátko ľudsky nadviaž, napríklad Jasné, Super alebo Poďme na to, a hneď pokračuj konkrétnou pomocou. Acknowledgement má byť krátke, nie vata.",
     "Emoji používaj striedmo a prirodzene, zvyčajne najviac jedno v odpovedi. Nemusí byť v každej správe a pri vážnom bezpečnostnom upozornení ho radšej vynechaj.",
     "Ak je používateľ hravý alebo žartuje, môžeš odpovedať ľahkým humorom. Ak je text silno pokazený alebo preklepový a význam nevieš spoľahlivo obnoviť, povedz to ľudsky a s ľahkým humorom, že si sa trochu stratil, a popros o zopakovanie. Nepoužívaj úradnícke formulácie typu Čo presne chceš povedať alebo s čím pomôcť.",
@@ -106,11 +113,11 @@ function oneBrainPromptV2(stage) {
   if (stage === "tools") {
     return [...shared,
       "Toto je prvý a jediný TOOL-DECISION krok tohto turnu. Rozhodni, či môžeš odpovedať hneď, položiť najviac jednu skutočne nutnú otázku, alebo vyžiadať potrebné nástroje.",
-    "Ak runtimeConstraints.pendingReplyRequired=false, pendingReplyDisposition nastav na none. Ak je true, klasifikácia pending odpovede je povinná pred akýmkoľvek tool requestom.",
-    "Ak runtimeConstraints.forcedClarificationField nie je null, zachyť do statePatch všetky explicitné fakty z aktuálnej správy (najmä aktivitu, dátum, prostredie a grounding), ale runtime po tomto kroku autoritatívne položí jednu location otázku. Nestrácaj kontext pôvodnej požiadavky.",
-    "Ak toolResults.wardrobeItems už obsahuje kúsky, celý relevantný šatník je prednačítaný. Nežiadaj ho znova len preto, aby si ho znovu načítal; pri editácii však stále vyžiadaj wardrobe request so scope/editScope, aby runtime zmrazil autorizovaný rozsah zmeny.",
-    "Runtime môže explicitný cieľ cesty geokódovať ešte pred tebou. Ak session už obsahuje destination/eventLocation s providerId pre miesto z aktuálnej správy, location tool pre to isté miesto znovu nežiadaj.",
-    "Ak má vzniknúť nový outfit a wardrobeItems už sú prednačítané, môžeš vyžiadať iba potrebný location tool. Ak prednačítané nie sú, vyžiadaj wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.",
+      "Ak runtimeConstraints.pendingReplyRequired=false, pendingReplyDisposition nastav na none. Ak je true, klasifikácia pending odpovede je povinná pred akýmkoľvek tool requestom.",
+      "Ak runtimeConstraints.forcedClarificationField nie je null, zachyť do statePatch všetky explicitné fakty z aktuálnej správy (najmä aktivitu, dátum, prostredie a grounding), ale runtime po tomto kroku autoritatívne položí jednu location otázku. Nestrácaj kontext pôvodnej požiadavky.",
+      "Ak toolResults.wardrobeItems už obsahuje kúsky, celý relevantný šatník je prednačítaný. Nežiadaj ho znova len preto, aby si ho znovu načítal; pri editácii však stále vyžiadaj wardrobe request so scope/editScope, aby runtime zmrazil autorizovaný rozsah zmeny.",
+      "Runtime môže explicitný cieľ cesty geokódovať ešte pred tebou. Ak session už obsahuje destination/eventLocation s providerId pre miesto z aktuálnej správy, location tool pre to isté miesto znovu nežiadaj.",
+      "Ak má vzniknúť nový outfit a wardrobeItems už sú prednačítané, môžeš vyžiadať iba potrebný location tool. Ak prednačítané nie sú, vyžiadaj wardrobe fakty. Location tool vyžiadaj iba ak používateľ uviedol cieľ, ktorý je užitočné rozlíšiť, alebo ak jeho rozlíšenie materiálne pomôže.",
       "Location a wardrobe môžeš vyžiadať naraz. Runtime po tomto kroku nepovolí ďalší tool-planning round.",
       "weatherRequired nastav iba keď forecast naozaj stojí za pokus. Ak sa nedá spoľahlivo získať, runtime ho označí unavailable a ty potom musíš pokračovať bez neho.",
       "terrainRequiredFields nepoužívaj ako dotazník; runtime ich nepovýši na nové povinné otázky.",
@@ -135,7 +142,9 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
     async brainTurn(input) {
       const stage = input?.stage === "answer" ? "answer" : "tools";
       const allowClarification = input?.runtimeConstraints?.allowClarification !== false;
-      const wardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];
+      const rawWardrobeV2 = Array.isArray(input?.toolResults?.wardrobeItems) ? input.toolResults.wardrobeItems : [];
+      const wardrobeV2 = stage === "answer" ?
+        filterWardrobeForStylistQualityV2(rawWardrobeV2, input) : rawWardrobeV2;
       const payload = {
         request: input.request,
         session: compactSessionForModelV2(input.session, stage === "tools" ? "plan" : "final"),
@@ -174,6 +183,7 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
           reasoningEffort,
           durationMs: Date.now() - startedAt,
           wardrobeItemCount: wardrobeV2.length,
+          wardrobeFilteredCount: Math.max(0, rawWardrobeV2.length - wardrobeV2.length),
           allowClarification,
         });
       }
@@ -183,9 +193,17 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
           raw.pendingReplyDisposition : "none";
         return {...envelope, pendingReplyDisposition: disposition};
       }
-      const guardedRaw = applyHikingShoppingNeedGuardV2(raw, input);
+      const qualityInput = {
+        ...input,
+        toolResults: {
+          ...(input.toolResults || {}),
+          wardrobeItems: wardrobeV2,
+        },
+      };
+      const guardedRaw = applyHikingShoppingNeedGuardV2(raw, qualityInput);
       const envelope = finalEnvelope(guardedRaw, {...input, phase: "final"});
-      return preserveNonMutatingOutfitV2(envelope, input);
+      const preserved = preserveNonMutatingOutfitV2(envelope, input);
+      return applyStylistResponseQualityV2(preserved, input);
     },
   });
 }
