@@ -30,6 +30,7 @@ function array(value) {
 }
 
 function numeric(value) {
+  if (value == null || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
 }
@@ -162,8 +163,7 @@ function hasWeatherCueV2(value) {
 function formatTemperatureV2(value) {
   const number = numeric(value);
   if (number == null) return null;
-  const rounded = Math.round(number);
-  return `${rounded} °C`;
+  return `${Math.round(number)} °C`;
 }
 
 function weatherSentenceV2(session) {
