@@ -3,6 +3,11 @@
 const assert = require("node:assert/strict");
 const admin = require("firebase-admin");
 const {hashValue} = require("../../costs/ai_usage_v1");
+const {
+  deleteQaAuthUserSelf,
+  exchangeQaCustomToken,
+  runQaCleanupV2,
+} = require("./stylist_qa_auth_cleanup_v2");
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "outfitoftheday-4d401";
 const API_KEY = String(process.env.FIREBASE_WEB_API_KEY || "").trim();
@@ -23,19 +28,6 @@ function qualityCheck(text) {
   const value = String(text || "").trim();
   assert.ok(value.length >= 20 && value.length <= 700, `reply_length:${value.length}`);
   assert.doesNotMatch(value, /validator|toolResults|grounding|candidateId|fail-closed/i);
-}
-
-async function exchangeCustomToken(customToken) {
-  assert.ok(API_KEY, "FIREBASE_WEB_API_KEY is required");
-  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithCustomToken?key=${encodeURIComponent(API_KEY)}`, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({token: customToken, returnSecureToken: true}),
-  });
-  const json = await response.json();
-  if (!response.ok) throw new Error(`firebase_token_exchange_failed:${response.status}:${json?.error?.message || "unknown"}`);
-  assert.ok(json.idToken);
-  return json.idToken;
 }
 
 async function callCallable(idToken, data) {
@@ -62,8 +54,12 @@ async function main() {
   const uid = `stylist_smoke_${stamp}`;
   const chatId = `smoke_chat_${stamp}`;
   const userRef = db.collection("users").doc(uid);
-  const usageDocs = [];
-  const requestKeys = [];
+  const serverSessionRef = db.collection("stylistSessionsV2Server").doc(uid);
+  const userKey = hashValue(uid);
+  let tokenExchangeStarted = false;
+  let authTokens = null;
+  let report = null;
+  let cleanupResult = null;
 
   const wardrobe = [
     ["shirt", {name: "Čierne tričko", category: "tops", canonicalType: "t_shirt", canonicalFamily: "tops",
@@ -93,18 +89,18 @@ async function main() {
     await batch.commit();
 
     const customToken = await auth.createCustomToken(uid);
-    const idToken = await exchangeCustomToken(customToken);
-    const base = (turnId, message) => {
-      requestKeys.push(hashValue([uid, turnId, "one_brain"]));
-      return {
-        v2SessionId: chatId,
-        turnId,
-        message,
-        history: [],
-        currentOutfitItemIds: [],
-        clientContext: {...dates, timezoneOffsetMinutes: -new Date().getTimezoneOffset()},
-      };
-    };
+    tokenExchangeStarted = true;
+    authTokens = await exchangeQaCustomToken({apiKey: API_KEY, customToken});
+    assert.equal(authTokens.localId, uid, "qa_auth_uid_mismatch");
+    const idToken = authTokens.idToken;
+    const base = (turnId, message) => ({
+      v2SessionId: chatId,
+      turnId,
+      message,
+      history: [],
+      currentOutfitItemIds: [],
+      clientContext: {...dates, timezoneOffsetMinutes: -new Date().getTimezoneOffset()},
+    });
 
     const first = await callCallable(idToken, base(`t1_${stamp}`, "zajtra idem na túru potrebujem outfit"));
     assert.equal(first.result.failClosed, false);
@@ -148,38 +144,82 @@ async function main() {
 
     await new Promise((resolve) => setTimeout(resolve, 1200));
     let estimatedCost = 0;
-    const models = [];
-    for (const requestKey of requestKeys) {
-      const snap = await db.collection("aiUsageEventsV1").where("requestKey", "==", requestKey).get();
-      for (const doc of snap.docs) {
-        usageDocs.push(doc.ref);
-        const data = doc.data() || {};
-        if (data.model) models.push(String(data.model));
-        estimatedCost += Number(data.estimatedCostUsd ?? data.estimatedCostUsdMax ?? data.estimatedCostUsdMin ?? 0);
-      }
+    const usage = await db.collection("aiUsageEventsV1").where("userKey", "==", userKey).get();
+    const usageEvents = usage.docs.map((doc) => doc.data() || {});
+    for (const event of usageEvents) {
+      estimatedCost += Number(event.estimatedCostUsd ?? event.estimatedCostUsdMax ??
+        event.estimatedCostUsdMin ?? 0);
     }
-    assert.ok(models.length > 0, "production_usage_events_missing");
-    assert.ok(models.every((model) => model.startsWith("gpt-5.6-terra")), `unexpected_model_used:${models.join(",")}`);
+    const expectedModels = new Map([
+      ["stylist_v2_one_brain", "gpt-5.6-terra"],
+      ["stylist_v2_selector", "gpt-5.6-terra"],
+      ["stylist_v2_quality_judge", "gpt-5.6-terra"],
+      ["stylist_v2_language", "gpt-5.6-luna"],
+    ]);
+    const stageModels = {};
+    for (const event of usageEvents) {
+      const feature = String(event.feature || "");
+      const model = String(event.model || "");
+      assert.ok(expectedModels.has(feature), `unexpected_usage_feature:${feature || "missing"}`);
+      assert.ok(model.startsWith(expectedModels.get(feature)), `unexpected_model_used:${feature}:${model}`);
+      (stageModels[feature] ||= []).push(model);
+    }
+    for (const feature of expectedModels.keys()) {
+      assert.ok(stageModels[feature]?.length > 0, `production_usage_stage_missing:${feature}`);
+    }
+    const providerRetries = usageEvents.filter((event) => Number(event.providerAttempt) > 1).length;
+    const modelRetries = usageEvents.filter((event) => Number(event.modelAttempt) > 1).length;
 
-    console.log(JSON.stringify({
+    report = {
       ok: true,
       latenciesMs: {clarify: first.latencyMs, why: why.latencyMs, outfit: outfit.latencyMs, opinion: opinion.latencyMs},
-      models,
+      usageEventCount: usageEvents.length,
+      stageModels,
+      providerRetries,
+      modelRetries,
       estimatedCostUsd: Number(estimatedCost.toFixed(6)),
       configuredBudgets: {maxCallMs: MAX_CALL_MS, maxCostUsd: MAX_COST_USD},
-    }));
+    };
   } finally {
-    for (const ref of usageDocs) await ref.delete().catch(() => {});
-    if (typeof db.recursiveDelete === "function") {
-      await db.recursiveDelete(userRef).catch(() => {});
-    } else {
-      for (const [id] of wardrobe) await userRef.collection("wardrobe").doc(id).delete().catch(() => {});
-      const sessions = await userRef.collection("stylistSessionsV2").get().catch(() => null);
-      if (sessions) for (const doc of sessions.docs) await doc.ref.delete().catch(() => {});
-      await userRef.delete().catch(() => {});
-    }
-    await auth.deleteUser(uid).catch(() => {});
+    cleanupResult = await runQaCleanupV2({
+      firestoreCleanup: async () => {
+        const usage = await db.collection("aiUsageEventsV1").where("userKey", "==", userKey).get();
+        for (const doc of usage.docs) await doc.ref.delete();
+        if (typeof db.recursiveDelete === "function") {
+          await db.recursiveDelete(serverSessionRef);
+          await db.recursiveDelete(userRef);
+        } else {
+          for (const [id] of wardrobe) await userRef.collection("wardrobe").doc(id).delete();
+          const clientSessions = await userRef.collection("stylistSessionsV2").get();
+          for (const doc of clientSessions.docs) await doc.ref.delete();
+          const serverSessions = await serverSessionRef.collection("sessions").get();
+          for (const doc of serverSessions.docs) await doc.ref.delete();
+          await serverSessionRef.delete();
+          await userRef.delete();
+        }
+        const [remainingUsage, remainingUser, remainingServerSessions] = await Promise.all([
+          db.collection("aiUsageEventsV1").where("userKey", "==", userKey).get(),
+          userRef.get(),
+          serverSessionRef.collection("sessions").limit(1).get(),
+        ]);
+        assert.equal(remainingUsage.empty, true, "qa_usage_cleanup_incomplete");
+        assert.equal(remainingUser.exists, false, "qa_user_cleanup_incomplete");
+        assert.equal(remainingServerSessions.empty, true, "qa_server_session_cleanup_incomplete");
+      },
+      authCleanup: async () => {
+        if (!tokenExchangeStarted) return {deleted: false, accountCreated: false};
+        assert.ok(authTokens, "qa_auth_tokens_unavailable_for_cleanup");
+        return deleteQaAuthUserSelf({apiKey: API_KEY, authTokens});
+      },
+    });
   }
+  console.log(JSON.stringify({
+    ...report,
+    cleanup: {
+      firestore: true,
+      authSelfDelete: cleanupResult.auth,
+    },
+  }));
 }
 
 main().catch((error) => {
