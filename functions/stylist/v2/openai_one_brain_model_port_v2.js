@@ -15,6 +15,7 @@ const {applyHikingShoppingNeedGuardV2} = require("./hiking_shopping_guard_v2");
 const {
   applyStylistResponseQualityV2,
   filterWardrobeForStylistQualityV2,
+  guardSelectedOutfitQualityV2,
 } = require("./stylist_quality_guard_v2");
 
 const ONE_BRAIN_MAX_MODEL_CALLS = 2;
@@ -200,7 +201,8 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
           wardrobeItems: wardrobeV2,
         },
       };
-      const guardedRaw = applyHikingShoppingNeedGuardV2(raw, qualityInput);
+      const selectedQualityRaw = guardSelectedOutfitQualityV2(raw, qualityInput);
+      const guardedRaw = applyHikingShoppingNeedGuardV2(selectedQualityRaw, qualityInput);
       const envelope = finalEnvelope(guardedRaw, {...input, phase: "final"});
       const preserved = preserveNonMutatingOutfitV2(envelope, input);
       return applyStylistResponseQualityV2(preserved, input);
