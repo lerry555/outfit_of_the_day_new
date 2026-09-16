@@ -35,6 +35,13 @@ function numeric(value) {
   return Number.isFinite(number) ? number : null;
 }
 
+function naturalListV2(values) {
+  const items = array(values).map(text).filter(Boolean);
+  if (items.length <= 1) return items[0] || "";
+  if (items.length === 2) return `${items[0]} a ${items[1]}`;
+  return `${items.slice(0, -1).join(", ")} a ${items[items.length - 1]}`;
+}
+
 function normalizedSeasonV2(value) {
   const season = normalized(value).replace(/\s+/g, "_");
   if (["zim", "zima", "winter"].includes(season)) return "winter";
@@ -64,7 +71,9 @@ function currentMonthV2(session) {
 }
 
 function isFootwearV2(item) {
-  return item?.category === "footwear" || item?.canonicalFamily === "footwear" || array(item?.bodySlots).includes("feet");
+  return normalized(item?.category) === "footwear" ||
+    normalized(item?.canonicalFamily) === "footwear" ||
+    array(item?.bodySlots).includes("feet");
 }
 
 function isBootV2(item) {
@@ -121,24 +130,65 @@ function isOutdoorRelevantV2(session) {
   return environment === "outdoor" || environment === "mixed" || OUTDOOR_ACTIVITY_IDS.has(activity);
 }
 
+function preserveCurrentCandidatesV2(input) {
+  return input?.runtimeConstraints?.requiredAnswerAction === "edit_outfit" ||
+    Boolean(input?.toolResults?.authorizedEditScope);
+}
+
 function filterWardrobeForStylistQualityV2(items, input) {
   const wardrobe = clone(array(items));
   if (!wardrobe.length) return wardrobe;
-  const currentIds = new Set(array(input?.session?.currentOutfit?.itemIds).map(String));
+  const currentIds = preserveCurrentCandidatesV2(input) ?
+    new Set(array(input?.session?.currentOutfit?.itemIds).map(String)) : new Set();
   const mids = wardrobe.filter((item) =>
     normalized(item?.layerPosition) === "mid" && array(item?.bodySlots).includes("upper_body"));
   const maxMidWarmth = mids.reduce((best, item) => Math.max(best, numeric(item?.warmth) ?? 0), -Infinity);
   const outdoor = isOutdoorRelevantV2(input?.session);
+  const temp = currentTemperatureCV2(input?.session);
 
   return wardrobe.filter((item) => {
     if (currentIds.has(String(item?.id || ""))) return true;
     if (isWinterFootwearUnsuitableV2(item, input)) return false;
-    if (outdoor && Number.isFinite(maxMidWarmth) && isLightSportOuterV2(item) &&
-        !hasProtectiveOuterFunctionV2(item) && (numeric(item?.warmth) ?? 0) < maxMidWarmth) {
+    if (outdoor && temp != null && temp <= 16 && Number.isFinite(maxMidWarmth) &&
+        isLightSportOuterV2(item) && !hasProtectiveOuterFunctionV2(item) &&
+        (numeric(item?.warmth) ?? 0) < maxMidWarmth) {
       return false;
     }
     return true;
   });
+}
+
+function guardSelectedOutfitQualityV2(raw, input) {
+  if (!raw || raw.action !== "generate_outfit" || !isOutdoorRelevantV2(input?.session)) return raw;
+  const selectedIds = array(raw.resultingOutfitItemIds).map(String);
+  if (selectedIds.length < 2) return raw;
+  const itemById = new Map(array(input?.toolResults?.wardrobeItems).map((item) => [String(item?.id || ""), item]));
+  const selectedItems = selectedIds.map((id) => itemById.get(id)).filter(Boolean);
+  const mids = selectedItems.filter((item) =>
+    normalized(item?.layerPosition) === "mid" && array(item?.bodySlots).includes("upper_body"));
+  if (!mids.length) return raw;
+
+  const removeIds = new Set();
+  for (const outer of selectedItems) {
+    if (!isLightSportOuterV2(outer) || hasProtectiveOuterFunctionV2(outer)) continue;
+    const outerWarmth = numeric(outer?.warmth) ?? 0;
+    if (mids.some((mid) => (numeric(mid?.warmth) ?? 0) > outerWarmth)) {
+      removeIds.add(String(outer.id));
+    }
+  }
+  if (!removeIds.size) return raw;
+
+  const next = clone(raw);
+  next.resultingOutfitItemIds = selectedIds.filter((id) => !removeIds.has(id));
+  next.displayItemIds = array(raw.displayItemIds).map(String).filter((id) => !removeIds.has(id));
+  next.selectionReasons = array(raw.selectionReasons).filter((entry) => !removeIds.has(String(entry?.itemId || "")));
+  const remainingNames = next.resultingOutfitItemIds
+    .map((id) => text(itemById.get(id)?.name))
+    .filter(Boolean);
+  if (remainingNames.length) {
+    next.assistantText = `Odporúčam ti ${naturalListV2(remainingNames)}. Slabšiu tréningovú bundu cez teplejšiu mikinu vynechávam, pretože bez ochrannej funkcie by také vrstvenie nedávalo zmysel.`;
+  }
+  return next;
 }
 
 function normalizeStylistVoiceV2(value) {
@@ -160,12 +210,6 @@ function hasWeatherCueV2(value) {
   return /\b(pocas\w*|teplot\w*|stupn\w*|dazd\w*|prs\w*|vetr\w*|vietor\w*|sneh\w*|chlad\w*|tepl\w*)\b/.test(line) || /°\s*c?/i.test(String(value || ""));
 }
 
-function formatTemperatureV2(value) {
-  const number = numeric(value);
-  if (number == null) return null;
-  return `${Math.round(number)} °C`;
-}
-
 function weatherSentenceV2(session) {
   const snapshot = session?.context?.weather?.snapshot;
   if (!snapshot || typeof snapshot !== "object") return null;
@@ -176,12 +220,13 @@ function weatherSentenceV2(session) {
   if (min != null && max != null && Math.round(min) !== Math.round(max)) {
     temperature = `${Math.round(min)}–${Math.round(max)} °C`;
   } else {
-    temperature = formatTemperatureV2(representative ?? max ?? min);
+    const value = representative ?? max ?? min;
+    if (value != null) temperature = `${Math.round(value)} °C`;
   }
   const facts = [];
-  if (temperature) facts.push(temperature);
+  if (temperature) facts.push(`teplotou ${temperature}`);
   if (snapshot.willRain === true) facts.push("možným dažďom");
-  if (snapshot.willSnow === true) facts.push("snehom");
+  if (snapshot.willSnow === true) facts.push("snežením");
   if (snapshot.isWindy === true) {
     const wind = numeric(snapshot.maxWindKph);
     facts.push(wind != null ? `vetrom do približne ${Math.round(wind)} km/h` : "vetrom");
@@ -189,7 +234,7 @@ function weatherSentenceV2(session) {
   if (!facts.length) return null;
   const prefix = OUTDOOR_ACTIVITY_IDS.has(normalized(session?.context?.activity?.id).replace(/\s+/g, "_")) ?
     "Na túre" : "Vonku";
-  return `${prefix} počítaj s ${facts.join(", ")}.`;
+  return `${prefix} počítaj s ${naturalListV2(facts)}.`;
 }
 
 function applyStylistResponseQualityV2(envelope, input) {
@@ -210,6 +255,7 @@ module.exports = {
   currentMonthV2,
   currentTemperatureCV2,
   filterWardrobeForStylistQualityV2,
+  guardSelectedOutfitQualityV2,
   hasProtectiveOuterFunctionV2,
   isWinterFootwearUnsuitableV2,
   normalizeStylistVoiceV2,
