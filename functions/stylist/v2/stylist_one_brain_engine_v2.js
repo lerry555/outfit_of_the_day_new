@@ -618,8 +618,45 @@ async function commitResultV2({durableRepository, uid, request, originalState, w
   }
 }
 
+async function selectionDecisionV2({selectionPipeline, languageGenerator, action, intentSummary,
+  requestedConstraints, request, workingState, toolResults, wardrobeItems, userStylePreferences}) {
+  const resolved = await selectionPipeline.resolve({
+    action,
+    intentSummary,
+    requestedConstraints,
+    request,
+    session: workingState,
+    toolResults,
+    wardrobeItems,
+    userStylePreferences,
+  });
+  const selection = resolved.selection;
+  const reasons = Object.fromEntries(selection.selectionReasons.map((entry) =>
+    [entry.itemId, entry.reason]));
+  for (const id of selection.selectedItemIds) {
+    if (!Object.hasOwn(reasons, id) && workingState.currentOutfit.itemIds.includes(id) &&
+        Object.hasOwn(workingState.currentOutfit.selectionReasonsByItemId, id)) {
+      reasons[id] = workingState.currentOutfit.selectionReasonsByItemId[id];
+    }
+  }
+  const assistantText = await languageGenerator.render(resolved.context, selection);
+  return {
+    action,
+    assistantText,
+    resultingOutfit: {
+      itemIds: [...selection.selectedItemIds],
+      selectionReasonsByItemId: reasons,
+      compromises: [...selection.compromises],
+      missingWardrobeNeeds: [...selection.missingWardrobeNeeds],
+    },
+    display: {kind: "outfit", itemIds: [...selection.selectedItemIds]},
+    ...(action === "edit_outfit" ? {editScope: clone(toolResults.authorizedEditScope)} : {}),
+  };
+}
+
 function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locationResolver,
-  weatherTool, shoppingTool, stylistBrain, clock = () => Date.now()}) {
+  weatherTool, shoppingTool, stylistBrain, selectionPipeline = null, languageGenerator = null,
+  userStylePreferences = null, clock = () => Date.now(), logger = console}) {
   const durableRepository = requirePort(sessionRepository, "sessionRepository");
   for (const method of ["ensure", "ensureFromLegacy", "get", "commitTurn"]) {
     requirePort(durableRepository[method], `sessionRepository.${method}`);
@@ -629,6 +666,9 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
   requirePort(weatherTool, "weatherTool");
   requirePort(shoppingTool, "shoppingTool");
   requirePort(stylistBrain, "stylistBrain");
+  if ((selectionPipeline == null) !== (languageGenerator == null)) {
+    throw new TypeError("selection pipeline and language generator must be configured together");
+  }
 
   return Object.freeze({
     async resolveTurn({uid, request: untrustedRequest, bootstrapInput = null, knownCanonicalState = null,
@@ -721,6 +761,25 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
           knownWardrobeItems,
         });
         workingState = executed.workingState;
+        if (selectionPipeline) {
+          const decision = await selectionDecisionV2({
+            selectionPipeline,
+            languageGenerator,
+            action: "edit_outfit",
+            intentSummary: request.latestUserInput,
+            requestedConstraints: [],
+            request,
+            workingState,
+            toolResults: executed.toolResults,
+            wardrobeItems: executed.wardrobeItems,
+            userStylePreferences,
+          });
+          return commitResultV2({
+            durableRepository, uid, request, originalState, workingState, decision,
+            wardrobeItems: executed.wardrobeItems,
+            authorizedEditScope: executed.toolResults.authorizedEditScope,
+          });
+        }
         const answerConstraints = {
           maxModelCalls: ONE_BRAIN_MAX_MODEL_CALLS,
           modelCallsRemaining: 1,
@@ -839,6 +898,12 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         runtimeConstraints.modelCallsRemaining -= 1;
         validateToolDecisionEnvelopeV2(toolEnvelope, {...repairConstraints, pendingQuestion: pendingQuestionAtBrain});
       }
+    logger?.info?.("STYLIST_V2_BRAIN_ACTION", {
+      kind: toolEnvelope.kind,
+      action: toolEnvelope.result?.action || null,
+      selectionAction: toolEnvelope.selectionAction || null,
+      modelCallsUsed: ONE_BRAIN_MAX_MODEL_CALLS - runtimeConstraints.modelCallsRemaining,
+    });
     const pendingDisposition = pendingReplyDispositionV2(toolEnvelope, pendingQuestionAtBrain);
 
     // A country preflight must preserve explicit scenario facts parsed from the
@@ -939,16 +1004,49 @@ function createStylistOneBrainEngineV2({sessionRepository, wardrobeTool, locatio
         runtimeConstraints.pendingResumeAction === "edit_outfit" &&
         executed.toolResults.authorizedEditScope && Array.isArray(executed.toolResults.wardrobeItems) &&
         executed.toolResults.wardrobeItems.length > 0 ? "edit_outfit" : null;
+      const requestedSelectionAction = ["generate_outfit", "edit_outfit"].includes(
+        effectiveToolEnvelope.selectionAction,
+      ) ? effectiveToolEnvelope.selectionAction : requiredAnswerAction;
       const answerConstraints = {
         ...runtimeConstraints,
         modelCallsRemaining: 1,
         allowClarification: false,
         cannotClarifyFields: cannotClarifyFieldsV2(workingState),
-        requiredAnswerAction,
+        requiredAnswerAction: selectionPipeline && !requestedSelectionAction ?
+          "non_mutating" : requiredAnswerAction,
       };
+      if (selectionPipeline && requestedSelectionAction) {
+        const decision = await selectionDecisionV2({
+          selectionPipeline,
+          languageGenerator,
+          action: requestedSelectionAction,
+          intentSummary: effectiveToolEnvelope.selectionIntentSummary || request.latestUserInput,
+          requestedConstraints: effectiveToolEnvelope.selectionConstraints || [],
+          request,
+          workingState,
+          toolResults: executed.toolResults,
+          wardrobeItems: executed.wardrobeItems,
+          userStylePreferences,
+        });
+        return commitResultV2({
+          durableRepository,
+          uid,
+          request,
+          originalState,
+          workingState,
+          decision,
+          wardrobeItems: executed.wardrobeItems,
+          authorizedEditScope: executed.toolResults.authorizedEditScope,
+        });
+      }
       const answerEnvelope = await callBrainV2(stylistBrain,
         brainInputV2(request, workingState, "answer", executed.toolResults, answerConstraints));
       validateAnswerEnvelopeV2(answerEnvelope, {requiredAction: requiredAnswerAction});
+      if (selectionPipeline && ["generate_outfit", "edit_outfit"].includes(answerEnvelope.result?.action)) {
+        throw new RepairableStructuralTurnError(
+          "one-brain answer cannot rank outfit IDs when the selection pipeline is configured",
+        );
+      }
       workingState = applyBrainStatePatchV2(workingState, answerEnvelope.statePatch);
       workingState = restoreTrustedExplicitLocationV2(workingState, trustedExplicitLocation);
 
@@ -978,6 +1076,7 @@ module.exports = {
   explicitStylingDestinationCandidateV2,
   pendingLocationQueryV2,
   pendingReplyDispositionV2,
+  selectionDecisionV2,
   restoreTrustedBroadLocationV2,
   restoreTrustedExplicitLocationV2,
   selectKnownWardrobeV2,

@@ -3,6 +3,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {PLAN_SCHEMA, FINAL_SCHEMA} = require("./openai_stylist_model_port_v2");
+const {SELECTOR_SCHEMA} = require("./openai_outfit_selector_v2");
+const {JUDGE_SCHEMA} = require("./openai_outfit_quality_judge_v2");
+const {LANGUAGE_SCHEMA} = require("./openai_stylist_language_v2");
 
 const FORBIDDEN_STRICT_SCHEMA_KEYWORDS = new Set([
   "maxLength",
@@ -34,4 +37,7 @@ function findForbidden(value, path = "$") {
 test("V2 strict response schemas stay inside the OpenAI Structured Outputs subset", () => {
   assert.deepEqual(findForbidden(PLAN_SCHEMA), []);
   assert.deepEqual(findForbidden(FINAL_SCHEMA), []);
+  assert.deepEqual(findForbidden(SELECTOR_SCHEMA), []);
+  assert.deepEqual(findForbidden(JUDGE_SCHEMA), []);
+  assert.deepEqual(findForbidden(LANGUAGE_SCHEMA), []);
 });

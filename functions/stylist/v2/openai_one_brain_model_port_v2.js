@@ -68,6 +68,9 @@ function schemaForStageV2(stage, allowClarification, requiredAnswerAction = null
       Array.isArray(action?.enum) && action.enum.includes(requiredAnswerAction)) {
     action.enum = [requiredAnswerAction];
   }
+  if (stage === "answer" && requiredAnswerAction === "non_mutating" && Array.isArray(action?.enum)) {
+    action.enum = action.enum.filter((value) => !MUTATING_ACTIONS_V2.has(value));
+  }
   return schema;
 }
 
@@ -80,6 +83,7 @@ function oneBrainPromptV2(stage) {
     "Ak runtimeConstraints.pendingReplyRequired=true, ďalšia správa NIE JE automaticky odpoveď na pendingQuestion. Rozlíš answer / skip / meta / unrelated a zapíš to do pendingReplyDisposition.",
     "Ak runtimeConstraints.structuralRepair existuje, predchádzajúci TOOL-DECISION výstup porušil uvedený štrukturálny kontrakt. Oprav presne túto chybu, zachovaj zámer používateľa a session fakty a neotváraj novú otázku navyše.",
     "Ak runtimeConstraints.requiredAnswerAction je generate_outfit alebo edit_outfit, odpovedáš už po jedinej potrebnej clarification a MUSÍŠ dokončiť pôvodnú požiadavku touto akciou. Obyčajný chat alebo stop nie je platné dokončenie.",
+    "Ak runtimeConstraints.requiredAnswerAction=non_mutating, Selector nebol vyžiadaný. V answer kroku preto nesmieš vytvoriť ani upraviť outfit; odpovedz iba ne-mutačnou akciou.",
     "answer znamená skutočnú odpoveď na položené pole. skip znamená neviem/nechaj tak/nerieš/preskoč. meta je otázka o tom, prečo údaj potrebuješ. unrelated je zmena témy alebo nový zámer.",
     "Pri skip/meta/unrelated nesmieš text správy poslať ako locationQuery ani ho uložiť do pôvodného pending poľa. Pri unrelated môže nový scenár dostať vlastnú jednu potrebnú otázku.",
     "Ak používateľ povedal neviem/netuším/je mi to jedno/preskoč to/nerieš/daj mi proste outfit, ber to ako príkaz pokračovať bez daného detailu. Pole v cannotClarifyFields už nikdy v tomto pokračovaní nepýtaj.",
@@ -115,6 +119,8 @@ function oneBrainPromptV2(stage) {
       "weatherRequired nastav iba keď forecast naozaj stojí za pokus. Ak sa nedá spoľahlivo získať, runtime ho označí unavailable a ty potom musíš pokračovať bez neho.",
       "terrainRequiredFields nepoužívaj ako dotazník; runtime ich nepovýši na nové povinné otázky.",
       "V tejto tool-decision schéme nový outfit ešte nevyberaj: buď final chat/clarify/stop, alebo tool_request.",
+      "Ak má po nástrojoch vzniknúť alebo byť upravený outfit, nastav selectionAction, stručný selectionIntentSummary a iba explicitné selectionConstraints. Samotné item IDs bude vyberať oddelený Selector.",
+      "Pri final chat/clarify/stop nastav selectionAction=none, selectionIntentSummary=null a selectionConstraints=[].",
     ].join("\n");
   }
 
@@ -181,7 +187,17 @@ function createOpenAiOneBrainModelPortV2({executeStructured, userStylePreference
         const envelope = planEnvelope(raw, {...input, phase: "plan"});
         const disposition = ["none", "answer", "skip", "meta", "unrelated"].includes(raw?.pendingReplyDisposition) ?
           raw.pendingReplyDisposition : "none";
-        return {...envelope, pendingReplyDisposition: disposition};
+        return {
+          ...envelope,
+          pendingReplyDisposition: disposition,
+          selectionAction: ["generate_outfit", "edit_outfit"].includes(raw?.selectionAction) ?
+            raw.selectionAction : null,
+          selectionIntentSummary: typeof raw?.selectionIntentSummary === "string" ?
+            raw.selectionIntentSummary.trim().slice(0, 800) || null : null,
+          selectionConstraints: Array.isArray(raw?.selectionConstraints) ?
+            [...new Set(raw.selectionConstraints.map((value) => String(value).trim().slice(0, 180))
+              .filter(Boolean))].slice(0, 16) : [],
+        };
       }
       const guardedRaw = applyHikingShoppingNeedGuardV2(raw, input);
       const envelope = finalEnvelope(guardedRaw, {...input, phase: "final"});
