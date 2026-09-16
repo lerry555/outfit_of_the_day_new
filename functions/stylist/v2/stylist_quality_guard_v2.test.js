@@ -6,6 +6,7 @@ const test = require("node:test");
 const {
   applyStylistResponseQualityV2,
   filterWardrobeForStylistQualityV2,
+  guardSelectedOutfitQualityV2,
   normalizeStylistVoiceV2,
 } = require("./stylist_quality_guard_v2");
 
@@ -67,8 +68,14 @@ function upper(id, overrides = {}) {
   };
 }
 
-function inputFor(currentSession, latestUserInput = "porad mi outfit") {
-  return {session: currentSession, request: {latestUserInput}};
+function inputFor(currentSession, latestUserInput = "porad mi outfit", overrides = {}) {
+  return {
+    session: currentSession,
+    request: {latestUserInput},
+    toolResults: {},
+    runtimeConstraints: {},
+    ...overrides,
+  };
 }
 
 test("September dinner removes winter-only hot boots but keeps transitional boots and sneakers", () => {
@@ -104,7 +111,7 @@ test("explicit boot request is respected", () => {
   assert.deepEqual(filtered.map((item) => item.id), ["winter"]);
 });
 
-test("hiking removes a weaker non-protective training jacket over a warmer hoodie", () => {
+test("cold outdoor answer candidates remove weaker training outer while preserving a real shell", () => {
   const hoodie = upper("hoodie", {canonicalType: "hoodie", layerPosition: "mid", warmth: 6});
   const trainingJacket = upper("training_jacket", {
     name: "Biela tréningová bunda",
@@ -120,7 +127,11 @@ test("hiking removes a weaker non-protective training jacket over a warmer hoodi
     warmth: 2,
     outfitFunctions: ["weather_protection", "waterproof"],
   });
-  const hiking = session({activity: "hiking", environment: "outdoor"});
+  const hiking = session({
+    activity: "hiking",
+    environment: "outdoor",
+    weather: {snapshot: {representativeTempC: 12}},
+  });
   const filtered = filterWardrobeForStylistQualityV2(
     [hoodie, trainingJacket, shell],
     inputFor(hiking, "idem na túru"),
@@ -128,10 +139,90 @@ test("hiking removes a weaker non-protective training jacket over a warmer hoodi
   assert.deepEqual(filtered.map((item) => item.id), ["hoodie", "rain_shell"]);
 });
 
-test("current outfit items are preserved even when they would be filtered for a new outfit", () => {
+test("authorized edit preserves current outfit candidates even when a new outfit would filter them", () => {
   const boots = footwear("winter", {canonicalType: "winter_boots", warmth: 8, seasons: ["winter"]});
   const current = session({currentIds: ["winter"]});
-  assert.deepEqual(filterWardrobeForStylistQualityV2([boots], inputFor(current)).map((item) => item.id), ["winter"]);
+  const editInput = inputFor(current, "vymeň mi košeľu", {
+    runtimeConstraints: {requiredAnswerAction: "edit_outfit"},
+    toolResults: {authorizedEditScope: {replaceItemIds: ["shirt"], retainItemIds: ["winter"]}},
+  });
+  assert.deepEqual(filterWardrobeForStylistQualityV2([boots], editInput).map((item) => item.id), ["winter"]);
+});
+
+test("new outfit does not preserve a stale winter boot merely because it was in the previous outfit", () => {
+  const boots = footwear("winter", {canonicalType: "winter_boots", warmth: 8, seasons: ["winter"]});
+  const current = session({currentIds: ["winter"]});
+  assert.deepEqual(filterWardrobeForStylistQualityV2([boots], inputFor(current)), []);
+});
+
+test("pairwise fallback removes non-protective training jacket over warmer hoodie even without forecast", () => {
+  const hoodie = upper("hoodie", {
+    name: "Svetlomodrá mikina",
+    canonicalType: "hoodie",
+    layerPosition: "mid",
+    warmth: 6,
+  });
+  const trainingJacket = upper("training_jacket", {
+    name: "Biela tréningová bunda",
+    canonicalType: "track_jacket",
+    layerPosition: "outer",
+    warmth: 3,
+    outfitFunctions: [],
+  });
+  const pants = {
+    id: "pants",
+    name: "Sivé tepláky",
+    category: "bottom",
+    canonicalFamily: "bottoms",
+    canonicalType: "joggers",
+    bodySlots: ["lower_body"],
+    layerPosition: "not_applicable",
+    warmth: 4,
+    outfitFunctions: [],
+  };
+  const hiking = session({activity: "hiking", environment: "outdoor"});
+  const input = inputFor(hiking, "idem na túru", {
+    toolResults: {wardrobeItems: [hoodie, trainingJacket, pants]},
+  });
+  const raw = {
+    action: "generate_outfit",
+    assistantText: "Na túru by som išiel vo vrstvách: mikina, tréningová bunda a tepláky.",
+    resultingOutfitItemIds: ["hoodie", "training_jacket", "pants"],
+    displayItemIds: ["hoodie", "training_jacket", "pants"],
+    selectionReasons: [
+      {itemId: "hoodie", reason: "Teplá vrstva."},
+      {itemId: "training_jacket", reason: "Ďalšia vrstva."},
+      {itemId: "pants", reason: "Pohodlie."},
+    ],
+  };
+  const guarded = guardSelectedOutfitQualityV2(raw, input);
+  assert.deepEqual(guarded.resultingOutfitItemIds, ["hoodie", "pants"]);
+  assert.deepEqual(guarded.displayItemIds, ["hoodie", "pants"]);
+  assert.deepEqual(guarded.selectionReasons.map((entry) => entry.itemId), ["hoodie", "pants"]);
+  assert.match(guarded.assistantText, /tréningovú bundu.*vynechávam/i);
+  assert.doesNotMatch(guarded.assistantText, /by som išiel/i);
+});
+
+test("pairwise fallback keeps a lighter real weather shell over a warmer hoodie", () => {
+  const hoodie = upper("hoodie", {canonicalType: "hoodie", layerPosition: "mid", warmth: 6});
+  const shell = upper("rain_shell", {
+    name: "Nepremokavá bunda",
+    canonicalType: "rain_shell",
+    layerPosition: "shell",
+    warmth: 2,
+    outfitFunctions: ["weather_protection", "waterproof"],
+  });
+  const input = inputFor(session({activity: "hiking", environment: "outdoor"}), "idem na túru", {
+    toolResults: {wardrobeItems: [hoodie, shell]},
+  });
+  const raw = {
+    action: "generate_outfit",
+    assistantText: "Odporúčam ti mikinu a nepremokavú bundu.",
+    resultingOutfitItemIds: ["hoodie", "rain_shell"],
+    displayItemIds: ["hoodie", "rain_shell"],
+    selectionReasons: [],
+  };
+  assert.deepEqual(guardSelectedOutfitQualityV2(raw, input), raw);
 });
 
 test("Stylist voice recommends clothes to the user instead of dressing itself", () => {
