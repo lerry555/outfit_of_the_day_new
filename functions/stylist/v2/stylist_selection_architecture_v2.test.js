@@ -18,7 +18,8 @@ const {
   languagePromptV2,
 } = require("./openai_stylist_language_v2");
 const {buildSelectionContextV2} = require("./stylist_selection_context_v2");
-const {createStylistSelectionPipelineV2} = require("./stylist_selection_pipeline_v2");
+const {createStylistSelectionPipelineV2, validateSelectionV2} =
+  require("./stylist_selection_pipeline_v2");
 const {projectWardrobeItemForStylistV2} = require("./wardrobe_integrity_projection_v2");
 const {createStylistOneBrainEngineV2} = require("./stylist_one_brain_engine_v2");
 const {createMemoryStylistSessionRepositoryV2} = require("./stylist_session_repository_v2");
@@ -112,6 +113,66 @@ test("B: no ideal formal footwear remains an explicit, non-fabricated compromise
   const result = await pipeline.resolve(inputFor(wardrobe));
   assert.deepEqual(result.selection.selectedItemIds, ["only-sneakers"]);
   assert.deepEqual(result.selection.missingWardrobeNeeds, ["formálna obuv"]);
+});
+
+test("generate_outfit repairs missing core coverage before Judge and freezes a complete outfit", async () => {
+  const wardrobe = [
+    item("shirt", "t_shirt"),
+    item("hoodie", "hoodie"),
+    item("pants", "jeans"),
+    item("shoes", "sneakers"),
+  ];
+  let selectorCalls = 0;
+  let judgeCalls = 0;
+  let repairFeedback = null;
+  const pipeline = createStylistSelectionPipelineV2({
+    selector: {select: async (_context, options) => {
+      selectorCalls += 1;
+      if (selectorCalls === 1) return output(["shirt", "hoodie"]);
+      repairFeedback = options.feedback;
+      return output(["shirt", "hoodie", "pants", "shoes"]);
+    }},
+    judge: {judge: async (_context, selection) => {
+      judgeCalls += 1;
+      assert.deepEqual(selection.selectedItemIds, ["shirt", "hoodie", "pants", "shoes"]);
+      return {verdict: "pass", problems: [], retryGuidance: null};
+    }},
+    logger: {warn() {}, info() {}},
+  });
+  const result = await pipeline.resolve(inputFor(wardrobe));
+  assert.deepEqual(result.selection.selectedItemIds, ["shirt", "hoodie", "pants", "shoes"]);
+  assert.equal(selectorCalls, 2);
+  assert.equal(judgeCalls, 1);
+  assert.equal(repairFeedback.source, "deterministic_contract");
+  assert.deepEqual(repairFeedback.problems, [
+    "selection_core_coverage_missing:lower_body",
+    "selection_core_coverage_missing:feet",
+  ]);
+});
+
+test("generate_outfit core coverage is availability-aware and accepts full-body coverage", () => {
+  const shoesOnly = buildSelectionContextV2(inputFor([item("shoes", "sneakers")]));
+  assert.deepEqual(validateSelectionV2(output(["shoes"]), shoesOnly).errors, []);
+
+  const dress = item("dress", "dress", {bodySlots: ["full_body"]});
+  const shoes = item("shoes", "sneakers");
+  const fullBody = buildSelectionContextV2(inputFor([dress, shoes]));
+  assert.deepEqual(validateSelectionV2(output(["dress", "shoes"]), fullBody).errors, []);
+});
+
+test("an incomplete Judge retry cannot replace the first complete frozen selection", async () => {
+  const wardrobe = [item("top", "t_shirt"), item("bottom", "jeans"), item("shoes", "sneakers")];
+  let selectorCalls = 0;
+  const pipeline = createStylistSelectionPipelineV2({
+    selector: {select: async () => ++selectorCalls === 1 ?
+      output(["top", "bottom", "shoes"]) : output(["top"])},
+    judge: {judge: async () => ({verdict: "retry", problems: ["Skontroluj celý outfit."],
+      retryGuidance: "Zlepši súdržnosť bez straty základného pokrytia."})},
+    logger: {warn() {}, info() {}},
+  });
+  const result = await pipeline.resolve(inputFor(wardrobe));
+  assert.deepEqual(result.selection.selectedItemIds, ["top", "bottom", "shoes"]);
+  assert.equal(selectorCalls, 2);
 });
 
 test("C through G: generic context can preserve winter, rain, hike, summer and visual-style outcomes", async (t) => {

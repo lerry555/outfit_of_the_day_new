@@ -44,6 +44,27 @@ function validateSelectionV2(selection, selectionContext) {
   for (const id of ids) if (!reasonIds.includes(id)) errors.push(`selection_reason_missing:${id}`);
   for (const id of reasonIds) if (!ids.includes(id)) errors.push(`selection_reason_detached:${id}`);
 
+  if (selectionContext.selection?.action === "generate_outfit") {
+    const candidates = [...candidateById.values()];
+    const selectedItems = ids.map((id) => candidateById.get(id)).filter(Boolean);
+    const slots = (item) => new Set(Array.isArray(item?.bodySlots) ? item.bodySlots : []);
+    const candidateCanCover = (slot) => candidates.some((item) => {
+      const itemSlots = slots(item);
+      return itemSlots.has(slot) ||
+        (["upper_body", "lower_body"].includes(slot) && itemSlots.has("full_body"));
+    });
+    const selectionCovers = (slot) => selectedItems.some((item) => {
+      const itemSlots = slots(item);
+      return itemSlots.has(slot) ||
+        (["upper_body", "lower_body"].includes(slot) && itemSlots.has("full_body"));
+    });
+    for (const slot of ["upper_body", "lower_body", "feet"]) {
+      if (candidateCanCover(slot) && !selectionCovers(slot)) {
+        errors.push(`selection_core_coverage_missing:${slot}`);
+      }
+    }
+  }
+
   if (selectionContext.selection?.action === "edit_outfit") {
     const scope = selectionContext.selection.authorizedEditScope;
     const currentIds = list(selectionContext.selection.currentOutfit?.itemIds, 12);
