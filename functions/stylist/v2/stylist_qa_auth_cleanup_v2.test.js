@@ -36,6 +36,21 @@ test("custom-token exchange retains the in-memory cleanup token set", async () =
     expiresIn: "3600",
   });
   assert.deepEqual(body, {token: "custom-token-secret", returnSecureToken: true});
+
+  const tokensWithoutOptionalMetadata = await exchangeQaCustomToken({
+    apiKey: "api-key-secret",
+    customToken: "custom-token-secret",
+    fetchImpl: async () => response(200, {
+      idToken: "id-token-secret",
+      refreshToken: "refresh-token-secret",
+    }),
+  });
+  assert.deepEqual(tokensWithoutOptionalMetadata, {
+    idToken: "id-token-secret",
+    refreshToken: "refresh-token-secret",
+    localId: "",
+    expiresIn: "",
+  });
 });
 
 test("self-delete succeeds with the current QA user's ID token", async () => {
