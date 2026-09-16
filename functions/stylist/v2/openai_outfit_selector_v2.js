@@ -27,6 +27,7 @@ function selectorPromptV2() {
     "Tvojou jedinou úlohou je vybrať finálne item IDs a ku každému zapísať stručný konkrétny dôvod.",
     "Nevlastníš konverzáciu, nepíšeš používateľskú odpoveď a nemeníš autorizovaný edit scope.",
     "Použi iba candidateItems[].id. Pri edit_outfit zachovaj všetky retainItemIds a meň iba autorizovaný rozsah.",
+    "Pri generate_outfit vytvor použiteľný celý outfit. Ak sú príslušné kandidáty dostupné, výber musí pokryť hornú časť alebo full-body kus, spodnú časť alebo full-body kus a obuv.",
     "Metadata sú autoritatívne pre ne-vizuálne fakty: typ, body slots, layer position, warmth, formality, sezónu, funkciu a bezpečnostné atribúty.",
     "Obrázky sú doplnkový vizuálny dôkaz pre strih, siluetu, textúru, paletu a vizuálnu súdržnosť. Neodvodzuj z nich nepremokavosť, priľnavosť, teplotu ani inú nedoloženú vlastnosť.",
     "Nie každý kandidát musí mať obrázok. Chýbajúci obrázok nie je negatívny signál a kandidáta nevylučuje.",
