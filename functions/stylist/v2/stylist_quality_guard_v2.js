@@ -44,7 +44,7 @@ function normalizedSeasonV2(value) {
   return season;
 }
 
-function currentTemperatureC V2(session) {
+function currentTemperatureCV2(session) {
   const snapshot = session?.context?.weather?.snapshot || {};
   const representative = numeric(snapshot.representativeTempC);
   if (representative != null) return representative;
