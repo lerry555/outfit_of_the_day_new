@@ -73,6 +73,7 @@ jobs:
           node --check functions/stylist/v2/stylist_deterministic_shell_v2.js
           node --check functions/stylist/v2/stylist_outfit_order_v2.js
           node --check functions/stylist/v2/stylist_live_smoke_v2.js
+          node --check functions/stylist/v2/stylist_qa_auth_cleanup_v2.js
           node --check functions/stylist/v2/stylist_production_smoke_v2.js
       - name: Run every non-emulator Stylist V2 test
         shell: bash

@@ -59,7 +59,7 @@ jobs:
           export STYLIST_SMOKE_MAX_COST_USD=0.01
           node functions/stylist/v2/stylist_live_smoke_v2.js
 
-      - name: Production callable smoke - isolated QA user, Luna only
+      - name: Production callable smoke - isolated QA user, stage-aware model routing
         if: inputs.mode == 'production'
         shell: bash
         run: |
