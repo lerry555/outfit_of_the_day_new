@@ -1,6 +1,9 @@
 name: Shorebird DEV setup
 on:
   workflow_dispatch:
+  push:
+    branches: [experiment/dev-mobile]
+    paths: ['.github/workflows/shorebird-dev-setup.yml']
 permissions:
   contents: write
 jobs:
@@ -29,7 +32,6 @@ jobs:
             echo "Existing Shorebird app ID preserved"
           fi
           test -s shorebird.yaml
-          grep -q 'shorebird.yaml' pubspec.yaml
       - name: Commit Shorebird app identity
         run: |
           git config user.name "github-actions[bot]"
