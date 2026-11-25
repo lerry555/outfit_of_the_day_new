@@ -78,7 +78,7 @@ jobs:
       - name: Resolve Flutter packages
         run: flutter pub get
       - name: Create Shorebird-enabled full app release
-        run: shorebird release android --artifact apk --no-confirm
+        run: shorebird release android --artifact apk --flutter-version=3.32.5 --no-confirm
       - name: Upload Shorebird DEV APK
         uses: actions/upload-artifact@v4
         with:
