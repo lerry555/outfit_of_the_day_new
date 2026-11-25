@@ -1,0 +1,83 @@
+name: Android real Wardrobe DEV
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.5'
+          channel: stable
+          cache: true
+      - name: Verify required DEV signing and Firebase secrets
+        env:
+          FIREBASE_CONFIG_B64: ${{ secrets.DEV_FIREBASE_CONFIG_B64 }}
+          KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+        run: |
+          test -n "$FIREBASE_CONFIG_B64" || { echo 'Missing DEV_FIREBASE_CONFIG_B64'; exit 1; }
+          test -n "$KEYSTORE_B64" || { echo 'Missing DEV_KEYSTORE_B64'; exit 1; }
+          test -n "$KEYSTORE_PASSWORD" || { echo 'Missing DEV_KEYSTORE_PASSWORD'; exit 1; }
+      - name: Configure isolated DEV Android package and signing
+        shell: bash
+        env:
+          FIREBASE_CONFIG_B64: ${{ secrets.DEV_FIREBASE_CONFIG_B64 }}
+          KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$FIREBASE_CONFIG_B64" | base64 -d > android/app/google-services.json
+          echo "$KEYSTORE_B64" | base64 -d > android/app/dev-signing.jks
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          config = json.loads(Path('android/app/google-services.json').read_text())
+          packages = [client.get('client_info',{}).get('android_client_info',{}).get('package_name')
+                      for client in config.get('client',[])]
+          assert 'com.krist.outfitoftheday.devpreview' in packages, 'DEV Firebase client missing'
+          p = Path('android/app/build.gradle.kts')
+          source = p.read_text()
+          old = 'applicationId = "com.krist.outfitoftheday"'
+          assert old in source
+          source = source.replace(old, 'applicationId = "com.krist.outfitoftheday.devpreview"')
+          source = source.replace(
+            'signingConfig = signingConfigs.getByName("debug")',
+            'signingConfig = signingConfigs.getByName("devPreview")')
+          anchor = '    buildTypes {'
+          assert anchor in source
+          source = source.replace(anchor, '''    signingConfigs {
+              create("devPreview") {
+                  storeFile = file("dev-signing.jks")
+                  storePassword = System.getenv("DEV_SIGN_PASSWORD")
+                  keyAlias = "outfitdev"
+                  keyPassword = System.getenv("DEV_SIGN_PASSWORD")
+              }
+          }
+          ''' + anchor)
+          p.write_text(source)
+          PY
+          keytool -list -v -keystore android/app/dev-signing.jks -storepass "$KEYSTORE_PASSWORD" | grep SHA1
+      - name: Resolve Flutter packages
+        run: flutter pub get
+      - name: Build signed real Wardrobe DEV APK
+        env:
+          DEV_SIGN_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+        run: flutter build apk --release --target lib/main_dev_wardrobe.dart
+      - name: Upload real Wardrobe DEV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: outfit-real-wardrobe-dev-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 14
+          if-no-files-found: error
