@@ -1,0 +1,41 @@
+name: Shorebird DEV setup
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  initialize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experiment/dev-mobile
+          persist-credentials: true
+      - name: Check Shorebird credentials
+        run: |
+          if [ -z "$SHOREBIRD_TOKEN" ]; then
+            echo "::error::Add SHOREBIRD_TOKEN as a repository Actions secret (service account with App Manager role)."
+            exit 1
+          fi
+      - uses: shorebirdtech/setup-shorebird@v1
+      - name: Initialize Shorebird for existing Flutter project
+        run: |
+          if [ ! -f shorebird.yaml ]; then
+            shorebird init --display-name "Outfit of the Day DEV"
+          else
+            echo "Existing Shorebird app ID preserved"
+          fi
+          test -s shorebird.yaml
+          grep -q 'shorebird.yaml' pubspec.yaml
+      - name: Commit Shorebird app identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add shorebird.yaml pubspec.yaml
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(dev): initialize Shorebird code push"
+            git push origin HEAD:experiment/dev-mobile
+          fi
