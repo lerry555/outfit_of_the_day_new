@@ -19,6 +19,17 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
       AnimationController(vsync: this, duration: const Duration(milliseconds: 650));
   double _drag = 0;
   String _lastPrefetchKey = '';
+  String? _streamUid;
+  Stream<QuerySnapshot<Map<String, dynamic>>>? _wardrobeStream;
+
+  Stream<QuerySnapshot<Map<String, dynamic>>> _streamFor(String uid) {
+    if (_wardrobeStream == null || _streamUid != uid) {
+      _streamUid = uid;
+      _wardrobeStream = FirebaseFirestore.instance.collection('users')
+          .doc(uid).collection('wardrobe').snapshots();
+    }
+    return _wardrobeStream!;
+  }
   double _settleFrom = 0;
   double _settleTo = 0;
 
@@ -241,7 +252,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
         padding: const EdgeInsets.symmetric(horizontal: 10),
         children: categories[group]!.map(_categoryButton).toList())),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
-        stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('wardrobe').snapshots(),
+        stream: _streamFor(uid),
         builder: (context, snapshot) {
           if (snapshot.hasError) return Center(child: Text('Chyba načítania: ${snapshot.error}', style: const TextStyle(color: Colors.white)));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator(color: gold));
@@ -279,7 +290,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                   Map<String,dynamic> at(int offset) => items[(idx + offset + items.length) % items.length];
                   // Five virtual positions form a continuous circular carousel.
                   // Every pointer movement changes the positions and sizes immediately.
-                  final slots = <int>[-3, -2, -1, 0, 1, 2, 3];
+                  final slots = <int>[-2, -1, 0, 1, 2];
                   final ordered = slots.toList()..sort((a, b) =>
                     (b + _drag).abs().compareTo((a + _drag).abs()));
                   return GestureDetector(
@@ -307,15 +318,13 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                         // return towards the centre behind the leading item.
                         final depth = distance <= 1 ? distance : (2 - distance).clamp(0.0, 1.0);
                         final scale = (1 - distance * .28).clamp(.22, 1.0);
-                        final opacity = (1 - (distance - 1).clamp(0.0, 2.0) * .40).clamp(.15, 1.0);
                         final x = (position < 0 ? -1.0 : 1.0) * depth * width * .37;
                         return Transform.translate(
                           key: ValueKey('cover-$slot'),
                           offset: Offset(x, distance * h * .065),
-                          child: Opacity(opacity: opacity,
-                            child: Transform.scale(scale: scale,
-                              child: _garment(at(slot), width: width * .80,
-                                height: h * .84, selected: distance < .45))),
+                          child: Transform.scale(scale: scale,
+                            child: _garment(at(slot), width: width * .80,
+                              height: h * .84, selected: distance < .45)),
                         );
                       }).toList(),
                       ],
