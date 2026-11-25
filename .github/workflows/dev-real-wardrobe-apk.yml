@@ -36,6 +36,36 @@ jobs:
         run: |
           test -n "$KEYSTORE_B64" || { echo 'Missing DEV_KEYSTORE_B64'; exit 1; }
           test -n "$KEYSTORE_PASSWORD" || { echo 'Missing DEV_KEYSTORE_PASSWORD'; exit 1; }
+      - name: Diagnose signing secret format safely
+        env:
+          KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, base64, binascii, subprocess, tempfile, pathlib, sys
+          raw = os.environ['KEYSTORE_B64']
+          compact = ''.join(raw.split())
+          print(f'Secret characters: {len(raw)}; whitespace removed: {len(raw)-len(compact)}')
+          try:
+              data = base64.b64decode(compact, validate=True)
+          except (binascii.Error, ValueError):
+              print('ERROR: Secret is not valid Base64 text (contents hidden)')
+              sys.exit(1)
+          print(f'Decoded bytes: {len(data)}')
+          if not data.startswith(b'0\\x82') and not data.startswith(bytes.fromhex('fe ed fe ed')):
+              print('WARNING: decoded content does not have a typical PKCS12/JKS header')
+          with tempfile.TemporaryDirectory() as folder:
+              file = pathlib.Path(folder)/'key.jks'
+              file.write_bytes(data)
+              p = subprocess.run(['keytool','-list','-keystore',str(file),
+                                  '-storepass',os.environ['KEYSTORE_PASSWORD']],
+                                 capture_output=True,text=True)
+              if p.returncode:
+                  print('ERROR: keytool could not open decoded keystore; check format/password')
+                  sys.exit(1)
+              print('Keystore opens with configured password')
+          PY
       - name: Configure isolated DEV Android package and signing
         shell: bash
         env:
