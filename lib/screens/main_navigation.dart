@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'home_screen.dart';
 import 'wardrobe_screen.dart';
+import 'wardrobe_cover_flow_preview.dart';
 import 'add_clothing_screen.dart';
 import 'stylist_chat_screen.dart';
 import '../Services/app_notification_router.dart';
@@ -19,7 +20,8 @@ const int kStylistIndexedStackIndex = 2;
 const int kStylistBottomBarIndex = 3;
 
 class MainNavigation extends StatefulWidget {
-  const MainNavigation({Key? key}) : super(key: key);
+  const MainNavigation({Key? key, this.previewCoverFlow = false}) : super(key: key);
+  final bool previewCoverFlow;
 
   @override
   State<MainNavigation> createState() => _MainNavigationState();
@@ -41,7 +43,7 @@ class _MainNavigationState extends State<MainNavigation> {
 
     _screens = [
       const HomeScreen(),
-      const WardrobeScreen(),
+      widget.previewCoverFlow ? const WardrobeCoverFlowPreview() : const WardrobeScreen(),
       const StylistChatScreen(),
     ];
 
