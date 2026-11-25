@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import '../widgets/wardrobe_web_image_stub.dart' if (dart.library.html) '../widgets/wardrobe_web_image_html.dart' as web_cache;
 import '../utils/wardrobe_image_processing.dart';
 import '../utils/wardrobe_image_url_priority.dart';
 import '../utils/wardrobe_list_utils.dart';
@@ -17,6 +18,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
   late final AnimationController _settle =
       AnimationController(vsync: this, duration: const Duration(milliseconds: 650));
   double _drag = 0;
+  String _lastPrefetchKey = '';
   double _settleFrom = 0;
   double _settleTo = 0;
 
@@ -250,6 +252,24 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
             items.sort((a,b) => _typeRank(a).compareTo(_typeRank(b)));
           }
           final idx = items.isEmpty ? 0 : current % items.length;
+          if (items.isNotEmpty) {
+            final prefetchKey = '$group|$category|$subtype|$idx|${items.length}';
+            if (_lastPrefetchKey != prefetchKey) {
+              _lastPrefetchKey = prefetchKey;
+              // Prime both sides of the ring so a fast flick does not wait
+              // for each Firebase photo to start loading after it appears.
+              final urls = <String>[];
+              for (var offset = -7; offset <= 9; offset++) {
+                final item = items[(idx + offset + items.length * 10) % items.length];
+                final url = getHomeOutfitImageUrlOrNull(item) ?? getBestWardrobeImageUrl(item);
+                if (url.isNotEmpty && !urls.contains(url)) urls.add(url);
+              }
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) web_cache.prefetchWardrobeImages(urls);
+              });
+            }
+          }
+
           return Column(children: [
             Expanded(child: items.isEmpty
               ? const Center(child: Text('V tejto kategórii nemáš oblečenie.', style: TextStyle(color: Colors.white60)))
