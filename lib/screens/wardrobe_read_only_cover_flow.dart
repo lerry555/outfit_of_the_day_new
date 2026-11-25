@@ -77,7 +77,7 @@ class _WardrobeReadOnlyCoverFlowState extends State<WardrobeReadOnlyCoverFlow> {
   }
 
   Widget _photo(Map<String, dynamic> item, {required bool center}) {
-    final url = getBestWardrobeImageUrl(item);
+    final url = getBestWardrobeImageUrlOrNull(item);
     return SizedBox(
       width: center ? 198 : 90,
       height: center ? 254 : 185,
