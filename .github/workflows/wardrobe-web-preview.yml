@@ -20,6 +20,7 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    # Firebase web configuration is supplied by WEB_FIREBASE_CONFIG.
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
