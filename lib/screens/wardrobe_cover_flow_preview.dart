@@ -233,8 +233,8 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
                         side: BorderSide(color: active ? gold : const Color(0xFF4B4030)),
                         onSelected: (_) => setState(() { subtype = value; current = 0; }),
                       ));
-                  }).toList())),
-                )) else const Spacer(),
+                  }).toList()))
+                else const Spacer(),
                 const SizedBox(width: 6),
                 IconButton(onPressed: () => showModalBottomSheet<void>(context: context,
                   isScrollControlled: true, backgroundColor: surface,
