@@ -1,4 +1,5 @@
 name: Android real Wardrobe DEV
+# Recheck after replacing DEV_KEYSTORE_B64
 # Rebuild after Firebase secret correction
 
 on:
