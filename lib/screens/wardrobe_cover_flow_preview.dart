@@ -245,7 +245,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
               ? const Center(child: Text('V tejto kategórii nemáš oblečenie.', style: TextStyle(color: Colors.white60)))
               : LayoutBuilder(builder: (context, size) {
                   final width = size.maxWidth;
-                  final h = size.maxHeight.clamp(180.0, 470.0).toDouble();
+                  final h = size.maxHeight.clamp(180.0, 580.0).toDouble();
                   Map<String,dynamic> at(int offset) => items[(idx + offset + items.length) % items.length];
                   // Five virtual positions form a continuous circular carousel.
                   // Every pointer movement changes the positions and sizes immediately.
@@ -263,16 +263,16 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                       children: ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
                         final position = slot + _drag;
                         final distance = position.abs();
-                        final scale = (1 - distance * .23).clamp(.43, 1.0);
+                        final scale = (1 - distance * .31).clamp(.35, 1.0);
                         final opacity = (1 - (distance - 1).clamp(0.0, 1.0) * .75).clamp(.2, 1.0);
-                        final x = position * width * .315;
+                        final x = position * width * .405;
                         return Transform.translate(
                           key: ValueKey('cover-$slot'),
                           offset: Offset(x, distance * h * .045),
                           child: Opacity(opacity: opacity,
                             child: Transform.scale(scale: scale,
-                              child: _garment(at(slot), width: width * .50,
-                                height: h * .88, selected: distance < .45))),
+                              child: _garment(at(slot), width: width * .72,
+                                height: h * .96, selected: distance < .45))),
                         );
                       }).toList(),
                     )),
