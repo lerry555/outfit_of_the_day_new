@@ -14,21 +14,34 @@ class WardrobeCoverFlowPreview extends StatefulWidget {
 }
 
 class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> with SingleTickerProviderStateMixin {
-  late final AnimationController _settle = AnimationController(vsync: this, duration: const Duration(milliseconds: 220));
+  late final AnimationController _settle =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 650));
   double _drag = 0;
   double _settleFrom = 0;
   double _settleTo = 0;
-  int _settleStep = 0;
+
+  void _applyPosition(double position) {
+    setState(() {
+      _drag = position;
+      while (_drag <= -1) { current++; _drag += 1; }
+      while (_drag >= 1) { current--; _drag -= 1; }
+    });
+  }
 
   @override
   void initState() {
     super.initState();
     _settle.addListener(() {
-      if (mounted) setState(() => _drag = _settleFrom + (_settleTo - _settleFrom) * Curves.easeOutCubic.transform(_settle.value));
-    });
-    _settle.addStatusListener((status) {
-      if (status == AnimationStatus.completed && mounted) {
-        setState(() { current += _settleStep; _drag = 0; });
+      if (mounted) {
+        final progress = Curves.easeOutCubic.transform(_settle.value);
+        _applyPosition(_settleFrom + (_settleTo - _settleFrom) * progress);
+        // _applyPosition normalizes the offset and advances current. Keep the
+        // remaining tween anchored to the normalized coordinate for continuity.
+        final whole = (_settleFrom + (_settleTo - _settleFrom) * progress) - _drag;
+        if (whole.abs() >= 1) {
+          _settleFrom -= whole;
+          _settleTo -= whole;
+        }
       }
     });
   }
@@ -39,19 +52,22 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
   void _dragBy(double delta, double width, int length) {
     if (length < 2) return;
     _settle.stop();
-    setState(() {
-      _drag += delta / (width * .48);
-      while (_drag <= -1) { current++; _drag += 1; }
-      while (_drag >= 1) { current--; _drag -= 1; }
-    });
+    _applyPosition(_drag + delta / (width * .48));
   }
 
-  void _finishDrag(double velocity, int length) {
+  void _finishDrag(double velocity, int length, double width) {
     if (length < 2) return;
-    final step = _drag < -.30 || velocity < -520 ? 1 : _drag > .30 || velocity > 520 ? -1 : 0;
+    // Flick inertia: faster gestures travel further and coast to a gradual stop.
+    // The user can interrupt the motion by touching the carousel again.
+    final speed = velocity / (width * .48);
+    final extra = (speed * .34).clamp(-4.0, 4.0);
+    final destination = _drag + extra;
+    final snapped = destination.roundToDouble();
     _settleFrom = _drag;
-    _settleStep = step;
-    _settleTo = -step.toDouble();
+    _settleTo = snapped;
+    final travel = (snapped - _drag).abs();
+    _settle.duration = Duration(milliseconds:
+      (300 + travel * 230).round().clamp(300, 1350));
     _settle.forward(from: 0);
   }
 
@@ -243,15 +259,15 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                   Map<String,dynamic> at(int offset) => items[(idx + offset + items.length) % items.length];
                   // Five virtual positions form a continuous circular carousel.
                   // Every pointer movement changes the positions and sizes immediately.
-                  final slots = <int>[-2, -1, 1, 2, 0];
+                  final slots = <int>[-3, -2, -1, 0, 1, 2, 3];
                   final ordered = slots.toList()..sort((a, b) =>
                     (b + _drag).abs().compareTo((a + _drag).abs()));
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onHorizontalDragStart: (_) => _settle.stop(),
                     onHorizontalDragUpdate: (d) => _dragBy(d.delta.dx, width, items.length),
-                    onHorizontalDragEnd: (d) => _finishDrag(d.primaryVelocity ?? 0, items.length),
-                    onHorizontalDragCancel: () => _finishDrag(0, items.length),
+                    onHorizontalDragEnd: (d) => _finishDrag(d.primaryVelocity ?? 0, items.length, width),
+                    onHorizontalDragCancel: () => _finishDrag(0, items.length, width),
                     onLongPress: () => _showDetail(at(0)),
                     child: ClipRect(child: SizedBox.expand(child: Stack(alignment: Alignment.center,
                       children: [
@@ -267,12 +283,15 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                         ...ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
                         final position = slot + _drag;
                         final distance = position.abs();
-                        final scale = (1 - distance * .23).clamp(.42, 1.0);
-                        final opacity = (1 - (distance - 1).clamp(0.0, 1.0) * .75).clamp(.2, 1.0);
-                        final x = position * width * .36;
+                        // Circular depth: garments move outwards at the front, then
+                        // return towards the centre behind the leading item.
+                        final depth = distance <= 1 ? distance : (2 - distance).clamp(0.0, 1.0);
+                        final scale = (1 - distance * .28).clamp(.22, 1.0);
+                        final opacity = (1 - (distance - 1).clamp(0.0, 2.0) * .40).clamp(.15, 1.0);
+                        final x = (position < 0 ? -1.0 : 1.0) * depth * width * .37;
                         return Transform.translate(
                           key: ValueKey('cover-$slot'),
-                          offset: Offset(x, distance * h * .045),
+                          offset: Offset(x, distance * h * .065),
                           child: Opacity(opacity: opacity,
                             child: Transform.scale(scale: scale,
                               child: _garment(at(slot), width: width * .80,
