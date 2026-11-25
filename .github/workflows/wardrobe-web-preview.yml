@@ -71,9 +71,11 @@ jobs:
           ls -lah build/web | head -25
       - uses: actions/configure-pages@v5
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
+      - name: Allow Pages artifact metadata to propagate
+        run: sleep 45
       - id: deployment
         uses: actions/deploy-pages@v4
         with:
