@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
+import '../widgets/wardrobe_web_image_stub.dart' if (dart.library.html) '../widgets/wardrobe_web_image_html.dart' as web_image;
 
 import '../Services/product_link_image_cleanup.dart';
 import '../widgets/wardrobe_processing_spinner.dart';
@@ -90,6 +92,9 @@ Widget _networkImage({
   int? cacheWidth,
   int? cacheHeight,
 }) {
+  if (kIsWeb) {
+    return web_image.wardrobeWebImage(url, fit: fit) ?? const SizedBox.expand();
+  }
   return Image.network(
     url,
     fit: fit,
