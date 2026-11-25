@@ -1,4 +1,5 @@
 name: Android real Wardrobe DEV
+# Rebuild after Firebase secret correction
 
 on:
   workflow_dispatch:
