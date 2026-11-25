@@ -1,0 +1,62 @@
+name: Wardrobe live web preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/dev-mobile]
+    paths:
+      - 'lib/main_web_wardrobe.dart'
+      - 'lib/screens/wardrobe_read_only_cover_flow.dart'
+      - 'lib/utils/wardrobe_image_url_priority.dart'
+      - 'lib/utils/wardrobe_list_utils.dart'
+      - '.github/workflows/wardrobe-web-preview.yml'
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: wardrobe-web-preview
+  cancel-in-progress: true
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.5'
+          channel: stable
+          cache: true
+      - name: Validate Firebase Web configuration
+        env:
+          API_KEY: ${{ secrets.WEB_FIREBASE_API_KEY }}
+          APP_ID: ${{ secrets.WEB_FIREBASE_APP_ID }}
+          SENDER_ID: ${{ secrets.WEB_FIREBASE_MESSAGING_SENDER_ID }}
+        run: |
+          test -n "$API_KEY" || { echo "::error::Missing WEB_FIREBASE_API_KEY"; exit 1; }
+          test -n "$APP_ID" || { echo "::error::Missing WEB_FIREBASE_APP_ID"; exit 1; }
+          test -n "$SENDER_ID" || { echo "::error::Missing WEB_FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
+      - name: Build real Wardrobe web preview
+        env:
+          API_KEY: ${{ secrets.WEB_FIREBASE_API_KEY }}
+          APP_ID: ${{ secrets.WEB_FIREBASE_APP_ID }}
+          SENDER_ID: ${{ secrets.WEB_FIREBASE_MESSAGING_SENDER_ID }}
+        run: |
+          flutter pub get
+          flutter build web --release --target lib/main_web_wardrobe.dart \
+            --base-href /outfit_of_the_day_new/ \
+            --dart-define=WEB_FIREBASE_API_KEY="$API_KEY" \
+            --dart-define=WEB_FIREBASE_APP_ID="$APP_ID" \
+            --dart-define=WEB_FIREBASE_MESSAGING_SENDER_ID="$SENDER_ID" \
+            --dart-define=WEB_FIREBASE_PROJECT_ID=outfitoftheday-4d401 \
+            --dart-define=WEB_FIREBASE_AUTH_DOMAIN=outfitoftheday-4d401.firebaseapp.com \
+            --dart-define=WEB_FIREBASE_STORAGE_BUCKET=outfitoftheday-4d401.firebasestorage.app
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/web
+      - id: deployment
+        uses: actions/deploy-pages@v4
