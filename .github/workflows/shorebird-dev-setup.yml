@@ -23,6 +23,23 @@ jobs:
             echo "::error::Add SHOREBIRD_TOKEN as a repository Actions secret (service account with App Manager role)."
             exit 1
           fi
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.5'
+          channel: stable
+      - name: Restore missing Gradle wrapper scripts without replacing project
+        run: |
+          flutter create --platforms=android --project-name wrapperhelper /tmp/shorebird_wrapper_helper
+          cp /tmp/shorebird_wrapper_helper/android/gradlew android/gradlew
+          chmod +x android/gradlew
+          if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
+            cp /tmp/shorebird_wrapper_helper/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/gradle-wrapper.jar
+          fi
+          flutter pub get
       - uses: shorebirdtech/setup-shorebird@v1
       - name: Initialize Shorebird for existing Flutter project
         run: |
