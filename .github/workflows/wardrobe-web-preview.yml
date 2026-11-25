@@ -50,7 +50,7 @@ jobs:
           }
           values = {}
           for source, target in names.items():
-              match = re.search(r'(?<!\\w)["\\\']?' + source + r'["\\\']?\\s*:\\s*["\\\']([^"\\\']+)["\\\']', raw)
+              match = re.search(r'\b' + source + r'\s*:\s*"([^"]+)"', raw)
               if not match:
                   raise SystemExit('Firebase config missing field: ' + source)
               values[target] = match.group(1)
@@ -61,8 +61,8 @@ jobs:
       - name: Build real Wardrobe web preview
         run: |
           flutter pub get
-          flutter build web --release --target lib/main_web_wardrobe.dart \\
-            --base-href /outfit_of_the_day_new/ \\
+          flutter build web --release --target lib/main_web_wardrobe.dart \
+            --base-href /outfit_of_the_day_new/ \
             --dart-define-from-file=/tmp/wardrobe-web-defines.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
