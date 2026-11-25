@@ -6,6 +6,8 @@ on:
     paths:
       - 'lib/main_web_wardrobe.dart'
       - 'lib/screens/wardrobe_read_only_cover_flow.dart'
+      - 'lib/screens/wardrobe_cover_flow_preview.dart'
+      - 'lib/screens/main_navigation.dart'
       - 'lib/utils/wardrobe_image_url_priority.dart'
       - 'lib/utils/wardrobe_image_processing.dart'
       - 'lib/widgets/wardrobe_web_image_*.dart'
@@ -76,8 +78,6 @@ jobs:
         uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
-      - name: Allow Pages artifact metadata to propagate
-        run: sleep 45
       - id: deployment
         uses: actions/deploy-pages@v4
         with:
