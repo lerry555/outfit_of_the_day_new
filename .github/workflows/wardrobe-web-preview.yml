@@ -7,6 +7,8 @@ on:
       - 'lib/main_web_wardrobe.dart'
       - 'lib/screens/wardrobe_read_only_cover_flow.dart'
       - 'lib/utils/wardrobe_image_url_priority.dart'
+      - 'lib/utils/wardrobe_image_processing.dart'
+      - 'lib/widgets/wardrobe_web_image_*.dart'
       - 'lib/utils/wardrobe_list_utils.dart'
       - '.github/workflows/wardrobe-web-preview.yml'
 permissions:
