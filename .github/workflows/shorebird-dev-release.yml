@@ -1,0 +1,88 @@
+name: Shorebird full Outfit DEV release
+on:
+  workflow_dispatch:
+  push:
+    branches: [experiment/dev-mobile]
+    paths: ['.github/workflows/shorebird-dev-release.yml']
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+      DEV_SIGN_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.32.5'
+          channel: stable
+          cache: true
+      - uses: shorebirdtech/setup-shorebird@v1
+      - name: Verify required secrets
+        env:
+          DEV_KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
+        run: |
+          test -n "$SHOREBIRD_TOKEN" && test -n "$DEV_SIGN_PASSWORD" && test -n "$DEV_KEYSTORE_B64"
+      - name: Restore Gradle wrapper
+        run: |
+          flutter create --platforms=android --project-name wrapperhelper /tmp/shorebird_wrapper_helper
+          cp /tmp/shorebird_wrapper_helper/android/gradlew android/gradlew
+          chmod +x android/gradlew
+          if [ ! -f android/gradle/wrapper/gradle-wrapper.jar ]; then
+            cp /tmp/shorebird_wrapper_helper/android/gradle/wrapper/gradle-wrapper.jar android/gradle/wrapper/gradle-wrapper.jar
+          fi
+      - name: Configure isolated DEV package and Firebase
+        env:
+          DEV_KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
+        run: |
+          printf '%s' "$DEV_KEYSTORE_B64" | base64 -d > android/app/dev-signing.jks
+          python3 - <<'PY'
+          import json
+          from copy import deepcopy
+          from pathlib import Path
+          p = Path('android/app/google-services.json')
+          config = json.loads(p.read_text())
+          production = next(c for c in config['client'] if c['client_info']['android_client_info']['package_name'] == 'com.krist.outfitoftheday')
+          dev = deepcopy(production)
+          dev['client_info']['android_client_info']['package_name'] = 'com.krist.outfitoftheday.devpreview'
+          dev['client_info']['mobilesdk_app_id'] = '1:221686818701:android:8b138d260ae88387973fc4'
+          dev['oauth_client'] = [c for c in dev.get('oauth_client', []) if c.get('client_type') != 1]
+          config['client'] = [c for c in config['client'] if c['client_info']['android_client_info']['package_name'] != 'com.krist.outfitoftheday.devpreview'] + [dev]
+          p.write_text(json.dumps(config))
+          p = Path('android/app/build.gradle.kts')
+          source = p.read_text()
+          old = 'applicationId = "com.krist.outfitoftheday"'
+          assert old in source
+          source = source.replace(old, 'applicationId = "com.krist.outfitoftheday.devpreview"')
+          source = source.replace('signingConfig = signingConfigs.getByName("debug")', 'signingConfig = signingConfigs.getByName("devPreview")')
+          anchor = '    buildTypes {'
+          assert anchor in source
+          source = source.replace(anchor, '''    signingConfigs {
+              create("devPreview") {
+                  storeFile = file("dev-signing.jks")
+                  storePassword = System.getenv("DEV_SIGN_PASSWORD")
+                  keyAlias = "outfitdev"
+                  keyPassword = System.getenv("DEV_SIGN_PASSWORD")
+              }
+          }
+          ''' + anchor)
+          p.write_text(source)
+          PY
+      - name: Resolve Flutter packages
+        run: flutter pub get
+      - name: Create Shorebird-enabled full app release
+        run: shorebird release android --artifact apk --no-confirm
+      - name: Upload Shorebird DEV APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: outfit-shorebird-dev-apk
+          path: build/app/outputs/flutter-apk/*.apk
+          if-no-files-found: error
+          retention-days: 14
