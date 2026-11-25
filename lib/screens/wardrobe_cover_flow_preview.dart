@@ -79,7 +79,8 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
   });
 
   Widget _garment(Map<String,dynamic> data, {required double width, required double height, required bool selected}) {
-    final url = getBestWardrobeImageUrl(data);
+    // Cover Flow prioritizes the transparent cutout used on the Home outfit canvas.
+    final url = getHomeOutfitImageUrlOrNull(data) ?? getBestWardrobeImageUrl(data);
     return SizedBox(
       width: width, height: height,
       child: Stack(alignment: Alignment.center, children: [
@@ -118,11 +119,11 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
       : value == 'Košele' ? Icons.dry_cleaning_outlined
       : value == 'Nohavice' ? Icons.airline_seat_legroom_normal
       : value == 'Tenisky' ? Icons.hiking_outlined : Icons.checkroom_outlined;
-    return Padding(padding: const EdgeInsets.only(right: 10),
+    return Padding(padding: const EdgeInsets.only(right: 5),
       child: InkWell(onTap: () => _switchCategory(value),
         borderRadius: BorderRadius.circular(18),
         child: AnimatedContainer(duration: const Duration(milliseconds: 180),
-          width: 98, padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+          width: 69, padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 7),
           decoration: BoxDecoration(
             color: active ? const Color(0xFF3C321C) : const Color(0xFF151515),
             borderRadius: BorderRadius.circular(18),
@@ -130,10 +131,10 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
             boxShadow: active ? [BoxShadow(color: gold.withOpacity(.24), blurRadius: 16)] : [],
           ),
           child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-            Icon(icon, color: active ? gold : Colors.white70, size: 28),
-            const SizedBox(height: 8),
+            Icon(icon, color: active ? gold : Colors.white70, size: 23),
+            const SizedBox(height: 5),
             Text(value, maxLines: 2, textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, color: active ? gold : Colors.white, height: 1.15)),
+              style: TextStyle(fontSize: 10, color: active ? gold : Colors.white, height: 1.1)),
           ]),
         ),
       ),
@@ -145,16 +146,16 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
     final uid = FirebaseAuth.instance.currentUser?.uid;
     if (uid == null) return const Center(child: Text('Prihlás sa cez Google.'));
     return ColoredBox(color: background, child: SafeArea(child: Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+      Padding(padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
         child: Row(children: [
-          const Icon(Icons.arrow_back_ios_new, color: gold, size: 20),
+          const Icon(Icons.arrow_back_ios_new, color: gold, size: 18),
           const Expanded(child: Column(children: [
-            Text('O U T F I T   O F   T H E   D A Y', style: TextStyle(color: gold, fontSize: 10, letterSpacing: 1.3)),
+            Text('O U T F I T   O F   T H E   D A Y', style: TextStyle(color: gold, fontSize: 9, letterSpacing: 1.1)),
             SizedBox(height: 7),
             Row(mainAxisAlignment: MainAxisAlignment.center, children: [
               Icon(Icons.checkroom_outlined, color: gold, size: 30),
               SizedBox(width: 8),
-              Text('Môj šatník', style: TextStyle(color: Colors.white, fontSize: 27, fontWeight: FontWeight.bold)),
+              Text('Môj šatník', style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
             ]),
           ])),
           IconButton(onPressed: () => showDialog<void>(context: context,
@@ -164,7 +165,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
             icon: const Icon(Icons.info_outline, color: gold)),
         ]),
       ),
-      Container(margin: const EdgeInsets.symmetric(horizontal: 14), height: 54,
+      Container(margin: const EdgeInsets.symmetric(horizontal: 14), height: 49,
         decoration: BoxDecoration(color: surface, borderRadius: BorderRadius.circular(27),
           border: Border.all(color: const Color(0xFF3D3223))),
         child: Row(children: categories.keys.map((name) {
@@ -182,9 +183,9 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
             )));
         }).toList()),
       ),
-      const SizedBox(height: 18),
-      SizedBox(height: 104, child: ListView(scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
+      const SizedBox(height: 14),
+      SizedBox(height: 78, child: ListView(scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
         children: categories[group]!.map(_categoryButton).toList())),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
         stream: FirebaseFirestore.instance.collection('users').doc(uid).collection('wardrobe').snapshots(),
@@ -213,29 +214,32 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
                     },
                     onLongPress: () => _showDetail(at(0)),
                     child: Stack(alignment: Alignment.center, children: [
-                      Positioned(left: -width * .035, child: Opacity(opacity: .78,
-                        child: _garment(at(-1), width: width * .36, height: h * .72, selected: false))),
-                      Positioned(right: -width * .035, child: Opacity(opacity: .78,
-                        child: _garment(at(1), width: width * .36, height: h * .72, selected: false))),
-                      _garment(at(0), width: width * .59, height: h * .92, selected: true),
+                      if (items.length > 1) Positioned(left: 0, child: Opacity(opacity: .88,
+                        child: _garment(at(-1), width: width * .31, height: h * .65, selected: false))),
+                      if (items.length > 1) Positioned(right: 0, child: Opacity(opacity: .88,
+                        child: _garment(at(1), width: width * .31, height: h * .65, selected: false))),
+                      _garment(at(0), width: width * .53, height: h * .90, selected: true),
                     ]),
                   );
                 })),
-            Padding(padding: const EdgeInsets.fromLTRB(14, 12, 14, 22),
+            Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 15),
               child: Row(children: [
                 if (category == 'Tričká & topy') Expanded(child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal, child: Row(children: ['Všetko','Tričká','Polokošele','Tielka'].map((value) {
                     final active = subtype == value;
-                    return Padding(padding: const EdgeInsets.only(right: 8),
+                    return Padding(padding: const EdgeInsets.only(right: 3),
                       child: ChoiceChip(
-                        label: Text(value, style: TextStyle(fontSize: 12, color: active ? Colors.black : Colors.white70)),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        visualDensity: const VisualDensity(horizontal: -3, vertical: -2),
+                        labelPadding: const EdgeInsets.symmetric(horizontal: 3),
+                        label: Text(value, style: TextStyle(fontSize: 11, color: active ? Colors.black : Colors.white70)),
                         selected: active, selectedColor: gold, backgroundColor: surface,
                         side: BorderSide(color: active ? gold : const Color(0xFF4B4030)),
                         onSelected: (_) => setState(() { subtype = value; current = 0; }),
                       ));
                   }).toList())))
                 else const Spacer(),
-                const SizedBox(width: 6),
+                const SizedBox(width: 2),
                 IconButton(onPressed: () => showModalBottomSheet<void>(context: context,
                   isScrollControlled: true, backgroundColor: surface,
                   builder: (ctx) => SafeArea(child: SizedBox(height: MediaQuery.sizeOf(ctx).height * .65,
