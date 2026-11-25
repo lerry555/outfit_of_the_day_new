@@ -31,29 +31,33 @@ jobs:
           cache: true
       - name: Verify required DEV signing and Firebase secrets
         env:
-          FIREBASE_CONFIG_B64: ${{ secrets.DEV_FIREBASE_CONFIG_B64 }}
           KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
         run: |
-          test -n "$FIREBASE_CONFIG_B64" || { echo 'Missing DEV_FIREBASE_CONFIG_B64'; exit 1; }
           test -n "$KEYSTORE_B64" || { echo 'Missing DEV_KEYSTORE_B64'; exit 1; }
           test -n "$KEYSTORE_PASSWORD" || { echo 'Missing DEV_KEYSTORE_PASSWORD'; exit 1; }
       - name: Configure isolated DEV Android package and signing
         shell: bash
         env:
-          FIREBASE_CONFIG_B64: ${{ secrets.DEV_FIREBASE_CONFIG_B64 }}
           KEYSTORE_B64: ${{ secrets.DEV_KEYSTORE_B64 }}
           KEYSTORE_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
         run: |
-          echo "$FIREBASE_CONFIG_B64" | base64 -d > android/app/google-services.json
           echo "$KEYSTORE_B64" | base64 -d > android/app/dev-signing.jks
           python3 - <<'PY'
           import json
           from pathlib import Path
           config = json.loads(Path('android/app/google-services.json').read_text())
-          packages = [client.get('client_info',{}).get('android_client_info',{}).get('package_name')
-                      for client in config.get('client',[])]
-          assert 'com.krist.outfitoftheday.devpreview' in packages, 'DEV Firebase client missing'
+          from copy import deepcopy
+          original = next(client for client in config['client']
+                          if client['client_info']['android_client_info']['package_name']
+                          == 'com.krist.outfitoftheday')
+          dev = deepcopy(original)
+          dev['client_info']['android_client_info']['package_name'] = 'com.krist.outfitoftheday.devpreview'
+          dev['client_info']['mobilesdk_app_id'] = '1:221686818701:android:8b138d260ae88387973fc4'
+          dev['oauth_client'] = [entry for entry in dev.get('oauth_client', [])
+                                 if entry.get('client_type') != 1]
+          config['client'].append(dev)
+          Path('android/app/google-services.json').write_text(json.dumps(config))
           p = Path('android/app/build.gradle.kts')
           source = p.read_text()
           old = 'applicationId = "com.krist.outfitoftheday"'
