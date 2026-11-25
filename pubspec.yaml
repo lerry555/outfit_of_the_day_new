@@ -59,4 +59,5 @@ flutter:
     - assets/data/color_database.json
     - assets/data/wardrobe_ontology_v2.json
     - assets/data/wardrobe_set_types_v1.json
+    - shorebird.yaml
 
