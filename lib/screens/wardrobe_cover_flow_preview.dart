@@ -267,16 +267,16 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                         ...ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
                         final position = slot + _drag;
                         final distance = position.abs();
-                        final scale = (1 - distance * .31).clamp(.35, 1.0);
+                        final scale = (1 - distance * .23).clamp(.42, 1.0);
                         final opacity = (1 - (distance - 1).clamp(0.0, 1.0) * .75).clamp(.2, 1.0);
-                        final x = position * width * .405;
+                        final x = position * width * .36;
                         return Transform.translate(
                           key: ValueKey('cover-$slot'),
                           offset: Offset(x, distance * h * .045),
                           child: Opacity(opacity: opacity,
                             child: Transform.scale(scale: scale,
-                              child: _garment(at(slot), width: width,
-                                height: h, selected: distance < .45))),
+                              child: _garment(at(slot), width: width * .80,
+                                height: h * .84, selected: distance < .45))),
                         );
                       }).toList(),
                       ],
