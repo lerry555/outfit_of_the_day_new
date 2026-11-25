@@ -525,7 +525,7 @@ class _WardrobeScreenState extends State<WardrobeScreen> {
                     padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
                     child: _GlassAppBar(
                       title: 'Môj šatník',
-                      subtitle: 'Tvoje oblečenie pripravené na outfity.',
+                      subtitle: 'Cover Flow • pripravujeme nový šatník',
                     ),
                   ),
 
