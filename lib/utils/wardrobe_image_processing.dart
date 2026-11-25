@@ -93,7 +93,10 @@ Widget _networkImage({
   int? cacheHeight,
 }) {
   if (kIsWeb) {
-    return web_image.wardrobeWebImage(url, fit: fit) ?? const SizedBox.expand();
+    return web_image.wardrobeWebImage(
+      urls: [url, ...wardrobeImageUrlCandidates(data).where((u) => u != url)],
+      fit: fit,
+    ) ?? const SizedBox.expand();
   }
   return Image.network(
     url,
