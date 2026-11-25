@@ -77,13 +77,13 @@ class _WardrobeReadOnlyCoverFlowState extends State<WardrobeReadOnlyCoverFlow> {
   }
 
   Widget _photo(Map<String, dynamic> item, {required bool center}) {
-    final url = getBestWardrobeImageUrlOrNull(item);
+    final urls = wardrobeImageUrlCandidates(item);
+    final url = urls.isEmpty ? null : urls.first;
     return SizedBox(
       width: center ? 198 : 90,
       height: center ? 254 : 185,
       child: url != null && url.isNotEmpty
-          ? Image.network(url, fit: BoxFit.contain, errorBuilder: (_, __, ___) =>
-              const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white38)))
+          ? _WardrobePhotoFallback(urls: urls)
           : const Center(child: Icon(Icons.image_not_supported_outlined, color: Colors.white38)),
     );
   }
@@ -183,6 +183,38 @@ class _WardrobeReadOnlyCoverFlowState extends State<WardrobeReadOnlyCoverFlow> {
           ]);
         },
       ),
+    );
+  }
+}
+
+class _WardrobePhotoFallback extends StatefulWidget {
+  const _WardrobePhotoFallback({required this.urls});
+  final List<String> urls;
+  @override
+  State<_WardrobePhotoFallback> createState() => _WardrobePhotoFallbackState();
+}
+class _WardrobePhotoFallbackState extends State<_WardrobePhotoFallback> {
+  int index = 0;
+  @override
+  void didUpdateWidget(covariant _WardrobePhotoFallback oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.urls.join('|') != widget.urls.join('|')) index = 0;
+  }
+  @override
+  Widget build(BuildContext context) {
+    if (index >= widget.urls.length) {
+      return const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white38));
+    }
+    return Image.network(widget.urls[index], fit: BoxFit.contain,
+      key: ValueKey(widget.urls[index]),
+      errorBuilder: (_, __, ___) {
+        if (index + 1 < widget.urls.length) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && index + 1 < widget.urls.length) setState(() => index++);
+          });
+        }
+        return const Center(child: Icon(Icons.broken_image_outlined, color: Colors.white38));
+      },
     );
   }
 }
