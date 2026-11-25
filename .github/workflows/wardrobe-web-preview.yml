@@ -30,30 +30,40 @@ jobs:
           flutter-version: '3.32.5'
           channel: stable
           cache: true
-      - name: Validate Firebase Web configuration
+      - name: Prepare Firebase web config from existing GitHub secret
         env:
-          API_KEY: ${{ secrets.WEB_FIREBASE_API_KEY }}
-          APP_ID: ${{ secrets.WEB_FIREBASE_APP_ID }}
-          SENDER_ID: ${{ secrets.WEB_FIREBASE_MESSAGING_SENDER_ID }}
+          FIREBASE_CONFIG: ${{ secrets.WEB_FIREBASE_CONFIG }}
         run: |
-          test -n "$API_KEY" || { echo "::error::Missing WEB_FIREBASE_API_KEY"; exit 1; }
-          test -n "$APP_ID" || { echo "::error::Missing WEB_FIREBASE_APP_ID"; exit 1; }
-          test -n "$SENDER_ID" || { echo "::error::Missing WEB_FIREBASE_MESSAGING_SENDER_ID"; exit 1; }
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          raw = os.environ.get('FIREBASE_CONFIG', '')
+          if not raw:
+              raise SystemExit('Missing WEB_FIREBASE_CONFIG GitHub Actions secret')
+          names = {
+              'apiKey': 'WEB_FIREBASE_API_KEY',
+              'appId': 'WEB_FIREBASE_APP_ID',
+              'messagingSenderId': 'WEB_FIREBASE_MESSAGING_SENDER_ID',
+              'projectId': 'WEB_FIREBASE_PROJECT_ID',
+              'authDomain': 'WEB_FIREBASE_AUTH_DOMAIN',
+              'storageBucket': 'WEB_FIREBASE_STORAGE_BUCKET',
+          }
+          values = {}
+          for source, target in names.items():
+              match = re.search(r'(?<!\\w)["\\\']?' + source + r'["\\\']?\\s*:\\s*["\\\']([^"\\\']+)["\\\']', raw)
+              if not match:
+                  raise SystemExit('Firebase config missing field: ' + source)
+              values[target] = match.group(1)
+          if values['WEB_FIREBASE_PROJECT_ID'] != 'outfitoftheday-4d401':
+              raise SystemExit('Firebase project ID mismatch')
+          Path('/tmp/wardrobe-web-defines.json').write_text(json.dumps(values))
+          PY
       - name: Build real Wardrobe web preview
-        env:
-          API_KEY: ${{ secrets.WEB_FIREBASE_API_KEY }}
-          APP_ID: ${{ secrets.WEB_FIREBASE_APP_ID }}
-          SENDER_ID: ${{ secrets.WEB_FIREBASE_MESSAGING_SENDER_ID }}
         run: |
           flutter pub get
-          flutter build web --release --target lib/main_web_wardrobe.dart \
-            --base-href /outfit_of_the_day_new/ \
-            --dart-define=WEB_FIREBASE_API_KEY="$API_KEY" \
-            --dart-define=WEB_FIREBASE_APP_ID="$APP_ID" \
-            --dart-define=WEB_FIREBASE_MESSAGING_SENDER_ID="$SENDER_ID" \
-            --dart-define=WEB_FIREBASE_PROJECT_ID=outfitoftheday-4d401 \
-            --dart-define=WEB_FIREBASE_AUTH_DOMAIN=outfitoftheday-4d401.firebaseapp.com \
-            --dart-define=WEB_FIREBASE_STORAGE_BUCKET=outfitoftheday-4d401.firebasestorage.app
+          flutter build web --release --target lib/main_web_wardrobe.dart \\
+            --base-href /outfit_of_the_day_new/ \\
+            --dart-define-from-file=/tmp/wardrobe-web-defines.json
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
