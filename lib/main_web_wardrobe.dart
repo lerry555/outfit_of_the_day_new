@@ -70,7 +70,7 @@ class _PreviewGateState extends State<_PreviewGate> {
       if (snapshot.connectionState == ConnectionState.waiting) {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
-      if (snapshot.hasData) return const MainNavigation();
+      if (snapshot.hasData) return const MainNavigation(previewCoverFlow: true);
       return Scaffold(
         backgroundColor: const Color(0xFF101814),
         body: Center(child: ConstrainedBox(
