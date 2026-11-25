@@ -52,9 +52,9 @@ class _MainNavigationState extends State<MainNavigation> {
     AppNotificationRouter.instance.attachStylistTabSink(
       _selectStylistFromNotification,
     );
-    unawaited(FcmService.instance.init());
+    if (!widget.previewCoverFlow) unawaited(FcmService.instance.init());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      ShareIntentService.start(context);
+      if (!widget.previewCoverFlow) ShareIntentService.start(context);
       AppNotificationRouter.instance.flushPending();
     });
   }
@@ -135,7 +135,7 @@ class _MainNavigationState extends State<MainNavigation> {
               highlightColor: Colors.transparent,
             ),
             child: BottomNavigationBar(
-              currentIndex: _currentIndex,
+              currentIndex: _currentIndex == kStylistIndexedStackIndex ? kStylistBottomBarIndex : _currentIndex,
               onTap: _onTabTapped,
               type: BottomNavigationBarType.fixed,
               backgroundColor: Colors.transparent,
