@@ -13,7 +13,48 @@ class WardrobeCoverFlowPreview extends StatefulWidget {
   State<WardrobeCoverFlowPreview> createState() => _WardrobeCoverFlowPreviewState();
 }
 
-class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
+class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> with SingleTickerProviderStateMixin {
+  late final AnimationController _settle = AnimationController(vsync: this, duration: const Duration(milliseconds: 220));
+  double _drag = 0;
+  double _settleFrom = 0;
+  double _settleTo = 0;
+  int _settleStep = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _settle.addListener(() {
+      if (mounted) setState(() => _drag = _settleFrom + (_settleTo - _settleFrom) * Curves.easeOutCubic.transform(_settle.value));
+    });
+    _settle.addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() { current += _settleStep; _drag = 0; });
+      }
+    });
+  }
+
+  @override
+  void dispose() { _settle.dispose(); super.dispose(); }
+
+  void _dragBy(double delta, double width, int length) {
+    if (length < 2) return;
+    _settle.stop();
+    setState(() {
+      _drag += delta / (width * .48);
+      while (_drag <= -1) { current++; _drag += 1; }
+      while (_drag >= 1) { current--; _drag -= 1; }
+    });
+  }
+
+  void _finishDrag(double velocity, int length) {
+    if (length < 2) return;
+    final step = _drag < -.30 || velocity < -520 ? 1 : _drag > .30 || velocity > 520 ? -1 : 0;
+    _settleFrom = _drag;
+    _settleStep = step;
+    _settleTo = -step.toDouble();
+    _settle.forward(from: 0);
+  }
+
   static const gold = Color(0xFFC8A36A);
   static const background = Color(0xFF090909);
   static const surface = Color(0xFF181716);
@@ -72,10 +113,10 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
   }
 
   void _switchGroup(String value) => setState(() {
-    group = value; category = categories[value]!.first; subtype = 'Všetko'; current = 0;
+    _settle.stop(); _drag = 0; group = value; category = categories[value]!.first; subtype = 'Všetko'; current = 0;
   });
   void _switchCategory(String value) => setState(() {
-    category = value; subtype = 'Všetko'; current = 0;
+    _settle.stop(); _drag = 0; category = value; subtype = 'Všetko'; current = 0;
   });
 
   Widget _garment(Map<String,dynamic> data, {required double width, required double height, required bool selected}) {
@@ -206,20 +247,35 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
                   final width = size.maxWidth;
                   final h = size.maxHeight.clamp(180.0, 470.0).toDouble();
                   Map<String,dynamic> at(int offset) => items[(idx + offset + items.length) % items.length];
+                  // Five virtual positions form a continuous circular carousel.
+                  // Every pointer movement changes the positions and sizes immediately.
+                  final slots = <int>[-2, -1, 1, 2, 0];
+                  final ordered = slots.toList()..sort((a, b) =>
+                    (b + _drag).abs().compareTo((a + _drag).abs()));
                   return GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onHorizontalDragEnd: (d) {
-                      final v = d.primaryVelocity ?? 0;
-                      if (v.abs() > 65) setState(() => current = (idx + (v < 0 ? 1 : items.length - 1)) % items.length);
-                    },
+                    onHorizontalDragStart: (_) => _settle.stop(),
+                    onHorizontalDragUpdate: (d) => _dragBy(d.delta.dx, width, items.length),
+                    onHorizontalDragEnd: (d) => _finishDrag(d.primaryVelocity ?? 0, items.length),
+                    onHorizontalDragCancel: () => _finishDrag(0, items.length),
                     onLongPress: () => _showDetail(at(0)),
-                    child: Stack(alignment: Alignment.center, children: [
-                      if (items.length > 1) Positioned(left: 0, child: Opacity(opacity: .88,
-                        child: _garment(at(-1), width: width * .31, height: h * .65, selected: false))),
-                      if (items.length > 1) Positioned(right: 0, child: Opacity(opacity: .88,
-                        child: _garment(at(1), width: width * .31, height: h * .65, selected: false))),
-                      _garment(at(0), width: width * .53, height: h * .90, selected: true),
-                    ]),
+                    child: ClipRect(child: Stack(alignment: Alignment.center,
+                      children: ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
+                        final position = slot + _drag;
+                        final distance = position.abs();
+                        final scale = (1 - distance * .23).clamp(.43, 1.0);
+                        final opacity = (1 - (distance - 1).clamp(0.0, 1.0) * .75).clamp(.2, 1.0);
+                        final x = position * width * .315;
+                        return Transform.translate(
+                          key: ValueKey('cover-$slot'),
+                          offset: Offset(x, distance * h * .045),
+                          child: Opacity(opacity: opacity,
+                            child: Transform.scale(scale: scale,
+                              child: _garment(at(slot), width: width * .50,
+                                height: h * .88, selected: distance < .45))),
+                        );
+                      }).toList(),
+                    )),
                   );
                 })),
             Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 15),
@@ -235,7 +291,7 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> {
                         label: Text(value, style: TextStyle(fontSize: 11, color: active ? Colors.black : Colors.white70)),
                         selected: active, selectedColor: gold, backgroundColor: surface,
                         side: BorderSide(color: active ? gold : const Color(0xFF4B4030)),
-                        onSelected: (_) => setState(() { subtype = value; current = 0; }),
+                        onSelected: (_) => setState(() { _settle.stop(); _drag = 0; subtype = value; current = 0; }),
                       ));
                   }).toList())))
                 else const Spacer(),
