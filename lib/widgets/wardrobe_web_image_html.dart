@@ -42,3 +42,18 @@ Widget? wardrobeWebImage({
   }
   return HtmlElementView(viewType: id);
 }
+
+// Warm the browser's image cache before an inertial flick reaches these items.
+// Keep references alive; otherwise browsers may discard in-flight requests.
+final Map<String, html.ImageElement> _prefetched = <String, html.ImageElement>{};
+void prefetchWardrobeImages(List<String> urls) {
+  for (final url in urls) {
+    if (url.isEmpty || _prefetched.containsKey(url)) continue;
+    final img = html.ImageElement()..src = url;
+    _prefetched[url] = img;
+    // Limit retained decoded resources on mobile browsers.
+    if (_prefetched.length > 36) {
+      _prefetched.remove(_prefetched.keys.first);
+    }
+  }
+}
