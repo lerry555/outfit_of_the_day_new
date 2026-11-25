@@ -271,8 +271,8 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                           offset: Offset(x, distance * h * .045),
                           child: Opacity(opacity: opacity,
                             child: Transform.scale(scale: scale,
-                              child: _garment(at(slot), width: width * .72,
-                                height: h * .96, selected: distance < .45))),
+                              child: _garment(at(slot), width: width,
+                                height: h, selected: distance < .45))),
                         );
                       }).toList(),
                     )),
