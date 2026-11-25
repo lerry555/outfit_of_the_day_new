@@ -53,6 +53,10 @@ jobs:
               print('ERROR: Secret is not valid Base64 text (contents hidden)')
               sys.exit(1)
           print(f'Decoded bytes: {len(data)}')
+          import hashlib
+          print('Decoded keystore SHA256:', hashlib.sha256(data).hexdigest())
+          print('Keystore header type:', 'PKCS12' if data[:1] == bytes.fromhex('30') else ('JKS' if data[:4] == bytes.fromhex('feedfeed') else 'other'))
+          print('Password character count:', len(os.environ['KEYSTORE_PASSWORD']))
           if not data.startswith(b'0\\x82') and not data.startswith(bytes.fromhex('fe ed fe ed')):
               print('WARNING: decoded content does not have a typical PKCS12/JKS header')
           with tempfile.TemporaryDirectory() as folder:
