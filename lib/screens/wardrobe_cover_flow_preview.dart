@@ -125,12 +125,6 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
     return SizedBox(
       width: width, height: height,
       child: Stack(alignment: Alignment.center, children: [
-        if (selected) Container(
-          margin: const EdgeInsets.all(18),
-          decoration: BoxDecoration(boxShadow: [
-            BoxShadow(color: gold.withOpacity(.36), blurRadius: 38, spreadRadius: 12),
-          ]),
-        ),
         if (url.isNotEmpty) Positioned.fill(child: wardrobeItemImage(
           data: data, imageUrl: url, showSpinner: false,
           backgroundColor: Colors.transparent, fit: BoxFit.contain,
@@ -259,8 +253,18 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                     onHorizontalDragEnd: (d) => _finishDrag(d.primaryVelocity ?? 0, items.length),
                     onHorizontalDragCancel: () => _finishDrag(0, items.length),
                     onLongPress: () => _showDetail(at(0)),
-                    child: ClipRect(child: Stack(alignment: Alignment.center,
-                      children: ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
+                    child: ClipRect(child: SizedBox.expand(child: Stack(alignment: Alignment.center,
+                      children: [
+                        // Full-bleed scene glow, not a narrow rectangular shadow behind one item.
+                        Positioned.fill(child: DecoratedBox(decoration: BoxDecoration(
+                          gradient: RadialGradient(
+                            center: const Alignment(0, -.06),
+                            radius: 1.05,
+                            colors: [gold.withOpacity(.25), const Color(0xFF19150F), background],
+                            stops: const [0, .55, 1],
+                          ),
+                        ))),
+                        ...ordered.where((slot) => items.length > 2 || slot.abs() <= 1).map((slot) {
                         final position = slot + _drag;
                         final distance = position.abs();
                         final scale = (1 - distance * .31).clamp(.35, 1.0);
@@ -275,7 +279,8 @@ class _WardrobeCoverFlowPreviewState extends State<WardrobeCoverFlowPreview> wit
                                 height: h, selected: distance < .45))),
                         );
                       }).toList(),
-                    )),
+                      ],
+                    ))),
                   );
                 })),
             Padding(padding: const EdgeInsets.fromLTRB(8, 8, 8, 15),
