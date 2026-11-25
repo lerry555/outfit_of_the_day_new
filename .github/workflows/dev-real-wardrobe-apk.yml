@@ -1,4 +1,4 @@
-name: Android real Wardrobe DEV
+name: Android full Outfit app DEV
 # Recheck after replacing DEV_KEYSTORE_B64
 # Rebuild after Firebase secret correction
 
@@ -117,14 +117,14 @@ jobs:
           keytool -list -v -keystore android/app/dev-signing.jks -storepass "$KEYSTORE_PASSWORD" | grep SHA1
       - name: Resolve Flutter packages
         run: flutter pub get
-      - name: Build signed real Wardrobe DEV APK
+      - name: Build signed full Outfit of the Day DEV APK
         env:
           DEV_SIGN_PASSWORD: ${{ secrets.DEV_KEYSTORE_PASSWORD }}
-        run: flutter build apk --release --target lib/main_dev_wardrobe.dart
-      - name: Upload real Wardrobe DEV APK
+        run: flutter build apk --release --target lib/main.dart
+      - name: Upload full Outfit DEV APK
         uses: actions/upload-artifact@v4
         with:
-          name: outfit-real-wardrobe-dev-apk
+          name: outfit-full-app-dev-apk
           path: build/app/outputs/flutter-apk/app-release.apk
           retention-days: 14
           if-no-files-found: error
