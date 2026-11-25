@@ -2,7 +2,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'screens/wardrobe_read_only_cover_flow.dart';
+import 'screens/main_navigation.dart';
 
 /// Read-only browser preview. Uses the same Firestore wardrobe and image URLs
 /// as the DEV Android build. No uploads, deletions, or background services.
@@ -35,7 +35,7 @@ class _PreviewApp extends StatelessWidget {
   const _PreviewApp();
   @override
   Widget build(BuildContext context) => MaterialApp(
-    title: 'Outfit of the Day – Wardrobe DEV',
+    title: 'Outfit of the Day',
     debugShowCheckedModeBanner: false,
     theme: ThemeData.dark(useMaterial3: true),
     home: const _PreviewGate(),
@@ -70,7 +70,7 @@ class _PreviewGateState extends State<_PreviewGate> {
       if (snapshot.connectionState == ConnectionState.waiting) {
         return const Scaffold(body: Center(child: CircularProgressIndicator()));
       }
-      if (snapshot.hasData) return const WardrobeReadOnlyCoverFlow();
+      if (snapshot.hasData) return const MainNavigation();
       return Scaffold(
         backgroundColor: const Color(0xFF101814),
         body: Center(child: ConstrainedBox(
