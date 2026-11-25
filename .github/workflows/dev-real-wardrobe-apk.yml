@@ -2,6 +2,13 @@ name: Android real Wardrobe DEV
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - experiment/dev-mobile
+    paths:
+      - 'lib/main_dev_wardrobe.dart'
+      - 'lib/screens/wardrobe_read_only_cover_flow.dart'
+      - '.github/workflows/dev-real-wardrobe-apk.yml'
 
 permissions:
   contents: read
